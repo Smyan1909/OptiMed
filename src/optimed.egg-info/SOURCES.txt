@@ -1,0 +1,5 @@
+pyproject.toml
+src/optimed.egg-info/PKG-INFO
+src/optimed.egg-info/SOURCES.txt
+src/optimed.egg-info/dependency_links.txt
+src/optimed.egg-info/top_level.txt

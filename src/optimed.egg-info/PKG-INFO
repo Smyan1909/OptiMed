@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: optimed
+Version: 0.0.0
+Summary: Skeleton package for OptiMed prototype
+Author-email: Smyan Sondur <smyan@sondur.com>
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
