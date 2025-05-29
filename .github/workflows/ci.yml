@@ -1,0 +1,51 @@
+name: CI (lint • type • test)
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1 ▸ Check out code
+      - uses: actions/checkout@v4
+
+      # 2 ▸ Set up a Conda env quickly with micromamba
+      - uses: mamba-org/setup-micromamba@v1
+        with:
+          environment-file: environment.yml
+          cache-downloads: true        # speeds up repeated runs
+          create-args: >-
+            'pip'                      # ensure pip is available
+          init-shell: bash
+
+      # 3 ▸ Install dev-only tools into the same env
+      - name: Install dev dependencies
+        shell: bash -l {0}
+        run: |
+          micromamba install -y -n optimed ruff mypy pytest pytest-asyncio
+
+      # 4 ▸ Editable install of your package(s)
+      - name: Install project in editable mode
+        shell: bash -l {0}
+        run: |
+          micromamba run -n optimed pip install -e .
+
+      # 5 ▸ Linting (ruff)
+      - name: Lint
+        shell: bash -l {0}
+        run: micromamba run -n optimed ruff .
+
+      # 6 ▸ Static type-checking (mypy)
+      - name: Type check
+        shell: bash -l {0}
+        run: micromamba run -n optimed mypy .
+
+      # 7 ▸ Unit tests
+      - name: Tests
+        shell: bash -l {0}
+        run: micromamba run -n optimed pytest -q

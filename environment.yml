@@ -1,0 +1,19 @@
+name: optimed
+channels:
+  - conda-forge
+dependencies:
+  # ── core runtime ───────────────────────────────
+  - python =3.12
+  - pip
+  # ── web / async  ───────────────────────────────
+  - fastapi
+  - uvicorn
+  # ── database / vector store ────────────────────
+  - psycopg
+  - pgvector
+  # ── type-safe models ───────────────────────────
+  - pydantic
+  # ── leave anything not on Conda to pip ────────
+  - pip:
+      - langgraph         # agent framework
+      - anthropic         # Claude client
