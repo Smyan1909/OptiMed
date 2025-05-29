@@ -18,9 +18,7 @@ jobs:
       - uses: mamba-org/setup-micromamba@v1
         with:
           environment-file: environment.yml
-          cache-downloads: true        # speeds up repeated runs
-          create-args: >-
-            'pip'                      # ensure pip is available
+          cache-downloads: true
           init-shell: bash
 
       # 3 ▸ Install dev-only tools into the same env
