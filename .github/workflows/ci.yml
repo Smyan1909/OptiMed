@@ -36,7 +36,7 @@ jobs:
       # 5 ▸ Linting (ruff)
       - name: Lint
         shell: bash -l {0}
-        run: micromamba run -n optimed ruff .
+        run: micromamba run -n optimed ruff check .
 
       # 6 ▸ Static type-checking (mypy)
       - name: Type check
