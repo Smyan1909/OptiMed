@@ -1,7 +1,15 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "optimed"
-version = "0.0.0"
-description = "Skeleton package for OptiMed prototype"
+name            = "optimed"
+version         = "0.0.0"
+description     = "Skeleton package for OptiMed prototype"
+authors         = [{ name = "Smyan Sondur", email = "smyan@sondur.com" }]
+readme          = "README.md"
 requires-python = ">=3.12"
+dependencies    = []
+
 [mypy]
 packages = optimed
