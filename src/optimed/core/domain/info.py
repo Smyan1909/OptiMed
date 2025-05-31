@@ -4,7 +4,7 @@ from typing import Dict, List, Optional
 
 from pydantic import Field
 
-from .enums import Channel, EventType, NotificationStatus
+from .enums import Channel, EventType, NotificationStatus, ChatRole
 from .mixins import FrozenModel
 
 class InfoEvent(FrozenModel):
@@ -49,3 +49,8 @@ class CommThread(FrozenModel):
         return self.closed_at is not None
     
 
+class ChatMessage(FrozenModel):
+    role: ChatRole
+    content: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    metadata: Dict[str, str] = Field(default_factory=dict)
