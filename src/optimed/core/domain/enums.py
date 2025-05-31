@@ -1,15 +1,6 @@
-
-
-"""OptiMed domain entities (v0).
-
-All classes are **immutable** (Pydantic frozen models) and contain only
-*side‑effect‑free* helper methods.  External I/O lives in adapters or
-service layers.
-"""
+from enum import Enum
 
 """Enum definitions shared across the domain layer."""
-
-from enum import Enum
 
 __all__ = [
     "BedStatus",

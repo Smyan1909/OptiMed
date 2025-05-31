@@ -1,13 +1,4 @@
 from __future__ import annotations
-
-"""OptiMed domain entities (v0).
-
-All classes are **immutable** (Pydantic frozen models) and contain only
-*side‑effect‑free* helper methods.  External I/O lives in adapters or
-service layers.
-"""
-
-
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
