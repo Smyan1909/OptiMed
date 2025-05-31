@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from datetime import datetime
-from typing import Iterable, Protocol, Sequence
+from typing import Protocol, Sequence
 
 from optimed.core.domain import PatientContext, KPIEvent, ChatMessage, DiagnosisResult
 

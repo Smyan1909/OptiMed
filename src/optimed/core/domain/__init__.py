@@ -28,6 +28,7 @@ __all__ = [
     "InfoEvent",
     "Notification",
     "CommThread",
+    "ChatMessage",
     # kpi
     "KPIEvent",
     "Alert",
