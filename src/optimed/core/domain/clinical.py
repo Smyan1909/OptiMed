@@ -7,7 +7,7 @@ All classes are **immutable** (Pydantic frozen models) and contain only
 service layers.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from pydantic import Field
@@ -24,7 +24,7 @@ class PatientContext(FrozenModel):
     care_unit: str
     vitals: Dict[str, str] = {}
     labs: Dict[str, str] = {}
-    updated_at: datetime = Field(default_factory=datetime.now(datetime.timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def has_critical_lab(self) -> bool:
         """Returns True if any lab value breaches critical threshold.
@@ -47,14 +47,14 @@ class BedState(FrozenModel):
     bed_id: str
     care_unit: str
     status: BedStatus
-    since: datetime = Field(default_factory=datetime.now(datetime.timezone.utc))
+    since: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     current_encounter: Optional[str] = None # FK to EncounterID
 
     def idle_minutes(self, now: Optional[datetime] = None) -> int:
         """Minutes bed has been VACANT or CLEANING."""
         if self.status == BedStatus.OCCUPIED:
             return 0
-        now = now or datetime.now(datetime.timezone.utc)
+        now = now or datetime.now(timezone.utc)
         return int((now - self.since).total_seconds() // 60)
     
 class Encounter(FrozenModel):
@@ -67,7 +67,7 @@ class Encounter(FrozenModel):
 
 
     def length_of_stay(self, now: Optional[datetime] = None) -> timedelta:
-        end = self.discharge_ts or now or datetime.now(datetime.timezone.utc)
+        end = self.discharge_ts or now or datetime.now(timezone.utc)
         return end - self.admit_ts
 
 

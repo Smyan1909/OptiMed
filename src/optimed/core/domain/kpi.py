@@ -5,7 +5,7 @@ All classes are **immutable** (Pydantic frozen models) and contain only
 service layers.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from pydantic import Field
@@ -17,7 +17,7 @@ class KPIEvent(FrozenModel):
     metric: str
     value: float
     unit: str
-    recorded_at: datetime = Field(default_factory=datetime.now(datetime.timezone.utc))
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metric_source: Optional[str] = None  # patient_id if applicable
 
 
@@ -26,7 +26,7 @@ class Alert(FrozenModel):
     message: str
     severity: Severity
     subject_id: Optional[str] = None  # patient_id if applicable
-    created_at: datetime = Field(default_factory=datetime.now(datetime.timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     resolved_at: Optional[datetime] = None
 
     _ladder = {
