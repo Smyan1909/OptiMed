@@ -46,4 +46,4 @@ jobs:
       # 7 ▸ Unit tests
       - name: Tests
         shell: bash -l {0}
-        run: micromamba run -n optimed pytest -q
+        run: micromamba run -n optimed pytest 
