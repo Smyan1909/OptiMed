@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+"""OptiMed domain entities (v0).
+
+All classes are **immutable** (Pydantic frozen models) and contain only
+*side‑effect‑free* helper methods.  External I/O lives in adapters or
+service layers.
+"""
+
+
+from datetime import datetime
+from typing import Dict, List, Optional
+
+from pydantic import Field
+
+from .enums import Channel, EventType, NotificationStatus
+from .mixins import FrozenModel
+
+class InfoEvent(FrozenModel):
+    event_id: str
+    patient_id: Optional[str] = None
+    type: EventType
+    payload_json: str
+    created_at: datetime = Field(default_factory=datetime.now(datetime.timezone.utc))
+
+    def route_targets(self, policy: Dict[str, List[str]]) -> List[str]:
+        """Pure function: choose recipients by event type & policy mapping."""
+        return policy.get(self.type, [])
+
+
+class Notification(FrozenModel):
+    notification_id: str
+    event_id: str # FK to InfoEvent
+    channel: Channel
+    status: NotificationStatus = NotificationStatus.DELIVERED
+    delivered_at: datetime = Field(default_factory=datetime.now(datetime.timezone.utc))
+    ack_at: Optional[datetime] = None
+
+    def acknowledge(self, ts: Optional[datetime] = None) -> "Notification":
+        """Acknowledge notification delivery."""
+        return self.model_copy(update={"status": NotificationStatus.ACK, "ack_at": ts or datetime.now(datetime.timezone.utc)})
+
+
+class CommThread(FrozenModel):
+    thread_id: str
+    notifications: List[Notification] = Field(default_factory=list)
+    owners: List[str] = Field(default_factory=list)  # User IDs of thread owners
+    opened_at: datetime = Field(default_factory=datetime.now(datetime.timezone.utc))
+    closed_at: Optional[datetime] = None
+
+    def add_notification(self, n: Notification) -> "CommThread":
+        """Add a notification to the thread."""
+        return self.model_copy(update={"notifications": self.notifications + [n]})
+    
+    def is_closed(self) -> bool:
+        """Check if thread is closed."""
+        return self.closed_at is not None
+    
+
