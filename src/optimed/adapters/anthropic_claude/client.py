@@ -62,8 +62,10 @@ class AnthropicClaudeClient(LLMClient):
         
         claude_msgs_typed = cast("list[MessageParam]", claude_msgs)
 
+        response: Message | None = None
+
         if system_prompt is not None:
-            response: Message = await self._client.messages.create(
+            response = await self._client.messages.create(
                 model=self._model,
                 messages=claude_msgs_typed,
                 system=system_prompt,
@@ -71,7 +73,7 @@ class AnthropicClaudeClient(LLMClient):
                 max_tokens=max_tokens or 4096,  # Claude's default max tokens
             )
         else:
-            response: Message = await self._client.messages.create(
+            response = await self._client.messages.create(
                 model=self._model,
                 messages=claude_msgs_typed,
                 temperature=temperature,
