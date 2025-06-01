@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import os 
-from typing import Sequence
+from typing import Sequence, cast
 
 import anthropic 
-from anthropic.types import Message
+from anthropic.types import Message, MessageParam
 
 from optimed.core.domain import ChatMessage, ChatRole
 from optimed.core.ports import LLMClient
@@ -60,10 +60,12 @@ class AnthropicClaudeClient(LLMClient):
                     "content": msg.content
                 })
         
+        claude_msgs_typed = cast("list[MessageParam]", claude_msgs)
+
         if system_prompt is not None:
             response: Message = await self._client.messages.create(
                 model=self._model,
-                messages=claude_msgs,
+                messages=claude_msgs_typed,
                 system=system_prompt,
                 temperature=temperature,
                 max_tokens=max_tokens or 4096,  # Claude's default max tokens
@@ -71,10 +73,11 @@ class AnthropicClaudeClient(LLMClient):
         else:
             response: Message = await self._client.messages.create(
                 model=self._model,
-                messages=claude_msgs,
+                messages=claude_msgs_typed,
                 temperature=temperature,
                 max_tokens=max_tokens or 4096,  # Claude's default max tokens
             )
+
         assistant_text = "".join(
             getattr(block, "text", "") for block in response.content
             if getattr(block, "type", None) == "text"
