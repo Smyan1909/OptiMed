@@ -72,7 +72,7 @@ class Severity(str, Enum):
     CRITICAL = "CRITICAL"
 
 class ChatRole(str, Enum):
-    SYSTEM = "SYSTEM"
-    USER = "USER"
-    ASSISTANT = "ASSISTANT"
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
 
