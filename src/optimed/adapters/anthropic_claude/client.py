@@ -39,7 +39,6 @@ class AnthropicClaudeClient(LLMClient):
     async def chat(
             self,
             messages: Sequence[ChatMessage],
-            *,
             temperature: float = 0.7,
             max_tokens: int | None = None,
     ) -> ChatMessage:
@@ -61,20 +60,21 @@ class AnthropicClaudeClient(LLMClient):
                     "content": msg.content
                 })
         
-        kwargs = dict(
-            model=self._model,
-            messages=claude_msgs,
-            temperature=temperature,
-            max_tokens=max_tokens or 4096,
-        )
-
         if system_prompt is not None:
-            kwargs["system"] = system_prompt
-
-        response: Message = await self._client.messages.create(
-            **kwargs
-        )
-
+            response: Message = await self._client.messages.create(
+                model=self._model,
+                messages=claude_msgs,
+                system=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens or 4096,  # Claude's default max tokens
+            )
+        else:
+            response: Message = await self._client.messages.create(
+                model=self._model,
+                messages=claude_msgs,
+                temperature=temperature,
+                max_tokens=max_tokens or 4096,  # Claude's default max tokens
+            )
         assistant_text = "".join(
             getattr(block, "text", "") for block in response.content
             if getattr(block, "type", None) == "text"

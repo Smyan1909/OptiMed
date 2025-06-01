@@ -14,7 +14,7 @@ async def main() -> None:
 
     llm = AnthropicClaudeClient()
 
-    user_msg = ChatMessage(role=ChatRole.USER, content="Hello, Claude. Give me some information about today!")
+    user_msg = ChatMessage(role=ChatRole.USER, content="Hello, Claude. Tell me an interesting fact!")
     reply = await llm.chat([user_msg])
 
     print("--- Claude response ---")
