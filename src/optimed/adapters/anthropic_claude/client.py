@@ -4,7 +4,7 @@ import os
 from typing import Sequence
 
 import anthropic 
-from anthropic.types import Message, ContentBlock
+from anthropic.types import Message
 
 from optimed.core.domain import ChatMessage, ChatRole
 from optimed.core.ports import LLMClient
@@ -61,22 +61,28 @@ class AnthropicClaudeClient(LLMClient):
                     "content": msg.content
                 })
         
-        response: Message = await self._client.messages.create(
+        kwargs = dict(
             model=self._model,
-            system=system_prompt,
             messages=claude_msgs,
             temperature=temperature,
-            max_tokens=max_tokens or 4096,  # Claude's default max tokens
+            max_tokens=max_tokens or 4096,
+        )
+
+        if system_prompt is not None:
+            kwargs["system"] = system_prompt
+
+        response: Message = await self._client.messages.create(
+            **kwargs
         )
 
         assistant_text = "".join(
-            block.text for block in response.content if isinstance(block, ContentBlock)
+            getattr(block, "text", "") for block in response.content
+            if getattr(block, "type", None) == "text"
         )
 
         return ChatMessage(
             role=ChatRole.ASSISTANT,
             content=assistant_text,
-            timestamp=response.created_at,
             metadata={
                 "model": self._model, 
                 "response_id": response.id,
