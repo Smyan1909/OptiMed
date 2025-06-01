@@ -20,7 +20,7 @@ class FHIRRepository(Protocol):
         ...
 
     @abstractmethod
-    async def search_patients(self, mrn_or_name: str) -> Sequence[PatientContext]:
+    async def search_patients(self, query: str) -> Sequence[PatientContext]:
         """Simple convenience search"""
         ...
 
