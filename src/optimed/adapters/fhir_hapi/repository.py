@@ -5,8 +5,8 @@ from typing import Sequence
 from pydantic import ValidationError
 
 import httpx
-from fhir.resources.patient import Patient
-from fhir.resources.observation import Observation
+from fhir.resources.patient import Patient # type: ignore[import-untyped]
+from fhir.resources.observation import Observation # type: ignore[import-untyped]
 
 from optimed.core.domain import PatientContext
 from optimed.core.ports import FHIRRepository
