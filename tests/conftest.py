@@ -1,5 +1,7 @@
 # tests/conftest.py
-import json, pathlib, pytest
+import json
+import pathlib
+import pytest
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 

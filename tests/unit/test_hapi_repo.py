@@ -1,5 +1,5 @@
 # tests/unit/test_hapi_repo.py
-import pytest, types
+import pytest
 from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
 from optimed.core.domain import PatientContext
 from conftest import FakeResp
