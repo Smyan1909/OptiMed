@@ -17,3 +17,5 @@ dependencies:
   - pip:
       - langgraph         # agent framework
       - anthropic         # Claude client
+      - "httpx[http2]>=0.27"
+      - "fhir.resources>=7.4"
