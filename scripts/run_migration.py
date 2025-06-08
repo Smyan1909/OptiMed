@@ -10,7 +10,7 @@ with open(sql_path, "r") as file:
     sql_script = file.read()
 
 
-conn = psycopg.connect(os.getenv("DATABASE_URL"))
+conn: psycopg.Connection[psycopg.rows.Row] = psycopg.connect(os.getenv("DATABASE_URL"))
 with conn, conn.cursor() as cur:
     cur.execute(sql_script)
 

@@ -1,4 +1,4 @@
-import asyncpg
+import asyncpg # type: ignore
 from typing import Sequence
 from optimed.core.ports import VectorStore
 
@@ -10,7 +10,7 @@ class PGVectorAdapter(VectorStore):
         self.max_size = max_size
         self._pool = None
 
-    async def _get_pool(self):
+    async def _get_pool(self) -> asyncpg.Pool:
         """Get or create the connection pool."""
         if self._pool is None:
             self._pool = await asyncpg.create_pool(
@@ -20,7 +20,7 @@ class PGVectorAdapter(VectorStore):
             )
         return self._pool
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the connection pool."""
         if self._pool:
             await self._pool.close()

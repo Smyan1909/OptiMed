@@ -19,3 +19,4 @@ where = ["src"]
 
 [tool.mypy]
 strict = false
+ignore_missing_imports = true
