@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
+import uuid
 
 @pytest.fixture
 def adapter():
@@ -65,11 +66,17 @@ class TestPGVectorAdapter:
         
         result = await adapter._get_pool()
         
-        mock_create_pool.assert_called_once_with(
-            dsn=adapter.dsn,
-            min_size=adapter.min_size,
-            max_size=adapter.max_size
-        )
+        # Check that create_pool was called with the expected arguments
+        mock_create_pool.assert_called_once()
+        call_args, call_kwargs = mock_create_pool.call_args
+        
+        # Verify the expected keyword arguments
+        assert call_kwargs['dsn'] == adapter.dsn
+        assert call_kwargs['min_size'] == adapter.min_size
+        assert call_kwargs['max_size'] == adapter.max_size
+        assert 'init' in call_kwargs  # Verify init function is passed
+        assert callable(call_kwargs['init'])  # Verify it's a callable
+        
         assert result == mock_pool
         assert adapter._pool == mock_pool
 
@@ -105,19 +112,26 @@ class TestPGVectorAdapter:
         
         embedding_id = "test_id"
         embedding = [0.1, 0.2, 0.3]
+        object_type = "document"
+        object_id = "doc_123"
+        content = "This is test content"
         metadata = {"key": "value"}
         
-        await adapter.upsert(embedding_id, embedding, metadata)
+        await adapter.upsert(embedding_id, embedding, object_type, object_id, content, metadata)
         
         mock_get_pool.assert_called_once()
         mock_pool.acquire.assert_called_once()
         mock_connection.execute.assert_called_once()
         call_args = mock_connection.execute.call_args
         assert "INSERT INTO embeddings" in call_args[0][0]
-        assert "ON CONFLICT (id) DO UPDATE SET" in call_args[0][0]
-        assert call_args[0][1] == embedding_id
-        assert call_args[0][2] == embedding
-        assert call_args[0][3] == metadata
+        assert "ON CONFLICT (key) DO UPDATE" in call_args[0][0]
+        assert isinstance(call_args[0][1], uuid.UUID)
+        assert call_args[0][2] == embedding_id  # Fixed: embedding_id is now at position 2
+        assert call_args[0][3] == object_type   # Fixed: object_type is now at position 3
+        assert call_args[0][4] == object_id     # Fixed: object_id is now at position 4
+        assert call_args[0][5] == content       # Fixed: content is now at position 5
+        assert call_args[0][6] == embedding     # Fixed: embedding is now at position 6
+        assert call_args[0][7] == '{"key": "value"}'  # metadata remains at position 7
 
     @patch.object(PGVectorAdapter, '_get_pool')
     async def test_upsert_without_metadata(self, mock_get_pool, adapter, mock_connection):
@@ -127,12 +141,15 @@ class TestPGVectorAdapter:
         
         embedding_id = "test_id"
         embedding = [0.1, 0.2, 0.3]
+        object_type = "document"
+        object_id = "doc_123"
+        content = "This is test content"
         
-        await adapter.upsert(embedding_id, embedding)
+        await adapter.upsert(embedding_id, embedding, object_type, object_id, content)
         
         mock_connection.execute.assert_called_once()
         call_args = mock_connection.execute.call_args
-        assert call_args[0][3] == {}
+        assert call_args[0][7] == '{}'
 
     @patch.object(PGVectorAdapter, '_get_pool')
     async def test_similarity_search_without_filter(self, mock_get_pool, adapter, mock_connection):
@@ -310,7 +327,7 @@ class TestPGVectorAdapter:
         mock_connection.execute.side_effect = Exception("Database error")
         
         with pytest.raises(Exception):
-            await adapter.upsert("test_id", [0.1, 0.2], {"key": "value"})
+            await adapter.upsert("test_id", [0.1, 0.2], "document", "doc_123", "test content", {"key": "value"})
 
     @patch.object(PGVectorAdapter, '_get_pool')
     async def test_sql_injection_prevention(self, mock_get_pool, adapter, mock_connection):
@@ -341,11 +358,18 @@ class TestPGVectorAdapter:
         embedding_id = "test_large_embedding"
         # Create a large embedding (e.g., 1536 dimensions like OpenAI's embeddings)
         large_embedding = [0.1] * 1536
+        object_type = "document"
+        object_id = "large_doc_123"
+        content = {"text": "Large document content"}
         metadata = {"model": "text-embedding-ada-002"}
         
-        await adapter.upsert(embedding_id, large_embedding, metadata)
+        await adapter.upsert(embedding_id, large_embedding, object_type, object_id, content, metadata)
         
         call_args = mock_connection.execute.call_args
-        assert call_args[0][1] == embedding_id
-        assert call_args[0][2] == large_embedding
-        assert len(call_args[0][2]) == 1536
+        assert isinstance(call_args[0][1], uuid.UUID)
+        assert call_args[0][2] == embedding_id  # Fixed: embedding_id is now at position 2
+        assert call_args[0][3] == object_type   # Fixed: object_type is now at position 3
+        assert call_args[0][4] == object_id     # Fixed: object_id is now at position 4
+        assert call_args[0][5] == '{"text": "Large document content"}'  # Fixed: content is now at position 5 (JSON serialized)
+        assert call_args[0][6] == large_embedding  # Fixed: embedding is now at position 6
+        assert len(call_args[0][6]) == 1536

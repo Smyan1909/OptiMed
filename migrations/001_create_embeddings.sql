@@ -1,7 +1,7 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE embeddings (
-    if UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     object_type TEXT NOT NULL,
     object_id TEXT NOT NULL,
     content JSONB,

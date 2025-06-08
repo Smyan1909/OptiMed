@@ -1,6 +1,9 @@
 import asyncpg # type: ignore
+from pgvector.asyncpg import register_vector # type: ignore
 from typing import Sequence, Any
 from optimed.core.ports import VectorStore
+import uuid
+import json
 
 class PGVectorAdapter(VectorStore):
     def __init__(self, dsn: str, min_size: int = 10, max_size: int = 20):
@@ -13,10 +16,16 @@ class PGVectorAdapter(VectorStore):
     async def _get_pool(self) -> asyncpg.Pool:
         """Get or create the connection pool."""
         if self._pool is None:
+
+            
+            async def _init(conn):
+                await register_vector(conn)
+
             self._pool = await asyncpg.create_pool(
                 dsn=self.dsn,
                 min_size=self.min_size,
-                max_size=self.max_size
+                max_size=self.max_size,
+                init=_init,
             )
         return self._pool
 
@@ -30,6 +39,9 @@ class PGVectorAdapter(VectorStore):
         self,
         embedding_id: str,
         embedding: Sequence[float],
+        object_type: str,
+        object_id: str,
+        content: str | dict,
         metadata: dict[str, str] | None = None,
     ) -> None:
         metadata = metadata or {}
@@ -37,15 +49,21 @@ class PGVectorAdapter(VectorStore):
         async with pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO embeddings (id, embedding, metadata)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (id) DO UPDATE SET
-                    embedding = EXCLUDED.embedding,
-                    metadata = EXCLUDED.metadata;
+                INSERT INTO embeddings
+                (id, key, object_type, object_id, content, embedding, metadata)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (key) DO UPDATE
+                SET embedding = EXCLUDED.embedding,
+                    metadata  = EXCLUDED.metadata,
+                    updated_at = now();
                 """,
+                uuid.uuid4(),
                 embedding_id,
+                object_type,
+                object_id,
+                json.dumps(content) if isinstance(content, dict) else content,
                 embedding,
-                metadata
+                json.dumps(metadata)
             )
     
     async def similarity_search(

@@ -20,3 +20,4 @@ dependencies:
       - anthropic         # Claude client
       - "httpx[http2]>=0.27"
       - "fhir.resources>=7.4"
+      - "sentence-transformers>=4.1.0"

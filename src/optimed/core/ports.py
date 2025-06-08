@@ -59,6 +59,9 @@ class VectorStore(Protocol):
         self,
         embedding_id: str,
         embedding: Sequence[float],
+        object_type: str,
+        object_id: str,
+        content: str | dict,
         metadata: dict[str, str] | None = None,
     ) -> None:
         """Upsert an embedding vector with optional metadata."""
