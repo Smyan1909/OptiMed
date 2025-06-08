@@ -55,8 +55,8 @@ class PGVectorAdapter(VectorStore):
         filter_: dict[str, str] | None = None,
     ) -> Sequence[tuple[str, float]]:
         filter_ = filter_ or {}
-        where_clauses = []
-        values = [embedding]
+        where_clauses: list[str] = []
+        values: list[float] = [embedding]
 
         for i, (k, v) in enumerate(filter_.items(), start=2):
             where_clauses.append(f"metadata ->> '{k}' = ${i}")
@@ -97,8 +97,8 @@ class PGVectorAdapter(VectorStore):
         if not embedding and not metadata:
             return
 
-        set_clauses = []
-        values = [embedding_id]
+        set_clauses: list[str] = []
+        values: list[float] = [embedding_id]
 
         if embedding:
             set_clauses.append("embedding = $2")
