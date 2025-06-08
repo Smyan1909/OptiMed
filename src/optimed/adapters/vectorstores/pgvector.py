@@ -1,5 +1,5 @@
 import asyncpg # type: ignore
-from typing import Sequence
+from typing import Sequence, Any
 from optimed.core.ports import VectorStore
 
 class PGVectorAdapter(VectorStore):
@@ -56,7 +56,7 @@ class PGVectorAdapter(VectorStore):
     ) -> Sequence[tuple[str, float]]:
         filter_ = filter_ or {}
         where_clauses: list[str] = []
-        values: list[float] = [embedding]
+        values: list[Any] = [embedding]
 
         for i, (k, v) in enumerate(filter_.items(), start=2):
             where_clauses.append(f"metadata ->> '{k}' = ${i}")
@@ -98,7 +98,7 @@ class PGVectorAdapter(VectorStore):
             return
 
         set_clauses: list[str] = []
-        values: list[float] = [embedding_id]
+        values: list[Any] = [embedding_id]
 
         if embedding:
             set_clauses.append("embedding = $2")
