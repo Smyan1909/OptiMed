@@ -74,6 +74,21 @@ class VectorStore(Protocol):
         """Find top-k most similar embeddings."""
         ...
 
+    @abstractmethod
+    async def delete(self, embedding_ids: Sequence[str]) -> None:
+        """Delete an embedding vector by ID."""
+        ...
+    
+    @abstractmethod
+    async def update(
+        self,
+        embedding_id: str,
+        embedding: Sequence[float] | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        """Update an existing embedding vector's metadata or embedding."""
+        ...
+
 
 class DiagnosticEngine(Protocol):
     """Pure-domain service used by LangGraph; orchestrates everything."""
