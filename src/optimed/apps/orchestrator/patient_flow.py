@@ -39,7 +39,7 @@ class FlowState(BaseModel):
 
 
 _fhir = HAPIFHIRRepository()
-_vec = PGVectorAdapter(os.getenv("PGVECTOR_DSN"))
+_vec = PGVectorAdapter(os.getenv("PGVECTOR_DSN")) # type: ignore
 _llm = AnthropicClaudeClient()
 
 
@@ -112,7 +112,7 @@ async def parse_icd(state: FlowState) -> FlowState:
     """
     prompt = (
         "Return JSON with fields primary_icd, differential (list), "
-        f"confidence (0-1) for the following answer:\n\n{state.llm_response.content}"
+        f"confidence (0-1) for the following answer:\n\n{state.llm_response.content if state.llm_response else ''}\n\n"
     )
     parsed = await _llm.chat([SYSTEM_MSG, ChatMessage(role=ChatRole.USER, content=prompt)], json_mode=True)
     data = json.loads(parsed.content)
@@ -153,7 +153,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
         self._prompt = default_prompt
 
     async def run(self, patient: PatientContext) -> DiagnosisResult:
-        data = await compiled_graph.run({
+        data = await compiled_graph.ainvoke({
             "patient_id": patient.patient_id,
             "user_prompt": self._prompt,
         })

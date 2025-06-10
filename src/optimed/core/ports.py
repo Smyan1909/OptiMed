@@ -64,7 +64,7 @@ class VectorStore(Protocol):
         object_id: str,
         content: str | dict,
         metadata: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> str:
         """Upsert an embedding vector with optional metadata."""
         ...
 

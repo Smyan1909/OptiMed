@@ -43,7 +43,7 @@ class PGVectorAdapter(VectorStore):
         object_id: str,
         content: str | dict,
         metadata: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> str:
         metadata = metadata or {}
         pool = await self._get_pool()
         async with pool.acquire() as conn:
@@ -65,6 +65,7 @@ class PGVectorAdapter(VectorStore):
                 embedding,
                 json.dumps(metadata)
             )
+            return embedding_id
     
     async def similarity_search(
         self,

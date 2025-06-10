@@ -7,7 +7,7 @@ from typing import Sequence, Any
 from optimed.embeddings.minilm import embed          # or whichever model
 from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
 
-_VECTOR_STORE = PGVectorAdapter(os.getenv("PGVECTOR_DSN"))
+_VECTOR_STORE = PGVectorAdapter(os.getenv("PGVECTOR_DSN")) # type: ignore
 
 
 async def embed_and_store(
