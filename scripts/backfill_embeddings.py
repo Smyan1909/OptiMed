@@ -84,7 +84,7 @@ async def main():
         else:
             failed += 1
     
-    print(f"\n📊 Processing complete:")
+    print("\n📊 Processing complete:")
     print(f"   ✅ Successful: {successful}")
     print(f"   ❌ Failed: {failed}")
     print(f"   📈 Success rate: {successful / len(patient_ids) * 100:.1f}%")

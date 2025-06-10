@@ -44,6 +44,7 @@ class LLMClient(Protocol):
     async def chat(
         self,
         messages: Sequence[ChatMessage],
+        json_mode: bool = False,
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> ChatMessage:

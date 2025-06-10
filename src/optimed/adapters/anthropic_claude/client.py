@@ -39,6 +39,7 @@ class AnthropicClaudeClient(LLMClient):
     async def chat(
             self,
             messages: Sequence[ChatMessage],
+            json_mode: bool = False, 
             temperature: float = 0.7,
             max_tokens: int | None = None,
     ) -> ChatMessage:
@@ -60,6 +61,14 @@ class AnthropicClaudeClient(LLMClient):
                     "content": msg.content
                 })
         
+        if json_mode:
+            json_instruction = "Please respond with valid JSON only. Do not include any text outside of the JSON structure."
+            if system_prompt is not None:
+                system_prompt = f"{system_prompt}\n\n{json_instruction}"
+            else:
+                system_prompt = json_instruction
+
+
         claude_msgs_typed = cast("list[MessageParam]", claude_msgs)
 
         response: Message | None = None

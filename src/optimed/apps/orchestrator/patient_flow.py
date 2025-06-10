@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid 
+import json
 from typing import List, Any
 
 from langgraph.graph import StateGraph, END
@@ -24,6 +25,9 @@ class FlowState(BaseModel):
     """Minimal LangGraph state."""
     patient_id: str
     user_prompt: str
+    primary_icd: str = ""
+    differential: List[str] = Field(default_factory=list)
+    confidence: float = 0.0
 
     patient_ctx: PatientContext | None = None
     retrieved_chunks: List[str] = Field(default_factory=list)
@@ -101,17 +105,34 @@ async def diagnose(state: FlowState) -> FlowState:
 
     return state
 
+async def parse_icd(state: FlowState) -> FlowState:
+    """
+    Currently uses claude to parse the ICD code from the response but can be replaced 
+    with a proper regex or a more sophisticated parsing method in the future.
+    """
+    prompt = (
+        "Return JSON with fields primary_icd, differential (list), "
+        f"confidence (0-1) for the following answer:\n\n{state.llm_response.content}"
+    )
+    parsed = await _llm.chat([SYSTEM_MSG, ChatMessage(role=ChatRole.USER, content=prompt)], json_mode=True)
+    data = json.loads(parsed.content)
+    state.primary_icd = data["primary_icd"]
+    state.differential = data["differential"]
+    state.confidence = data["confidence"]
 
+    return state
 
 _builder = StateGraph(FlowState)
 _builder.add_node("fetch_patient", fetch_patient)
 _builder.add_node("retrieve_chunks", retrieve_chunks)
 _builder.add_node("diagnose", diagnose)
+_builder.add_node("parse_icd", parse_icd)
 
 _builder.set_entry_point("fetch_patient")
 _builder.add_edge("fetch_patient", "retrieve_chunks")
 _builder.add_edge("retrieve_chunks", "diagnose")
-_builder.add_edge("diagnose", END)
+_builder.add_edge("diagnose", "parse_icd")
+_builder.add_edge("parse_icd", END)
 
 compiled_graph = _builder.compile()
 
@@ -119,10 +140,10 @@ def _to_output(data: dict[str, Any]) -> DiagnosisResult:
     """Convert raw dict emitted by compiled_graph to DiagnosisResult."""
     return DiagnosisResult(
         patient_id=data["patient_id"],
-        primary_icd="R69",  # TODO: real extraction
-        differential=[],
-        confidence=0.0,
-        explaination=data["answer"],
+        primary_icd=data["primary_icd"], 
+        differential=data["differential"],
+        confidence=data["confidence"],
+        explaination=data["llm_response"].content if data["llm_response"] else "",
     )
 
 class LangGraphDiagnosticEngine(DiagnosticEngine):
@@ -146,5 +167,4 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
         }):
             yield update
 
-    
     

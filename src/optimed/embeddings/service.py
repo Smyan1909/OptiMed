@@ -1,5 +1,7 @@
 from __future__ import annotations
-import os, json, datetime as dt
+import os 
+import json 
+import datetime as dt
 from typing import Sequence, Any
 
 from optimed.embeddings.minilm import embed          # or whichever model

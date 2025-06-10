@@ -1,17 +1,18 @@
-import asyncio, pprint
+import asyncio
+import pprint
 from dotenv import load_dotenv
-
+from optimed.apps.orchestrator.patient_flow import (
+    LangGraphDiagnosticEngine,
+    compiled_graph,
+    _fhir,                             # re-use the singleton repo for demo
+)
 
 # --------------------------------------------------------------------
 # Load env and import the engine
 # --------------------------------------------------------------------
 load_dotenv()                          # PGVECTOR_DSN, Claude key, etc.
 
-from optimed.apps.orchestrator.patient_flow import (
-    LangGraphDiagnosticEngine,
-    compiled_graph,
-    _fhir,                             # re-use the singleton repo for demo
-)
+
 
 # --------------------------------------------------------------------
 # 1️⃣  Streaming demo
@@ -75,12 +76,13 @@ def draw_graph():
         # Fallback: Print node and edge information
         print("\nGraph structure (manual):")
         print("Nodes:")
-        for node in ["fetch_patient", "retrieve_chunks", "diagnose"]:
+        for node in ["fetch_patient", "retrieve_chunks", "diagnose", "parse_icd"]:
             print(f"  - {node}")
         print("Edges:")
         print("  - fetch_patient -> retrieve_chunks")
         print("  - retrieve_chunks -> diagnose") 
-        print("  - diagnose -> END")
+        print("  - diagnose -> parse_icd")
+        print("  - parse_icd -> END")
 
 # --------------------------------------------------------------------
 # 3️⃣  CLI entry
