@@ -1,6 +1,9 @@
 import asyncpg # type: ignore
+from pgvector.asyncpg import register_vector # type: ignore
 from typing import Sequence, Any
 from optimed.core.ports import VectorStore
+import uuid
+import json
 
 class PGVectorAdapter(VectorStore):
     def __init__(self, dsn: str, min_size: int = 10, max_size: int = 20):
@@ -13,10 +16,16 @@ class PGVectorAdapter(VectorStore):
     async def _get_pool(self) -> asyncpg.Pool:
         """Get or create the connection pool."""
         if self._pool is None:
+
+            
+            async def _init(conn):
+                await register_vector(conn)
+
             self._pool = await asyncpg.create_pool(
                 dsn=self.dsn,
                 min_size=self.min_size,
-                max_size=self.max_size
+                max_size=self.max_size,
+                init=_init,
             )
         return self._pool
 
@@ -30,30 +39,40 @@ class PGVectorAdapter(VectorStore):
         self,
         embedding_id: str,
         embedding: Sequence[float],
-        metadata: dict[str, str] | None = None,
-    ) -> None:
+        object_type: str,
+        object_id: str,
+        content: str | dict,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
         metadata = metadata or {}
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO embeddings (id, embedding, metadata)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (id) DO UPDATE SET
-                    embedding = EXCLUDED.embedding,
-                    metadata = EXCLUDED.metadata;
+                INSERT INTO embeddings
+                (id, key, object_type, object_id, content, embedding, metadata)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (key) DO UPDATE
+                SET embedding = EXCLUDED.embedding,
+                    metadata  = EXCLUDED.metadata,
+                    updated_at = now();
                 """,
+                uuid.uuid4(),
                 embedding_id,
+                object_type,
+                object_id,
+                json.dumps(content) if isinstance(content, dict) else content,
                 embedding,
-                metadata
+                json.dumps(metadata)
             )
+            return embedding_id
     
     async def similarity_search(
         self,
         embedding: Sequence[float],
         top_k: int = 5,
         filter_: dict[str, str] | None = None,
-    ) -> Sequence[tuple[str, float]]:
+    ) -> Sequence[tuple[str, float, str]]:
         filter_ = filter_ or {}
         where_clauses: list[str] = []
         values: list[Any] = [embedding]
@@ -70,7 +89,7 @@ class PGVectorAdapter(VectorStore):
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 f"""
-                SELECT id, embedding <#> $1 AS distance
+                SELECT id, embedding <#> $1 AS distance, content
                 FROM embeddings
                 {where_sql}
                 ORDER BY distance
@@ -78,7 +97,7 @@ class PGVectorAdapter(VectorStore):
                 """,
                 *values
             )
-            return [(row['id'], row['distance']) for row in rows]
+            return [(row['id'], row['distance'], row['content']) for row in rows]
 
     async def delete(self, embedding_ids: Sequence[str]) -> None:
         pool = await self._get_pool()
@@ -92,7 +111,7 @@ class PGVectorAdapter(VectorStore):
         self,
         embedding_id: str,
         embedding: Sequence[float] | None = None,
-        metadata: dict[str, str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         if not embedding and not metadata:
             return

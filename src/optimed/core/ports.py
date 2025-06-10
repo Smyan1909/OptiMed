@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Protocol, Sequence
+from typing import Protocol, Sequence, Any
 
 from optimed.core.domain import PatientContext, KPIEvent, ChatMessage, DiagnosisResult
 
@@ -44,6 +44,7 @@ class LLMClient(Protocol):
     async def chat(
         self,
         messages: Sequence[ChatMessage],
+        json_mode: bool = False,
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> ChatMessage:
@@ -59,8 +60,11 @@ class VectorStore(Protocol):
         self,
         embedding_id: str,
         embedding: Sequence[float],
-        metadata: dict[str, str] | None = None,
-    ) -> None:
+        object_type: str,
+        object_id: str,
+        content: str | dict,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
         """Upsert an embedding vector with optional metadata."""
         ...
 
@@ -70,7 +74,7 @@ class VectorStore(Protocol):
         embedding: Sequence[float],
         top_k: int = 5,
         filter_: dict[str, str] | None = None, 
-    ) -> Sequence[tuple[str, float]]:
+    ) -> Sequence[tuple[str, float, str]]:
         """Find top-k most similar embeddings."""
         ...
 
@@ -84,7 +88,7 @@ class VectorStore(Protocol):
         self,
         embedding_id: str,
         embedding: Sequence[float] | None = None,
-        metadata: dict[str, str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Update an existing embedding vector's metadata or embedding."""
         ...
