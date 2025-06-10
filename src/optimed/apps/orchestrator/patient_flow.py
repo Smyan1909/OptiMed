@@ -150,20 +150,30 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
     """Concrete engine that streams or returns full result."""
 
     def __init__(self, default_prompt: str = "Provide the most likely diagnosis"):
-        self._prompt = default_prompt
+        self._default_prompt = default_prompt
 
-    async def run(self, patient: PatientContext) -> DiagnosisResult:
+    async def run(self, patient: PatientContext, user_prompt: str | None = None) -> DiagnosisResult:
+        
+        prompt = user_prompt or self._default_prompt
+        
         data = await compiled_graph.ainvoke({
             "patient_id": patient.patient_id,
-            "user_prompt": self._prompt,
+            "user_prompt": prompt,
         })
-        return _to_output(data)
+        
+        if hasattr(data, "model_dump"):
+            return _to_output(data.model_dump())
+        else:
+            return _to_output(data)
 
-    async def run_stream(self, patient: PatientContext):
+    async def run_stream(self, patient: PatientContext, user_prompt: str | None = None):
         """Async generator that yields chunks as they stream from the graph."""
+
+        prompt = user_prompt or self._default_prompt
+
         async for update in compiled_graph.astream({
             "patient_id": patient.patient_id,
-            "user_prompt": self._prompt,
+            "user_prompt": prompt,
         }):
             yield update
 
