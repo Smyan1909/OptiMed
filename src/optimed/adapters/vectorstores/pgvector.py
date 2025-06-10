@@ -42,7 +42,7 @@ class PGVectorAdapter(VectorStore):
         object_type: str,
         object_id: str,
         content: str | dict,
-        metadata: dict[str, str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         metadata = metadata or {}
         pool = await self._get_pool()
@@ -71,7 +71,7 @@ class PGVectorAdapter(VectorStore):
         embedding: Sequence[float],
         top_k: int = 5,
         filter_: dict[str, str] | None = None,
-    ) -> Sequence[tuple[str, float]]:
+    ) -> Sequence[tuple[str, float, str]]:
         filter_ = filter_ or {}
         where_clauses: list[str] = []
         values: list[Any] = [embedding]
@@ -88,7 +88,7 @@ class PGVectorAdapter(VectorStore):
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 f"""
-                SELECT id, embedding <#> $1 AS distance
+                SELECT id, embedding <#> $1 AS distance, content
                 FROM embeddings
                 {where_sql}
                 ORDER BY distance
@@ -96,7 +96,7 @@ class PGVectorAdapter(VectorStore):
                 """,
                 *values
             )
-            return [(row['id'], row['distance']) for row in rows]
+            return [(row['id'], row['distance'], row['content']) for row in rows]
 
     async def delete(self, embedding_ids: Sequence[str]) -> None:
         pool = await self._get_pool()
@@ -110,7 +110,7 @@ class PGVectorAdapter(VectorStore):
         self,
         embedding_id: str,
         embedding: Sequence[float] | None = None,
-        metadata: dict[str, str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         if not embedding and not metadata:
             return

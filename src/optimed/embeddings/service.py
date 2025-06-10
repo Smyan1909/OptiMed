@@ -21,16 +21,26 @@ async def embed_and_store(
 
     Returns the row's UUID (primary key).
     """
+    # Prepare content for embedding (always use string for embedding)
+    embed_text = text if isinstance(text, str) else json.dumps(text)
+    
     # run embed model (sync or async)
-    vec: Sequence[float] = await embed(text if isinstance(text, str) else json.dumps(text))
+    vec: Sequence[float] = await embed(embed_text)
 
     key = f"{namespace}:{object_type}:{object_id}"
+    
+    # Ensure content is always a valid JSON object for database storage
+    if isinstance(text, str):
+        content = {"text": text}  # Wrap plain text in JSON object
+    else:
+        content = text
+    
     row_uuid = await _VECTOR_STORE.upsert(
         embedding_id=key,
         embedding=vec,
         object_type=object_type,
         object_id=object_id,
-        content=text if isinstance(text, str) else json.dumps(text),
+        content=content,  # This will now always be a dict, which gets JSON serialized
         metadata={
             **(metadata or {}),
             "namespace": namespace,

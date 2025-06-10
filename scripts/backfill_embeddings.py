@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 import json
 
 load_dotenv()
-DSN = os.getenv("DATABASE_URL")
+DSN = os.getenv("PGVECTOR_DSN")
 
 async def process_patient(repo: HAPIFHIRRepository, store: PGVectorAdapter, patient_id: str) -> bool:
     """Process a single patient and return success status."""
