@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Protocol, Sequence, Any
+from typing import Protocol, Sequence, Any, Union
 
 from optimed.core.domain import PatientContext, KPIEvent, ChatMessage, DiagnosisResult
 
@@ -98,6 +98,6 @@ class DiagnosticEngine(Protocol):
     """Pure-domain service used by LangGraph; orchestrates everything."""
 
     @abstractmethod
-    async def run(self, patient: PatientContext) -> DiagnosisResult:
+    async def run(self, patient: PatientContext) -> Union[DiagnosisResult,  dict]:
         """Return the top diagnosis (v0) or ranked list (v1)."""
         ...
