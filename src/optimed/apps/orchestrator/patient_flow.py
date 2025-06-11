@@ -54,7 +54,7 @@ _llm = AnthropicClaudeClient()
 
 
 async def fetch_patient(state: FlowState) -> FlowState:
-    state.patient_ctx = await _fhir.get_patient(state.patient_id) # type: ignore
+    state.patient_ctx = await _fhir.get_patient(str(state.patient_id)) # Cast to str to avoid type errors
     return state
 
 async def retrieve_chunks(state: FlowState) -> FlowState:

@@ -33,12 +33,15 @@ async def diagnose(req: ChatRequest):
 
     try:
         # Fetch patient context
-        patient_ctx: PatientContext = await _fhir.get_patient(req.patient_id)
+        patient_ctx: PatientContext = await _fhir.get_patient(str(req.patient_id)) # Cast to str to avoid type errors
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Patient not found: {e}")
     
     result = await _engine.run(patient_ctx, req.user_prompt)
-    return result.model_dump()
+    if hasattr(result, 'model_dump'):
+        return result.model_dump()
+    else:
+        return result
 
 
 
@@ -51,7 +54,7 @@ async def _event_stream(patient: PatientContext) -> AsyncGenerator[str, None]:
 @app.post("/diagnose/stream")
 async def diagnose_stream(req: ChatRequest):
     try:
-        patient = await _fhir.get_patient(req.patient_id)
+        patient = await _fhir.get_patient(str(req.patient_id)) # Cast to str to avoid type errors
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Patient not found: {e}")
     
@@ -76,7 +79,10 @@ async def chat(req: ChatRequest):
             return result
         else:
             result = await _engine.run(patient=patient_ctx, user_prompt=req.user_prompt)
-            return result.model_dump()
+            if hasattr(result, 'model_dump'):
+                return result.model_dump()
+            else:
+                return result
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
