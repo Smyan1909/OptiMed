@@ -1,9 +1,8 @@
 from __future__ import annotations 
-import os
 import asyncio
 from typing import AsyncGenerator
-from fastapi import FastAPI, Depends, HTTPException # type: ignore
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi import FastAPI, HTTPException # type: ignore
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv # type: ignore
 
 from optimed.core.domain import PatientContext
@@ -12,14 +11,16 @@ from optimed.apps.orchestrator.patient_flow import LangGraphDiagnosticEngine
 
 from pydantic import BaseModel
 
+load_dotenv()
+
 _fhir = HAPIFHIRRepository()
 _engine = LangGraphDiagnosticEngine()
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0")
 
 class ChatRequest(BaseModel):
-    patient_id: str
-    user_prompt: str
+    patient_id: str | None = None
+    user_prompt: str | None = None
 
 
 @app.post("/health", summary="Health Check")
@@ -55,3 +56,27 @@ async def diagnose_stream(req: ChatRequest):
         raise HTTPException(status_code=404, detail=f"Patient not found: {e}")
     
     return StreamingResponse(_event_stream(patient), media_type="text/event-stream")
+
+
+@app.post("/chat", response_model=dict)
+async def chat(req: ChatRequest):
+    """General chat endpoint that works with or without patient context."""
+    try:
+        patient_ctx = None
+        if req.patient_id is not None:
+            try:
+                patient_ctx = await _fhir.get_patient(req.patient_id)
+            except Exception as e:
+                # Log the error but continue with general chat
+                print(f"Could not fetch patient {req.patient_id}: {e}")
+        
+        # Create a mock patient context for general chat
+        if not patient_ctx:
+            result = await _engine.run(user_prompt=req.user_prompt)
+            return result
+        else:
+            result = await _engine.run(patient=patient_ctx, user_prompt=req.user_prompt)
+            return result.model_dump()
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")

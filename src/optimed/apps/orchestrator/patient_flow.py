@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import uuid 
 import json
-from typing import List, Any
+from typing import List, Any, Union
 
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
@@ -18,12 +18,22 @@ from optimed.embeddings.service import embed_and_store
 
 
 
-SYSTEM_MSG = ChatMessage(role=ChatRole.SYSTEM, content="You are OptiMed‑AI, a clinical reasoning assistant."
-        "Combine real‑time vitals, labs, and external evidence to help physicians." "Give an explanation as to why you give the response. Also cite sources where you feel it is required.") # Needs to be more specific and properly created to make the LLM function properly
+SYSTEM_MSG = ChatMessage(role=ChatRole.SYSTEM, 
+                         content="""You are OptiMed‑AI, a clinical reasoning assistant and medical chat companion.
+                                    When patient context is provided:
+                                    - Combine real‑time vitals, labs, and external evidence to help physicians
+                                    - Provide clinical diagnoses with explanations and cite sources
+                                    - Focus on medical accuracy and clinical reasoning
 
-class FlowState(BaseModel):
-    """Minimal LangGraph state."""
-    patient_id: str
+                                    When no patient context is provided:
+                                    - Engage in general medical conversations
+                                    - Answer medical questions and provide health information
+                                    - Maintain professional, helpful, and educational responses
+                                    - Always remind users to consult healthcare providers for personal medical advice""") # Needs to be more specific and properly created to make the LLM function properly
+
+class FlowState(BaseModel): # Potentially add 
+    """Minimal LangGraph state.""" # Add field for user_id or session_id if needed later on as well
+    patient_id: str | None = None
     user_prompt: str
     primary_icd: str = ""
     differential: List[str] = Field(default_factory=list)
@@ -55,27 +65,31 @@ async def retrieve_chunks(state: FlowState) -> FlowState:
 
 
 async def diagnose(state: FlowState) -> FlowState:
-    if not state.patient_ctx:
-        raise ValueError("Patient context is required for diagnosis.")
     
     history = state.chat_history[-6:] # Limit to last 6 messages for context but change number as needed later on
 
-    ctx = ChatMessage(
-        role=ChatRole.USER,
-        content="Patient context: \n" + state.patient_ctx.model_dump_json(indent=2),
-     )
+    messages = [SYSTEM_MSG] + history
+
+    if state.patient_ctx:
+        ctx = ChatMessage(
+            role=ChatRole.USER,
+            content="Patient context: \n" + state.patient_ctx.model_dump_json(indent=2),
+        )
+        messages.append(ctx)
     
-    docs = ChatMessage(
-        role=ChatRole.USER,
-        content="Relevant notes:\n" + "\n---\n".join(state.retrieved_chunks),
-    )
+    if state.retrieved_chunks:
+        docs = ChatMessage(
+            role=ChatRole.USER,
+            content="Relevant notes:\n" + "\n---\n".join(state.retrieved_chunks),
+        )
+        messages.append(docs)
 
     user = ChatMessage(
         role=ChatRole.USER,
         content=state.user_prompt,
     )
 
-    messages = [SYSTEM_MSG] + history + [ctx, docs, user]
+    messages.append(user)
 
     state.llm_response = await _llm.chat(messages)
 
@@ -87,7 +101,7 @@ async def diagnose(state: FlowState) -> FlowState:
         object_id=str(uuid.uuid4()),
         text={"content": user.content, "role":user.role.value},
         metadata={
-            "patient_id": state.patient_id,
+            "patient_id": state.patient_id if state.patient_id else "general_chat",
             "role": user.role.value,
         },
     )
@@ -98,7 +112,7 @@ async def diagnose(state: FlowState) -> FlowState:
         object_id=str(uuid.uuid4()),
         text={"content": state.llm_response.content if state.llm_response else "", "role": ChatRole.ASSISTANT.value},
         metadata={
-            "patient_id": state.patient_id,
+            "patient_id": state.patient_id if state.patient_id else "general_chat",
             "role": ChatRole.ASSISTANT.value,
         }
     )
@@ -110,25 +124,53 @@ async def parse_icd(state: FlowState) -> FlowState:
     Currently uses claude to parse the ICD code from the response but can be replaced 
     with a proper regex or a more sophisticated parsing method in the future.
     """
-    prompt = (
-        "Return JSON with fields primary_icd, differential (list), "
-        f"confidence (0-1) for the following answer:\n\n{state.llm_response.content if state.llm_response else ''}\n\n"
-    )
-    parsed = await _llm.chat([SYSTEM_MSG, ChatMessage(role=ChatRole.USER, content=prompt)], json_mode=True)
-    data = json.loads(parsed.content)
-    state.primary_icd = data["primary_icd"]
-    state.differential = data["differential"]
-    state.confidence = data["confidence"]
+    if state.patient_ctx:
+        prompt = (
+            "Return JSON with fields primary_icd, differential (list), "
+            f"confidence (0-1) for the following medical diagnosis:\n\n{state.llm_response.content if state.llm_response else ''}\n\n"
+        )
+        parsed = await _llm.chat([SYSTEM_MSG, ChatMessage(role=ChatRole.USER, content=prompt)], json_mode=True)
+        data = json.loads(parsed.content)
+        state.primary_icd = data["primary_icd"]
+        state.differential = data["differential"]
+        state.confidence = data["confidence"]
+    else:
+        # For general chat, set default values
+        state.primary_icd = "N/A - General Chat"
+        state.differential = []
+        state.confidence = 0.0
 
     return state
 
+def check_patient_exists(state: FlowState) -> FlowState:
+    """Check if patient_id is provided in the state."""
+    # This node doesn't need to do anything - just pass through
+    return state
+
+def has_patient(state: FlowState) -> bool:
+    return state.patient_id is not None and state.patient_id.strip() != ""
+
+
 _builder = StateGraph(FlowState)
+_builder.add_node("check_patient", check_patient_exists)  # New decision node
 _builder.add_node("fetch_patient", fetch_patient)
 _builder.add_node("retrieve_chunks", retrieve_chunks)
 _builder.add_node("diagnose", diagnose)
 _builder.add_node("parse_icd", parse_icd)
 
-_builder.set_entry_point("fetch_patient")
+_builder.set_entry_point("check_patient")
+
+# Conditional logic right at the start
+_builder.add_conditional_edges(
+    "check_patient",
+    has_patient,
+    {
+        True: "fetch_patient",      # Patient ID provided -> fetch details
+        False: "retrieve_chunks"    # No patient ID -> skip to chunks
+    }
+)
+
+# Linear flow after patient fetch
 _builder.add_edge("fetch_patient", "retrieve_chunks")
 _builder.add_edge("retrieve_chunks", "diagnose")
 _builder.add_edge("diagnose", "parse_icd")
@@ -146,25 +188,38 @@ def _to_output(data: dict[str, Any]) -> DiagnosisResult:
         explaination=data["llm_response"].content if data["llm_response"] else "",
     )
 
+def chat_output(data: dict[str, Any]) -> dict[str, Any]:
+    """Convert raw dict emitted by compiled_graph to a chat output format."""
+    return {
+        "explaination": data["llm_response"].content if data["llm_response"] else "",
+    }
+
 class LangGraphDiagnosticEngine(DiagnosticEngine):
     """Concrete engine that streams or returns full result."""
 
     def __init__(self, default_prompt: str = "Provide the most likely diagnosis"):
         self._default_prompt = default_prompt
 
-    async def run(self, patient: PatientContext, user_prompt: str | None = None) -> DiagnosisResult:
+    async def run(self, patient: PatientContext | None = None, user_prompt: str | None = None) -> Union[DiagnosisResult,  dict]:
         
         prompt = user_prompt or self._default_prompt
-        
-        data = await compiled_graph.ainvoke({
-            "patient_id": patient.patient_id,
-            "user_prompt": prompt,
-        })
-        
-        if hasattr(data, "model_dump"):
-            return _to_output(data.model_dump())
+        if patient is not None:
+            data = await compiled_graph.ainvoke({
+                "patient_id": patient.patient_id,
+                "user_prompt": prompt,
+            })
         else:
-            return _to_output(data)
+            data = await compiled_graph.ainvoke({
+                "user_prompt": prompt,
+            })
+        
+        if patient is not None:
+            if hasattr(data, "model_dump"):
+                return _to_output(data.model_dump())
+            else:
+                return _to_output(data)
+        else:
+            return chat_output(data)
 
     async def run_stream(self, patient: PatientContext, user_prompt: str | None = None):
         """Async generator that yields chunks as they stream from the graph."""
