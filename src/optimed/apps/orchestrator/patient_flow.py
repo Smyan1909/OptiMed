@@ -29,7 +29,8 @@ SYSTEM_MSG = ChatMessage(role=ChatRole.SYSTEM,
                                     - Engage in general medical conversations
                                     - Answer medical questions and provide health information
                                     - Maintain professional, helpful, and educational responses
-                                    - Always remind users to consult healthcare providers for personal medical advice""") # Needs to be more specific and properly created to make the LLM function properly
+                                    - Always remind users to consult healthcare providers for personal medical advice
+                                    - Behave like a knowledgeable medical professional and do not name anything about the patient information unless explicitly requested""") # Needs to be more specific and properly created to make the LLM function properly
 
 class FlowState(BaseModel): # Potentially add 
     """Minimal LangGraph state.""" # Add field for user_id or session_id if needed later on as well
@@ -58,9 +59,52 @@ async def fetch_patient(state: FlowState) -> FlowState:
     return state
 
 async def retrieve_chunks(state: FlowState) -> FlowState:
+    # 0) If we have patient_ctx, ensure it’s in the vector DB under “clinical” + patient_id
+    if state.patient_ctx:
+        # serialize patient context once
+        patient_json = state.patient_ctx.model_dump_json(indent=2)
+        try:
+            # embed the patient JSON to get a real vector
+            patient_vec = await embed(patient_json)
+            existing = await _vec.similarity_search(
+                patient_vec,
+                top_k=1,
+                filter_={"namespace": "clinical", "patient_id": state.patient_id},
+            )
+        except Exception as e:
+            # if embedding or search fails, log and treat as "not found"
+            print(f"[retrieve_chunks] existence check failed: {e}")
+            existing = []
+
+        if not existing:
+            try:
+                await embed_and_store(
+                    namespace="clinical",
+                    object_type="PatientContext",
+                    object_id=str(state.patient_id),
+                    text={"content": patient_json},
+                    metadata={"patient_id": state.patient_id},
+                )
+            except Exception as e:
+                print(f"[retrieve_chunks] embed_and_store failed: {e}")
+
+    # 1) Now embed the user prompt and retrieve top-5 clinical chunks
     q_vec = await embed(state.user_prompt)
-    rows = await _vec.similarity_search(q_vec, top_k=5, filter_={"namespace": "clinical"})
-    state.retrieved_chunks = [row[2] if len(row) > 2 else row[1] for row in rows]
+    rows = await _vec.similarity_search(
+        q_vec,
+        top_k=5,
+        filter_={"namespace": "clinical"},
+    )
+
+    # 2) If no rows, fallback to raw patient context
+    if not rows and state.patient_ctx:
+        state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
+        return state
+
+    # 3) Otherwise extract the text from each row
+    state.retrieved_chunks = [
+        row[2] if len(row) > 2 else row[1] for row in rows
+    ]
     return state
 
 
@@ -118,6 +162,7 @@ async def diagnose(state: FlowState) -> FlowState:
     )
 
     return state
+
 
 async def parse_icd(state: FlowState) -> FlowState:
     """
@@ -185,13 +230,13 @@ def _to_output(data: dict[str, Any]) -> DiagnosisResult:
         primary_icd=data["primary_icd"], 
         differential=data["differential"],
         confidence=data["confidence"],
-        explaination=data["llm_response"].content if data["llm_response"] else "",
+        explanation=data["llm_response"].content if data["llm_response"] else "",
     )
 
 def chat_output(data: dict[str, Any]) -> dict[str, Any]:
     """Convert raw dict emitted by compiled_graph to a chat output format."""
     return {
-        "explaination": data["llm_response"].content if data["llm_response"] else "",
+        "explanation": data["llm_response"].content if data["llm_response"] else "",
     }
 
 class LangGraphDiagnosticEngine(DiagnosticEngine):

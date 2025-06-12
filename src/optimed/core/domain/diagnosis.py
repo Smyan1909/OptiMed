@@ -15,4 +15,4 @@ class DiagnosisResult(FrozenModel):
     differential: List[str] = Field(default_factory=list)
     confidence: float = 0.0
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    explaination: Optional[str] = None
+    explanation: Optional[str] = None
