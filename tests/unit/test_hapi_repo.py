@@ -1,5 +1,6 @@
 # tests/unit/test_hapi_repo.py
 import pytest
+import httpx
 from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
 from optimed.core.domain import PatientContext
 from conftest import FakeResp
@@ -59,6 +60,15 @@ async def test_search_patients_stub(monkeypatch, _load_fixture):
     }
 
     async def _fake_get(self, path: str, *_, **kwargs):
+        # Simulate patient‐by‐ID not found:
+        if path.startswith("/Patient/"):
+            # raise HTTPStatusError to trigger the except block in search_patients
+            raise httpx.HTTPStatusError(
+                "Not Found",
+                request=httpx.Request("GET", path),
+                response=httpx.Response(404),
+            )
+        # Otherwise return our name‐search bundle
         return FakeResp(bundle_json)
 
     monkeypatch.setattr(

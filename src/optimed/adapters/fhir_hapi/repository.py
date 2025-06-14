@@ -142,9 +142,16 @@ class HAPIFHIRRepository(FHIRRepository):
 
         results: list[PatientContext] = []
         for entry in bundle.get("entry", []):
-            p = Patient.model_validate(entry["resource"])
+            # drop the top‐level "text" block so Patient.model_validate won't expect text.div
+            resource = entry["resource"].copy()
+            resource.pop("text", None)
+            try:
+                p = Patient.model_validate(resource)
+            except ValidationError:
+                # skip any resource that still fails validation
+                continue
             results.append(_to_patient_ctx(p, [], []))
-        
+
         return results
     
     async def close(self) -> None:
