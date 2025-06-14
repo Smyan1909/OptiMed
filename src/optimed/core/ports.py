@@ -121,6 +121,6 @@ class DiagnosticEngine(Protocol):
         ...
 
     @abstractmethod
-    async def run_stream(self, patient: PatientContext, user_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
+    async def run_stream(self, patient: PatientContext, user_prompt: str | None = None):
         """Run the diagnostic engine with streaming support."""
         ...
