@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import AsyncGenerator, Protocol, Sequence, Any, Union
+from typing import Protocol, Sequence, Any, Union
 
 from optimed.core.domain import PatientContext, KPIEvent, ChatMessage, DiagnosisResult
 
