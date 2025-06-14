@@ -264,16 +264,19 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
         else:
             return self.chat_output(data)
 
-    async def run_stream(self, patient: PatientContext, user_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
-        """Async generator that yields chunks as they stream from the graph."""
+    def run_stream(self, patient: PatientContext, user_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
+        """Return an async generator that yields chunks as they stream from the graph."""
 
-        prompt = user_prompt or self._default_prompt
+        async def _stream_generator():
+            prompt = user_prompt or self._default_prompt
 
-        async for update in self._compiled_graph.astream({
-            "patient_id": patient.patient_id,
-            "user_prompt": prompt,
-        }):
-            yield update
+            async for update in self._compiled_graph.astream({
+                "patient_id": patient.patient_id,
+                "user_prompt": prompt,
+            }):
+                yield update
+
+        return _stream_generator()
 
     def _to_output(self, data: dict[str, Any]) -> DiagnosisResult:
         """Convert raw dict emitted by compiled_graph to DiagnosisResult."""
