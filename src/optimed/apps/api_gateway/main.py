@@ -21,7 +21,7 @@ app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
 class ChatRequest(BaseModel):
     patient_id: str | None = None
     user_prompt: str | None = None
-
+    chat_mode: bool = False
 
 class PatientOut(BaseModel):
     id: str
@@ -46,8 +46,8 @@ async def diagnose(req: ChatRequest):
         patient_ctx: PatientContext = await _fhir.get_patient(str(req.patient_id)) # Cast to str to avoid type errors
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Patient not found: {e}")
-    
-    result = await _engine.run(patient_ctx, req.user_prompt)
+
+    result = await _engine.run(patient_ctx, req.user_prompt, chat_mode=req.chat_mode)
     if hasattr(result, 'model_dump'):
         return result.model_dump()
     else:
@@ -126,10 +126,10 @@ async def chat(req: ChatRequest):
         
         # Create a mock patient context for general chat
         if not patient_ctx:
-            result = await _engine.run(user_prompt=req.user_prompt)
+            result = await _engine.run(user_prompt=req.user_prompt, chat_mode=req.chat_mode)
             return result
         else:
-            result = await _engine.run(patient=patient_ctx, user_prompt=req.user_prompt)
+            result = await _engine.run(patient=patient_ctx, user_prompt=req.user_prompt, chat_mode=req.chat_mode)
             if hasattr(result, 'model_dump'):
                 return result.model_dump()
             else:

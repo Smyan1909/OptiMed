@@ -13,13 +13,19 @@ interface ChatBoxProps {
 }
 
 export default function ChatBox({ mode, patientId }: ChatBoxProps) {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [chatHistory, setChatHistory] = useState<Message[]>([]);
+  const [diagnoseHistory, setDiagnoseHistory] = useState<Message[]>([]);
   const [input, setInput] = useState("");
 
-  // clear history whenever mode changes
+  // Use different history based on mode
+  const messages = mode === "chat" ? chatHistory : diagnoseHistory;
+  const setMessages = mode === "chat" ? setChatHistory : setDiagnoseHistory;
+
+  // Clear histories when patient changes
   useEffect(() => {
-    setMessages([]);
-  }, [mode, patientId]);
+    setChatHistory([]);
+    setDiagnoseHistory([]);
+  }, [patientId]);
 
   const sendMessage = async (e: FormEvent) => {
     e.preventDefault();
@@ -35,20 +41,24 @@ export default function ChatBox({ mode, patientId }: ChatBoxProps) {
       ...prev,
       { sender: "system", text: "OptiMed is thinking...", loading: true },
     ]);
-
+    
     try {
-      // 3) call backend
-      const res = await fetch(`/api/chat`, {
+      // 3) call appropriate backend endpoint
+      const endpoint = mode === "chat" ? "/api/chat" : "/api/diagnose";
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
             patient_id: patientId ?? null,
             user_prompt: userText,
+            chat_mode: mode === "chat"
          }),
       });
       const data = await res.json();
-      console.log("🏷️  /api/chat returned:", res.status, data);
-      const reply = data.explanation ?? "No reply";
+      console.log(`🏷️  ${endpoint} returned:`, res.status, data);
+      
+      // Handle different response formats
+      const reply = data.explanation ?? data.message ?? data.response ?? "No reply";
 
       // 4) replace placeholder with actual reply
       setMessages((prev) => {
@@ -109,7 +119,7 @@ export default function ChatBox({ mode, patientId }: ChatBoxProps) {
           placeholder={
             mode === "chat"
               ? "Type your message..."
-              : "Describe symptoms..."
+              : "How do you want help with the diagnoses?"
           }
           className="
             flex-1

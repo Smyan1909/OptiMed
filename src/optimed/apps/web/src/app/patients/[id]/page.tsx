@@ -30,12 +30,17 @@ export default function PatientDetail() {
 
   return (
     <section className="max-w-6xl mx-auto py-8 space-y-8">
-      <button
-        onClick={() => router.push("/patients")}
-        className="text-blue-600 hover:text-blue-800 font-medium"
-      >
-        ← Back to patients
-      </button>
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => router.push("/patients")}
+          className="text-blue-600 hover:text-blue-800 font-medium"
+        >
+          ← Back to patients
+        </button>
+        <h1 className="text-2xl font-bold text-gray-900">
+          Patient: {patient.name}
+        </h1>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Sidebar */}
@@ -56,7 +61,6 @@ export default function PatientDetail() {
             <h2 className="text-lg font-semibold text-green-600 mb-4">Vitals</h2>
             <dl className="grid grid-cols-1 gap-y-2 text-gray-800">
               {Object.entries(patient.vitals).map(([code, raw]) => {
-                // split raw string into numeric part + unit part
                 const parts = raw.split(/\s+/);
                 const num = parseFloat(parts[0]);
                 const displayValue = isNaN(num) ? raw : num.toFixed(2);
@@ -101,7 +105,7 @@ export default function PatientDetail() {
         <main className="lg:col-span-2 bg-white rounded-xl shadow flex flex-col p-6 h-[700px]">
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-2xl font-semibold text-gray-900">
-              {mode === "chat" ? "Chat" : "Diagnose"} — {patient.name}
+              {mode === "chat" ? "Chat with OptiMed" : "Diagnosis Assistant"}
             </h1>
             <label className="inline-flex items-center space-x-3">
               <span className={mode === "chat" ? "text-blue-600" : "text-gray-500"}>Chat</span>
