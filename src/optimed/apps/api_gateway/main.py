@@ -74,7 +74,6 @@ async def search_patients(q: str = Query("", alias="q")):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not load patients: {e}")
 
-from fastapi import Path
 
 @app.get(
     "/patients/{patient_id}",
