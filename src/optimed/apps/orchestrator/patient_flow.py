@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid 
 import json
-from typing import List, Any, Union
+from typing import List, Any, Union, AsyncGenerator
 
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
@@ -264,7 +264,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
         else:
             return self.chat_output(data)
 
-    async def run_stream(self, patient: PatientContext, user_prompt: str | None = None):
+    async def run_stream(self, patient: PatientContext, user_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Async generator that yields chunks as they stream from the graph."""
 
         prompt = user_prompt or self._default_prompt
