@@ -3,18 +3,12 @@ import asyncio
 from typing import AsyncGenerator, Dict
 from fastapi import FastAPI, HTTPException, Query, Path # type: ignore
 from fastapi.responses import StreamingResponse
-from dotenv import load_dotenv # type: ignore
-
 from optimed.core.domain import PatientContext
-from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
-from optimed.apps.orchestrator.patient_flow import LangGraphDiagnosticEngine
+from optimed.apps.orchestrator.factory import create_app_dependencies
 
 from pydantic import BaseModel
 
-load_dotenv()
-
-_fhir = HAPIFHIRRepository()
-_engine = LangGraphDiagnosticEngine()
+_engine, _fhir = create_app_dependencies()
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
 
@@ -114,25 +108,24 @@ async def diagnose_stream(req: ChatRequest):
 @app.post("/chat", response_model=dict)
 async def chat(req: ChatRequest):
     """General chat endpoint that works with or without patient context."""
-    try:
-        patient_ctx = None
-        if req.patient_id is not None:
-            try:
-                patient_ctx = await _fhir.get_patient(req.patient_id)
-            except Exception as e:
-                # Log the error but continue with general chat
-                print(f"Could not fetch patient {req.patient_id}: {e}")
-        
-        # Create a mock patient context for general chat
-        if not patient_ctx:
-            result = await _engine.run(user_prompt=req.user_prompt, chat_mode=req.chat_mode)
-            return result
+    
+    patient_ctx = None
+    if req.patient_id is not None:
+        try:
+            patient_ctx = await _fhir.get_patient(req.patient_id)
+        except Exception as e:
+            # Log the error but continue with general chat
+            print(f"Could not fetch patient {req.patient_id}: {e}")
+    
+    # Create a mock patient context for general chat
+    if not patient_ctx:
+        result = await _engine.run(user_prompt=req.user_prompt, chat_mode=req.chat_mode)
+        return result
+    else:
+        result = await _engine.run(patient=patient_ctx, user_prompt=req.user_prompt, chat_mode=req.chat_mode)
+        if hasattr(result, 'model_dump'):
+            return result.model_dump()
         else:
-            result = await _engine.run(patient=patient_ctx, user_prompt=req.user_prompt, chat_mode=req.chat_mode)
-            if hasattr(result, 'model_dump'):
-                return result.model_dump()
-            else:
-                return result
+            return result
         
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
+   

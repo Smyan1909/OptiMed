@@ -24,6 +24,24 @@ class FHIRRepository(Protocol):
         """Simple convenience search"""
         ...
 
+    @abstractmethod
+    async def close(self) -> None:
+        """Close any resources like HTTP clients."""
+        ...
+
+    @abstractmethod
+    async def _get_patient_resource(self, patient_id: str) -> PatientContext:
+        """Fetch a single Patient resource by ID."""
+        ...
+    
+    @abstractmethod
+    async def _get_observations(
+        self, patient_id: str, category: str, count: int = 10
+    ) -> list[Any]:
+        """Fetch observations of a specific category for a patient."""
+        ...
+
+
 
 class KPIEventSink(Protocol):
 
