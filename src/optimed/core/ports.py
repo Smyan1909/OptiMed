@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Protocol, Sequence, Any, Union
+from typing import AsyncGenerator, Protocol, Sequence, Any, Union
 
 from optimed.core.domain import PatientContext, KPIEvent, ChatMessage, DiagnosisResult
 
@@ -121,6 +121,6 @@ class DiagnosticEngine(Protocol):
         ...
 
     @abstractmethod
-    async def run_stream(self, patient: PatientContext, user_prompt: str | None = None) -> Any:
+    async def run_stream(self, patient: PatientContext, user_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Run the diagnostic engine with streaming support."""
         ...

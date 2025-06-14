@@ -15,7 +15,7 @@ def create_app_dependencies() -> Tuple[DiagnosticEngine, FHIRRepository]:
     load_dotenv()
 
     fhir_repo = HAPIFHIRRepository()
-    vector_store = PGVectorAdapter(os.getenv("PGVECTOR_DSN"))
+    vector_store = PGVectorAdapter(str(os.getenv("PGVECTOR_DSN")))
     llm_client = AnthropicClaudeClient()
 
     
