@@ -72,7 +72,7 @@ async def retrieve_chunks(state: FlowState) -> FlowState:
             existing = await _vec.similarity_search(
                 patient_vec,
                 top_k=1,
-                filter_={"namespace": "clinical", "patient_id": state.patient_id},
+                filter_={"namespace": "clinical", "patient_id": str(state.patient_id)},
             )
         except Exception as e:
             # if embedding or search fails, log and treat as "not found"
