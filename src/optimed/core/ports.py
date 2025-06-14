@@ -115,12 +115,12 @@ class VectorStore(Protocol):
 class DiagnosticEngine(Protocol):
     """Pure-domain service used by LangGraph; orchestrates everything."""
 
-    @abstractmethod
+    
     async def run(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False) -> Union[DiagnosisResult,  dict]:
         """Return the top diagnosis (v0) or ranked list (v1)."""
         ...
 
-    @abstractmethod
+    
     async def run_stream(self, patient: PatientContext, user_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Run the diagnostic engine with streaming support."""
         ...
