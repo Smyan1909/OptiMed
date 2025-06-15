@@ -37,7 +37,7 @@ export default function PatientDetail() {
         >
           ← Back to patients
         </button>
-        <h1 className="text-2xl font-bold text-gray-900">
+        <h1 className="text-2xl font-bold text-white-900">
           Patient: {patient.name}
         </h1>
       </div>

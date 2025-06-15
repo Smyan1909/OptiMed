@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
 
@@ -14,6 +15,9 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+
+const inter = Inter({ subsets: ["latin"] });
+
 export const metadata: Metadata = {
   title: "OptiMed",
   description: "AI-driven patient diagnosis and treatment recommendations",
@@ -22,7 +26,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="min-h-screen flex flex-col bg-gray-50 text-gray-800">
+      <body className={`${inter.className} min-h-screen flex flex-col bg-gray-50 text-gray-800`}>
         <Navbar />
         <main className="flex-1 container mx-auto px-4 py-8">
           {children}

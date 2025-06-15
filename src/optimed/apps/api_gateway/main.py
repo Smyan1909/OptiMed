@@ -8,7 +8,7 @@ from optimed.apps.orchestrator.factory import create_app_dependencies
 
 from pydantic import BaseModel
 
-_engine, _fhir = create_app_dependencies()
+_engine, _fhir, _vector_store = create_app_dependencies()
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
 
@@ -88,6 +88,16 @@ async def get_patient(patient_id: str = Path(..., description="The patient ID"))
         vitals=pctx.vitals,
         labs=pctx.labs,
     )
+
+
+@app.delete("/patients/{patient_id}/chat-history", summary="Delete patient by ID")
+async def clear_patient_chat_history(patient_id: str = Path(..., description="The patient ID")):
+    try:
+
+        await _vector_store.clear_chat_history(patient_id)
+        return {"message": f"Chat history cleared for patient {patient_id}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not clear chat history: {e}")
 
 async def _event_stream(patient: PatientContext) -> AsyncGenerator[str, None]:
     async for delta in _engine.run_stream(patient):
