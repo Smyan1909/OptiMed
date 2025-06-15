@@ -158,7 +158,8 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 for row in rows:
                     chunk_text = row[2] if len(row) > 2 else row[1]
                     # Verify this chunk is actually about our patient
-                    if str(state.patient_id) in chunk_text or state.patient_ctx.name in chunk_text:
+                    patient_name = state.patient_ctx.name if state.patient_ctx else ""
+                    if str(state.patient_id) in chunk_text or patient_name in chunk_text:
                         patient_specific_chunks.append(chunk_text)
                     else:
                         print(f"[retrieve_chunks] Filtered out chunk not related to patient {state.patient_id}")

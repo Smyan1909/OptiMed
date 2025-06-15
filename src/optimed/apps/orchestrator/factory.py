@@ -4,11 +4,11 @@ from optimed.apps.orchestrator.patient_flow import LangGraphDiagnosticEngine
 from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
 from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
 from optimed.adapters.anthropic_claude.client import AnthropicClaudeClient
-from optimed.core.ports import DiagnosticEngine, FHIRRepository
+from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore
 from dotenv import load_dotenv # type: ignore
 
 
-def create_app_dependencies() -> Tuple[DiagnosticEngine, FHIRRepository]:
+def create_app_dependencies() -> Tuple[DiagnosticEngine, FHIRRepository, VectorStore]:
     """Factory function to wire up all application dependencies."""
 
     # Load environment variables from .env file
