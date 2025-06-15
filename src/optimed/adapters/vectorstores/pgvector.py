@@ -107,6 +107,46 @@ class PGVectorAdapter(VectorStore):
                 embedding_ids
             )
 
+    async def get_chat_history(self, patient_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        query = """
+            SELECT content, metadata
+            FROM embeddings 
+            WHERE metadata->>'patient_id' = $1 
+            AND metadata->>'namespace' = 'chat_history'
+            ORDER BY metadata->>'timestamp' DESC
+            LIMIT $2
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, patient_id, limit)
+
+        result = []
+        for row in rows:
+            try:
+                # Parse metadata if it's a JSON string
+                metadata = json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
+                result.append({
+                    "content": row["content"], 
+                    "metadata": metadata
+                })
+            except Exception as e:
+                print(f"Error parsing row in get_chat_history: {e}")
+                continue
+        
+        return result
+
+    async def clear_chat_history(self, patient_id: str) -> None:
+        """Clear chat history for a specific patient."""
+        query = """
+            DELETE FROM embeddings 
+            WHERE metadata->>'patient_id' = $1 
+            AND metadata->>'namespace' = 'chat_history'
+        """
+        
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(query, patient_id)
+
     async def update(
         self,
         embedding_id: str,

@@ -25,4 +25,4 @@ def create_app_dependencies() -> Tuple[DiagnosticEngine, FHIRRepository]:
         llm_client=llm_client,
     )
     
-    return diagnostic_engine, fhir_repo
+    return diagnostic_engine, fhir_repo, vector_store

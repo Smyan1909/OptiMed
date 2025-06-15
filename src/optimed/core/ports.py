@@ -89,6 +89,14 @@ class VectorStore(Protocol):
         """Delete an embedding vector by ID."""
         ...
     
+    async def get_chat_history(self, patient_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Get chat history for a patient."""
+        ...
+
+    async def clear_chat_history(self, patient_id: str) -> None:
+        """Clear chat history for a patient."""
+        ...
+
     async def update(
         self,
         embedding_id: str,

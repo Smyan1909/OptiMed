@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid 
 import json
+import time
 from typing import List, Any, Union, AsyncGenerator
 
 from langgraph.graph import StateGraph, END
@@ -18,18 +19,27 @@ from optimed.embeddings.service import embed_and_store
 
 SYSTEM_MSG_DIAGNOSE = ChatMessage(role=ChatRole.SYSTEM, 
                          content="""You are OptiMed‑AI, a clinical reasoning assistant and medical chat companion.
+                                    
+                                    IMPORTANT: If you see previous conversation history marked between === lines, YOU MUST acknowledge and reference it in your response. This shows continuity of care.
+                                    
                                     When patient context is provided:
-                                    - Combine real‑time vitals, labs, and external evidence to help physicians
+                                    - Use only the provided patient context to inform your responses
+                                    - Do not reference other patients' data
+                                    - Combine real‑time vitals, labs, and evidence to help physicians
                                     - Provide clinical diagnoses with explanations and cite sources
-                                    - Focus on medical accuracy and clinical reasoning""") # Needs to be more specific and properly created to make the LLM function properly
-
+                                    - Focus on medical accuracy and clinical reasoning
+                                    - Reference previous conversation history when available""")
 
 SYSTEM_MSG_CHAT = ChatMessage(role=ChatRole.SYSTEM, 
                          content="""You are OptiMed‑AI, a clinical reasoning assistant and medical chat companion.
+                         
+                                    IMPORTANT: If you see previous conversation history marked between === lines, YOU MUST acknowledge and reference it in your response.
+                                    
                                     - Engage in friendly conversation
                                     - Provide general health advice and wellness tips
                                     - Focus on being helpful and informative
-                                    - Provide sources for your answers if available""") # Needs to be more specific and properly created to make the LLM function properly
+                                    - Reference previous conversation history to maintain context
+                                    - Continue conversations naturally based on chat history""") # Needs to be more specific and properly created to make the LLM function properly
 
 class FlowState(BaseModel): # Potentially add 
     """Minimal LangGraph state.""" # Add field for user_id or session_id if needed later on as well
@@ -65,6 +75,34 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             state.patient_ctx = await self._fhir.get_patient(str(state.patient_id)) # Cast to str to avoid type errors
             return state
 
+
+        async def load_chat_history(state: FlowState) -> FlowState:
+            """Load chat history for the patient if available."""
+            if state.patient_id:
+                try:
+                    history_data = await self._vec.get_chat_history(patient_id=str(state.patient_id), limit=20)
+
+                    chat_messages = []
+                    
+                    for item in history_data:
+                        try:
+                            content_data = json.loads(item['content']) if isinstance(item['content'], str) else item['content']
+                            role = ChatRole(content_data.get("role", "user"))
+                            content = content_data.get("content", "")
+
+                            chat_messages.append(ChatMessage(role=role, content=content))
+                        except json.JSONDecodeError:
+                            print(f"[load_chat_history] JSON decode error for item: {item}")
+                            continue
+                    state.chat_history = chat_messages
+                except Exception as e:
+                    print(f"[load_chat_history] Error loading chat history: {e}")
+                    state.chat_history = []
+            else:
+                state.chat_history = []
+
+            return state
+
         async def retrieve_chunks(state: FlowState) -> FlowState:
             # 0) If we have patient_ctx, ensure it’s in the vector DB under “clinical” + patient_id
             if state.patient_ctx:
@@ -95,34 +133,66 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     except Exception as e:
                         print(f"[retrieve_chunks] embed_and_store failed: {e}")
 
-            # 1) Now embed the user prompt and retrieve top-5 clinical chunks
-            q_vec = await embed(state.user_prompt)
-            rows = await self._vec.similarity_search(
-                q_vec,
-                top_k=5,
-                filter_={"namespace": "clinical"},
-            )
+            # 1) ONLY search for THIS patient's data
+            if state.patient_id:
+                q_vec = await embed(state.user_prompt)
+                rows = await self._vec.similarity_search(
+                    q_vec,
+                    top_k=3,  # Reduced from 5
+                    filter_={
+                        "namespace": "clinical", 
+                        "patient_id": str(state.patient_id)  # CRUCIAL: Only this patient
+                    },
+                )
+            else:
+                rows = []
 
-            # 2) If no rows, fallback to raw patient context
+            # 2) If no patient-specific rows, use patient context directly
             if not rows and state.patient_ctx:
                 state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
                 return state
 
-            # 3) Otherwise extract the text from each row
-            state.retrieved_chunks = [
-                row[2] if len(row) > 2 else row[1] for row in rows
-            ]
+            # 3) Extract text and ensure it's from the right patient
+            patient_specific_chunks = []
+            for row in rows:
+                chunk_text = row[2] if len(row) > 2 else row[1]
+                # Verify this chunk is actually about our patient
+                if str(state.patient_id) in chunk_text or state.patient_ctx.name in chunk_text:
+                    patient_specific_chunks.append(chunk_text)
+                else:
+                    print(f"[retrieve_chunks] Filtered out chunk not related to patient {state.patient_id}")
+            
+            state.retrieved_chunks = patient_specific_chunks
             return state
 
 
         async def diagnose(state: FlowState) -> FlowState:
-            
-            history = state.chat_history[-6:] # Limit to last 6 messages for context but change number as needed later on
+
 
             if state.chat_mode:
-                messages = [SYSTEM_MSG_CHAT] + history
+                messages = [SYSTEM_MSG_CHAT] 
             else:
-                messages = [SYSTEM_MSG_DIAGNOSE] + history
+                messages = [SYSTEM_MSG_DIAGNOSE] 
+
+            history = state.chat_history[-10:] if state.chat_history else []  # Limit to last 10
+            if history:
+                # Add a clear header
+                history_header = ChatMessage(
+                    role=ChatRole.USER,
+                    content=f"=== PREVIOUS CONVERSATION HISTORY FOR PATIENT {state.patient_id} ==="
+                )
+                messages.append(history_header)
+                
+                # Add the actual history
+                messages.extend(history)
+                
+                # Add footer to make it clear
+                history_footer = ChatMessage(
+                    role=ChatRole.USER,
+                    content="=== END OF CONVERSATION HISTORY - ACKNOWLEDGE THIS HISTORY IN YOUR RESPONSE ==="
+                )
+                messages.append(history_footer)
+                
 
             if state.patient_ctx:
                 ctx = ChatMessage(
@@ -131,6 +201,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 )
                 messages.append(ctx)
             
+
             if state.retrieved_chunks:
                 docs = ChatMessage(
                     role=ChatRole.USER,
@@ -149,25 +220,39 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
 
             state.chat_history.extend([user, state.llm_response])
 
+            current_timestamp = str(int(time.time() * 1000))
+
             await embed_and_store(
-                namespace="chat",
+                namespace="chat_history",
                 object_type="ChatMessage",
                 object_id=str(uuid.uuid4()),
-                text={"content": user.content, "role":user.role.value},
+                text=json.dumps({
+                    "content": user.content, 
+                    "role": user.role.value,
+                    "timestamp": current_timestamp  # Add timestamp to content
+                }),
                 metadata={
                     "patient_id": state.patient_id if state.patient_id else "general_chat",
                     "role": user.role.value,
+                    "timestamp": current_timestamp,
+                    "namespace": "chat_history",
                 },
             )
 
             await embed_and_store(
-                namespace="chat",
+                namespace="chat_history",
                 object_type="AssistantReply",
                 object_id=str(uuid.uuid4()),
-                text={"content": state.llm_response.content if state.llm_response else "", "role": ChatRole.ASSISTANT.value},
+                text=json.dumps({
+                    "content": state.llm_response.content if state.llm_response else "", 
+                    "role": ChatRole.ASSISTANT.value,
+                    "timestamp": str(int(time.time() * 1000) + 1)  # Assistant comes after user
+                }),
                 metadata={
                     "patient_id": state.patient_id if state.patient_id else "general_chat",
                     "role": ChatRole.ASSISTANT.value,
+                    "timestamp": str(int(time.time() * 1000) + 1),
+                    "namespace": "chat_history",
                 }
             )
 
@@ -215,6 +300,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
 
         _builder = StateGraph(FlowState)
         _builder.add_node("check_patient", check_patient_exists)  # New decision node
+        _builder.add_node("load_chat_history", load_chat_history)
         _builder.add_node("fetch_patient", fetch_patient)
         _builder.add_node("retrieve_chunks", retrieve_chunks)
         _builder.add_node("diagnose", diagnose)
@@ -227,12 +313,13 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             "check_patient",
             has_patient,
             {
-                True: "fetch_patient",      # Patient ID provided -> fetch details
+                True: "load_chat_history",      # Patient ID provided -> fetch details
                 False: "retrieve_chunks"    # No patient ID -> skip to chunks
             }
         )
 
         # Linear flow after patient fetch
+        _builder.add_edge("load_chat_history", "fetch_patient")
         _builder.add_edge("fetch_patient", "retrieve_chunks")
         _builder.add_edge("retrieve_chunks", "diagnose")
         _builder.add_edge("diagnose", "parse_icd")
