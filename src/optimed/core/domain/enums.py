@@ -76,3 +76,16 @@ class ChatRole(str, Enum):
     USER = "user"
     ASSISTANT = "assistant"
 
+
+class UserRole(str, Enum):
+    ADMIN = "admin"
+    DOCTOR = "doctor"
+    NURSE = "nurse"
+    TECHNICIAN = "technician"
+    OTHER_STAFF = "other_staff"
+
+class UserStatus(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    SUSPENDED = "suspended"
+

@@ -9,6 +9,39 @@ export type PatientDetail = {
   labs:   Record<string,string>
 }
 
+export type User = {
+  user_id: string;
+  username: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  role: string;
+  status: string;
+  department?: string;
+  license_number?: string;
+  phone?: string;
+  full_name: string;
+  display_name: string;
+};
+
+export type ChatRequest = {
+  patient_id?: string;
+  user_prompt?: string;
+  chat_mode?: boolean;
+  user_id?: string;
+  session_id?: string;
+};
+
+export type LoginRequest = {
+  username: string;
+  password: string;
+};
+
+export type LoginResponse = {
+  user: User;
+  session_id: string;
+  message: string;
+};
 
 export async function fetchPatients(q = ""): Promise<Patient[]> {
   const url = q ? `/api/patients?q=${encodeURIComponent(q)}` : `/api/patients`;
@@ -20,5 +53,93 @@ export async function fetchPatients(q = ""): Promise<Patient[]> {
 export async function fetchPatient(id: string): Promise<PatientDetail> {
   const res = await fetch(`/api/patients/${id}`);
   if (!res.ok) throw new Error(`Failed to load patient ${id}`);
+  return res.json();
+}
+
+function getSessionHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  };
+  
+  if (typeof window !== 'undefined') {
+    const sessionId = localStorage.getItem('session_id');
+    if (sessionId) {
+      headers['X-Session-ID'] = sessionId;
+    }
+  }
+  
+  return headers;
+}
+
+export async function clearPatientChatHistory(patientId: string): Promise<void> {
+  const res = await fetch(`/api/patients/${patientId}/chat-history`, {
+    method: 'DELETE',
+    headers: getSessionHeaders()
+  });
+  
+  if (!res.ok) throw new Error('Failed to clear chat history');
+}
+
+// Authentication functions
+export async function getCurrentUser(): Promise<User | null> {
+  try {
+    const res = await fetch('/api/auth/me', {
+      headers: getSessionHeaders()
+    });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function loginUser(username: string, password: string): Promise<{ user: User; session: { session_id: string } }> {
+  const res = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+  if (!res.ok) throw new Error('Login failed');
+  
+  const data = await res.json();
+  return {
+    user: data.user,
+    session: { session_id: data.session_id }
+  };
+}
+
+export async function logoutUser(): Promise<void> {
+  await fetch('/api/auth/logout', { 
+    method: 'POST',
+    headers: getSessionHeaders()
+  });
+}
+
+// New user-aware functions
+export async function diagnoseWithUser(request: ChatRequest): Promise<any> {
+  const res = await fetch('/api/diagnose', {
+    method: 'POST',
+    headers: getSessionHeaders(),
+    body: JSON.stringify(request)
+  });
+  
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Diagnosis failed: ${res.status} - ${errorText}`);
+  }
+  return res.json();
+}
+
+export async function chatWithUser(request: ChatRequest): Promise<any> {
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: getSessionHeaders(),
+    body: JSON.stringify(request)
+  });
+  
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Chat failed: ${res.status} - ${errorText}`);
+  }
   return res.json();
 }

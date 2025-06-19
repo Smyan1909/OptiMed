@@ -65,4 +65,3 @@ class Encounter(FrozenModel):
         end = self.discharge_ts or now or datetime.now(timezone.utc)
         return end - self.admit_ts
 
-

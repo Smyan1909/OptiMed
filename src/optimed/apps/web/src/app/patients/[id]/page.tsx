@@ -1,128 +1,216 @@
-"use client";
-import { useParams, useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
-import ChatBox from "@/components/ChatBox";
-import { fetchPatient } from "@/lib/api";
-import type { PatientDetail } from "@/lib/api";
+'use client';
 
-export default function PatientDetail() {
-  const { id } = useParams();
+import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { Header } from '@/components/Header';
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { fetchPatient, PatientDetail, diagnoseWithUser, chatWithUser } from "@/lib/api";
+import { useUser } from '@/contexts/UserContext';
+import ChatBox from "@/components/ChatBox";
+import { Badge } from "@/components/ui/badge";
+
+function PatientDetailContent() {
+  const params = useParams();
   const router = useRouter();
+  const { user } = useUser();
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<"chat" | "diagnose">("chat");
+  const [error, setError] = useState<string | null>(null);
+
+  const patientId = params?.id as string;
 
   useEffect(() => {
-    if (!id) return;
-    const pid = Array.isArray(id) ? id[0] : id;
-    fetchPatient(pid)
-      .then(setPatient)
-      .catch(() => setPatient(null))
-      .finally(() => setLoading(false));
-  }, [id]);
+    const loadPatient = async () => {
+      if (!patientId) return;
+      
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await fetchPatient(patientId);
+        setPatient(result);
+      } catch (err: any) {
+        setError(err.message || "Failed to load patient");
+        console.error('Patient load error:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadPatient();
+  }, [patientId]);
 
   if (loading) {
-    return <p className="text-center py-8 text-lg text-gray-700">Loading patient…</p>;
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Header />
+        <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-center h-64">
+            <div className="text-center">
+              <div className="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+              <p className="text-gray-900 font-medium">Loading patient details...</p>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
   }
-  if (!patient) {
-    return <p className="text-center py-8 text-lg text-red-600">Patient not found.</p>;
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Header />
+        <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+          <div className="bg-red-50 border border-red-200 rounded-md p-6">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <span className="text-red-400 text-2xl">⚠️</span>
+              </div>
+              <div className="ml-3">
+                <h3 className="text-lg font-medium text-red-800">Error Loading Patient</h3>
+                <div className="mt-2 text-sm text-red-700">
+                  <p>{error}</p>
+                </div>
+                <div className="mt-4">
+                  <Link href="/patients">
+                    <button className="bg-red-100 text-red-800 px-4 py-2 rounded-md hover:bg-red-200 transition-colors font-semibold">
+                      ← Back to Patients
+                    </button>
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
   }
 
   return (
-    <section className="max-w-6xl mx-auto py-8 space-y-8">
-      <div className="flex items-center justify-between">
-        <button
-          onClick={() => router.push("/patients")}
-          className="text-blue-600 hover:text-blue-800 font-medium"
-        >
-          ← Back to patients
-        </button>
-        <h1 className="text-2xl font-bold text-white-900">
-          Patient: {patient.name}
-        </h1>
-      </div>
+    <div className="min-h-screen bg-gray-50">
+      <Header />
+      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        <div className="px-4 py-6 sm:px-0">
+          {/* Breadcrumb */}
+          <nav className="flex mb-6" aria-label="Breadcrumb">
+            <ol className="flex items-center space-x-4">
+              <li>
+                <Link href="/patients" className="text-blue-600 hover:text-blue-800 font-medium">
+                  Patients
+                </Link>
+              </li>
+              <li>
+                <span className="text-gray-400">/</span>
+              </li>
+              <li>
+                <span className="text-gray-900 font-medium">{patient?.name}</span>
+              </li>
+            </ol>
+          </nav>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Sidebar */}
-        <aside className="space-y-8">
-          {/* Demographics */}
-          <div className="bg-blue-50 p-6 rounded-xl shadow">
-            <h2 className="text-xl font-semibold text-blue-600 mb-4">Demographics</h2>
-            <ul className="space-y-2 text-gray-900">
-              <li><span className="font-medium">Name:</span> {patient.name}</li>
-              <li><span className="font-medium">Age:</span> {patient.age}</li>
-              <li><span className="font-medium">Sex:</span> {patient.sex}</li>
-              <li><span className="font-medium">Unit:</span> {patient.care_unit}</li>
-            </ul>
-          </div>
-
-          {/* Vitals */}
-          <div className="bg-white p-6 rounded-xl shadow border-l-4 border-green-500">
-            <h2 className="text-lg font-semibold text-green-600 mb-4">Vitals</h2>
-            <dl className="grid grid-cols-1 gap-y-2 text-gray-800">
-              {Object.entries(patient.vitals).map(([code, raw]) => {
-                const parts = raw.split(/\s+/);
-                const num = parseFloat(parts[0]);
-                const displayValue = isNaN(num) ? raw : num.toFixed(2);
-                const displayUnit = isNaN(num) ? "" : parts.slice(1).join(" ");
-                return (
-                  <div key={code} className="flex justify-between">
-                    <dt className="font-medium">{code}</dt>
-                    <dd className="text-right">
-                      {displayValue}
-                      {displayUnit && <> {displayUnit}</>}
-                    </dd>
+          {/* Patient Header */}
+          <div className="bg-white shadow rounded-lg mb-6">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <div className="h-12 w-12 bg-blue-100 rounded-full flex items-center justify-center">
+                    <span className="text-blue-600 font-bold text-lg">
+                      {patient?.name.split(' ').map(n => n[0]).join('').substring(0, 2)}
+                    </span>
                   </div>
-                );
-              })}
-            </dl>
-          </div>
-
-          {/* Laboratory */}
-          <div className="bg-white p-6 rounded-xl shadow border-l-4 border-purple-500">
-            <h2 className="text-lg font-semibold text-purple-600 mb-4">Laboratory</h2>
-            <dl className="grid grid-cols-1 gap-y-2 text-gray-800">
-              {Object.entries(patient.labs).map(([code, raw]) => {
-                const parts = raw.split(/\s+/);
-                const num = parseFloat(parts[0]);
-                const displayValue = isNaN(num) ? raw : num.toFixed(2);
-                const displayUnit = isNaN(num) ? "" : parts.slice(1).join(" ");
-                return (
-                  <div key={code} className="flex justify-between">
-                    <dt className="font-medium">{code}</dt>
-                    <dd className="text-right">
-                      {displayValue}
-                      {displayUnit && <> {displayUnit}</>}
-                    </dd>
+                  <div className="ml-4">
+                    <h1 className="text-2xl font-bold text-gray-900">{patient?.name}</h1>
+                    <p className="text-gray-700 font-medium">Patient ID: {patient?.id}</p>
                   </div>
-                );
-              })}
-            </dl>
+                </div>
+                <div className="text-right">
+                  <Badge variant="success" className="text-sm px-3 py-1">
+                    ✅ Active
+                  </Badge>
+                </div>
+              </div>
+            </div>
+            
+            {/* Patient Info Grid */}
+            <div className="px-6 py-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900 mb-2">Demographics</h3>
+                  <div className="space-y-1">
+                    <p className="text-sm text-gray-900 font-medium">Age: {patient?.age} years</p>
+                    <p className="text-sm text-gray-900 font-medium">Sex: {patient?.sex}</p>
+                    <p className="text-sm text-gray-900 font-medium">Unit: {patient?.care_unit}</p>
+                  </div>
+                </div>
+                
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900 mb-2">Vital Signs</h3>
+                  <div className="space-y-1">
+                    {patient?.vitals && Object.keys(patient.vitals).length > 0 ? (
+                      Object.entries(patient.vitals).map(([key, value]) => (
+                        <p key={key} className="text-sm text-gray-900 font-medium">
+                          {key}: <Badge variant="outline" className="ml-1">{value}</Badge>
+                        </p>
+                      ))
+                    ) : (
+                      <p className="text-sm text-gray-600 font-medium">No vitals recorded</p>
+                    )}
+                  </div>
+                </div>
+                
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900 mb-2">Lab Results</h3>
+                  <div className="space-y-1">
+                    {patient?.labs && Object.keys(patient.labs).length > 0 ? (
+                      Object.entries(patient.labs).map(([key, value]) => (
+                        <p key={key} className="text-sm text-gray-900 font-medium">
+                          {key}: <Badge variant="secondary" className="ml-1">{value}</Badge>
+                        </p>
+                      ))
+                    ) : (
+                      <p className="text-sm text-gray-600 font-medium">No lab results</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-        </aside>
 
-        {/* Main chat/diagnose */}
-        <main className="lg:col-span-2 bg-white rounded-xl shadow flex flex-col p-6 h-[700px]">
-          <div className="flex items-center justify-between mb-6">
-            <h1 className="text-2xl font-semibold text-gray-900">
-              {mode === "chat" ? "Chat with OptiMed" : "Diagnosis Assistant"}
-            </h1>
-            <label className="inline-flex items-center space-x-3">
-              <span className={mode === "chat" ? "text-blue-600" : "text-gray-500"}>Chat</span>
-              <input
-                type="checkbox"
-                checked={mode === "diagnose"}
-                onChange={() => setMode((m) => (m === "chat" ? "diagnose" : "chat"))}
-                className="relative inline-block w-12 h-6 bg-gray-300 rounded-full transition-colors checked:bg-blue-600"
-              />
-              <span className={mode === "diagnose" ? "text-blue-600" : "text-gray-500"}>
-                Diagnose
-              </span>
-            </label>
+          {/* AI Diagnosis Chat Section */}
+          <div className="bg-white shadow rounded-lg">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">AI Diagnostic Assistant</h2>
+                  <p className="text-sm text-gray-700 font-medium">Have a continuous conversation about this patient's diagnosis</p>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Badge variant="default" className="px-3 py-1">
+                    🤖 AI Assistant
+                  </Badge>
+                  <Badge variant="outline" className="px-3 py-1">
+                    👨‍⚕️ {user?.display_name}
+                  </Badge>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-6">
+              <div className="h-[600px]">
+                <ChatBox mode="diagnose" patientId={patientId} />
+              </div>
+            </div>
           </div>
-          <ChatBox mode={mode} patientId={patient.id} />
-        </main>
-      </div>
-    </section>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+export default function PatientDetailPage() {
+  return (
+    <ProtectedRoute>
+      <PatientDetailContent />
+    </ProtectedRoute>
   );
 }

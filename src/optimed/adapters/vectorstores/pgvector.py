@@ -107,28 +107,65 @@ class PGVectorAdapter(VectorStore):
                 embedding_ids
             )
 
-    async def get_chat_history(self, patient_id: str, limit: int = 20) -> list[dict[str, Any]]:
-        query = """
+    async def get_chat_history(self, patient_id: str, session_id: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        """Get chat history, optionally filtered by session."""
+
+        # Build the base query
+        where_conditions = [
+            "metadata->>'patient_id' = $1",
+            "metadata->>'namespace' = 'chat_history'"
+        ]
+        params = [patient_id]
+        
+        # Add session filter if provided
+        if session_id:
+            where_conditions.append(f"metadata->>'session_id' = ${len(params) + 1}")
+            params.append(session_id)
+        
+        where_clause = " AND ".join(where_conditions)
+        
+        query = f"""
             SELECT content, metadata
             FROM embeddings 
-            WHERE metadata->>'patient_id' = $1 
-            AND metadata->>'namespace' = 'chat_history'
-            ORDER BY metadata->>'timestamp' DESC
-            LIMIT $2
+            WHERE {where_clause}
+            ORDER BY 
+                CASE WHEN metadata->>'timestamp' ~ '^[0-9]+$' 
+                    THEN (metadata->>'timestamp')::bigint 
+                    ELSE 0 
+                END ASC
+            LIMIT {limit}
         """
+        
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch(query, patient_id, limit)
+            rows = await conn.fetch(query, *params)
 
         result = []
         for row in rows:
             try:
-                # Parse metadata if it's a JSON string
-                metadata = json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
+                # Parse content
+                raw_content = row["content"]
+                
+                if isinstance(raw_content, str):
+                    try:
+                        content_data = json.loads(raw_content)
+                    except json.JSONDecodeError as e:
+                        print(f"[DEBUG] JSON decode error: {e}")
+                        content_data = {"content": raw_content, "role": "user"}
+                else:
+                    content_data = raw_content
+                
+                # Extract the actual message content and role
+                message_content = content_data.get("content", "")
+                message_role = content_data.get("role", "user")
+                
                 result.append({
-                    "content": row["content"], 
-                    "metadata": metadata
+                    "content": message_content,
+                    "role": message_role,
+                    "timestamp": content_data.get("timestamp", ""),
+                    "metadata": json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
                 })
+                
             except Exception as e:
                 print(f"Error parsing row in get_chat_history: {e}")
                 continue

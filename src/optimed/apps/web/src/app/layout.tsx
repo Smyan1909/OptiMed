@@ -1,39 +1,26 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import Navbar from "@/components/Navbar";
-
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
+import { UserProvider } from "@/contexts/UserContext";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "OptiMed",
-  description: "AI-driven patient diagnosis and treatment recommendations",
+  title: "OptiMed - AI Medical Diagnostic Assistant",
+  description: "Advanced AI-powered medical diagnostic system",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
-      <body className={`${inter.className} min-h-screen flex flex-col bg-gray-50 text-gray-800`}>
-        <Navbar />
-        <main className="flex-1 container mx-auto px-4 py-8">
+      <body className={inter.className}>
+        <UserProvider>
           {children}
-        </main>
-        <footer className="text-center py-4 text-sm text-gray-500">
-          © {new Date().getFullYear()} OptiMed
-        </footer>
+        </UserProvider>
       </body>
     </html>
   );
