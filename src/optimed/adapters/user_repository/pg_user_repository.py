@@ -287,6 +287,4 @@ class PGUserRepository(UserRepository):
             resource_id=row['resource_id'],
             description=row['description'],
             metadata=row['metadata'] if row['metadata'] else {},
-            created_at=row['created_at'],
-            updated_at=row['updated_at']
         )

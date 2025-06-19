@@ -88,8 +88,8 @@ class VectorStore(Protocol):
     async def delete(self, embedding_ids: Sequence[str]) -> None:
         """Delete an embedding vector by ID."""
         ...
-    
-    async def get_chat_history(self, patient_id: str, limit: int = 20) -> list[dict[str, Any]]:
+
+    async def get_chat_history(self, patient_id: str, session_id: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
         """Get chat history for a patient."""
         ...
 
@@ -110,7 +110,7 @@ class VectorStore(Protocol):
 class DiagnosticEngine(Protocol):
     """Pure-domain service used by LangGraph; orchestrates everything."""
 
-    async def run(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False) -> Union[DiagnosisResult,  dict]:
+    async def run(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, user_id: str | None = None, session_id: str | None = None) -> Union[DiagnosisResult,  dict]:
         """Return the top diagnosis (v0) or ranked list (v1)."""
         ...
 

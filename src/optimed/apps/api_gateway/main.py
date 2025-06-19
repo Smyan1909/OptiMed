@@ -30,11 +30,11 @@ class PatientOut(BaseModel):
     labs:   Dict[str, str]
 
 class UserOut(BaseModel):
-    user_id: str
+    user_id: str 
     username: str
     email: str
-    first_name: str
-    last_name: str
+    first_name: str | None
+    last_name: str | None
     role: str
     status: str
     department: str | None
@@ -54,7 +54,7 @@ class LoginResponse(BaseModel):
 
 async def get_current_user(
     x_session_id: str = Header(None, alias="X-Session-ID")
-) -> Optional[UserOut]:
+) -> Optional[User]:
     
     if not x_session_id:
         return None
