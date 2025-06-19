@@ -2,6 +2,7 @@ from .clinical import PatientContext, BedState, Encounter
 from .diagnosis import DiagnosisResult
 from .info import InfoEvent, Notification, CommThread, ChatMessage
 from .kpi import KPIEvent, Alert
+from .users import User, UserAction, UserSession
 from .enums import (
     BedStatus,
     EncounterStatus,
@@ -10,6 +11,8 @@ from .enums import (
     NotificationStatus,
     Severity,
     ChatRole,
+    UserRole,
+    UserStatus,
 )
 
 """OptiMed domain entities (v0).
@@ -42,4 +45,10 @@ __all__ = [
     "ChatRole",
     # diagnosis
     "DiagnosisResult",
+    # users
+    "User",
+    "UserAction",
+    "UserSession",
+    "UserRole",
+    "UserStatus",
 ]

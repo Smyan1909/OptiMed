@@ -4,7 +4,7 @@ from typing import Dict, List, Optional
 
 from pydantic import Field
 
-from .enums import Channel, EventType, NotificationStatus, ChatRole
+from .enums import Channel, EventType, NotificationStatus, ChatRole, UserRole
 from .mixins import FrozenModel
 
 class InfoEvent(FrozenModel):
@@ -52,5 +52,12 @@ class CommThread(FrozenModel):
 class ChatMessage(FrozenModel):
     role: ChatRole
     content: str
+    user_id: Optional[str] = None  # User ID of the sender
+    user_role: Optional[UserRole] = None  # Role of the user (e.g., doctor, nurse)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: Dict[str, str] = Field(default_factory=dict)
+
+    @property
+    def is_from_staff(self) -> bool:
+        """Check if the message is from a staff member (doctor, nurse, etc.)."""
+        return self.user_id is not None and self.user_role is not None

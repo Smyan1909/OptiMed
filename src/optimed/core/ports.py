@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import AsyncGenerator, Protocol, Sequence, Any, Union
+from typing import AsyncGenerator, Protocol, Sequence, Any, Union, Optional
 
-from optimed.core.domain import PatientContext, KPIEvent, ChatMessage, DiagnosisResult
+from optimed.core.domain import PatientContext, KPIEvent, ChatMessage, DiagnosisResult, User, UserSession, UserAction
 
 # core/ports.py
 #
@@ -88,8 +88,8 @@ class VectorStore(Protocol):
     async def delete(self, embedding_ids: Sequence[str]) -> None:
         """Delete an embedding vector by ID."""
         ...
-    
-    async def get_chat_history(self, patient_id: str, limit: int = 20) -> list[dict[str, Any]]:
+
+    async def get_chat_history(self, patient_id: str, session_id: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
         """Get chat history for a patient."""
         ...
 
@@ -110,10 +110,62 @@ class VectorStore(Protocol):
 class DiagnosticEngine(Protocol):
     """Pure-domain service used by LangGraph; orchestrates everything."""
 
-    async def run(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False) -> Union[DiagnosisResult,  dict]:
+    async def run(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, user_id: str | None = None, session_id: str | None = None) -> Union[DiagnosisResult,  dict]:
         """Return the top diagnosis (v0) or ranked list (v1)."""
         ...
 
     def run_stream(self, patient: PatientContext, user_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Run the diagnostic engine with streaming support."""
+        ...
+
+    @property
+    def vector_store(self) -> VectorStore:
+        """Access to the underlying vector store."""
+        ...
+
+class UserRepository(Protocol):
+    """User management and session handling."""
+
+    async def get_user_by_id(self, user_id: str) -> Optional[User]:
+        """Get user by ID."""
+        ...
+
+    async def get_user_by_username(self, username: str) -> Optional[User]:
+        """Get user by username."""
+        ...
+
+    async def get_user_by_email(self, email: str) -> Optional[User]:
+        """Get user by email."""
+        ...
+
+    async def create_user(self, user: User) -> User:
+        """Create a new user."""
+        ...
+    
+    async def update_user(self, user: User) -> User:
+        """Update an existing user."""
+        ... 
+
+    async def delete_user(self, user_id: str) -> None:
+        """Delete a user by ID."""
+        ...
+    
+    async def list_users_by_role(self, role: str) -> Sequence[User]:
+        """List users by role."""
+        ...
+
+    async def create_session(self, session: UserSession) -> UserSession:
+        """Create a new user session."""
+        ...
+
+    async def update_session_activity(self, session_id: str) -> None:
+        """Update the last activity timestamp of a user session."""
+        ...
+
+    async def get_active_session(self, session_id: str) -> Optional[UserSession]:
+        """Get an active user session by ID."""
+        ...
+    
+    async def log_action(self, action: UserAction) -> UserAction:
+        """Log a user action."""
         ...

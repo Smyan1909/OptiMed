@@ -1,10 +1,13 @@
 "use client";
-import { useState, FormEvent, useEffect } from "react";
+
+import { useState, useEffect, FormEvent } from "react";
+import { useUser } from '@/contexts/UserContext';
 
 interface Message {
   sender: "user" | "system";
   text: string;
   loading?: boolean;
+  timestamp?: string;
 }
 
 interface ChatBoxProps {
@@ -13,134 +16,234 @@ interface ChatBoxProps {
 }
 
 export default function ChatBox({ mode, patientId }: ChatBoxProps) {
-  const [chatHistory, setChatHistory] = useState<Message[]>([]);
-  const [diagnoseHistory, setDiagnoseHistory] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  
+  // FIX: Create persistent session ID per patient/mode combination
+  const [sessionId] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const key = `chat_session_${mode}_${patientId || 'general'}`;
+      let existing = localStorage.getItem(key);
+      if (!existing) {
+        existing = `${mode}_${patientId || 'general'}_${Date.now()}`;
+        localStorage.setItem(key, existing);
+      }
+      return existing;
+    }
+    return `${mode}_${patientId || 'general'}_${Date.now()}`;
+  });
+  
+  const { user } = useUser();
 
-  // Use different history based on mode
-  const messages = mode === "chat" ? chatHistory : diagnoseHistory;
-  const setMessages = mode === "chat" ? setChatHistory : setDiagnoseHistory;
-
-  // Clear histories when patient changes
+  // Load chat history on component mount
   useEffect(() => {
-    setChatHistory([]);
-    setDiagnoseHistory([]);
-  }, [patientId]);
+    const loadHistory = async () => {
+      try {
+        console.log(`Loading history for session: ${sessionId}, patient: ${patientId}`);
+        
+        const response = await fetch('/api/chat-history', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ 
+            patient_id: patientId,
+            session_id: sessionId,
+            mode: mode
+          })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('Loaded chat history:', data);
+          
+          if (data.messages && data.messages.length > 0) {
+            const formattedMessages = data.messages.map((msg: any) => ({
+              sender: msg.role === 'user' ? 'user' : 'system',
+              text: msg.content,
+              timestamp: new Date(msg.timestamp || Date.now()).toLocaleTimeString()
+            }));
+            setMessages(formattedMessages);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load conversation history:', error);
+      }
+    };
+
+    // Only load if we have a patient ID for diagnosis mode or if it's general chat
+    if ((mode === 'diagnose' && patientId) || mode === 'chat') {
+      loadHistory();
+    }
+  }, [sessionId, patientId, mode]);
+
+  // Clear messages when patient changes (but not on initial load)
+  useEffect(() => {
+    if (patientId) {
+      // Only clear if we're switching patients, not on initial load
+      const key = `chat_session_${mode}_${patientId}`;
+      if (!localStorage.getItem(key)) {
+        setMessages([]);
+      }
+    }
+  }, [patientId, mode]);
+
+  // Add welcome message when starting diagnosis mode (only if no history)
+  useEffect(() => {
+    if (mode === "diagnose" && patientId && messages.length === 0) {
+      setMessages([{
+        sender: "system",
+        text: `Hello! I'm OptiMed AI, ready to help with patient ${patientId}'s diagnosis. Ask me anything about their condition, symptoms, or potential treatments. What would you like to discuss?`,
+        timestamp: new Date().toLocaleTimeString()
+      }]);
+    }
+  }, [mode, patientId, messages.length]);
 
   const sendMessage = async (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
 
     const userText = input.trim();
-    // 1) show user message
-    setMessages((prev) => [...prev, { sender: "user", text: userText }]);
+    const timestamp = new Date().toLocaleTimeString();
+    
+    // 1) Add user message
+    setMessages((prev) => [
+      ...prev, 
+      { sender: "user", text: userText, timestamp }
+    ]);
     setInput("");
 
-    // 2) show thinking placeholder
+    // 2) Add thinking placeholder
     setMessages((prev) => [
       ...prev,
-      { sender: "system", text: "OptiMed is thinking...", loading: true },
+      { sender: "system", text: "OptiMed is thinking...", loading: true, timestamp },
     ]);
     
     try {
-      // 3) call appropriate backend endpoint
+      // 3) Call appropriate backend endpoint
       const endpoint = mode === "chat" ? "/api/chat" : "/api/diagnose";
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-            patient_id: patientId ?? null,
-            user_prompt: userText,
-            chat_mode: mode === "chat"
-         }),
+          patient_id: patientId ?? null,
+          user_prompt: userText,
+          chat_mode: mode === "chat",
+          user_id: user?.user_id,
+          session_id: sessionId  // Use the consistent session ID
+        }),
       });
+      
       const data = await res.json();
-      console.log(`🏷️  ${endpoint} returned:`, res.status, data);
+      console.log(`🏷️ ${endpoint} returned:`, res.status, data);
       
       // Handle different response formats
       const reply = data.explanation ?? data.message ?? data.response ?? "No reply";
 
-      // 4) replace placeholder with actual reply
+      // 4) Replace placeholder with actual reply
       setMessages((prev) => {
         const withoutLoading = prev.filter((m) => !m.loading);
-        return [...withoutLoading, { sender: "system", text: reply }];
+        return [...withoutLoading, { 
+          sender: "system", 
+          text: reply,
+          timestamp: new Date().toLocaleTimeString()
+        }];
       });
-    } catch {
+    } catch (error) {
+      console.error('Chat error:', error);
       setMessages((prev) => {
         const withoutLoading = prev.filter((m) => !m.loading);
         return [
           ...withoutLoading,
-          { sender: "system", text: "Error contacting server." },
+          { 
+            sender: "system", 
+            text: "Error contacting server. Please try again.",
+            timestamp: new Date().toLocaleTimeString()
+          },
         ];
       });
     }
   };
 
+  const getPlaceholderText = () => {
+    if (mode === "chat") return "Type your message...";
+    if (mode === "diagnose" && patientId) return "Ask about diagnosis, symptoms, treatments...";
+    return "How can I help with the diagnosis?";
+  };
+
+  const getEmptyStateText = () => {
+    if (mode === "chat") return "Start chatting with OptiMed...";
+    if (mode === "diagnose" && patientId) return "AI diagnosis assistant ready for patient consultation";
+    return "Enter patient details to begin diagnosis...";
+  };
+
   return (
-    <div className="flex flex-col h-full border rounded-lg p-4 bg-white">
-      <div className="flex-1 overflow-y-auto mb-4 space-y-2">
+    <div className="flex flex-col h-full border rounded-lg bg-white shadow-sm">
+      {/* Chat Messages Area */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.length === 0 && (
-          <p className="text-gray-400 italic">
-            {mode === "chat"
-              ? "Start chatting with OptiMed..."
-              : "Enter patient details to diagnose..."}
-          </p>
+          <div className="text-center py-8">
+            <div className="text-gray-500 text-lg mb-2">🤖</div>
+            <p className="text-gray-600 font-medium italic">
+              {getEmptyStateText()}
+            </p>
+          </div>
         )}
+        
         {messages.map((msg, idx) => (
-          <div
-            key={idx}
-            className={`flex ${
-              msg.sender === "user" ? "justify-end" : "justify-start"
-            }`}
-          >
-            <div
-              className={`max-w-xs px-3 py-2 rounded-lg ${
-                msg.sender === "user"
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-100 text-gray-800"
-              }`}
-            >
-              {msg.loading ? (
-                <span className="animate-pulse text-gray-500">
-                  {msg.text}
-                </span>
-              ) : (
-                msg.text
+          <div key={idx} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
+            <div className="max-w-[80%]">
+              <div className={`px-4 py-3 rounded-lg ${
+                msg.sender === "user" 
+                  ? "bg-blue-600 text-white" 
+                  : "bg-gray-100 text-gray-900 border"
+              }`}>
+                {msg.loading ? (
+                  <span className="flex items-center">
+                    <div className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full mr-2"></div>
+                    <span className="animate-pulse text-gray-600">{msg.text}</span>
+                  </span>
+                ) : (
+                  <div className="font-medium whitespace-pre-wrap">{msg.text}</div>
+                )}
+              </div>
+              {msg.timestamp && (
+                <div className={`text-xs mt-1 ${
+                  msg.sender === "user" ? "text-right text-gray-500" : "text-left text-gray-500"
+                }`}>
+                  {msg.timestamp}
+                </div>
               )}
             </div>
           </div>
         ))}
       </div>
-      <form onSubmit={sendMessage} className="flex gap-2">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={
-            mode === "chat"
-              ? "Type your message..."
-              : "How do you want help with the diagnoses?"
-          }
-          className="
-            flex-1
-            border border-gray-300
-            bg-gray-50
-            placeholder-gray-400
-            text-gray-900
-            rounded
-            px-3 py-2
-            focus:outline-none
-            focus:ring-2 focus:ring-blue-600
-            focus:border-transparent
-          "
-        />
-        <button
-          type="submit"
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
-        >
-          Send
-        </button>
-      </form>
+
+      {/* Input Form */}
+      <div className="border-t bg-gray-50 p-4">
+        <form onSubmit={sendMessage} className="flex gap-3">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={getPlaceholderText()}
+            className="flex-1 border border-gray-300 bg-white placeholder-gray-500 text-gray-900 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium"
+          />
+          <button
+            type="submit"
+            disabled={!input.trim()}
+            className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Send
+          </button>
+        </form>
+        
+        {mode === "diagnose" && user && (
+          <div className="mt-2 text-xs text-gray-600 text-center">
+            Consulting as <span className="font-semibold">{user.display_name}</span> ({user.role})
+          </div>
+        )}
+      </div>
     </div>
   );
 }
