@@ -456,5 +456,10 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             "created_by_user_id": data.get("user_id"),  # Use user_id from state if available
             "is_ai_generated": True,  # Always true for LangGraph engine
         }
+    
+    @property
+    def vector_store(self) -> VectorStore:
+        """Access to the underlying vector store."""
+        return self._vec
 
     

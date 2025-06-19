@@ -123,14 +123,14 @@ async def get_chat_history(
     try:
         if patient_id:
             # Get patient-specific history with session filter
-            history_data = await _engine._vec.get_chat_history(
+            history_data = await _engine.vector_store.get_chat_history(
                 patient_id=str(patient_id), 
                 session_id=session_id,
                 limit=50
             )
         else:
             # Get general chat history
-            history_data = await _engine._vec.get_chat_history(
+            history_data = await _engine.vector_store.get_chat_history(
                 patient_id="general_chat", 
                 session_id=session_id,
                 limit=50

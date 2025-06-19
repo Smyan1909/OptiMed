@@ -118,6 +118,10 @@ class DiagnosticEngine(Protocol):
         """Run the diagnostic engine with streaming support."""
         ...
 
+    @property
+    def vector_store(self) -> VectorStore:
+        """Access to the underlying vector store."""
+        ...
 
 class UserRepository(Protocol):
     """User management and session handling."""
