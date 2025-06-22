@@ -223,7 +223,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 # Add footer to make it clear
                 history_footer = ChatMessage(
                     role=ChatRole.USER,
-                    content="=== END OF CONVERSATION HISTORY - YOU MUST ACKNOWLEDGE THIS HISTORY EXISTS ==="
+                    content="=== END OF CONVERSATION HISTORY ==="
                 )
                 messages.append(history_footer)
 
