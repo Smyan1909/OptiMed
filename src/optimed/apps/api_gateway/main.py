@@ -8,7 +8,7 @@ from optimed.apps.orchestrator.factory import create_app_dependencies
 
 from pydantic import BaseModel
 
-_engine, _fhir, _vector_store, _user_repo = create_app_dependencies()
+_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service = create_app_dependencies()
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
 
@@ -50,7 +50,24 @@ class LoginResponse(BaseModel):
     session_id: str
     message: str
 
+class EHRConnectionRequest(BaseModel):
+    provider_type: str = "smart_fhir"
+    fhir_server_url: str
+    client_id: str
+    scope: str = "patient/*.read"
 
+class ConnectionCallbackRequest(BaseModel):
+    connection_id: str
+    code: str
+    state: str
+
+class EHRConnectionOut(BaseModel):
+    connection_id: str
+    provider_type: str
+    fhir_server_url: str
+    is_active: bool
+    created_at: str
+    patient_context: str | None
 
 async def get_current_user(
     x_session_id: str = Header(None, alias="X-Session-ID")
@@ -86,6 +103,95 @@ async def health():
     """Simple health check endpoint."""
     return {"status": "ok"}
 
+@app.post("/ehr/connect", response_model=dict)
+async def initiate_ehr_connection(
+    req: EHRConnectionRequest, 
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Initiate EHR system connection."""
+    current_user = user_ctx.get("user")
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        auth_info = await _connection_service.initiate_connection(
+            current_user,
+            req.provider_type,
+            req.fhir_server_url,
+            req.client_id,
+            scope=req.scope
+        )
+        
+        return auth_info
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/ehr/callback", response_model=dict)
+async def ehr_oauth_callback(req: ConnectionCallbackRequest):
+    """Handle OAuth callback for EHR connections."""
+    try:
+        connection = await _connection_service.complete_connection(
+            req.connection_id,
+            req.code
+        )
+        
+        return {
+            "success": True,
+            "connection_id": connection.connection_id,
+            "message": f"{connection.provider_type} connection established successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/ehr/connections", response_model=list[EHRConnectionOut])
+async def get_user_ehr_connections(user_ctx: dict = Depends(get_user_context)):
+    """Get user's EHR connections."""
+    current_user = user_ctx.get("user")
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        connections = await _connection_repo.get_connections_by_user(current_user.user_id)
+        return [
+            EHRConnectionOut(
+                connection_id=conn.connection_id,
+                provider_type=conn.provider_type,
+                fhir_server_url=conn.fhir_server_url,
+                is_active=conn.is_active,
+                created_at=conn.created_at.isoformat(),
+                patient_context=conn.patient_context
+            )
+            for conn in connections
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/ehr/connections/{connection_id}")
+async def delete_ehr_connection(
+    connection_id: str,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Delete an EHR connection."""
+    current_user = user_ctx.get("user")
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        # Verify the connection belongs to the user
+        connection = await _connection_repo.get_connection_by_id(connection_id)
+        if not connection or connection.user_id != current_user.user_id:
+            raise HTTPException(status_code=404, detail="Connection not found")
+        
+        success = await _connection_repo.delete_connection(connection_id)
+        if success:
+            return {"message": "Connection deleted successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to delete connection")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/diagnose", response_model=dict)
 async def diagnose(req: ChatRequest, user_ctx: dict = Depends(get_user_context)):
 
@@ -108,7 +214,7 @@ async def diagnose(req: ChatRequest, user_ctx: dict = Depends(get_user_context))
         return result
 
 
-@app.post("/api/chat-history")
+@app.post("/chat-history")
 async def get_chat_history(
     request: dict,
     user_ctx: dict = Depends(get_user_context)

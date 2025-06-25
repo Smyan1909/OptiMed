@@ -2,7 +2,7 @@ from .clinical import PatientContext, BedState, Encounter
 from .diagnosis import DiagnosisResult
 from .info import InfoEvent, Notification, CommThread, ChatMessage
 from .kpi import KPIEvent, Alert
-from .users import User, UserAction, UserSession
+from .users import User, UserAction, UserSession, UserEHRConnection
 from .enums import (
     BedStatus,
     EncounterStatus,
@@ -51,4 +51,5 @@ __all__ = [
     "UserSession",
     "UserRole",
     "UserStatus",
+    "UserEHRConnection",
 ]

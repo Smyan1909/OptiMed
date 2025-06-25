@@ -8,8 +8,8 @@ import httpx
 from fhir.resources.patient import Patient  # type: ignore[import-untyped]
 from fhir.resources.observation import Observation  # type: ignore[import-untyped]
 
-from optimed.core.domain import PatientContext
-from optimed.core.ports import FHIRRepository
+from optimed.core.domain import PatientContext, UserEHRConnection
+from optimed.core.ports import FHIRRepository, AuthenticatedFHIRRepository, AuthenticationProvider
 
 """
 optimed.adapters.smart_fhir.repository
@@ -77,50 +77,77 @@ def _to_patient_ctx(
         labs=labs_dict,
     )
 
-class SMARTFHIRRepository(FHIRRepository):
+class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
     """SMART on FHIR repository implementation with OAuth2 support."""
 
     def __init__(
             self,
-            *,
-            base_url: str,
-            client_id: str,
-            client_secret: Optional[str] = None,
-            scope: str = "patient/*.read",
-            token_url: Optional[str] = None,
-            redirect_uri: str = "http://localhost:8000/callback",
+            connection: UserEHRConnection,
+            auth_provider: Optional[AuthenticationProvider] = None,
             timeout: float = 10.0,
     ) -> None:
-                """Initialize the SMART on FHIR repository.
+        """Initialize the SMART on FHIR repository with a UserEHRConnection."""
+        if connection.provider_type != "smart_fhir":
+            raise ValueError(f"Expected smart_fhir connection, got {connection.provider_type}")
         
-                Args:
-                    base_url: Base URL of the FHIR server
-                    client_id: OAuth client ID
-                    client_secret: OAuth client secret (if using confidential client)
-                    scope: OAuth scope(s)
-                    token_url: OAuth token endpoint URL (if different from base_url/token)
-                    redirect_uri: OAuth redirect URI
-                    timeout: HTTP timeout
-                """
-                self._base = base_url.rstrip("/")
-                self._client_id = client_id
-                self._client_secret = client_secret
-                self._scope = scope
-                self._token_url = token_url or f"{self._base}/token"
-                self._redirect_uri = redirect_uri
-                self._timeout = timeout
-                
-                # Initialize without token - will be set after authentication
-                self._client = httpx.AsyncClient(
-                    base_url=self._base, 
-                    timeout=self._timeout,
-                    headers={"User-Agent": "OptiMed-SMART/0.1"}
-                )
-                
-                # Token management
-                self._access_token = None
-                self._refresh_token = None
-                self._token_expiry = None
+        self._connection = connection
+        self._auth_provider = auth_provider
+        self._base = connection.fhir_server_url.rstrip("/")
+        self._timeout = timeout
+        
+        # Extract credentials from UserEHRConnection
+        self._access_token = connection.access_token
+        self._refresh_token = connection.refresh_token
+        self._token_expiry = connection.token_expires_at
+        
+        # Initialize client
+        headers = {"User-Agent": "OptiMed-SMART/0.1"}
+        if self._access_token:
+            headers["Authorization"] = f"Bearer {self._access_token}"
+        
+        self._client = httpx.AsyncClient(
+            base_url=self._base, 
+            timeout=self._timeout,
+            headers=headers
+        )    @staticmethod
+    def from_connection(
+        connection: UserEHRConnection,
+        auth_provider: Optional[AuthenticationProvider] = None,
+        **kwargs: Any
+    ) -> 'SMARTFHIRRepository':
+        """Create repository instance from UserEHRConnection."""
+        return SMARTFHIRRepository(connection, auth_provider, **kwargs)
+
+    async def is_authenticated(self) -> bool:
+        """Check if the repository is properly authenticated."""
+        if not self._access_token:
+            return False
+        
+        if self._auth_provider:
+            result = await self._auth_provider.validate_token(self._access_token)
+            return result.get("valid", False)
+        
+        return True
+
+    async def refresh_authentication(self) -> bool:
+        """Refresh authentication if possible."""
+        if not self._refresh_token or not self._auth_provider:
+            return False
+        
+        try:
+            new_credentials = await self._auth_provider.refresh_token(self._refresh_token)
+            
+            # Update internal state
+            self._access_token = new_credentials["access_token"]
+            self._refresh_token = new_credentials.get("refresh_token", self._refresh_token)
+            
+            if new_credentials.get("expires_in"):
+                self._token_expiry = datetime.now(timezone.utc) + timedelta(seconds=new_credentials["expires_in"])
+            
+            self._client.headers["Authorization"] = f"Bearer {self._access_token}"
+            return True
+        except Exception:
+            return False
 
     async def authenticate(self, code: str) -> Dict[str, Any]:
         """Authenticate using the provided authorization code."""
@@ -166,26 +193,14 @@ class SMARTFHIRRepository(FHIRRepository):
         if not self._access_token:
             raise ValueError("Access token is not set. Please authenticate first.")
         
-        if self._token_expiry and datetime.now(timezone.utc) >= self._token_expiry and self._refresh_token:
-
-            data = {
-                "grant_type": "refresh_token",
-                "refresh_token": self._refresh_token,
-                "client_id": self._client_id,
-            }
-            if self._client_secret:
-                data["client_secret"] = self._client_secret
-
-            async with httpx.AsyncClient(timeout=self._timeout) as auth_client:
-                response = await auth_client.post(self._token_url, data=data)
-                response.raise_for_status()
-                token_data = response.json()
-
-                self._access_token = token_data["access_token"]
-                expires_in = token_data.get("expires_in", 3600)
-                self._token_expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
-
-                self._client.headers["Authorization"] = f"Bearer {self._access_token}"
+        # Check if token is expired and needs refresh
+        if (self._token_expiry and 
+            datetime.now(timezone.utc) >= self._token_expiry and 
+            self._refresh_token):
+            
+            success = await self.refresh_authentication()
+            if not success:
+                raise ValueError("Failed to refresh authentication")
 
     async def get_patient(self, patient_id: str) -> PatientContext:
         """Get patient context by ID."""
