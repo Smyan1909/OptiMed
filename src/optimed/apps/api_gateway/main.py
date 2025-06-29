@@ -1,9 +1,11 @@
 from __future__ import annotations 
 import asyncio
+import uuid
+from datetime import datetime, timezone
 from typing import AsyncGenerator, Dict, Optional
 from fastapi import FastAPI, HTTPException, Query, Path, Header, Depends # type: ignore
 from fastapi.responses import StreamingResponse
-from optimed.core.domain import PatientContext, User
+from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection
 from optimed.apps.orchestrator.factory import create_app_dependencies
 
 from pydantic import BaseModel
@@ -69,6 +71,16 @@ class EHRConnectionOut(BaseModel):
     created_at: str
     patient_context: str | None
 
+class EHRLoginRequest(BaseModel):
+    fhir_server_url: str
+    client_id: str
+    scope: str = "user/*.cruds"
+
+class EHRLoginResponse(BaseModel):
+    authorization_url: str
+    connection_id: str
+    state: str
+
 async def get_current_user(
     x_session_id: str = Header(None, alias="X-Session-ID")
 ) -> Optional[User]:
@@ -103,6 +115,176 @@ async def health():
     """Simple health check endpoint."""
     return {"status": "ok"}
 
+@app.post("/auth/ehr-login", response_model=EHRLoginResponse)
+async def initiate_ehr_login(req: EHRLoginRequest):
+    """Initiate EHR-based login flow."""
+    try:
+        # Create a temporary user for the EHR login flow
+        
+        temp_user_id = f"ehr_temp_{uuid.uuid4()}"
+        temp_user = User(
+            user_id=temp_user_id,
+            username="ehr_user",
+            email="",
+            first_name="EHR",
+            last_name="User",
+            role="doctor",  # Default role for EHR users
+            status="pending",  # Will be activated after successful auth
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
+        )
+        
+        # Store temporary user
+        await _user_repo.create_user(temp_user)
+        
+        # Initiate connection
+        auth_info = await _connection_service.initiate_connection(
+            temp_user,
+            "smart_fhir",
+            req.fhir_server_url,
+            req.client_id,
+            scope=req.scope
+        )
+        
+        return EHRLoginResponse(
+            authorization_url=auth_info["authorization_url"],
+            connection_id=auth_info["connection_id"],
+            state=auth_info["state"]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/auth/ehr-callback", response_model=LoginResponse)
+async def complete_ehr_login(req: ConnectionCallbackRequest):
+    """Complete EHR-based login and create/update user."""
+    try:
+        # Complete the connection
+        connection = await _connection_service.complete_connection(
+            req.connection_id,
+            req.code
+        )
+        
+        # Get user info from the connection
+        temp_user = await _user_repo.get_user_by_id(connection.user_id)
+        if not temp_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Try to get user info from FHIR server
+        fhir_repo = await _connection_service.create_fhir_repository(
+            connection.user_id, 
+            "smart_fhir"
+        )
+        
+        user_info = None
+        if fhir_repo and hasattr(fhir_repo, '_client'):
+            try:
+                # Try to get user info from FHIR server
+                response = await fhir_repo._client.get("/Practitioner")
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("entry") and len(data["entry"]) > 0:
+                        practitioner = data["entry"][0]["resource"]
+                        user_info = {
+                            "name": practitioner.get("name", [{}])[0],
+                            "telecom": practitioner.get("telecom", [])
+                        }
+            except Exception as e:
+                print(f"Could not fetch user info from FHIR: {e}")
+        
+        # Check if a user with this EHR connection already exists
+        existing_connections = await _connection_repo.get_connections_by_user(
+            temp_user.user_id, "smart_fhir"
+        )
+        
+        # Look for an existing active user with the same FHIR server and client
+        existing_user = None
+        for conn in existing_connections:
+            if (conn.fhir_server_url == connection.fhir_server_url and 
+                conn.client_id == connection.client_id and 
+                conn.user_id != temp_user.user_id):
+                try:
+                    existing_user = await _user_repo.get_user_by_id(conn.user_id)
+                    if existing_user and existing_user.status.value == "active":
+                        break
+                except:
+                    continue
+        
+        if existing_user:
+            # Update the existing user's connection
+            updated_connection_data = connection.model_dump()
+            updated_connection_data["user_id"] = existing_user.user_id
+            updated_connection = UserEHRConnection(**updated_connection_data)
+            await _connection_repo.update_connection(updated_connection)
+            
+            # Delete temporary user
+            # Note: You might want to add a delete_user method to your user repository
+            
+            final_user = existing_user
+        else:
+            # Create proper user account from temporary user
+            username = f"ehr_{connection.connection_id[:8]}"
+            email = ""
+            first_name = "EHR"
+            last_name = "User"
+            
+            if user_info:
+                name_info = user_info.get("name", {})
+                if name_info.get("given"):
+                    first_name = " ".join(name_info["given"])
+                if name_info.get("family"):
+                    last_name = name_info["family"]
+                
+                # Try to extract email from telecom
+                for telecom in user_info.get("telecom", []):
+                    if telecom.get("system") == "email":
+                        email = telecom.get("value", "")
+                        break
+            
+            # Update the temporary user to a proper user
+            from datetime import datetime, timezone
+            updated_user = User(
+                **temp_user.model_dump(),
+                username=username,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                status="active",
+                updated_at=datetime.now(timezone.utc)
+            )
+            
+            await _user_repo.update_user(updated_user)
+            final_user = updated_user
+        
+        # Create session        
+        session = UserSession(
+            session_id=str(uuid.uuid4()),
+            user_id=final_user.user_id,
+            login_time=datetime.now(timezone.utc),
+            last_activity=datetime.now(timezone.utc),
+            is_active=True
+        )
+        
+        await _user_repo.create_session(session)
+        
+        return LoginResponse(
+            user=UserOut(
+                user_id=final_user.user_id,
+                username=final_user.username,
+                email=final_user.email,
+                first_name=final_user.first_name,
+                last_name=final_user.last_name,
+                role=final_user.role.value,
+                status=final_user.status.value,
+                department=final_user.department,
+                full_name=final_user.full_name,
+                display_name=final_user.display_name
+            ),
+            session_id=session.session_id,
+            message="EHR login successful"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/ehr/connect", response_model=dict)
 async def initiate_ehr_connection(
     req: EHRConnectionRequest, 
@@ -126,7 +308,7 @@ async def initiate_ehr_connection(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/ehr/callback", response_model=dict)
+@app.post("/ehr/callback", response_model=dict)
 async def ehr_oauth_callback(req: ConnectionCallbackRequest):
     """Handle OAuth callback for EHR connections."""
     try:

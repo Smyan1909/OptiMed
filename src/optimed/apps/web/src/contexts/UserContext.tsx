@@ -10,6 +10,8 @@ type UserContextType = {
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   error: string | null;
+  setUser: (user: User | null) => void;  // Add this
+  setIsAuthenticated: (authenticated: boolean) => void;  // Add this
 };
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
@@ -18,14 +20,17 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   const checkAuth = async () => {
     try {
       setIsLoading(true);
       const currentUser = await getCurrentUser();
       setUser(currentUser);
+      setIsAuthenticated(!!currentUser);
     } catch (err) {
       setUser(null);
+      setIsAuthenticated(false);
     } finally {
       setIsLoading(false);
     }
@@ -43,6 +48,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
       
       localStorage.setItem('session_id', response.session.session_id);
       setUser(response.user);
+      setIsAuthenticated(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
       throw err;
@@ -50,7 +56,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
     }
   };
-    const logout = async () => {
+
+  const logout = async () => {
     try {
       await logoutUser();
     } catch (err) {
@@ -58,6 +65,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
     } finally {
       localStorage.removeItem('session_id');
       setUser(null);
+      setIsAuthenticated(false);
     }
   };
 
@@ -66,10 +74,12 @@ export function UserProvider({ children }: { children: ReactNode }) {
       value={{ 
         user, 
         isLoading, 
-        isAuthenticated: !!user, 
+        isAuthenticated,
         login, 
         logout, 
-        error 
+        error,
+        setUser,           // Export this
+        setIsAuthenticated // Export this
       }}
     >
       {children}

@@ -43,6 +43,49 @@ export type LoginResponse = {
   message: string;
 };
 
+export async function initiateEHRLogin(
+  fhirServerUrl: string,
+  clientId: string,
+  scope: string = "patient/*.read user/*.read"
+): Promise<{ authorization_url: string; connection_id: string; state: string }> {
+  const res = await fetch('/api/auth/ehr-login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      fhir_server_url: fhirServerUrl,
+      client_id: clientId,
+      scope: scope
+    })
+  });
+  
+  if (!res.ok) throw new Error('Failed to initiate EHR login');
+  return res.json();
+}
+
+export async function completeEHRLogin(
+  connectionId: string,
+  code: string,
+  state: string
+): Promise<{ user: User; session_id: string; message: string }> {
+  const res = await fetch('/api/auth/ehr-callback', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      connection_id: connectionId,
+      code: code,
+      state: state
+    })
+  });
+  
+  if (!res.ok) throw new Error('Failed to complete EHR login');
+  return res.json();
+}
+
+
 export async function fetchPatients(q = ""): Promise<Patient[]> {
   const url = q ? `/api/patients?q=${encodeURIComponent(q)}` : `/api/patients`;
   const res = await fetch(url);
