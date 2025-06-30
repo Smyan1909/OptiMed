@@ -1,12 +1,13 @@
 # tests/unit/test_hapi_repo.py
 import pytest
 import httpx
+from typing import Any
 from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
 from optimed.core.domain import PatientContext
 from conftest import FakeResp
 
 @pytest.mark.asyncio
-async def test_get_patient_stub(monkeypatch, _load_fixture):
+async def test_get_patient_stub(monkeypatch: Any, _load_fixture: Any) -> None:
     """Adapter returns a PatientContext when /Patient and /Observation calls succeed."""
     patient_json = _load_fixture("patient_example.json")
     vitals_json = _load_fixture("observations_vital.json")
@@ -51,7 +52,7 @@ async def test_get_patient_stub(monkeypatch, _load_fixture):
 
 
 @pytest.mark.asyncio
-async def test_search_patients_stub(monkeypatch, _load_fixture):
+async def test_search_patients_stub(monkeypatch: Any, _load_fixture: Any) -> None:
     """Adapter returns a list[PatientContext] for /Patient?name= query."""
     bundle_json = {
         "resourceType": "Bundle",

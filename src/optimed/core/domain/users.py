@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Any
 
 from pydantic import Field
 
@@ -62,6 +62,27 @@ class UserAction(FrozenModel):
     resource_id: Optional[str] = None
     description: str
     metadata: dict = Field(default_factory=dict)
+
+
+class UserEHRConnection(FrozenModel):
+    """Represents a connection to an EHR system for a user."""
+    connection_id: str
+    user_id: str
+    provider_type: str
+    fhir_server_url: str
+    client_id: str
+    credentials: dict[str, Any]
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    token_expires_at: Optional[datetime] = None
+    scope: Optional[str] = None
+    patient_context: Optional[str] = None
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: Optional[datetime] = None
+    
+    
 
 
 

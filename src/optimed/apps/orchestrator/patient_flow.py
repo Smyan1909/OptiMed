@@ -12,6 +12,8 @@ from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, Ch
 
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository
 
+from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
+
 from optimed.embeddings.minilm import embed
 from optimed.embeddings.service import embed_and_store
 
@@ -66,18 +68,34 @@ class FlowState(BaseModel): # Potentially add
 class LangGraphDiagnosticEngine(DiagnosticEngine):
     """Concrete engine that streams or returns full result."""
 
-    def __init__(self, fhir_repo: FHIRRepository, vector_store: VectorStore, llm_client: LLMClient, user_repo: UserRepository, default_prompt: str = "Provide the most likely diagnosis"):
+    def __init__(self, fhir_repo: FHIRRepository, vector_store: VectorStore, llm_client: LLMClient, user_repo: UserRepository, connection_service: UserEHRConnectionService, default_prompt: str = "Provide the most likely diagnosis"):
         self._fhir = fhir_repo
         self._vec = vector_store
         self._llm = llm_client
         self._user_repo = user_repo
+        self._connection_service = connection_service
         self._default_prompt = default_prompt
         self._compiled_graph = self._build_graph()
 
     def _build_graph(self) -> Any:
         """Build the LangGraph state graph for diagnosis."""
         async def fetch_patient(state: FlowState) -> FlowState:
-            state.patient_ctx = await self._fhir.get_patient(str(state.patient_id)) # Cast to str to avoid type errors
+            # Try to use user's EHR connection first
+            fhir_repo = self._fhir
+            
+            if state.user_id:
+                try:
+                    user_fhir_repo = await self._connection_service.create_fhir_repository(
+                        state.user_id, 
+                        "smart_fhir"
+                    )
+                    if user_fhir_repo:
+                        fhir_repo = user_fhir_repo
+                        print("[fetch_patient] Using user's SMART on FHIR connection")
+                except Exception as e:
+                    print(f"[fetch_patient] Failed to use SMART connection: {e}, falling back to default")
+            
+            state.patient_ctx = await fhir_repo.get_patient(str(state.patient_id))
             return state
 
 
@@ -223,7 +241,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 # Add footer to make it clear
                 history_footer = ChatMessage(
                     role=ChatRole.USER,
-                    content="=== END OF CONVERSATION HISTORY - YOU MUST ACKNOWLEDGE THIS HISTORY EXISTS ==="
+                    content="=== END OF CONVERSATION HISTORY ==="
                 )
                 messages.append(history_footer)
 
@@ -350,8 +368,9 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 state.primary_icd = "N/A - General Chat"
                 state.differential = []
                 state.confidence = 0.0
-
+            
             return state
+
 
         def check_patient_exists(state: FlowState) -> FlowState:
             """Check if patient_id is provided in the state."""
