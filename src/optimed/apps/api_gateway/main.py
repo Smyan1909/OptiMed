@@ -5,11 +5,12 @@ import os
 import httpx
 import json
 import base64
+import time
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode
 from typing import AsyncGenerator, Dict, Optional
 from fastapi import FastAPI, HTTPException, Query, Path, Header, Depends # type: ignore
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection
 from optimed.core.ports import FHIRRepository
@@ -211,6 +212,8 @@ async def initiate_ehr_login(req: EHRLoginRequest):
         
         redirect_uri = os.getenv("EHR_REDIRECT_URI", "http://localhost:8000/auth/ehr-callback")
         
+        print(req.fhir_server_url)
+
         # Create temporary session data (no user creation needed)
         session_data = {
             "session_id": session_id,
@@ -294,36 +297,56 @@ async def complete_ehr_login(
     error_description: Optional[str] = Query(None, description="Error description if any")
 ):
     """Complete EHR-based login and create/update user."""
-    try:
-        # Handle OAuth errors
-        if error:
-            # Redirect to frontend with error
-            frontend_url = f"http://localhost:3000/login?error={error}&error_description={error_description or 'Unknown error'}"
-            from fastapi.responses import RedirectResponse
-            return RedirectResponse(url=frontend_url)
+    frontend_base = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    
+    if error:
+        print(f"[ERROR] OAuth error received: {error} - {error_description}")
         
+        # Map common errors to user-friendly messages
+        if error == "access_denied":
+            error_msg = "Access was denied. Please try again if you want to connect your EHR."
+        elif error == "invalid_request":
+            if error_description == "Unauthorized":
+                error_msg = "Access was denied by the user."
+            else:
+                error_msg = f"Invalid request: {error_description or 'Unknown error'}"
+        else:
+            error_msg = error_description or error or "Authorization failed"
+        
+        # Always redirect to frontend with error
+        frontend_url = f"{frontend_base}/login?error={error_msg}"
+        return RedirectResponse(url=frontend_url, status_code=302)
+    
+    # Check for missing required parameters
+    if not code or not state:
+        print(f"[ERROR] Missing required parameters - code: {bool(code)}, state: {bool(state)}")
+        frontend_url = f"{frontend_base}/login?error=Missing authorization parameters"
+        return RedirectResponse(url=frontend_url, status_code=302)
+    
+    try:
         # Extract connection_id from state parameter
         try:
             state_data = json.loads(base64.urlsafe_b64decode(state).decode())
             connection_id = state_data["connection_id"]
         except Exception as e:
-            frontend_url = f"http://localhost:3000/login?error=invalid_state&error_description=Invalid state parameter"
-            from fastapi.responses import RedirectResponse
-            return RedirectResponse(url=frontend_url)
+            print(f"[ERROR] Invalid state parameter: {e}")
+            frontend_url = f"{frontend_base}/login?error=Invalid state parameter"
+            return RedirectResponse(url=frontend_url, status_code=302)
         
         # Get the temporary session data
         session_data = await _connection_repo.get_ehr_login_session(connection_id)
         if not session_data:
-            frontend_url = f"http://localhost:3000/login?error=session_expired&error_description=Login session expired"
-            from fastapi.responses import RedirectResponse
-            return RedirectResponse(url=frontend_url)
+            print(f"[ERROR] Login session expired for connection: {connection_id}")
+            frontend_url = f"{frontend_base}/login?error=Login session expired"
+            return RedirectResponse(url=frontend_url, status_code=302)
         
         # Verify state parameter
         if session_data["state"] != state:
-            frontend_url = f"http://localhost:3000/login?error=state_mismatch&error_description=State parameter mismatch"
-            from fastapi.responses import RedirectResponse
-            return RedirectResponse(url=frontend_url)
+            print(f"[ERROR] State parameter mismatch")
+            frontend_url = f"{frontend_base}/login?error=Security validation failed"
+            return RedirectResponse(url=frontend_url, status_code=302)
         
+        # Rest of your existing success logic...
         # Exchange authorization code for access token
         access_token_data = await exchange_code_for_token(
             code,
@@ -361,7 +384,6 @@ async def complete_ehr_login(
             # Create new user with unique username
             user_id = f"ehr_user_{uuid.uuid4()}"
             # Ensure username is unique by adding timestamp
-            import time
             unique_username = f"{username}_{int(time.time())}"
             
             new_user = User(
@@ -416,15 +438,13 @@ async def complete_ehr_login(
         await _user_repo.create_session(session)
         
         # Redirect to frontend with success and session info
-        from fastapi.responses import RedirectResponse
         frontend_url = f"http://localhost:3000/auth/ehr-success?session_id={session.session_id}&user_id={final_user.user_id}"
         return RedirectResponse(url=frontend_url)
         
     except Exception as e:
         print(f"[ERROR] EHR callback failed: {e}")
         # Redirect to frontend with error
-        from fastapi.responses import RedirectResponse
-        frontend_url = f"http://localhost:3000/login?error=callback_failed&error_description={str(e)}"
+        frontend_url = f"{frontend_base}/login?error=Authentication failed: {str(e)}"
         return RedirectResponse(url=frontend_url)
 
 # Helper functions
@@ -502,94 +522,6 @@ async def get_user_info_from_fhir(fhir_server_url: str, access_token: str) -> di
         "email": "",
         "username": f"ehr_user_{uuid.uuid4().hex[:8]}"
     }
-@app.post("/ehr/connect", response_model=dict)
-async def initiate_ehr_connection(
-    req: EHRConnectionRequest, 
-    user_ctx: dict = Depends(get_user_context)
-):
-    """Initiate EHR system connection."""
-    current_user = user_ctx.get("user")
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
-    try:
-        auth_info = await _connection_service.initiate_connection(
-            current_user,
-            req.provider_type,
-            req.fhir_server_url,
-            req.client_id,
-            scope=req.scope
-        )
-        
-        return auth_info
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/ehr/callback", response_model=dict)
-async def ehr_oauth_callback(req: ConnectionCallbackRequest):
-    """Handle OAuth callback for EHR connections."""
-    try:
-        connection = await _connection_service.complete_connection(
-            req.connection_id,
-            req.code
-        )
-        
-        return {
-            "success": True,
-            "connection_id": connection.connection_id,
-            "message": f"{connection.provider_type} connection established successfully"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/ehr/connections", response_model=list[EHRConnectionOut])
-async def get_user_ehr_connections(user_ctx: dict = Depends(get_user_context)):
-    """Get user's EHR connections."""
-    current_user = user_ctx.get("user")
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
-    try:
-        connections = await _connection_repo.get_connections_by_user(current_user.user_id)
-        return [
-            EHRConnectionOut(
-                connection_id=conn.connection_id,
-                provider_type=conn.provider_type,
-                fhir_server_url=conn.fhir_server_url,
-                is_active=conn.is_active,
-                created_at=conn.created_at.isoformat(),
-                patient_context=conn.patient_context
-            )
-            for conn in connections
-        ]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/ehr/connections/{connection_id}")
-async def delete_ehr_connection(
-    connection_id: str,
-    user_ctx: dict = Depends(get_user_context)
-):
-    """Delete an EHR connection."""
-    current_user = user_ctx.get("user")
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
-    try:
-        # Verify the connection belongs to the user
-        connection = await _connection_repo.get_connection_by_id(connection_id)
-        if not connection or connection.user_id != current_user.user_id:
-            raise HTTPException(status_code=404, detail="Connection not found")
-        
-        success = await _connection_repo.delete_connection(connection_id)
-        if success:
-            return {"message": "Connection deleted successfully"}
-        else:
-            raise HTTPException(status_code=500, detail="Failed to delete connection")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/diagnose", response_model=dict)
 async def diagnose(
@@ -739,11 +671,6 @@ async def login(req: LoginRequest):
     user = await _user_repo.get_user_by_username(req.username)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
-    # Create session
-    import uuid
-    from datetime import datetime
-    from optimed.core.domain import UserSession
     
     session = UserSession(
         session_id=str(uuid.uuid4()),

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@/contexts/UserContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -12,20 +12,36 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2, User, Lock, Stethoscope, Hospital, Shield } from 'lucide-react';
 import { initiateEHRLogin } from '@/lib/api';
 
+
 export default function LoginPage() {
   // Regular login state
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   
-  // EHR login state
-  const [ehrServerUrl, setEhrServerUrl] = useState(process.env.NEXT_PUBLIC_DEFAULT_FHIR_SERVER || 'https://launch.smarthealthit.org/v/r4/sim/WzIsImE3NDY1MWE2LTgxNDEtNGM3ZS05MWI1LWE0M2NlODBlNmI5MixhZGJmODFlZi0wZDZkLTQwYWQtYjdlZS04YjMwMWI3NGEzZTMsNTQ2ZWJjMDItN2EyNC00OTdmLWJjYmMtZTNiYjQ3M2RhYzdhLDIwYTMwMjQwLTkwZTItNDMxYi04Y2U1LWU0N2FhODE0ZDAxNyxiMTZjYzA4Ny1kNDhhLTQyOTItYTc4Yy1hYmEzZTg1ZTUxNmUsNWZkMDY5ZGMtZTMzNy00MDYyLTk3MjItYTczMmM2NTVjMTdkLGE4Y2QzNDYyLWVkMGMtNDhhNC04MWNjLTQ1MjQ5YWE5NDZjYSxkYmFlYjMzNi04ZmI2LTQ0ZGQtOTYwNi02Y2NiNDExNDA3NGIsNTliYzVkYmItMTk1Ny00N2VmLWI2YjUtMjU5NTJlNmJmZGFiLDNmMWZlMTU0LTk4ZDgtNGQxOS1iZjM0LTU0OTdlMzdkMjA2OCxlMjI0MjY4Yi1lMjMzLTQ1ZjAtYTk2MS01OWZkMjIzODI3YzksNGJkOTQwOTItY2UzYS00MDRhLThkMTYtZDZjODRiOTYxN2JjLGQ0ZjFhYWIxLTczZTYtNGQ1MS05OGViLWUxNTU2NDA2YjJhMyw4MjliYjA2YS00MmI5LTQzM2QtYThmNi01NjA3MjdjNjNkYTksMDdmNzQxY2UtMjIwZC00NzQ0LWIxYWItZDI4MzY2MTEwMjY0LGM0Y2JmZGRmLTZmODctNGFjZC1hMzRiLTY3MDE3OGMzZTUzNSw5ODIzMzg0ZC0yMTIwLTQ3OGUtOWFiMy02Mzc1YzU5NDM0N2QsMDI4M2I0MzctZWYyMC00MWJiLWEwMjYtYjYwYTc0MmQ1MzZhLGZhNDcwYjQ2LWI2NDktNGYwMy1hOWU1LWMyZTNmNDgzNTI0Yyw0NjQ4YWQ0Mi01ZGI1LTQ5OTYtODYyNy0yNTU2ODBhZWFkYTgsMzg5YmFjNmItNWIxOS00M2MyLTkwYTYtNzlhZmE5YmE1OWU3LDY1Nzk3NTNjLWNiNTctNDk2Mi1hNDE3LWEwNDc4YjExMTVhYSxiYTRhYTkxZC1kY2I0LTRiOWYtODRmYi1mMmE5ZmE1N2E5ZmUsODQ2ODA1MTYtYzJiYi00ZGJmLWFhYzgtZTgwNmEzZjI4YWU0LDA4MmUxZTUwLTY1NjEtNDJhNC05YjVmLTBlNTA5NDE0Mjc1NiIsIjdjZGNlZTU2LWEwYzAtNDE5Yy05OGZkLWE3Y2NjOTgxZjY1MCIsIkFVVE8iLDAsMCwwLCJ1c2VyLyouY3J1ZHMiLCJodHRwOi8vbG9jYWxob3N0OjgwMDAvYXV0aC9laHItY2FsbGJhY2siLCJvcHRpbWVkIiwiIiwiIiwiIiwiIiwwLDEsIiJd/fhir');
+  // EHR login state - FIXED: Use space-separated scopes (no commas!)
+  const [ehrServerUrl, setEhrServerUrl] = useState(process.env.NEXT_PUBLIC_DEFAULT_FHIR_SERVER || 'https://launch.smarthealthit.org/v/r4/fhir');
   const [ehrClientId, setEhrClientId] = useState(process.env.NEXT_PUBLIC_DEFAULT_CLIENT_ID || 'optimed');
   const [ehrScope, setEhrScope] = useState(process.env.NEXT_PUBLIC_DEFAULT_EHR_SCOPE || 'user/*.cruds');
   const [isEhrConnecting, setIsEhrConnecting] = useState(false);
   
+  const [authError, setAuthError] = useState<string | null>(null);
+  
   const { login, isAuthenticated, error, isLoading } = useUser();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  
+  useEffect(() => {
+    // Check for error in URL params when component mounts
+    const errorParam = searchParams.get('error');
+    if (errorParam) {
+      setAuthError(decodeURIComponent(errorParam));
+      // Clear the error from URL after showing it
+      const url = new URL(window.location.href);
+      url.searchParams.delete('error');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -38,6 +54,7 @@ export default function LoginPage() {
     if (!username || !password) return;
 
     setIsSubmitting(true);
+    setAuthError(null); // Clear any previous EHR errors
     try {
       await login(username, password);
       router.push('/patients');
@@ -53,6 +70,7 @@ export default function LoginPage() {
     if (!ehrServerUrl || !ehrClientId) return;
 
     setIsEhrConnecting(true);
+    setAuthError(null); // Clear any previous errors
     try {
       const result = await initiateEHRLogin(
         ehrServerUrl,
@@ -67,7 +85,7 @@ export default function LoginPage() {
       window.location.href = result.authorization_url;
     } catch (err: any) {
       console.error('EHR login error:', err);
-      alert('Failed to initiate EHR login: ' + err.message);
+      setAuthError('Failed to initiate EHR login: ' + err.message);
     } finally {
       setIsEhrConnecting(false);
     }
@@ -96,6 +114,15 @@ export default function LoginPage() {
               Choose your preferred sign-in method
             </CardDescription>
           </div>
+          
+          {/* Display EHR authentication errors */}
+          {authError && (
+            <Alert variant="destructive" className="mt-4">
+              <AlertDescription>
+                {authError}
+              </AlertDescription>
+            </Alert>
+          )}
         </CardHeader>
         
         <CardContent>
