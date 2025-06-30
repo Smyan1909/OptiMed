@@ -14,49 +14,165 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
     def __init__(self, dsn: str):
         self._dsn = dsn
         self._pool: Optional[asyncpg.Pool] = None
+        self._tables_created = False
     
     async def _get_pool(self) -> asyncpg.Pool:
         """Get or create connection pool."""
         if self._pool is None:
+            # Create pool without init function to avoid the recursive issue
             self._pool = await asyncpg.create_pool(self._dsn)
+            
+            # Create tables once after pool is created
+            if not self._tables_created:
+                await self._ensure_tables_once()
+                self._tables_created = True
+                
         return self._pool
     
-    async def _ensure_tables(self, conn: asyncpg.Connection):
-        """Create tables if they don't exist."""
-        
-        # Create user_ehr_connections table
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS user_ehr_connections (
-                connection_id VARCHAR(255) PRIMARY KEY,
-                user_id VARCHAR(255) NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                provider_type VARCHAR(100) NOT NULL,
-                fhir_server_url TEXT NOT NULL,
-                client_id VARCHAR(255) NOT NULL,
-                credentials JSONB DEFAULT '{}',
-                access_token TEXT,
-                refresh_token TEXT,
-                token_expires_at TIMESTAMP WITH TIME ZONE,
-                scope TEXT,
-                patient_context VARCHAR(255),
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                expires_at TIMESTAMP WITH TIME ZONE
+    async def _ensure_tables_once(self):
+        """Create tables once, safely."""
+        if self._pool is None:
+            return
+            
+        async with self._pool.acquire() as conn:
+            try:
+                # Check if tables exist first
+                tables_exist = await conn.fetchval("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'ehr_login_sessions'
+                    )
+                """)
+                
+                if not tables_exist:
+                    # Create temporary EHR login sessions table
+                    await conn.execute("""
+                        CREATE TABLE ehr_login_sessions (
+                            session_id VARCHAR(255) PRIMARY KEY,
+                            connection_id VARCHAR(255) UNIQUE NOT NULL,
+                            fhir_server_url TEXT NOT NULL,
+                            client_id VARCHAR(255) NOT NULL,
+                            scope TEXT NOT NULL,
+                            state VARCHAR(255) NOT NULL,
+                            redirect_uri TEXT NOT NULL,
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                            expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '1 hour')
+                        )
+                    """)
+                
+                # Check if user_ehr_connections table exists
+                connections_exist = await conn.fetchval("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'user_ehr_connections'
+                    )
+                """)
+                
+                if not connections_exist:
+                    # Create user_ehr_connections table
+                    await conn.execute("""
+                        CREATE TABLE user_ehr_connections (
+                            connection_id VARCHAR(255) PRIMARY KEY,
+                            user_id VARCHAR(255) NOT NULL,
+                            provider_type VARCHAR(100) NOT NULL,
+                            fhir_server_url TEXT NOT NULL,
+                            client_id VARCHAR(255) NOT NULL,
+                            credentials JSONB DEFAULT '{}',
+                            access_token TEXT,
+                            refresh_token TEXT,
+                            token_expires_at TIMESTAMP WITH TIME ZONE,
+                            scope TEXT,
+                            patient_context VARCHAR(255),
+                            is_active BOOLEAN DEFAULT TRUE,
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                            expires_at TIMESTAMP WITH TIME ZONE
+                        )
+                    """)
+                
+                # Create indexes if they don't exist
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_ehr_connections_user_id ON user_ehr_connections(user_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_ehr_connections_provider_type ON user_ehr_connections(provider_type)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_ehr_connections_active ON user_ehr_connections(is_active)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_ehr_login_sessions_expires ON ehr_login_sessions(expires_at)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_ehr_login_sessions_connection ON ehr_login_sessions(connection_id)")
+                
+            except Exception as e:
+                print(f"Warning: Error creating tables: {e}")
+                # Continue anyway - tables might already exist
+                pass
+    
+    async def create_ehr_login_session(self, session_data: dict) -> str:
+        """Create a temporary EHR login session."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            session_id = session_data["session_id"]
+            await conn.execute("""
+                INSERT INTO ehr_login_sessions (
+                    session_id, connection_id, fhir_server_url, client_id,
+                    scope, state, redirect_uri, created_at, expires_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            """, 
+                session_id,
+                session_data["connection_id"],
+                session_data["fhir_server_url"],
+                session_data["client_id"],
+                session_data["scope"],
+                session_data["state"],
+                session_data["redirect_uri"],
+                session_data["created_at"],
+                session_data["expires_at"]
             )
-        """)
-        
-        # Create indexes
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ehr_connections_user_id ON user_ehr_connections(user_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ehr_connections_provider_type ON user_ehr_connections(provider_type)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ehr_connections_active ON user_ehr_connections(is_active)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ehr_connections_user_provider ON user_ehr_connections(user_id, provider_type)")
+            return session_id
+    
+    async def get_ehr_login_session(self, connection_id: str) -> Optional[dict]:
+        """Get EHR login session by connection ID."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT session_id, connection_id, fhir_server_url, client_id,
+                       scope, state, redirect_uri, created_at, expires_at
+                FROM ehr_login_sessions 
+                WHERE connection_id = $1 AND expires_at > NOW()
+            """, connection_id)
+            
+            if not row:
+                return None
+            
+            return {
+                "session_id": row["session_id"],
+                "connection_id": row["connection_id"],
+                "fhir_server_url": row["fhir_server_url"],
+                "client_id": row["client_id"],
+                "scope": row["scope"],
+                "state": row["state"],
+                "redirect_uri": row["redirect_uri"],
+                "created_at": row["created_at"],
+                "expires_at": row["expires_at"]
+            }
+    
+    async def delete_ehr_login_session(self, connection_id: str) -> bool:
+        """Delete EHR login session."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute("""
+                DELETE FROM ehr_login_sessions WHERE connection_id = $1
+            """, connection_id)
+            return result == "DELETE 1"
+    
+    async def cleanup_expired_sessions(self) -> int:
+        """Clean up expired EHR login sessions."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute("""
+                DELETE FROM ehr_login_sessions WHERE expires_at <= NOW()
+            """)
+            return int(result.split()[-1]) if result else 0
     
     async def create_connection(self, connection: UserEHRConnection) -> UserEHRConnection:
         """Create a new EHR connection."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            await self._ensure_tables(conn)
-            
             await conn.execute("""
                 INSERT INTO user_ehr_connections (
                     connection_id, user_id, provider_type, fhir_server_url, client_id,
@@ -77,8 +193,6 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
         """Get connection by ID."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            await self._ensure_tables(conn)
-            
             row = await conn.fetchrow("""
                 SELECT connection_id, user_id, provider_type, fhir_server_url, client_id,
                        credentials, access_token, refresh_token, token_expires_at,
@@ -112,8 +226,6 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
         """Get all connections for a user, optionally filtered by provider type."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            await self._ensure_tables(conn)
-            
             if provider_type:
                 rows = await conn.fetch("""
                     SELECT connection_id, user_id, provider_type, fhir_server_url, client_id,
@@ -159,8 +271,6 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
         """Update an existing connection."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            await self._ensure_tables(conn)
-            
             await conn.execute("""
                 UPDATE user_ehr_connections SET
                     provider_type = $2, fhir_server_url = $3, client_id = $4,
@@ -181,8 +291,6 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
         """Delete a connection."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            await self._ensure_tables(conn)
-            
             result = await conn.execute("""
                 DELETE FROM user_ehr_connections WHERE connection_id = $1
             """, connection_id)
@@ -193,8 +301,6 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
         """Get the active connection for a user and provider type."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            await self._ensure_tables(conn)
-            
             row = await conn.fetchrow("""
                 SELECT connection_id, user_id, provider_type, fhir_server_url, client_id,
                        credentials, access_token, refresh_token, token_expires_at,

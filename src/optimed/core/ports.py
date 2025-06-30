@@ -190,6 +190,23 @@ class UserEHRConnectionRepository(Protocol):
     async def get_active_connection_by_user(self, user_id: str, provider_type: str) -> Optional[UserEHRConnection]:
         """Get the active connection for a user and provider type."""
         ...
+    
+    # New methods for EHR login sessions
+    async def create_ehr_login_session(self, session_data: dict) -> str:
+        """Create a temporary EHR login session."""
+        ...
+    
+    async def get_ehr_login_session(self, connection_id: str) -> Optional[dict]:
+        """Get EHR login session by connection ID."""
+        ...
+    
+    async def delete_ehr_login_session(self, connection_id: str) -> bool:
+        """Delete EHR login session."""
+        ...
+    
+    async def cleanup_expired_sessions(self) -> int:
+        """Clean up expired EHR login sessions."""
+        ...
 
 
 

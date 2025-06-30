@@ -109,7 +109,9 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
             base_url=self._base, 
             timeout=self._timeout,
             headers=headers
-        )    @staticmethod
+        )    
+        
+    @staticmethod
     def from_connection(
         connection: UserEHRConnection,
         auth_provider: Optional[AuthenticationProvider] = None,

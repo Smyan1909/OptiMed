@@ -46,24 +46,27 @@ export type LoginResponse = {
 export async function initiateEHRLogin(
   fhirServerUrl: string,
   clientId: string,
-  scope: string = "patient/*.read user/*.read"
+  scope: string
 ): Promise<{ authorization_url: string; connection_id: string; state: string }> {
-  const res = await fetch('/api/auth/ehr-login', {
+  const response = await fetch('/api/auth/ehr-login', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       fhir_server_url: fhirServerUrl,
       client_id: clientId,
-      scope: scope
-    })
+      scope: scope,
+    }),
   });
-  
-  if (!res.ok) throw new Error('Failed to initiate EHR login');
-  return res.json();
-}
 
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || 'Failed to initiate EHR login');
+  }
+
+  return response.json();
+}
 export async function completeEHRLogin(
   connectionId: string,
   code: string,
@@ -88,13 +91,18 @@ export async function completeEHRLogin(
 
 export async function fetchPatients(q = ""): Promise<Patient[]> {
   const url = q ? `/api/patients?q=${encodeURIComponent(q)}` : `/api/patients`;
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: getSessionHeaders()
+  });
   if (!res.ok) throw new Error("Failed to load patients");
   return res.json();
 }
 
+// Update fetchPatient to use session headers:
 export async function fetchPatient(id: string): Promise<PatientDetail> {
-  const res = await fetch(`/api/patients/${id}`);
+  const res = await fetch(`/api/patients/${id}`, {
+    headers: getSessionHeaders()
+  });
   if (!res.ok) throw new Error(`Failed to load patient ${id}`);
   return res.json();
 }
