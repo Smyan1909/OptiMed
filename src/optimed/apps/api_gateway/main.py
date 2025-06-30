@@ -182,7 +182,7 @@ async def get_repository_status(
     if hasattr(fhir_repo, 'is_authenticated'):
         try:
             repository_info["is_authenticated"] = await fhir_repo.is_authenticated()
-        except Exception as e:
+        except Exception:
             repository_info["is_authenticated"] = False
     
     # Get connection info if available
@@ -367,14 +367,14 @@ async def complete_ehr_login(
         
         try:
             existing_user = await _user_repo.get_user_by_username(username)
-        except Exception as e:
+        except Exception:
             pass  # User doesn't exist, we'll create them
         
         # Also check by email if available
         if not existing_user and user_info.get("email"):
             try:
                 existing_user = await _user_repo.get_user_by_email(user_info["email"])
-            except Exception as e:
+            except Exception:
                 pass
         
         if existing_user:
@@ -512,7 +512,7 @@ async def get_user_info_from_fhir(fhir_server_url: str, access_token: str) -> di
                         "email": "",  # Extract from telecom if available
                         "username": f"practitioner_{practitioner.get('id', uuid.uuid4().hex[:8])}"
                     }
-    except Exception as e:
+    except Exception:
         pass
     
     # Return default user info if we can't get practitioner data
