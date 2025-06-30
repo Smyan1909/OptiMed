@@ -111,8 +111,8 @@ class TestUserEHRConnectionService:
         # Create the mock repository instance first
         mock_repo_instance = AsyncMock()
         
-        # Patch the SMARTFHIRRepository constructor since that's what's actually called
-        with patch('optimed.adapters.smart_fhir.repository.SMARTFHIRRepository') as mock_repo_class:
+        # Patch SMARTFHIRRepository where it's imported in the connection service
+        with patch('optimed.apps.orchestrator.connection_service.SMARTFHIRRepository') as mock_repo_class:
             mock_repo_class.return_value = mock_repo_instance
             
             result = await connection_service.create_fhir_repository("test_user_123", "smart_fhir")
@@ -122,7 +122,7 @@ class TestUserEHRConnectionService:
         # Verify the repository was created with the right connection and auth provider
         mock_repo_class.assert_called_once()
         call_args = mock_repo_class.call_args
-        assert call_args[0][0] == mock_connection  # First argument should be the connection
+        assert call_args[0][0] == mock_connection 
 
     async def test_create_fhir_repository_no_connection(self, connection_service, mock_connection_repo):
         """Test FHIR repository creation with no active connection."""
