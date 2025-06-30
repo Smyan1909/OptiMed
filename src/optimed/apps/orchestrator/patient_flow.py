@@ -91,7 +91,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     )
                     if user_fhir_repo:
                         fhir_repo = user_fhir_repo
-                        print(f"[fetch_patient] Using user's SMART on FHIR connection")
+                        print("[fetch_patient] Using user's SMART on FHIR connection")
                 except Exception as e:
                     print(f"[fetch_patient] Failed to use SMART connection: {e}, falling back to default")
             

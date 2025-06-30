@@ -6,7 +6,6 @@ from typing import Optional, Dict, Any
 from optimed.core.domain import UserEHRConnection, User
 from optimed.core.ports import UserEHRConnectionRepository, AuthenticationProvider, FHIRRepository
 from optimed.adapters.smart_fhir.auth_provider import SMARTAuthProvider
-from optimed.adapters.smart_fhir import repository as smart_fhir_repository
 
 class UserEHRConnectionService:
     """Service for managing user EHR connections."""

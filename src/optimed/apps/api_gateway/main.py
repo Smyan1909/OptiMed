@@ -150,10 +150,10 @@ async def get_user_fhir_repository(user_ctx: dict = Depends(get_user_context)) -
             import traceback
             traceback.print_exc()
     else:
-        print(f"[DEBUG] No current user found, using default repository")
+        print("[DEBUG] No current user found, using default repository")
     
     # Fallback to default HAPI repository
-    print(f"[API] Using default HAPI FHIR repository")
+    print("[API] Using default HAPI FHIR repository")
     return _fhir
 
 @app.post("/health", summary="Health Check")
@@ -182,7 +182,7 @@ async def get_repository_status(
     if hasattr(fhir_repo, 'is_authenticated'):
         try:
             repository_info["is_authenticated"] = await fhir_repo.is_authenticated()
-        except:
+        except Exception as e:
             repository_info["is_authenticated"] = False
     
     # Get connection info if available
@@ -342,7 +342,7 @@ async def complete_ehr_login(
         
         # Verify state parameter
         if session_data["state"] != state:
-            print(f"[ERROR] State parameter mismatch")
+            print("[ERROR] State parameter mismatch")
             frontend_url = f"{frontend_base}/login?error=Security validation failed"
             return RedirectResponse(url=frontend_url, status_code=302)
         
@@ -367,14 +367,14 @@ async def complete_ehr_login(
         
         try:
             existing_user = await _user_repo.get_user_by_username(username)
-        except:
+        except Exception as e:
             pass  # User doesn't exist, we'll create them
         
         # Also check by email if available
         if not existing_user and user_info.get("email"):
             try:
                 existing_user = await _user_repo.get_user_by_email(user_info["email"])
-            except:
+            except Exception as e:
                 pass
         
         if existing_user:
@@ -512,7 +512,7 @@ async def get_user_info_from_fhir(fhir_server_url: str, access_token: str) -> di
                         "email": "",  # Extract from telecom if available
                         "username": f"practitioner_{practitioner.get('id', uuid.uuid4().hex[:8])}"
                     }
-    except:
+    except Exception as e:
         pass
     
     # Return default user info if we can't get practitioner data
