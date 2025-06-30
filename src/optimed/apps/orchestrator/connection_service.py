@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any
 from optimed.core.domain import UserEHRConnection, User
 from optimed.core.ports import UserEHRConnectionRepository, AuthenticationProvider, FHIRRepository
 from optimed.adapters.smart_fhir.auth_provider import SMARTAuthProvider
+from optimed.adapters.smart_fhir.repository import SMARTFHIRRepository
 
 class UserEHRConnectionService:
     """Service for managing user EHR connections."""
@@ -33,7 +34,7 @@ class UserEHRConnectionService:
                 # Extract constructor args from kwargs
                 auth_kwargs = {k: v for k, v in kwargs.items() 
                               if k in ['client_secret', 'redirect_uri', 'timeout']}
-                auth_provider = SMARTAuthProvider(
+                auth_provider: AuthenticationProvider = SMARTAuthProvider(
                     fhir_server_url=fhir_server_url,
                     client_id=client_id,
                     **auth_kwargs
@@ -143,11 +144,9 @@ class UserEHRConnectionService:
         if provider_type == "smart_fhir":
             try:
                 # Import your SMART FHIR repository class
-                from optimed.adapters.smart_fhir.repository import SMARTFHIRRepository
-                from optimed.adapters.smart_fhir.auth_provider import SMARTAuthProvider
                 
                 # Create auth provider
-                auth_provider = SMARTAuthProvider(
+                auth_provider: AuthenticationProvider = SMARTAuthProvider(
                     fhir_server_url=connection.fhir_server_url,
                     client_id=connection.client_id
                 )

@@ -12,7 +12,7 @@ from typing import AsyncGenerator, Dict, Optional
 from fastapi import FastAPI, HTTPException, Query, Path, Header, Depends # type: ignore
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection
+from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus
 from optimed.core.ports import FHIRRepository
 from optimed.apps.orchestrator.factory import create_app_dependencies
 
@@ -392,8 +392,8 @@ async def complete_ehr_login(
                 email=user_info.get("email", ""),
                 first_name=user_info.get("first_name", "EHR"),
                 last_name=user_info.get("last_name", "User"),
-                role="doctor",  # Default role
-                status="active",
+                role=UserRole.DOCTOR,  # Default role
+                status=UserStatus.ACTIVE,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc)
             )

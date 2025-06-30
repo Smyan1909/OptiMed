@@ -50,12 +50,12 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, FHIRRepo
 
     # Create repositories
     fhir_repo: FHIRRepository = HAPIFHIRRepository() if not use_smart else create_smart_fhir_repository()
-    vector_store: VectorStore = PGVectorAdapter(dsn=os.getenv("PGVECTOR_DSN"))
+    vector_store: VectorStore = PGVectorAdapter(dsn=str(os.getenv("PGVECTOR_DSN")))
     llm_client = AnthropicClaudeClient()
-    user_repo: UserRepository = PGUserRepository(dsn=os.getenv("PGVECTOR_DSN"))
+    user_repo: UserRepository = PGUserRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
     
     # New EHR connection dependencies
-    connection_repo: UserEHRConnectionRepository = PGUserEHRConnectionRepository(dsn=os.getenv("PGVECTOR_DSN"))
+    connection_repo: UserEHRConnectionRepository = PGUserEHRConnectionRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
     connection_service = UserEHRConnectionService(connection_repo)
     
     # Main engine with connection service

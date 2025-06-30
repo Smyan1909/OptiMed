@@ -95,6 +95,12 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
         self._base = connection.fhir_server_url.rstrip("/")
         self._timeout = timeout
         
+        self._client_id = connection.client_id
+        self._client_secret = None  # Will be set by auth_provider if needed
+        self._redirect_uri = "http://localhost:8000/auth/ehr-callback"  # Default
+        self._scope = connection.scope or "patient/*.read"
+        self._token_url = f"{self._base}/token"
+
         # Extract credentials from UserEHRConnection
         self._access_token = connection.access_token
         self._refresh_token = connection.refresh_token
@@ -110,13 +116,13 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
             timeout=self._timeout,
             headers=headers
         )    
-        
+
     @staticmethod
     def from_connection(
         connection: UserEHRConnection,
         auth_provider: Optional[AuthenticationProvider] = None,
         **kwargs: Any
-    ) -> 'SMARTFHIRRepository':
+    ) -> 'AuthenticatedFHIRRepository':
         """Create repository instance from UserEHRConnection."""
         return SMARTFHIRRepository(connection, auth_provider, **kwargs)
 
