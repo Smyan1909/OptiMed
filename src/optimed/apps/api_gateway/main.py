@@ -386,10 +386,14 @@ async def complete_ehr_login(
             # Ensure username is unique by adding timestamp
             unique_username = f"{username}_{int(time.time())}"
             
+            email = user_info.get("email")
+            if not email or email.strip() == "":
+                email = f"noemail+{unique_username}@optimed.local"  # Generate a unique placeholder email
+
             new_user = User(
                 user_id=user_id,
                 username=unique_username,
-                email=user_info.get("email", ""),
+                email=email,
                 first_name=user_info.get("first_name", "EHR"),
                 last_name=user_info.get("last_name", "User"),
                 role=UserRole.DOCTOR,  # Default role
