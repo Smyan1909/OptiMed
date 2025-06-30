@@ -118,7 +118,7 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
         )    
 
     @staticmethod
-    def from_connection(
+    async def from_connection(
         connection: UserEHRConnection,
         auth_provider: Optional[AuthenticationProvider] = None,
         **kwargs: Any

@@ -394,8 +394,6 @@ async def complete_ehr_login(
                 last_name=user_info.get("last_name", "User"),
                 role=UserRole.DOCTOR,  # Default role
                 status=UserStatus.ACTIVE,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc)
             )
             
             await _user_repo.create_user(new_user)
