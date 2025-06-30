@@ -2,6 +2,7 @@
 
 import { useState, useEffect, FormEvent } from "react";
 import { useUser } from '@/contexts/UserContext';
+import { get } from "http";
 
 interface Message {
   sender: "user" | "system";
@@ -14,6 +15,18 @@ interface ChatBoxProps {
   mode: "chat" | "diagnose";
   patientId?: string;
 }
+
+const getAuthHeaders = () => {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  // Get the authentication session_id from localStorage
+  const authToken = typeof window !== 'undefined' ? localStorage.getItem('session_id') : null;
+  if (authToken) {
+    headers['X-Session-ID'] = authToken;
+  }
+  return headers;
+};
 
 export default function ChatBox({ mode, patientId }: ChatBoxProps) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -43,9 +56,7 @@ export default function ChatBox({ mode, patientId }: ChatBoxProps) {
         
         const response = await fetch('/api/chat-history', {
           method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-          },
+          headers: getAuthHeaders(),
           body: JSON.stringify({ 
             patient_id: patientId,
             session_id: sessionId,
@@ -124,7 +135,7 @@ export default function ChatBox({ mode, patientId }: ChatBoxProps) {
       const endpoint = mode === "chat" ? "/api/chat" : "/api/diagnose";
       const res = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ 
           patient_id: patientId ?? null,
           user_prompt: userText,

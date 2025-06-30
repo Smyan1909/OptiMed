@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import AsyncGenerator, Protocol, Sequence, Any, Union, Optional
 
-from optimed.core.domain import PatientContext, KPIEvent, ChatMessage, DiagnosisResult, User, UserSession, UserAction
+from optimed.core.domain import PatientContext, KPIEvent, ChatMessage, DiagnosisResult, User, UserSession, UserAction, UserEHRConnection
 
 # core/ports.py
 #
@@ -122,6 +122,93 @@ class DiagnosticEngine(Protocol):
     def vector_store(self) -> VectorStore:
         """Access to the underlying vector store."""
         ...
+
+
+class AuthenticationProvider(Protocol):
+    """Generic authentication provider interface."""
+
+    async def initiate_auth_flow(self, **kwargs: Any) -> dict[str, Any]:
+        """Initiate an authentication flow."""
+        ...
+    
+    async def complete_auth_flow(self, auth_code: str, **kwargs: Any) -> dict[str, Any]:
+        """Complete an authentication flow and return user info."""
+        ...
+    
+    async def refresh_token(self, refresh_token: str, **kwargs: Any) -> dict[str, Any]:
+        """Refresh an access token."""
+        ...
+
+    async def validate_token(self, token: str) -> dict[str, Any]:
+        """Validate an access token and return user info."""
+        ...
+
+class AuthenticatedFHIRRepository(Protocol):
+    """FHIR Repository that can be created from authentication credentials."""
+    
+    @classmethod
+    async def from_connection(
+        cls, 
+        connection: UserEHRConnection,
+        auth_provider: Optional[AuthenticationProvider] = None,
+        **kwargs: Any
+    ) -> 'AuthenticatedFHIRRepository':
+        """Create repository instance from external connection."""
+        ...
+    
+    async def is_authenticated(self) -> bool:
+        """Check if the repository is properly authenticated."""
+        ...
+    
+    async def refresh_authentication(self) -> bool:
+        """Refresh authentication if possible."""
+        ...
+
+class UserEHRConnectionRepository(Protocol):
+    """Repository for managing user EHR connections."""
+    
+    async def create_connection(self, connection: UserEHRConnection) -> UserEHRConnection:
+        """Create a new EHR connection."""
+        ...
+    
+    async def get_connection_by_id(self, connection_id: str) -> Optional[UserEHRConnection]:
+        """Get connection by ID."""
+        ...
+    
+    async def get_connections_by_user(self, user_id: str, provider_type: Optional[str] = None) -> Sequence[UserEHRConnection]:
+        """Get all connections for a user, optionally filtered by provider type."""
+        ...
+    
+    async def update_connection(self, connection: UserEHRConnection) -> UserEHRConnection:
+        """Update an existing connection."""
+        ...
+    
+    async def delete_connection(self, connection_id: str) -> bool:
+        """Delete a connection."""
+        ...
+    
+    async def get_active_connection_by_user(self, user_id: str, provider_type: str) -> Optional[UserEHRConnection]:
+        """Get the active connection for a user and provider type."""
+        ...
+    
+    # New methods for EHR login sessions
+    async def create_ehr_login_session(self, session_data: dict) -> str:
+        """Create a temporary EHR login session."""
+        ...
+    
+    async def get_ehr_login_session(self, connection_id: str) -> Optional[dict]:
+        """Get EHR login session by connection ID."""
+        ...
+    
+    async def delete_ehr_login_session(self, connection_id: str) -> bool:
+        """Delete EHR login session."""
+        ...
+    
+    async def cleanup_expired_sessions(self) -> int:
+        """Clean up expired EHR login sessions."""
+        ...
+
+
 
 class UserRepository(Protocol):
     """User management and session handling."""

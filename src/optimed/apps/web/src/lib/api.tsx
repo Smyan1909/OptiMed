@@ -43,15 +43,66 @@ export type LoginResponse = {
   message: string;
 };
 
+export async function initiateEHRLogin(
+  fhirServerUrl: string,
+  clientId: string,
+  scope: string
+): Promise<{ authorization_url: string; connection_id: string; state: string }> {
+  const response = await fetch('/api/auth/ehr-login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      fhir_server_url: fhirServerUrl,
+      client_id: clientId,
+      scope: scope,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || 'Failed to initiate EHR login');
+  }
+
+  return response.json();
+}
+export async function completeEHRLogin(
+  connectionId: string,
+  code: string,
+  state: string
+): Promise<{ user: User; session_id: string; message: string }> {
+  const res = await fetch('/api/auth/ehr-callback', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      connection_id: connectionId,
+      code: code,
+      state: state
+    })
+  });
+  
+  if (!res.ok) throw new Error('Failed to complete EHR login');
+  return res.json();
+}
+
+
 export async function fetchPatients(q = ""): Promise<Patient[]> {
   const url = q ? `/api/patients?q=${encodeURIComponent(q)}` : `/api/patients`;
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: getSessionHeaders()
+  });
   if (!res.ok) throw new Error("Failed to load patients");
   return res.json();
 }
 
+// Update fetchPatient to use session headers:
 export async function fetchPatient(id: string): Promise<PatientDetail> {
-  const res = await fetch(`/api/patients/${id}`);
+  const res = await fetch(`/api/patients/${id}`, {
+    headers: getSessionHeaders()
+  });
   if (!res.ok) throw new Error(`Failed to load patient ${id}`);
   return res.json();
 }
