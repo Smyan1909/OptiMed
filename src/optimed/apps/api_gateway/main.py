@@ -6,10 +6,12 @@ import httpx
 import json
 import base64
 import time
+import io
+from PIL import Image
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode
-from typing import AsyncGenerator, Dict, Optional
-from fastapi import FastAPI, HTTPException, Query, Path, Header, Depends # type: ignore
+from typing import AsyncGenerator, Dict, Optional, Any, List
+from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, Header, Depends, File, Form # type: ignore
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus
@@ -18,7 +20,7 @@ from optimed.apps.orchestrator.factory import create_app_dependencies
 
 from pydantic import BaseModel
 
-_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service = create_app_dependencies()
+_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service = create_app_dependencies()
 
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
@@ -97,6 +99,37 @@ class EHRLoginResponse(BaseModel):
     authorization_url: str
     connection_id: str
     state: str
+
+
+class DICOMImageResponse(BaseModel):
+    image_id: str
+    patient_id: Optional[str] = None
+    user_id: str
+    filename: str
+    file_size: int
+    metadata: Dict[str, str]
+    dimensions: Dict[str, Any]
+    default_window_level: Dict[str, float]
+    status: str
+    uploaded_at: datetime
+    processed_at: Optional[datetime] = None
+    storage_path: Optional[str] = None
+
+
+class DICOMImageListResponse(BaseModel):
+    images: List[DICOMImageResponse]
+
+class DICOMPixelDataResponse(BaseModel):
+    image_id: str
+    image_data_base64: str  # Base64 encoded image for display
+    original_dtype: str
+    photometric_interpretation: Optional[str] = None
+    statistics: Dict[str, Any]
+
+class DICOMUploadResponse(BaseModel):
+    image_id: str
+    message: str
+    image: DICOMImageResponse
 
 async def get_current_user(
     x_session_id: str = Header(None, alias="X-Session-ID")
@@ -756,3 +789,286 @@ async def logout(user_ctx: dict = Depends(get_user_context)):
     
     return {"message": "Logout successful"}
    
+
+### Image endpoints
+
+@app.post("/dicom/upload", response_model=DICOMUploadResponse)
+async def upload_dicom_image(
+    request: Request,
+    file: UploadFile = File(...),
+    patient_id: Optional[str] = Form(None)
+):
+    """Upload a DICOM image file."""
+    # Get current user from session
+    session_id = request.headers.get("X-Session-ID")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+    
+    session = await _user_repo.get_active_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
+    user = await _user_repo.get_user_by_id(session.user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    try:
+        # Read file content
+        file_content = await file.read()
+        
+        # Create upload request
+        from optimed.core.domain import ImageUploadRequest
+        upload_request = ImageUploadRequest(
+            user_id=user.user_id,
+            filename=file.filename or "unknown.dcm",
+            file_content=file_content,
+            patient_id=patient_id
+        )
+        
+        # Get image service
+        image_service = _create_image_service()
+        
+        # Process upload
+        dicom_image = await image_service.upload_image(upload_request)
+        
+        # Convert to response model
+        image_response = DICOMImageResponse(
+            image_id=dicom_image.image_id,
+            patient_id=dicom_image.patient_id,
+            user_id=dicom_image.user_id,
+            filename=dicom_image.filename,
+            file_size=dicom_image.file_size,
+            metadata=dicom_image.metadata.to_dict(),
+            dimensions={
+                'width': dicom_image.dimensions.width,
+                'height': dicom_image.dimensions.height,
+                'depth': dicom_image.dimensions.depth,
+                'pixel_spacing_x': dicom_image.dimensions.pixel_spacing_x,
+                'pixel_spacing_y': dicom_image.dimensions.pixel_spacing_y,
+                'slice_thickness': dicom_image.dimensions.slice_thickness
+            },
+            default_window_level={
+                'center': dicom_image.default_window_level.center,
+                'width': dicom_image.default_window_level.width
+            },
+            status=dicom_image.status.value,
+            uploaded_at=dicom_image.uploaded_at,
+            processed_at=dicom_image.processed_at,
+            storage_path=dicom_image.storage_path
+        )
+        
+        return DICOMUploadResponse(
+            image_id=dicom_image.image_id,
+            message="DICOM image uploaded successfully",
+            image=image_response
+        )
+        
+    except Exception as e:
+        print(f"[ERROR] DICOM upload failed: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to upload DICOM image: {str(e)}")
+
+@app.get("/dicom/images", response_model=DICOMImageListResponse)
+async def list_user_dicom_images(request: Request):
+    """List all DICOM images for the current user."""
+    # Get current user from session
+    session_id = request.headers.get("X-Session-ID")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+    
+    session = await _user_repo.get_active_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
+    try:
+        # Get image service
+        image_service = _create_image_service()
+        
+        # Get user's images
+        images = await image_service.list_user_images(session.user_id)
+        
+        # Convert to response models with better error handling
+        image_responses = []
+        for img in images:
+            try:
+                # Ensure metadata.to_dict() works properly
+                metadata_dict = img.metadata.to_dict() if hasattr(img.metadata, 'to_dict') else {}
+                
+                image_responses.append(DICOMImageResponse(
+                    image_id=img.image_id,
+                    patient_id=img.patient_id,
+                    user_id=img.user_id,
+                    filename=img.filename,
+                    file_size=img.file_size,
+                    metadata=metadata_dict,
+                    dimensions={
+                        'width': img.dimensions.width,
+                        'height': img.dimensions.height,
+                        'depth': img.dimensions.depth,
+                        'pixel_spacing_x': img.dimensions.pixel_spacing_x,
+                        'pixel_spacing_y': img.dimensions.pixel_spacing_y,
+                        'slice_thickness': img.dimensions.slice_thickness
+                    },
+                    default_window_level={
+                        'center': img.default_window_level.center,
+                        'width': img.default_window_level.width
+                    },
+                    status=img.status.value,
+                    uploaded_at=img.uploaded_at,
+                    processed_at=img.processed_at,
+                    storage_path=img.storage_path
+                ))
+            except Exception as e:
+                print(f"[ERROR] Failed to serialize image {img.image_id}: {e}")
+                # Skip this image and continue with others
+                continue
+        
+        return DICOMImageListResponse(images=image_responses)
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to list DICOM images: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to list images: {str(e)}")
+
+@app.get("/dicom/images/{image_id}", response_model=DICOMImageResponse)
+async def get_dicom_image(image_id: str, request: Request):
+    """Get a specific DICOM image by ID."""
+    # Get current user from session
+    session_id = request.headers.get("X-Session-ID")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+    
+    session = await _user_repo.get_active_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
+    try:
+        # Get image service
+        image_service = _create_image_service()
+        
+        # Get image
+        image = await image_service.get_image(image_id, session.user_id)
+        if not image:
+            raise HTTPException(status_code=404, detail="Image not found")
+        
+        # Convert to response model
+        return DICOMImageResponse(
+            image_id=image.image_id,
+            patient_id=image.patient_id,
+            user_id=image.user_id,
+            filename=image.filename,
+            file_size=image.file_size,
+            metadata=image.metadata.to_dict(),
+            dimensions={
+                'width': image.dimensions.width,
+                'height': image.dimensions.height,
+                'depth': image.dimensions.depth,
+                'pixel_spacing_x': image.dimensions.pixel_spacing_x,
+                'pixel_spacing_y': image.dimensions.pixel_spacing_y,
+                'slice_thickness': image.dimensions.slice_thickness
+            },
+            default_window_level={
+                'center': image.default_window_level.center,
+                'width': image.default_window_level.width
+            },
+            status=image.status.value,
+            uploaded_at=image.uploaded_at,
+            processed_at=image.processed_at,
+            storage_path=image.storage_path
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] Failed to get DICOM image: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get image: {str(e)}")
+
+@app.get("/dicom/images/{image_id}/pixel-data", response_model=DICOMPixelDataResponse)
+async def get_dicom_pixel_data(
+    image_id: str, 
+    request: Request,
+    window_center: Optional[float] = Query(None),
+    window_width: Optional[float] = Query(None)
+):
+    """Get pixel data for a DICOM image with optional windowing."""
+    # Get current user from session
+    session_id = request.headers.get("X-Session-ID")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+    
+    session = await _user_repo.get_active_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
+    try:
+        # Get image service
+        image_service = _create_image_service()
+        
+        # Create window level if specified
+        window_level = None
+        if window_center is not None and window_width is not None:
+            from optimed.core.domain import WindowLevel
+            window_level = WindowLevel(center=window_center, width=window_width)
+        
+        # Get pixel data
+        pixel_data = await image_service.get_image_pixel_data(
+            image_id, session.user_id, window_level
+        )
+        if not pixel_data:
+            raise HTTPException(status_code=404, detail="Pixel data not found")
+        
+        # Convert numpy array to PIL Image and then to base64
+        if pixel_data.pixel_array.ndim == 2:
+            # Grayscale image
+            pil_image = Image.fromarray(pixel_data.pixel_array, mode='L')
+        elif pixel_data.pixel_array.ndim == 3:
+            # RGB image
+            pil_image = Image.fromarray(pixel_data.pixel_array, mode='RGB')
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported image format")
+        
+        # Convert to base64
+        buffer = io.BytesIO()
+        pil_image.save(buffer, format='PNG')
+        image_base64 = base64.b64encode(buffer.getvalue()).decode()
+        
+        return DICOMPixelDataResponse(
+            image_id=pixel_data.image_id,
+            image_data_base64=f"data:image/png;base64,{image_base64}",
+            original_dtype=pixel_data.original_dtype,
+            photometric_interpretation=pixel_data.photometric_interpretation,
+            statistics=pixel_data.get_statistics()
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] Failed to get pixel data: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get pixel data: {str(e)}")
+
+@app.delete("/dicom/images/{image_id}")
+async def delete_dicom_image(image_id: str, request: Request):
+    """Delete a DICOM image."""
+    # Get current user from session
+    session_id = request.headers.get("X-Session-ID")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+    
+    session = await _user_repo.get_active_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
+    try:
+        # Get image service
+        image_service = _create_image_service()
+        
+        # Delete image
+        await image_service.delete_image(image_id, session.user_id)
+        
+        return {"message": "Image deleted successfully"}
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        print(f"[ERROR] Failed to delete DICOM image: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete image: {str(e)}")

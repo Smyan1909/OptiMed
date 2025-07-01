@@ -22,3 +22,8 @@ dependencies:
       - "fhir.resources>=7.4"
       - "sentence-transformers>=4.1.0"
       - pgvector
+      - pydicom          # DICOM parsing
+      - numpy
+      - aiofiles
+      - pillow
+      - types-aiofiles 
