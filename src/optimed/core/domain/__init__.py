@@ -3,6 +3,7 @@ from .diagnosis import DiagnosisResult
 from .info import InfoEvent, Notification, CommThread, ChatMessage
 from .kpi import KPIEvent, Alert
 from .users import User, UserAction, UserSession, UserEHRConnection
+from .image import ImageModalityType, ImageStatus, DICOMMetadata, ImageDimensions, WindowLevel, DICOMImage, ImagePixelData, ImageUploadRequest
 from .enums import (
     BedStatus,
     EncounterStatus,
@@ -13,6 +14,8 @@ from .enums import (
     ChatRole,
     UserRole,
     UserStatus,
+    ImageModalityType,
+    ImageStatus,
 )
 
 """OptiMed domain entities (v0).
@@ -52,4 +55,13 @@ __all__ = [
     "UserRole",
     "UserStatus",
     "UserEHRConnection",
+    # image
+    "ImageModalityType",
+    "ImageStatus",
+    "DICOMMetadata",
+    "ImageDimensions",
+    "ImagePixelData",
+    "WindowLevel",
+    "DICOMImage",
+    "ImageUploadRequest",
 ]

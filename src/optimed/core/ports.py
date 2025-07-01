@@ -2,7 +2,21 @@ from __future__ import annotations
 
 from typing import AsyncGenerator, Protocol, Sequence, Any, Union, Optional
 
-from optimed.core.domain import PatientContext, KPIEvent, ChatMessage, DiagnosisResult, User, UserSession, UserAction, UserEHRConnection
+from optimed.core.domain import (
+    PatientContext, 
+    KPIEvent, 
+    ChatMessage, 
+    DiagnosisResult, 
+    User, 
+    UserSession, 
+    UserAction, 
+    UserEHRConnection, 
+    DICOMImage, 
+    ImagePixelData, 
+    ImageUploadRequest,
+    DICOMMetadata,
+    ImageDimensions,
+    WindowLevel)
 
 # core/ports.py
 #
@@ -256,3 +270,112 @@ class UserRepository(Protocol):
     async def log_action(self, action: UserAction) -> UserAction:
         """Log a user action."""
         ...
+
+class ImageRepository(Protocol):
+    """Repository for managing DICOM images."""
+
+    async def save_image(self, image: DICOMImage) -> None:
+        """Save a DICOM image."""
+        ...
+    
+    async def get_image_by_id(self, image_id: str) -> Optional[DICOMImage]:
+        """Get a DICOM image by its ID."""
+        ...
+    
+    async def get_images_by_user(self, user_id: str) -> Sequence[DICOMImage]:
+        """Get all DICOM images uploaded by a user."""
+        ...
+    
+    async def get_images_by_patient(self, patient_id: str) -> Sequence[DICOMImage]:
+        """Get all DICOM images associated with a patient."""
+        ...
+
+    async def update_image(self, image: DICOMImage) -> None:
+        """Update an existing DICOM image."""
+        ...
+
+    async def delete_image(self, image_id: str) -> None:
+        """Delete a DICOM image by its ID."""
+        ...
+    
+
+class ImageStorage(Protocol):
+    """Port for DICOM image file storage"""
+
+    async def store_image_file(self, image_id: str, file_content: bytes) -> str:
+        """Store the raw DICOM file content and return the storage path."""
+        ...
+
+    async def get_image_file(self, storage_path: str) -> bytes:
+        """Retrieve the raw DICOM file content from storage."""
+        ...
+    
+    async def store_pixel_data(self, pixel_data: ImagePixelData) -> None:
+        """Store pixel data for a DICOM image."""
+        ...
+
+    async def get_pixel_data(self, image_id: str) -> Optional[ImagePixelData]:
+        """Get pixel data for a DICOM image by its ID."""
+        ...
+
+    async def delete_image_file(self, storage_path: str) -> None:
+        """Delete the stored DICOM file."""
+        ...
+
+class DICOMProcessor(Protocol):
+    """Port for processing DICOM images."""
+
+    async def extract_metadata(self, file_content: bytes) -> DICOMMetadata:
+        """Extract metadata from a DICOM file."""
+        ...
+    async def extract_pixel_data(self, file_content: bytes) -> ImagePixelData:
+        """Extract pixel data from a DICOM file."""
+        ...
+    
+    async def get_image_dimensions(self, file_content: bytes) -> ImageDimensions:
+        """Get dimensions of the DICOM image."""
+        ...
+    
+    async def get_default_window_level(self, file_content: bytes) -> WindowLevel:
+        """Get the default window/level settings for the DICOM image."""
+        ...
+    
+    async def validate_dicom_file(self, file_content: bytes) -> bool:
+        """Validate if the file content is a valid DICOM file."""
+        ...
+    
+
+    
+
+class ImageService(Protocol):
+    """Service for processing and managing DICOM images."""
+
+    async def upload_image(self, upload_request: ImageUploadRequest) -> DICOMImage:
+        """Process and upload a DICOM image."""
+        ...
+
+    async def get_image(self, image_id: str, user_id: str) -> Optional[DICOMImage]:
+        """Get a DICOM image by its ID and user ID."""
+        ...
+    
+    async def get_image_pixel_data(
+        self,
+        image_id: str,
+        user_id: str,
+        window_level: Optional[WindowLevel] = None
+    ) -> Optional[ImagePixelData]:
+        """Get pixel data for a DICOM image with optional windowing."""
+        ...
+    
+    async def list_user_images(self, user_id: str) -> Sequence[DICOMImage]:
+        """List all DICOM images uploaded by a user."""
+        ... 
+    
+    async def list_patient_images(self, patient_id: str, user_id: str) -> Sequence[DICOMImage]:
+        """List all DICOM images associated with a patient."""
+        ...
+
+    async def delete_image(self, image_id: str, user_id: str) -> None:
+        """Delete a DICOM image by its ID."""
+        ...
+    

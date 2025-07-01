@@ -9,6 +9,10 @@ from optimed.adapters.anthropic_claude.client import AnthropicClaudeClient
 from optimed.adapters.user_repository.pg_user_repository import PGUserRepository
 from optimed.adapters.user_repository.pg_ehr_connection_repository import PGUserEHRConnectionRepository
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository
+from optimed.adapters.dicom.pydicom_processor import PyDICOMProcessor
+from optimed.adapters.dicom.image_service import ImageServiceImpl
+from optimed.adapters.dicom.pg_image_repository import PostgreSQLImageRepository
+from optimed.adapters.dicom.image_storage import FileSystemImageStorage
 from optimed.core.domain import UserEHRConnection
 from datetime import datetime, timezone
 from dotenv import load_dotenv # type: ignore
@@ -58,6 +62,15 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, FHIRRepo
     connection_repo: UserEHRConnectionRepository = PGUserEHRConnectionRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
     connection_service = UserEHRConnectionService(connection_repo)
     
+    # Image processing dependencies
+    dicom_processor = PyDICOMProcessor()
+    image_storage = FileSystemImageStorage()
+    
+    # Image service factory (creates per request with fresh repository)
+    def create_image_service():
+        image_repository = PostgreSQLImageRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
+        return ImageServiceImpl(image_repository, image_storage, dicom_processor)
+
     # Main engine with connection service
     engine: DiagnosticEngine = LangGraphDiagnosticEngine(
         fhir_repo=fhir_repo,
@@ -67,4 +80,4 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, FHIRRepo
         connection_service=connection_service
     )
     
-    return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service
+    return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service
