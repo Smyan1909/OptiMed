@@ -328,7 +328,7 @@ class DICOMProcessor(Protocol):
     async def extract_metadata(self, file_content: bytes) -> DICOMMetadata:
         """Extract metadata from a DICOM file."""
         ...
-    async def extract_pixel_data(self, file_content: bytes) -> ImagePixelData:
+    async def extract_pixel_data(self, file_content: bytes, image_id: str) -> ImagePixelData:
         """Extract pixel data from a DICOM file."""
         ...
     

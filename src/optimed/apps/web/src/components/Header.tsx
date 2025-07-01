@@ -6,12 +6,13 @@ import { useUser } from '@/contexts/UserContext';
 import { UserProfile } from '@/components/UserProfile';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Stethoscope, Users, MessageSquare, Settings } from 'lucide-react';
+import { Stethoscope, Users, MessageSquare, Settings, Images} from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navigation = [
   { name: 'Patients', href: '/patients', icon: Users },
   { name: 'Chat', href: '/chat', icon: MessageSquare },
+  { name: 'DICOM Viewer', href: '/dicom', icon: Images },
   { name: 'Admin', href: '/admin', icon: Settings, adminOnly: true },
 ];
 

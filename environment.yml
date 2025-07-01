@@ -25,3 +25,4 @@ dependencies:
       - pydicom          # DICOM parsing
       - numpy
       - aiofiles
+      - pillow 

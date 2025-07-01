@@ -1,10 +1,12 @@
 import Link from "next/link";
+import { ImageIcon } from "lucide-react";
 
 export default function Navbar() {
   const links = [
     { href: "/", label: "Home" },
     { href: "/chat", label: "Chat" },
     { href: "/patients", label: "Patients" },
+    { href: "/dicom", label: "DICOM Viewer", icon: ImageIcon },
   ];
 
   return (
@@ -16,8 +18,9 @@ export default function Navbar() {
             <li key={link.href}>
               <Link
                 href={link.href}
-                className="text-white hover:text-gray-200 transition-colors"
+                className="text-white hover:text-gray-200 transition-colors flex items-center gap-2"
               >
+                {link.icon && <link.icon className="h-4 w-4" />}
                 {link.label}
               </Link>
             </li>

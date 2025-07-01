@@ -62,12 +62,12 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, FHIRRepo
     connection_repo: UserEHRConnectionRepository = PGUserEHRConnectionRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
     connection_service = UserEHRConnectionService(connection_repo)
     
-    # Image processing dependencies
-    dicom_processor = PyDICOMProcessor()
-    image_storage = FileSystemImageStorage()
+    
     
     # Image service factory (creates per request with fresh repository)
     def create_image_service():
+        dicom_processor = PyDICOMProcessor()
+        image_storage = FileSystemImageStorage()
         image_repository = PostgreSQLImageRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
         return ImageServiceImpl(image_repository, image_storage, dicom_processor)
 

@@ -3,6 +3,7 @@ from .mixins import FrozenModel
 from .enums import ImageModalityType, ImageStatus
 from typing import Optional, Dict, List 
 from datetime import datetime
+from pydantic import field_validator
 import numpy as np 
 
 
@@ -103,10 +104,20 @@ class DICOMImage(FrozenModel):
         
 class ImagePixelData(FrozenModel):
     """Raw pixel data for a DICOM image."""
+    model_config = {'arbitrary_types_allowed': True}
+
     image_id: str
     pixel_array: np.ndarray  # Raw pixel data
     original_dtype: str  # Original data type
     photometric_interpretation: Optional[str] = None
+    
+    @field_validator('pixel_array')
+    @classmethod
+    def validate_pixel_array(cls, v):
+        """Validate that pixel_array is a numpy array."""
+        if not isinstance(v, np.ndarray):
+            raise ValueError('pixel_array must be a numpy ndarray')
+        return v
     
     def get_normalized_array(self, window_level: Optional[WindowLevel] = None) -> np.ndarray:
         """Get normalized pixel array for display (0-255 range)."""
