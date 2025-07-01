@@ -11,7 +11,7 @@ from PIL import Image
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode
 from typing import AsyncGenerator, Dict, Optional, Any, List
-from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, Header, Depends, File, Form # type: ignore
+from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, Header, Depends, File, Form, Body # type: ignore
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus
@@ -20,7 +20,7 @@ from optimed.apps.orchestrator.factory import create_app_dependencies
 
 from pydantic import BaseModel
 
-_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service = create_app_dependencies()
+_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine = create_app_dependencies()
 
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
@@ -1072,3 +1072,87 @@ async def delete_dicom_image(image_id: str, request: Request):
     except Exception as e:
         print(f"[ERROR] Failed to delete DICOM image: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete image: {str(e)}")
+
+@app.post("/dicom/images/{image_id}/analyze", response_model=dict)
+async def analyze_dicom_image(
+    image_id: str,
+    request: Request,
+    query: str = Body(..., description="Analysis query or clinical question"),
+    patient_id: Optional[str] = Body(None, description="Optional patient ID for context")
+):
+    """Analyze a DICOM image using AI vision."""
+    session_id = request.headers.get("X-Session-ID")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+    
+    session = await _user_repo.get_active_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
+    try:
+        # Get image service
+        image_service = _create_image_service()
+        
+        # Get image details
+        image = await image_service.get_image(image_id, session.user_id)
+        if not image:
+            raise HTTPException(status_code=404, detail="Image not found")
+        
+        # Get pixel data
+        pixel_data = await image_service.get_image_pixel_data(image_id, session.user_id)
+        if not pixel_data:
+            raise HTTPException(status_code=404, detail="Image pixel data not found")
+        
+        # Run analysis using the image analysis engine
+        analysis = await _image_analysis_engine.analyze(
+            pixel_data=pixel_data,
+            metadata=image.metadata,
+            query=query,
+            user_id=session.user_id,
+            patient_id=patient_id,
+            session_id=session_id
+        )
+        
+        return {
+            "image_id": image_id,
+            "patient_id": patient_id,
+            "query": query,
+            "analysis": analysis,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        print(f"[ERROR] DICOM analysis failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+@app.get("/dicom/images/{image_id}/similar")
+async def find_similar_dicom_images(
+    image_id: str,
+    request: Request,
+    limit: int = Query(5, ge=1, le=20)
+):
+    """Find similar DICOM images based on embeddings."""
+    session_id = request.headers.get("X-Session-ID")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+    
+    session = await _user_repo.get_active_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
+    try:
+        image_service = _create_image_service()
+        similar_images = await image_service.find_similar_images(
+            image_id, session.user_id, limit
+        )
+        
+        return {
+            "reference_image_id": image_id,
+            "similar_images": similar_images
+        }
+        
+    except Exception as e:
+        print(f"[ERROR] Similar image search failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")

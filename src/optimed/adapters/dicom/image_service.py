@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Any
 
 from optimed.core.domain import (
     DICOMImage,
@@ -14,7 +14,9 @@ from optimed.core.ports import (
     ImageRepository,
     ImageStorage,
     DICOMProcessor,
-    ImageService 
+    ImageService,
+    VectorStore,
+    ImageEmbeddingService, 
 )
 
 
@@ -25,11 +27,15 @@ class ImageServiceImpl(ImageService):
         self,
         image_repository: ImageRepository,
         image_storage: ImageStorage,
-        dicom_processor: DICOMProcessor
+        dicom_processor: DICOMProcessor,
+        embedding_service: Optional[ImageEmbeddingService] = None,
+        vector_store: Optional[VectorStore] = None
     ):
         self._image_repository = image_repository
         self._image_storage = image_storage
         self._dicom_processor = dicom_processor
+        self._embedding_service = embedding_service
+        self._vector_store = vector_store
     
     async def upload_image(self, request: ImageUploadRequest) -> DICOMImage:
         """Upload and process a DICOM image."""
@@ -74,6 +80,9 @@ class ImageServiceImpl(ImageService):
             pixel_data = await self._dicom_processor.extract_pixel_data(request.file_content, image_id)
             await self._image_storage.store_pixel_data(pixel_data)
             
+            if self._embedding_service and self._vector_store:
+                await self._create_and_store_embeddings(image, pixel_data)
+
             # Update image with storage path and ready status
             updated_image = DICOMImage(
                 image_id=image.image_id,
@@ -180,3 +189,83 @@ class ImageServiceImpl(ImageService):
         
         # Delete from repository
         await self._image_repository.delete_image(image_id)
+
+    async def _create_and_store_embeddings(self, image: DICOMImage, pixel_data: ImagePixelData) -> None:
+        """Create and store embeddings for the DICOM image."""
+        try:
+            # Create image embedding
+            image_embedding = await self._embedding_service.create_image_embedding(pixel_data)
+            
+            # Create metadata embedding
+            metadata_embedding = await self._embedding_service.create_metadata_embedding(image.metadata)
+            
+            # Combine embeddings (simple average)
+            combined_embedding = [
+                (img + meta) / 2 for img, meta in zip(image_embedding, metadata_embedding)
+            ]
+            
+            # Store in vector database
+            embedding_metadata = {
+                'type': 'dicom',
+                'image_id': image.image_id,
+                'patient_id': image.patient_id,
+                'user_id': image.user_id,
+                'modality': image.metadata.modality.value if image.metadata.modality else None,
+                'body_part': image.metadata.body_part_examined,
+                'study_description': image.metadata.study_description,
+                'filename': image.filename,
+                'uploaded_at': image.uploaded_at.isoformat()
+            }
+            
+            await self._vector_store.store_dicom_embedding(
+                image.image_id,
+                combined_embedding,
+                embedding_metadata
+            )
+            
+        except Exception as e:
+            print(f"Warning: Failed to create embeddings for image {image.image_id}: {e}")
+            # Don't fail the upload if embedding creation fails
+    
+    async def find_similar_images(self, image_id: str, user_id: str, limit: int = 5) -> list[dict[str, Any]]:
+        """Find similar DICOM images based on embeddings."""
+        if not self._embedding_service or not self._vector_store:
+            return []
+        
+        try:
+            # Get the reference image
+            image = await self.get_image(image_id, user_id)
+            if not image:
+                return []
+            
+            # Get pixel data
+            pixel_data = await self._image_storage.get_pixel_data(image_id)
+            if not pixel_data:
+                return []
+            
+            # Create query embedding
+            image_embedding = await self._embedding_service.create_image_embedding(pixel_data)
+            metadata_embedding = await self._embedding_service.create_metadata_embedding(image.metadata)
+            
+            combined_embedding = [
+                (img + meta) / 2 for img, meta in zip(image_embedding, metadata_embedding)
+            ]
+            
+            # Search for similar images
+            similar_images = await self._vector_store.search_similar_dicom(
+                combined_embedding, 
+                limit=limit + 1  # +1 to exclude the query image itself
+            )
+            
+            # Filter out the query image and user access control
+            filtered_results = []
+            for result in similar_images:
+                if (result['metadata']['image_id'] != image_id and 
+                    result['metadata']['user_id'] == user_id):
+                    filtered_results.append(result)
+            
+            return filtered_results[:limit]
+            
+        except Exception as e:
+            print(f"Error finding similar images: {e}")
+            return []

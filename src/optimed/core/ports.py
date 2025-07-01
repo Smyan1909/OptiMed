@@ -62,6 +62,32 @@ class KPIEventSink(Protocol):
         ...
 
 
+class ImageEmbeddingService(Protocol):
+    """Service for creating embeddings from DICOM images."""
+    
+    async def create_image_embedding(self, pixel_data: ImagePixelData) -> Sequence[float]:
+        """Create vector embedding from DICOM pixel data."""
+        ...
+    
+    async def create_metadata_embedding(self, metadata: DICOMMetadata) -> Sequence[float]:
+        """Create vector embedding from DICOM metadata."""
+        ...
+
+
+class VisionLLMClient(Protocol):
+    """LLM client capable of analyzing images."""
+    
+    async def analyze_dicom_image(
+        self, 
+        pixel_data: ImagePixelData, 
+        metadata: DICOMMetadata,
+        query: str,
+        patient_context: Optional[PatientContext] = None
+    ) -> str:
+        """Analyze a DICOM image and provide medical insights."""
+        ...
+    
+
 class LLMClient(Protocol):
 
     async def chat(
@@ -137,6 +163,18 @@ class DiagnosticEngine(Protocol):
         """Access to the underlying vector store."""
         ...
 
+class ImageAnalysisEngine(Protocol):
+    """Service for analyzing DICOM images and generating insights."""
+
+    async def analyze(
+        self,
+        pixel_data: ImagePixelData,
+        metadata: DICOMMetadata,
+        query: str,
+        user_id: Optional[str] = None,
+        patient_id: Optional[str] = None
+    ) -> str:
+        ...
 
 class AuthenticationProvider(Protocol):
     """Generic authentication provider interface."""
