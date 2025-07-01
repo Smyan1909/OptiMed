@@ -1,7 +1,7 @@
 from __future__ import annotations
 from .mixins import FrozenModel
 from .enums import ImageModalityType, ImageStatus
-from typing import Optional, Dict, List 
+from typing import Optional, Dict, List, Any 
 from datetime import datetime
 from pydantic import field_validator
 import numpy as np 
@@ -141,7 +141,7 @@ class ImagePixelData(FrozenModel):
         
         return array.astype(np.uint8)
     
-    def get_statistics(self) -> Dict[str, float]:
+    def get_statistics(self) -> Dict[str, Any]:
         """Get basic statistics about the pixel data."""
         return {
             'min': float(np.min(self.pixel_array)),
@@ -157,8 +157,8 @@ class ImageUploadRequest(FrozenModel):
     filename: str
     file_content: bytes
     patient_id: Optional[str] = None
-    
-    def validate(self) -> None:
+
+    def validate_request(self) -> None:
         """Validate the upload request."""
         if not self.filename.lower().endswith(('.dcm', '.dicom')):
             raise ValueError("File must be a DICOM file (.dcm or .dicom)")

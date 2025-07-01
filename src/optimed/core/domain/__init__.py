@@ -14,6 +14,8 @@ from .enums import (
     ChatRole,
     UserRole,
     UserStatus,
+    ImageModalityType,
+    ImageStatus,
 )
 
 """OptiMed domain entities (v0).
@@ -60,4 +62,6 @@ __all__ = [
     "WindowLevel",
     "DICOMImage",
     "ImageUploadRequest",
+    "ImageModalityType",
+    "ImageStatus",
 ]

@@ -34,7 +34,7 @@ class ImageServiceImpl(ImageService):
     async def upload_image(self, request: ImageUploadRequest) -> DICOMImage:
         """Upload and process a DICOM image."""
         # Validate request
-        request.validate()
+        request.validate_request()
         
         # Validate DICOM file
         is_valid = await self._dicom_processor.validate_dicom_file(request.file_content)
@@ -176,7 +176,7 @@ class ImageServiceImpl(ImageService):
             raise ValueError("Image not found or access denied")
         
         # Delete from storage
-        await self._image_storage.delete_image_files(image_id)
+        await self._image_storage.delete_image_file(image_id)
         
         # Delete from repository
         await self._image_repository.delete_image(image_id)

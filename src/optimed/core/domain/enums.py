@@ -92,7 +92,7 @@ class UserStatus(str, Enum):
 
 
 class ImageModalityType(str, Enum):
-    "DICO image modality types."
+    "DICOM image modality types."
     CT = "CT"
     MRI = "MRI"
     XRAY = "CR"
