@@ -1,5 +1,5 @@
 import os
-from typing import Tuple
+from typing import Tuple, Callable
 from optimed.apps.orchestrator.patient_flow import LangGraphDiagnosticEngine
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
 from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
@@ -46,7 +46,7 @@ def create_smart_fhir_repository() -> SMARTFHIRRepository:
     return SMARTFHIRRepository(dummy_connection, auth_provider)
 
 
-def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, UserEHRConnectionService, callable]:
+def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, UserEHRConnectionService, Callable[[], ImageServiceImpl]]:
     """Factory function to wire up all application dependencies."""
 
     # Load environment variables from .env file
