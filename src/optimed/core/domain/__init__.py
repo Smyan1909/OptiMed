@@ -56,8 +56,6 @@ __all__ = [
     "UserStatus",
     "UserEHRConnection",
     # image
-    "ImageModalityType",
-    "ImageStatus",
     "DICOMMetadata",
     "ImageDimensions",
     "ImagePixelData",
