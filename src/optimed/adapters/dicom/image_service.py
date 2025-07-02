@@ -194,34 +194,35 @@ class ImageServiceImpl(ImageService):
         """Create and store embeddings for the DICOM image."""
         try:
             # Create image embedding
-            image_embedding = await self._embedding_service.create_image_embedding(pixel_data)
-            
-            # Create metadata embedding
-            metadata_embedding = await self._embedding_service.create_metadata_embedding(image.metadata)
-            
-            # Combine embeddings (simple average)
-            combined_embedding = [
-                (img + meta) / 2 for img, meta in zip(image_embedding, metadata_embedding)
-            ]
-            
-            # Store in vector database
-            embedding_metadata = {
-                'type': 'dicom',
-                'image_id': image.image_id,
-                'patient_id': image.patient_id,
-                'user_id': image.user_id,
-                'modality': image.metadata.modality.value if image.metadata.modality else None,
-                'body_part': image.metadata.body_part_examined,
-                'study_description': image.metadata.study_description,
-                'filename': image.filename,
-                'uploaded_at': image.uploaded_at.isoformat()
-            }
-            
-            await self._vector_store.store_dicom_embedding(
-                image.image_id,
-                combined_embedding,
-                embedding_metadata
-            )
+            if self._embedding_service is not None and self._vector_store is not None:
+                image_embedding = await self._embedding_service.create_image_embedding(pixel_data)
+                
+                # Create metadata embedding
+                metadata_embedding = await self._embedding_service.create_metadata_embedding(image.metadata)
+                
+                # Combine embeddings (simple average)
+                combined_embedding = [
+                    (img + meta) / 2 for img, meta in zip(image_embedding, metadata_embedding)
+                ]
+                
+                # Store in vector database
+                embedding_metadata = {
+                    'type': 'dicom',
+                    'image_id': image.image_id,
+                    'patient_id': image.patient_id,
+                    'user_id': image.user_id,
+                    'modality': image.metadata.modality.value if image.metadata.modality else None,
+                    'body_part': image.metadata.body_part_examined,
+                    'study_description': image.metadata.study_description,
+                    'filename': image.filename,
+                    'uploaded_at': image.uploaded_at.isoformat()
+                }
+                
+                await self._vector_store.store_dicom_embedding(
+                    image.image_id,
+                    combined_embedding,
+                    embedding_metadata
+                )
             
         except Exception as e:
             print(f"Warning: Failed to create embeddings for image {image.image_id}: {e}")

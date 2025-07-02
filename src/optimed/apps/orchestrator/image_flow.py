@@ -55,7 +55,7 @@ class LangGraphImageAnalysisEngine(ImageAnalysisEngine):
         # Build the graph
         self.graph = self._build_graph()
     
-    def _build_graph(self) -> StateGraph:
+    def _build_graph(self) -> Any:
         """Build the LangGraph flow for image analysis."""
         graph = StateGraph(ImageAnalysisState)
         
@@ -159,6 +159,14 @@ class LangGraphImageAnalysisEngine(ImageAnalysisEngine):
                 state.error = "Vision analysis requires Claude client"
                 return state
             
+            if state.pixel_data is None:
+                state.error = "No pixel data available for analysis"
+                return state
+                
+            if state.metadata is None:
+                state.error = "No metadata available for analysis"
+                return state
+
             # Enhanced analysis with patient context and history
             analysis = await self.llm_client.analyze_dicom_image(
                 pixel_data=state.pixel_data,
@@ -177,7 +185,7 @@ class LangGraphImageAnalysisEngine(ImageAnalysisEngine):
     async def _find_similar_cases(self, state: ImageAnalysisState) -> ImageAnalysisState:
         """Find similar cases using embeddings."""
         try:
-            if not state.pixel_data:
+            if not state.pixel_data or not state.metadata:
                 return state
             
             # Create embedding for the current image

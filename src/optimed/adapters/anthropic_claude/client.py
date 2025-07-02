@@ -143,7 +143,7 @@ Please analyze this medical image and provide:
 
 Focus on being accurate, detailed, and clinically relevant. If you cannot make definitive diagnoses, clearly state limitations and suggest appropriate follow-up."""
 
-            messages = [
+            messages: list[MessageParam] = [
                 {
                     "role": "user",
                     "content": [
@@ -169,7 +169,12 @@ Focus on being accurate, detailed, and clinically relevant. If you cannot make d
                 messages=messages
             )
             
-            return response.content[0].text
+            response_text = ""
+            for block in response.content:
+                if hasattr(block, 'text') and block.type == "text":
+                    response_text += block.text
+            
+            return response_text
             
         except Exception as e:
             print(f"Error in DICOM image analysis: {e}")
@@ -178,34 +183,35 @@ Focus on being accurate, detailed, and clinically relevant. If you cannot make d
     async def _pixel_data_to_base64(self, pixel_data: ImagePixelData) -> str:
         """Convert pixel data to base64 encoded PNG image."""
         try:
-            pixel_array = pixel_data.pixel_array
-            
-            # Handle 3D volumes by taking middle slice
-            if len(pixel_array.shape) == 3:
-                pixel_array = pixel_array[pixel_array.shape[0] // 2]
+            # Convert numpy array to PIL Image
+            if pixel_data.pixel_array.ndim == 3:
+                # Handle multi-slice images by taking the middle slice
+                middle_slice = pixel_data.pixel_array.shape[0] // 2
+                img_array = pixel_data.pixel_array[middle_slice]
+            else:
+                img_array = pixel_data.pixel_array
             
             # Normalize to 0-255 range
-            if pixel_array.dtype != np.uint8:
-                pixel_min, pixel_max = pixel_array.min(), pixel_array.max()
-                if pixel_max > pixel_min:
-                    pixel_array = ((pixel_array - pixel_min) / (pixel_max - pixel_min) * 255).astype(np.uint8)
-                else:
-                    pixel_array = np.zeros_like(pixel_array, dtype=np.uint8)
+            img_array = img_array.astype(np.float32)
+            img_array = (img_array - img_array.min()) / (img_array.max() - img_array.min()) * 255
+            img_array = img_array.astype(np.uint8)
             
-            # Convert to PIL Image
-            image = Image.fromarray(pixel_array, mode='L')  # Grayscale
+            # Create PIL Image
+            pil_image = Image.fromarray(img_array)
+            if pil_image.mode != 'RGB':
+                pil_image = pil_image.convert('RGB')
             
             # Convert to PNG bytes
-            img_byte_arr = io.BytesIO()
-            image.save(img_byte_arr, format='PNG')
-            img_byte_arr = img_byte_arr.getvalue()
+            buffer = io.BytesIO()
+            pil_image.save(buffer, format='PNG')
+            # Fix: Get bytes from buffer correctly
+            png_bytes = buffer.getvalue()
             
             # Encode to base64
-            return base64.b64encode(img_byte_arr).decode('utf-8')
+            return base64.b64encode(png_bytes).decode('utf-8')
             
         except Exception as e:
-            print(f"Error converting pixel data to base64: {e}")
-            raise
+            raise ValueError(f"Failed to convert pixel data to base64: {e}")
     
     def _format_metadata_for_analysis(self, metadata: DICOMMetadata) -> str:
         """Format DICOM metadata for analysis prompt."""

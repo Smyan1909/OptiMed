@@ -146,6 +146,24 @@ class VectorStore(Protocol):
         """Update an existing embedding vector's metadata or embedding."""
         ...
 
+    async def store_dicom_embedding(
+        self,
+        image_id: str,
+        embedding: Sequence[float],
+        metadata: dict[str, Any]
+    ) -> str:
+        """Store a DICOM image embedding with metadata."""
+        ...
+
+    async def search_similar_dicom(
+        self,
+        query_embedding: Sequence[float],
+        limit: int = 5,
+        similarity_threshold: float = 0.7
+    ) -> list[dict[str, Any]]:
+        """Search for similar DICOM images by embedding."""
+        ... 
+
 
 class DiagnosticEngine(Protocol):
     """Pure-domain service used by LangGraph; orchestrates everything."""
@@ -172,7 +190,8 @@ class ImageAnalysisEngine(Protocol):
         metadata: DICOMMetadata,
         query: str,
         user_id: Optional[str] = None,
-        patient_id: Optional[str] = None
+        patient_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> str:
         ...
 
