@@ -225,7 +225,10 @@ class PGVectorAdapter(VectorStore):
         
         if self._pool is None:
             self._pool = await self._get_pool()
-            
+
+        if self._pool is None:
+            raise RuntimeError("Connection pool is not initialized")
+
         async with self._pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO embeddings (id, embedding, metadata, created_at)
@@ -244,6 +247,9 @@ class PGVectorAdapter(VectorStore):
         
         if self._pool is None:
             self._pool = await self._get_pool()
+
+        if self._pool is None:
+            return []
 
         async with self._pool.acquire() as conn:
             results = await conn.fetch("""
