@@ -212,7 +212,7 @@ class LangGraphImageAnalysisEngine(ImageAnalysisEngine):
             
             # Add patient context if available
             if state.patient_context:
-                response_parts.append(f"## Patient Context")
+                response_parts.append("## Patient Context")
                 response_parts.append(f"Patient: {state.patient_context.name}")
                 if hasattr(state.patient_context, 'demographics') and state.patient_context.demographics:
                     demo = state.patient_context.demographics

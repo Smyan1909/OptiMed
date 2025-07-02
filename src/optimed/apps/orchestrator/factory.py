@@ -48,7 +48,7 @@ def create_smart_fhir_repository() -> SMARTFHIRRepository:
     return SMARTFHIRRepository(dummy_connection, auth_provider)
 
 
-def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, UserEHRConnectionService, Callable[[], ImageServiceImpl]]:
+def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, UserEHRConnectionService, Callable[[], ImageServiceImpl], ImageAnalysisEngine]:
     """Factory function to wire up all application dependencies."""
 
     # Load environment variables from .env file
@@ -71,7 +71,7 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, FHIRRepo
     )
 
     # Image analysis engine
-    image_analysis_engine = LangGraphImageAnalysisEngine(
+    image_analysis_engine: ImageAnalysisEngine = LangGraphImageAnalysisEngine(
         llm_client=llm_client,
         fhir_repo=fhir_repo,
         vector_store=vector_store,

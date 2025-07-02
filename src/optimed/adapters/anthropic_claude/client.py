@@ -139,7 +139,7 @@ Please analyze this medical image and provide:
 2. Any abnormalities or areas of concern  
 3. Clinical impressions based on the imaging findings
 4. Recommendations for further evaluation if needed
-{f"5. How findings relate to the patient's clinical history" if patient_context else ""}
+{"5. How findings relate to the patient's clinical history" if patient_context else ""}
 
 Focus on being accurate, detailed, and clinically relevant. If you cannot make definitive diagnoses, clearly state limitations and suggest appropriate follow-up."""
 
