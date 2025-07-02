@@ -61,3 +61,35 @@ class ChatMessage(FrozenModel):
     def is_from_staff(self) -> bool:
         """Check if the message is from a staff member (doctor, nurse, etc.)."""
         return self.user_id is not None and self.user_role is not None
+    
+class WebSearchQuery(FrozenModel):
+    """Represents a web search query."""
+    query_id: str
+    query_text: str
+    patient_id: Optional[str] = None
+    user_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    search_intent: str = ""  # Medical condition, drug info, treatment guidelines, etc.
+
+class WebSearchResult(FrozenModel):
+    """Represents a single web search result."""
+    url: str
+    title: str
+    snippet: str
+    relevance_score: float = 0.0
+    source_type: str = "general"  # medical_journal, clinical_guideline, drug_database, etc.
+    publication_date: Optional[datetime] = None
+
+class WebSearchResponse(FrozenModel):
+    """Represents the complete web search response."""
+    query: WebSearchQuery
+    results: List[WebSearchResult] = Field(default_factory=list)
+    total_results: int = 0
+    search_time_ms: int = 0
+    sources_used: List[str] = Field(default_factory=list)  # URLs that were actually used
+    summary: str = ""  # AI-generated summary of findings
+    searched_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    def get_credible_sources(self, min_score: float = 0.7) -> List[WebSearchResult]:
+        """Filter results by relevance score for credible sources."""
+        return [result for result in self.results if result.relevance_score >= min_score]

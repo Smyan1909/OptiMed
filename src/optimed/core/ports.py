@@ -7,6 +7,7 @@ from optimed.core.domain import (
     KPIEvent, 
     ChatMessage, 
     DiagnosisResult, 
+    WebSearchResponse,
     User, 
     UserSession, 
     UserAction, 
@@ -436,3 +437,25 @@ class ImageService(Protocol):
         """Delete a DICOM image by its ID."""
         ...
     
+
+class WebSearchService(Protocol):
+    """Service for performing web searches and retrieving results."""
+
+    async def search(
+        self, 
+        query: str, 
+        max_results: int = 10,
+        patient_context: Optional[str] = None,
+        search_intent: Optional[str] = None
+    ) -> WebSearchResponse:
+        """Perform a web search and return structured results."""
+        ...
+    
+    async def evaluate_search_need(
+        self, 
+        user_query: str, 
+        patient_context: Optional[str] = None,
+        chat_history: Optional[list[str]] = None
+    ) -> bool:
+        """Evaluate if web search is needed for the given query."""
+        ...

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, FormEvent } from "react";
 import { useUser } from '@/contexts/UserContext';
-import { get } from "http";
+
 
 interface Message {
   sender: "user" | "system";
@@ -15,6 +15,77 @@ interface ChatBoxProps {
   mode: "chat" | "diagnose";
   patientId?: string;
 }
+
+const parseLinksInText = (text: string, isUser: boolean = false) => {
+  // Escape HTML first to prevent XSS
+  const escapeHtml = (unsafe: string) => {
+    return unsafe
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  };
+
+  // Escape the text first
+  let processedText = escapeHtml(text);
+  
+  const linkClass = isUser 
+    ? "text-blue-200 hover:text-blue-100 underline font-medium transition-colors duration-200 break-words"
+    : "text-blue-600 hover:text-blue-800 underline font-medium transition-colors duration-200 break-words";
+  
+  const externalIcon = `<svg class="w-3 h-3 inline ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>`;
+  
+  // Regular expressions for different link formats
+  const markdownLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+  const urlRegex = /(https?:\/\/[^\s<>]+)/g;
+  
+  // Handle markdown-style links [text](url) first
+  processedText = processedText.replace(markdownLinkRegex, (match, linkText, url) => {
+    // Unescape the URL and link text for proper use in href
+    const cleanUrl = url.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#039;/g, "'");
+    const cleanLinkText = linkText.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#039;/g, "'");
+    
+    return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="${linkClass}">${cleanLinkText}${externalIcon}</a>`;
+  });
+  
+  // Handle plain URLs (avoiding already processed markdown links)
+  processedText = processedText.replace(urlRegex, (url) => {
+    // Skip if this URL is already inside an <a> tag
+    const beforeMatch = processedText.substring(0, processedText.indexOf(url));
+    if (beforeMatch.includes('<a href=')) {
+      // Check if we're inside a recently created link
+      const lastLinkStart = beforeMatch.lastIndexOf('<a href=');
+      const lastLinkEnd = beforeMatch.lastIndexOf('</a>');
+      if (lastLinkStart > lastLinkEnd) {
+        return url; // We're inside a link, don't process
+      }
+    }
+    
+    const cleanUrl = url.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#039;/g, "'");
+    const displayUrl = cleanUrl.length > 50 ? cleanUrl.substring(0, 47) + '...' : cleanUrl;
+    
+    return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="${linkClass}">${displayUrl}${externalIcon}</a>`;
+  });
+  
+  return processedText;
+};
+
+interface MessageContentProps {
+  text: string;
+  isUser: boolean;
+}
+
+const MessageContent = ({ text, isUser }: MessageContentProps) => {
+  const processedText = parseLinksInText(text, isUser); // Add the isUser parameter here
+  
+  return (
+    <div 
+      className={`font-medium whitespace-pre-wrap ${isUser ? 'text-white' : 'text-gray-900'}`}
+      dangerouslySetInnerHTML={{ __html: processedText }}
+    />
+  );
+};
 
 const getAuthHeaders = () => {
   const headers: Record<string, string> = {
@@ -215,7 +286,7 @@ export default function ChatBox({ mode, patientId }: ChatBoxProps) {
                     <span className="animate-pulse text-gray-600">{msg.text}</span>
                   </span>
                 ) : (
-                  <div className="font-medium whitespace-pre-wrap">{msg.text}</div>
+                  <MessageContent text={msg.text} isUser={msg.sender === "user"} />
                 )}
               </div>
               {msg.timestamp && (

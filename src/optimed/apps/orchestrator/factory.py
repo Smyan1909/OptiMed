@@ -14,6 +14,7 @@ from optimed.adapters.dicom.image_service import ImageServiceImpl
 from optimed.adapters.dicom.pg_image_repository import PostgreSQLImageRepository
 from optimed.adapters.dicom.image_storage import FileSystemImageStorage
 from optimed.adapters.dicom.image_embedding_service import DICOMImageEmbeddingService
+from optimed.adapters.web_search.web_service import TavilyWebSearchService
 from optimed.apps.orchestrator.image_flow import LangGraphImageAnalysisEngine
 from optimed.core.domain import UserEHRConnection
 from datetime import datetime, timezone
@@ -87,13 +88,21 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, FHIRRepo
         image_repository = PostgreSQLImageRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
         return ImageServiceImpl(image_repository, image_storage, dicom_processor, image_embedding_service, vector_store)
 
+
+    # Web search service
+    web_search_service = TavilyWebSearchService(
+        api_key=os.getenv("TAVILY_API_KEY"),
+        llm_client=llm_client,
+    )
+
     # Main engine with connection service
     engine: DiagnosticEngine = LangGraphDiagnosticEngine(
         fhir_repo=fhir_repo,
         vector_store=vector_store,
         llm_client=llm_client,
         user_repo=user_repo,
-        connection_service=connection_service
+        connection_service=connection_service,
+        web_search_service=web_search_service
     )
     
     return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine
