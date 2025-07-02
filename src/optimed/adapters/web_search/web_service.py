@@ -44,7 +44,8 @@ class TavilyWebSearchService(WebSearchService):
         - Query needs specific dosing information not in patient context
         - Query asks about rare conditions or cutting-edge research
         - Query needs current safety alerts or contraindications
-        - Query specifically requests web search for up-to-date information
+        - Query asks about web search 
+        - Query asks about up to date information
         
         Web search is NOT needed if:
         - Query can be answered with patient context alone
