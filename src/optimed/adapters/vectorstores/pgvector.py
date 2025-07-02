@@ -220,11 +220,12 @@ class PGVectorAdapter(VectorStore):
         metadata: dict[str, Any]
     ) -> str:
         """Store DICOM image embedding."""
-        if not self._pool:
-            await self.setup()
             
         embedding_id = f"dicom_{image_id}_{uuid.uuid4()}"
         
+        if self._pool is None:
+            self._pool = await self._get_pool()
+            
         async with self._pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO embeddings (id, embedding, metadata, created_at)
@@ -240,7 +241,10 @@ class PGVectorAdapter(VectorStore):
         similarity_threshold: float = 0.7
     ) -> list[dict[str, Any]]:
         """Search for similar DICOM images by embedding."""
-            
+        
+        if self._pool is None:
+            self._pool = await self._get_pool()
+
         async with self._pool.acquire() as conn:
             results = await conn.fetch("""
                 SELECT id, metadata, 1 - (embedding <=> $1) as similarity
