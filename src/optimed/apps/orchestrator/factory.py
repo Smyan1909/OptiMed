@@ -91,7 +91,7 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, FHIRRepo
 
     # Web search service
     web_search_service = TavilyWebSearchService(
-        api_key=os.getenv("TAVILY_API_KEY"),
+        api_key=str(os.getenv("TAVILY_API_KEY")),
         llm_client=llm_client,
     )
 
