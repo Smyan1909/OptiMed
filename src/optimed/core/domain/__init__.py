@@ -1,6 +1,6 @@
 from .clinical import PatientContext, BedState, Encounter
 from .diagnosis import DiagnosisResult
-from .info import InfoEvent, Notification, CommThread, ChatMessage
+from .info import InfoEvent, Notification, CommThread, ChatMessage, WebSearchQuery, WebSearchResult, WebSearchResponse
 from .kpi import KPIEvent, Alert
 from .users import User, UserAction, UserSession, UserEHRConnection
 from .image import DICOMMetadata, ImageDimensions, WindowLevel, DICOMImage, ImagePixelData, ImageUploadRequest
@@ -64,4 +64,8 @@ __all__ = [
     "ImageUploadRequest",
     "ImageModalityType",
     "ImageStatus",
+    # web search 
+    "WebSearchQuery",
+    "WebSearchResult",
+    "WebSearchResponse",
 ]

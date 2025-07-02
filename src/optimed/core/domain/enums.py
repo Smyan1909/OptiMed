@@ -90,7 +90,6 @@ class UserStatus(str, Enum):
     SUSPENDED = "suspended"
     PENDING = "pending"
 
-
 class ImageModalityType(str, Enum):
     "DICOM image modality types."
     CT = "CT"
