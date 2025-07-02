@@ -311,3 +311,36 @@ export async function deleteDICOMImage(imageId: string): Promise<{ message: stri
   }
   return res.json();
 }
+
+export async function analyzeDICOMImage(imageId: string, query: string, patientId?: string) {
+  const body: any = { query };
+  if (patientId) {
+    body.patient_id = patientId;
+  }
+
+  const res = await fetch(`/api/dicom/images/${imageId}/analyze`, {
+    method: 'POST',
+    headers: getSessionHeaders(),
+    body: JSON.stringify(body)
+  });
+  
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Analysis failed: ${res.status} - ${errorText}`);
+  }
+  
+  return res.json();
+}
+
+export async function findSimilarDICOMImages(imageId: string, limit: number = 5) {
+  const res = await fetch(`/api/dicom/images/${imageId}/similar?limit=${limit}`, {
+    headers: getSessionHeaders()
+  });
+  
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Search failed: ${res.status} - ${errorText}`);
+  }
+  
+  return res.json();
+}

@@ -27,3 +27,5 @@ dependencies:
       - aiofiles
       - pillow
       - types-aiofiles 
+      - torch
+      - transformers

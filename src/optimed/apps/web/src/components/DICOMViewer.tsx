@@ -14,10 +14,11 @@ import {
   ChevronRight,
   Play,
   Pause,
-  ImageIcon
+  ImageIcon,
+  Brain,
+  Search
 } from 'lucide-react';
 import { Button } from './ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Slider } from './ui/slider';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
@@ -26,7 +27,11 @@ import {
   uploadDICOMImage, 
   listDICOMImages, 
   getDICOMPixelData, 
-  deleteDICOMImage 
+  deleteDICOMImage,
+  analyzeDICOMImage,
+  findSimilarDICOMImages,
+  fetchPatients,
+  fetchPatient
 } from '@/lib/api';
 
 interface DICOMImage {
@@ -62,6 +67,14 @@ interface DICOMPixelData {
   statistics: Record<string, any>;
 }
 
+interface Patient {
+  id: string;
+  name: string;
+  birthDate?: string;
+  gender?: string;
+  [key: string]: any;
+}
+
 interface DICOMViewerProps {
   className?: string;
 }
@@ -80,19 +93,42 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [imagePosition, setImagePosition] = useState({ x: 0, y: 0 });
   
+  // Analysis states
+  const [analysisQuery, setAnalysisQuery] = useState('');
+  const [analysisResult, setAnalysisResult] = useState<string | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [similarImages, setSimilarImages] = useState<any[]>([]);
+  const [showSimilarImages, setShowSimilarImages] = useState(false);
+  
+  // Patient context states
+  const [selectedPatientId, setSelectedPatientId] = useState('no-patient');
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [loadingPatients, setLoadingPatients] = useState(false);
+  
   // 3D/Multi-slice support
   const [currentSlice, setCurrentSlice] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [playSpeed, setPlaySpeed] = useState(500); // ms between frames
+  const [playSpeed, setPlaySpeed] = useState(500);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const playIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Load images on component mount
+  // Load images and patients on component mount
   useEffect(() => {
     loadImages();
+    loadPatients();
   }, []);
+
+  // Load patient details when patient ID changes
+  useEffect(() => {
+    if (selectedPatientId) {
+      loadPatientDetails(selectedPatientId);
+    } else {
+      setSelectedPatient(null);
+    }
+  }, [selectedPatientId]);
 
   // Auto-play for 3D volumes
   useEffect(() => {
@@ -127,6 +163,29 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
     }
   };
 
+  const loadPatients = async () => {
+    setLoadingPatients(true);
+    try {
+      const response = await fetchPatients();
+      setPatients(response || []);
+    } catch (error) {
+      console.error('Failed to load patients:', error);
+      // Don't show error for patients as it might not be critical
+    } finally {
+      setLoadingPatients(false);
+    }
+  };
+
+  const loadPatientDetails = async (patientId: string) => {
+    try {
+      const patient = await fetchPatient(patientId);
+      setSelectedPatient(patient);
+    } catch (error) {
+      console.error('Failed to load patient details:', error);
+      setSelectedPatient(null);
+    }
+  };
+
   const loadPixelData = async (image: DICOMImage, slice: number = 0) => {
     setIsLoading(true);
     try {
@@ -153,21 +212,57 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
     setImagePosition({ x: 0, y: 0 });
     setCurrentSlice(0);
     setIsPlaying(false);
+    
+    // Auto-select patient if image has patient_id
+    if (image.patient_id && image.patient_id !== selectedPatientId) {
+      setSelectedPatientId(image.patient_id);
+    }
+    
     loadPixelData(image, 0);
   };
 
+  const handleAnalyzeImage = async () => {
+    if (!selectedImage || !analysisQuery.trim()) return;
+    
+    setIsAnalyzing(true);
+    try {
+      const result = await analyzeDICOMImage(
+        selectedImage.image_id, 
+        analysisQuery,
+        selectedPatientId !== 'no-patient' ? selectedPatientId : undefined
+      );
+      setAnalysisResult(result.analysis);
+    } catch (error) {
+      console.error('Analysis failed:', error);
+      alert('Failed to analyze image. Please try again.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleFindSimilar = async () => {
+    if (!selectedImage) return;
+    
+    try {
+      const result = await findSimilarDICOMImages(selectedImage.image_id);
+      setSimilarImages(result.similar_images);
+      setShowSimilarImages(true);
+    } catch (error) {
+      console.error('Similar image search failed:', error);
+      alert('Failed to find similar images. Please try again.');
+    }
+  };
+
+  // ... (keep all existing handlers - handleFileSelect, handleDeleteImage, etc.)
   const handleFileSelect = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
     setIsUploading(true);
     try {
-      const result = await uploadDICOMImage(file);
+      const result = await uploadDICOMImage(file, selectedPatientId !== 'no-patient' ? selectedPatientId : undefined);
       
-      // Reload images list
       await loadImages();
-      
-      // Select the newly uploaded image
       const newImage = result.image;
       handleImageSelect(newImage);
       
@@ -181,18 +276,15 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
         fileInputRef.current.value = '';
       }
     }
-  }, []);
+  }, [selectedPatientId]);
 
   const handleDeleteImage = async (imageId: string) => {
     if (!confirm('Are you sure you want to delete this image?')) return;
 
     try {
       await deleteDICOMImage(imageId);
-      
-      // Remove from local state
       setUploadedImages(prev => prev.filter(img => img.image_id !== imageId));
       
-      // Clear selection if deleted image was selected
       if (selectedImage?.image_id === imageId) {
         setSelectedImage(null);
         setPixelData(null);
@@ -223,18 +315,16 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
     }
   };
 
-  // Debounced windowing change
   useEffect(() => {
     if (!selectedImage) return;
     
     const timeoutId = setTimeout(() => {
       handleWindowingChange();
-    }, 300); // 300ms debounce
+    }, 300);
 
     return () => clearTimeout(timeoutId);
   }, [windowCenter, windowWidth]);
 
-  // Slice navigation for 3D volumes
   const handleSliceChange = (newSlice: number) => {
     if (!selectedImage?.dimensions.depth) return;
     
@@ -282,6 +372,41 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
       {/* Upload and Image Selection Section */}
       <div className="border-b border-gray-200 pb-6 mb-6">
         <div className="flex flex-col space-y-4">
+          {/* Patient Selection */}
+          <div className="bg-blue-50 p-4 rounded-lg">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Patient Context (Optional):
+            </label>
+            <Select
+              value={selectedPatientId}
+              onValueChange={setSelectedPatientId}
+            >
+              <SelectTrigger className="w-full bg-white border-gray-300">
+                <SelectValue placeholder="Select a patient for context..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="no-patient">No patient selected</SelectItem>
+                {patients.map((patient) => (
+                  <SelectItem key={patient.id} value={patient.id}>
+                    <div className="flex flex-col">
+                      <span className="font-medium">{patient.name}</span>
+                      <span className="text-xs text-gray-500">
+                        {patient.birthDate && `Born: ${patient.birthDate}`}
+                        {patient.gender && ` | ${patient.gender}`}
+                      </span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedPatient && (
+              <div className="mt-2 p-2 bg-white rounded border text-sm">
+                <strong>Selected Patient:</strong> {selectedPatient.name}
+                {selectedPatient.birthDate && ` (${selectedPatient.birthDate})`}
+              </div>
+            )}
+          </div>
+
           {/* Upload Section */}
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
@@ -344,6 +469,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
                           <span className="text-xs text-gray-500">
                             {img.dimensions.width}×{img.dimensions.height}
                             {img.dimensions.depth && ` (${img.dimensions.depth} slices)`}
+                            {img.patient_id && ` | Patient: ${img.patient_id}`}
                           </span>
                         </div>
                         <div className="flex items-center gap-2 ml-4">
@@ -380,6 +506,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Image Viewer */}
           <div className="lg:col-span-3">
+            {/* ... (keep existing image viewer code) ... */}
             <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
               {/* Viewer Header */}
               <div className="border-b border-gray-200 p-4">
@@ -401,6 +528,11 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
                         {is3D && (
                           <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
                             3D Volume ({selectedImage.dimensions.depth} slices)
+                          </Badge>
+                        )}
+                        {selectedPatient && (
+                          <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                            Patient: {selectedPatient.name}
                           </Badge>
                         )}
                       </div>
@@ -445,7 +577,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
                   </div>
                 </div>
 
-                {/* 3D Navigation Controls */}
+                {/* 3D Navigation Controls - keep existing code */}
                 {is3D && (
                   <div className="flex items-center gap-4 pt-4 border-t border-gray-200 mt-4">
                     <div className="flex items-center gap-2">
@@ -512,7 +644,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
                 )}
               </div>
 
-              {/* Image Display Area */}
+              {/* Image Display Area - keep existing code */}
               <div className="p-4">
                 <div 
                   className="relative bg-black rounded-lg overflow-hidden flex justify-center items-center border border-gray-300"
@@ -549,7 +681,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
                   {/* Overlay information */}
                   {pixelData && (
                     <div className="absolute top-4 left-4 text-white text-sm bg-black bg-opacity-75 p-3 rounded-lg">
-                      <div><strong>Patient:</strong> {selectedImage.metadata['Patient Name'] || 'Unknown'}</div>
+                      <div><strong>Patient:</strong> {selectedPatient?.name || selectedImage.metadata['Patient Name'] || 'Unknown'}</div>
                       <div><strong>Study:</strong> {selectedImage.metadata['Study Description'] || 'N/A'}</div>
                       {is3D && <div><strong>Slice:</strong> {currentSlice + 1} / {selectedImage.dimensions.depth}</div>}
                     </div>
@@ -574,7 +706,51 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
 
           {/* Metadata and Controls Panel */}
           <div className="space-y-6">
-            {/* Window/Level Controls */}
+            {/* AI Analysis Panel */}
+            <div className="bg-white border border-gray-200 rounded-lg p-4">
+              <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                <Brain className="h-4 w-4 mr-2 text-blue-600" />
+                AI Image Analysis
+              </h4>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Analysis Query
+                  </label>
+                  <textarea
+                    value={analysisQuery}
+                    onChange={(e) => setAnalysisQuery(e.target.value)}
+                    placeholder="e.g., 'What abnormalities do you see?' or 'Describe the key findings'"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    rows={3}
+                  />
+                </div>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={handleAnalyzeImage}
+                    disabled={isAnalyzing || !analysisQuery.trim()}
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-md transition-colors flex items-center justify-center"
+                  >
+                    <Brain className="h-4 w-4 mr-2" />
+                    {isAnalyzing ? 'Analyzing...' : 'Analyze'}
+                  </button>
+                  <button
+                    onClick={handleFindSimilar}
+                    className="flex-1 border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-md transition-colors flex items-center justify-center"
+                  >
+                    <Search className="h-4 w-4 mr-2" />
+                    Find Similar
+                  </button>
+                </div>
+                {selectedPatient && selectedPatientId !== 'no-patient' && (
+                  <div className="text-xs text-blue-600 bg-blue-50 p-2 rounded">
+                    Analysis will include patient context: {selectedPatient.name}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Window/Level Controls - keep existing code */}
             <div className="bg-white border border-gray-200 rounded-lg p-4">
               <h4 className="font-medium text-gray-900 mb-3 flex items-center">
                 <Info className="h-4 w-4 mr-2 text-gray-500" />
@@ -610,6 +786,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
               </div>
             </div>
 
+            {/* ... (keep all existing panels - Basic Info, Pixel Statistics, Detailed Metadata) ... */}
             {/* Basic Info */}
             <div className="bg-white border border-gray-200 rounded-lg p-4">
               <h4 className="font-medium text-gray-900 mb-3">Basic Information</h4>
@@ -700,7 +877,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
           <ImageIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">No DICOM Image Selected</h3>
           <p className="text-gray-600 mb-6">
-            Upload a DICOM file or select an existing image to begin viewing.
+            Upload a DICOM file or select an existing image to begin viewing and analysis.
           </p>
           <Button
             onClick={() => fileInputRef.current?.click()}
@@ -709,6 +886,102 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
             <Upload className="h-4 w-4 mr-2" />
             Upload Your First DICOM File
           </Button>
+        </div>
+      )}
+
+      {/* Full-Width Analysis Results Section */}
+      {analysisResult && (
+        <div className="mt-8 bg-white border border-gray-200 rounded-lg shadow-lg">
+          <div className="border-b border-gray-200 p-4">
+            <h3 className="text-lg font-medium text-gray-900 flex items-center">
+              <Brain className="h-5 w-5 mr-2 text-blue-600" />
+              AI Analysis Results
+              {selectedPatient && selectedPatientId !== 'no-patient' && (
+                <span className="ml-2 text-sm text-gray-500">
+                  for {selectedPatient.name}
+                </span>
+              )}
+            </h3>
+          </div>
+          <div className="p-6">
+            <div className="prose max-w-none">
+              <div className="bg-gray-50 p-6 rounded-lg border">
+                <div className="text-base text-gray-700 whitespace-pre-wrap leading-relaxed">
+                  {analysisResult}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="border-t border-gray-200 p-4 bg-gray-50">
+            <div className="flex justify-between items-center text-sm text-gray-500">
+              <span>Analysis completed at {new Date().toLocaleString()}</span>
+              <div className="flex space-x-4">
+                <button 
+                  onClick={() => navigator.clipboard.writeText(analysisResult)}
+                  className="text-blue-600 hover:text-blue-800 font-medium"
+                >
+                  Copy Results
+                </button>
+                <button 
+                  onClick={() => setAnalysisResult(null)}
+                  className="text-red-600 hover:text-red-800 font-medium"
+                >
+                  Clear Results
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full-Width Similar Images Section */}
+      {showSimilarImages && similarImages.length > 0 && (
+        <div className="mt-6 bg-white border border-gray-200 rounded-lg shadow-lg">
+          <div className="border-b border-gray-200 p-4">
+            <h3 className="text-lg font-medium text-gray-900 flex items-center">
+              <Search className="h-5 w-5 mr-2 text-green-600" />
+              Similar Images Found
+              <span className="ml-2 text-sm text-gray-500">
+                ({similarImages.length} results)
+              </span>
+            </h3>
+          </div>
+          <div className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {similarImages.map((similar, index) => (
+                <div key={index} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="font-medium text-base text-gray-900">
+                      Similarity: {(similar.similarity * 100).toFixed(1)}%
+                    </div>
+                    <div className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-medium">
+                      Match
+                    </div>
+                  </div>
+                  <div className="space-y-2 text-sm text-gray-600">
+                    <div><strong>Modality:</strong> {similar.metadata.modality || 'N/A'}</div>
+                    <div><strong>Body Part:</strong> {similar.metadata.body_part || 'N/A'}</div>
+                    <div><strong>Study:</strong> {similar.metadata.study_description || 'N/A'}</div>
+                    <div><strong>File:</strong> {similar.metadata.filename}</div>
+                    {similar.metadata.patient_id && (
+                      <div><strong>Patient:</strong> {similar.metadata.patient_id}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="border-t border-gray-200 p-4 bg-gray-50">
+            <div className="flex justify-between items-center text-sm text-gray-500">
+              <span>Search completed at {new Date().toLocaleString()}</span>
+              <button 
+                onClick={() => setShowSimilarImages(false)}
+                className="text-red-600 hover:text-red-800 font-medium"
+              >
+                Close Results
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -62,6 +62,32 @@ class KPIEventSink(Protocol):
         ...
 
 
+class ImageEmbeddingService(Protocol):
+    """Service for creating embeddings from DICOM images."""
+    
+    async def create_image_embedding(self, pixel_data: ImagePixelData) -> Sequence[float]:
+        """Create vector embedding from DICOM pixel data."""
+        ...
+    
+    async def create_metadata_embedding(self, metadata: DICOMMetadata) -> Sequence[float]:
+        """Create vector embedding from DICOM metadata."""
+        ...
+
+
+class VisionLLMClient(Protocol):
+    """LLM client capable of analyzing images."""
+    
+    async def analyze_dicom_image(
+        self, 
+        pixel_data: ImagePixelData, 
+        metadata: DICOMMetadata,
+        query: str,
+        patient_context: Optional[PatientContext] = None
+    ) -> str:
+        """Analyze a DICOM image and provide medical insights."""
+        ...
+    
+
 class LLMClient(Protocol):
 
     async def chat(
@@ -120,6 +146,24 @@ class VectorStore(Protocol):
         """Update an existing embedding vector's metadata or embedding."""
         ...
 
+    async def store_dicom_embedding(
+        self,
+        image_id: str,
+        embedding: Sequence[float],
+        metadata: dict[str, Any]
+    ) -> str:
+        """Store a DICOM image embedding with metadata."""
+        ...
+
+    async def search_similar_dicom(
+        self,
+        query_embedding: Sequence[float],
+        limit: int = 5,
+        similarity_threshold: float = 0.7
+    ) -> list[dict[str, Any]]:
+        """Search for similar DICOM images by embedding."""
+        ... 
+
 
 class DiagnosticEngine(Protocol):
     """Pure-domain service used by LangGraph; orchestrates everything."""
@@ -137,6 +181,19 @@ class DiagnosticEngine(Protocol):
         """Access to the underlying vector store."""
         ...
 
+class ImageAnalysisEngine(Protocol):
+    """Service for analyzing DICOM images and generating insights."""
+
+    async def analyze(
+        self,
+        pixel_data: ImagePixelData,
+        metadata: DICOMMetadata,
+        query: str,
+        user_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> str:
+        ...
 
 class AuthenticationProvider(Protocol):
     """Generic authentication provider interface."""
