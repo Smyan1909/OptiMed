@@ -90,3 +90,20 @@ class UserStatus(str, Enum):
     SUSPENDED = "suspended"
     PENDING = "pending"
 
+class ImageModalityType(str, Enum):
+    "DICOM image modality types."
+    CT = "CT"
+    MRI = "MRI"
+    XRAY = "CR"
+    ULTRASOUND = "US"
+    MAMMOGRAPHY = "MG"
+    NUCLEAR = "NM"
+    PET = "PT"
+    OTHER = "OT"
+
+class ImageStatus(str, Enum):
+    "Status of the image in the system."
+    UPLOADED = "UPLOADED"
+    PROCESSING = "PROCESSING"
+    READY = "READY"
+    ERROR = "ERROR"

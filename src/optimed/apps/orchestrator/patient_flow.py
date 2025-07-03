@@ -3,14 +3,14 @@ from __future__ import annotations
 import uuid 
 import json
 import time
-from typing import List, Any, Union, AsyncGenerator
+from typing import List, Any, Union, AsyncGenerator, Optional
 
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
-from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User
+from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse
 
-from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository
+from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService
 
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
 
@@ -22,26 +22,35 @@ from optimed.embeddings.service import embed_and_store
 SYSTEM_MSG_DIAGNOSE = ChatMessage(role=ChatRole.SYSTEM, 
                          content="""You are OptiMed‑AI, a clinical reasoning assistant and medical chat companion.
                                     
-                                    IMPORTANT: If you see previous conversation history marked between === lines, YOU MUST acknowledge and reference it in your response. This shows continuity of care.
-                                    
+                                    IMPORTANT INSTRUCTIONS:
+                                    1. If you see previous conversation history marked between === lines, YOU MUST acknowledge and reference it in your response.
+                                    2. If web search results are provided, YOU MUST cite the specific sources by including the titles and URLs in your response.
+                                    3. When citing web sources, use this format: "According to [Source Title](URL)" or "As reported in [Source Title](URL)"
+                                    4. Always include at least 2-3 source citations when web search results are available.
+
                                     When patient context is provided:
                                     - Use only the provided patient context to inform your responses
                                     - Do not reference other patients' data
-                                    - Combine real‑time vitals, labs, and evidence to help physicians
-                                    - Provide clinical diagnoses with explanations and cite sources
+                                    - Combine real‑time vitals, labs, evidence, and web sources to help physicians
+                                    - Provide clinical diagnoses with explanations and cite all sources
                                     - Focus on medical accuracy and clinical reasoning
                                     - Reference previous conversation history when available""")
 
 SYSTEM_MSG_CHAT = ChatMessage(role=ChatRole.SYSTEM, 
                          content="""You are OptiMed‑AI, a clinical reasoning assistant and medical chat companion.
                          
-                                    IMPORTANT: If you see previous conversation history marked between === lines, YOU MUST acknowledge and reference it in your response.
+                                    IMPORTANT INSTRUCTIONS:
+                                    1. If you see previous conversation history marked between === lines, YOU MUST acknowledge and reference it in your response.
+                                    2. If web search results are provided, YOU MUST cite the specific sources by including the titles and URLs in your response.
+                                    3. When citing web sources, use this format: "According to [Source Title](URL)" or "As reported in [Source Title](URL)"
+                                    4. Always include at least 2-3 source citations when web search results are available.
                                     
                                     - Engage in friendly conversation
                                     - Provide general health advice and wellness tips
                                     - Focus on being helpful and informative
                                     - Reference previous conversation history to maintain context
-                                    - Continue conversations naturally based on chat history""") # Needs to be more specific and properly created to make the LLM function properly
+                                    - Continue conversations naturally based on chat history
+                                    - Always cite your sources when providing medical information""")# Needs to be more specific and properly created to make the LLM function properly
 
 class FlowState(BaseModel): # Potentially add 
     """Minimal LangGraph state.""" # Add field for user_id or session_id if needed later on as well
@@ -54,7 +63,10 @@ class FlowState(BaseModel): # Potentially add
     patient_ctx: PatientContext | None = None
     retrieved_chunks: List[str] = Field(default_factory=list)
     llm_response: ChatMessage | None = None
+
     retrieved_web: List[str] = Field(default_factory=list) # This is for future use, if we want to retrieve web data To be implemented later
+    web_search_response: Optional[WebSearchResponse] = None  # Add this
+    web_search_performed: bool = False  # Add this
 
     chat_mode: bool = False # If True, we are in chat mode and not diagnosing a patient
 
@@ -68,12 +80,13 @@ class FlowState(BaseModel): # Potentially add
 class LangGraphDiagnosticEngine(DiagnosticEngine):
     """Concrete engine that streams or returns full result."""
 
-    def __init__(self, fhir_repo: FHIRRepository, vector_store: VectorStore, llm_client: LLMClient, user_repo: UserRepository, connection_service: UserEHRConnectionService, default_prompt: str = "Provide the most likely diagnosis"):
+    def __init__(self, fhir_repo: FHIRRepository, vector_store: VectorStore, llm_client: LLMClient, user_repo: UserRepository, connection_service: UserEHRConnectionService, web_search_service: WebSearchService, default_prompt: str = "Provide the most likely diagnosis"):
         self._fhir = fhir_repo
         self._vec = vector_store
         self._llm = llm_client
         self._user_repo = user_repo
         self._connection_service = connection_service
+        self._web_search = web_search_service
         self._default_prompt = default_prompt
         self._compiled_graph = self._build_graph()
 
@@ -112,6 +125,80 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             
             return state
             
+        
+        async def evaluate_web_search_need(state: FlowState) -> FlowState:
+            """Evaluate if web search is needed for this query."""
+            try:
+                # Prepare context for evaluation
+                patient_context_str = None
+                if state.patient_ctx:
+                    patient_context_str = f"Patient: {state.patient_ctx.name}, Age: {state.patient_ctx.age}"
+                
+                chat_history_str = None
+                if state.chat_history:
+                    chat_history_str = [msg.content for msg in state.chat_history[-3:]]
+                
+                # Use web search service to evaluate need
+                needs_search = await self._web_search.evaluate_search_need(
+                    user_query=state.user_prompt,
+                    patient_context=patient_context_str,
+                    chat_history=chat_history_str
+                )
+                
+                state.web_search_performed = needs_search
+                print(f"[web_search] Web search needed: {needs_search}")
+                
+            except Exception as e:
+                print(f"[web_search] Error evaluating search need: {e}")
+                state.web_search_performed = False
+            
+            return state
+
+        async def perform_web_search(state: FlowState) -> FlowState:
+            """Perform web search if needed."""
+            try:
+                if not state.web_search_performed:
+                    return state
+                
+                # Prepare enhanced query with patient context
+                search_query = state.user_prompt
+                patient_context_str = None
+                
+                if state.patient_ctx:
+                    patient_context_str = (
+                        f"Patient demographics: {state.patient_ctx.name}, "
+                        f"Age: {state.patient_ctx.age}, Sex: {state.patient_ctx.sex}"
+                    )
+                
+                # Perform search
+                search_response = await self._web_search.search(
+                    query=search_query,
+                    max_results=8,
+                    patient_context=patient_context_str,
+                    search_intent="clinical_information"
+                )
+                
+                state.web_search_response = search_response
+                
+                # Also populate the legacy retrieved_web field for compatibility
+                if search_response.results:
+                    state.retrieved_web = [
+                        f"Source: {result.title}\nURL: {result.url}\nContent: {result.snippet}"
+                        for result in search_response.results[:3]
+                    ]
+                
+                print(f"[web_search] Found {len(search_response.results)} results")
+                
+            except Exception as e:
+                print(f"[web_search] Error performing search: {e}")
+                state.web_search_response = None
+                state.retrieved_web = []
+            
+            return state
+
+        def needs_web_search(state: FlowState) -> bool:
+            """Conditional function to determine if web search should be performed."""
+            return state.web_search_performed
 
         async def load_chat_history(state: FlowState) -> FlowState:
             """Load chat history for the patient if available."""
@@ -261,6 +348,26 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 )
                 messages.append(docs)
 
+            if state.web_search_response and state.web_search_response.results:
+                # Create a more detailed and instructional web search message
+                sources_list = []
+                for i, result in enumerate(state.web_search_response.results[:5], 1):
+                    sources_list.append(f"{i}. [{result.title}]({result.url})\n   - {result.snippet[:200]}...")
+                
+                web_info = ChatMessage(
+                    role=ChatRole.USER,
+                    content=f"""=== WEB SEARCH RESULTS FOR: '{state.user_prompt}' ===
+
+SEARCH SUMMARY: {state.web_search_response.summary}
+
+SOURCES TO CITE IN YOUR RESPONSE:
+{chr(10).join(sources_list)}
+
+INSTRUCTION: You MUST cite these sources in your response using the format [Source Title](URL). Include at least 2-3 citations in your answer.
+
+=== END OF WEB SEARCH RESULTS ===""")
+                messages.append(web_info)
+
             user = ChatMessage(
                 role=ChatRole.USER,
                 content=state.user_prompt,
@@ -387,6 +494,8 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
         _builder.add_node("load_chat_history", load_chat_history)
         _builder.add_node("fetch_patient", fetch_patient)
         _builder.add_node("retrieve_chunks", retrieve_chunks)
+        _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
+        _builder.add_node("perform_web_search", perform_web_search)
         _builder.add_node("diagnose", diagnose)
         _builder.add_node("parse_icd", parse_icd)
 
@@ -408,7 +517,17 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
         # Linear flow after patient fetch
         _builder.add_edge("load_chat_history", "fetch_patient")
         _builder.add_edge("fetch_patient", "retrieve_chunks")
-        _builder.add_edge("retrieve_chunks", "diagnose")
+        _builder.add_edge("retrieve_chunks", "evaluate_web_search_need")
+        _builder.add_conditional_edges(
+            "evaluate_web_search_need",
+            needs_web_search,
+            {
+                True: "perform_web_search",
+                False: "diagnose"
+            }
+        )
+
+        _builder.add_edge("perform_web_search", "diagnose")
         _builder.add_edge("diagnose", "parse_icd")
         _builder.add_edge("parse_icd", END)
 
@@ -470,10 +589,41 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
 
     def chat_output(self, data: dict[str, Any]) -> dict[str, Any]:
         """Convert raw dict emitted by compiled_graph to a chat output format."""
+        web_search_info = {}
+        if data.get("web_search_response"):
+            web_response = data["web_search_response"]
+            
+            # Check if the response actually contains citations
+            response_content = data["llm_response"].content if data["llm_response"] else ""
+            citations_found = []
+            
+            for result in web_response.results[:5]:
+                if result.url in response_content or result.title in response_content:
+                    citations_found.append(result.url)
+            
+            web_search_info = {
+                "web_search_performed": True,
+                "sources_consulted": [result.url for result in web_response.results[:5]],
+                "sources_cited_in_response": citations_found,
+                "search_summary": web_response.summary,
+                "source_count": len(web_response.results),
+                "citations_included": len(citations_found) > 0
+            }
+        else:
+            web_search_info = {
+                "web_search_performed": False,
+                "sources_consulted": [],
+                "sources_cited_in_response": [],
+                "search_summary": "",
+                "source_count": 0,
+                "citations_included": False
+            }
+        
         return {
             "explanation": data["llm_response"].content if data["llm_response"] else "",
-            "created_by_user_id": data.get("user_id"),  # Use user_id from state if available
-            "is_ai_generated": True,  # Always true for LangGraph engine
+            "created_by_user_id": data.get("user_id"),
+            "is_ai_generated": True,
+            "web_search_info": web_search_info,
         }
     
     @property

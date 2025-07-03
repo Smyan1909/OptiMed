@@ -2,7 +2,22 @@ from __future__ import annotations
 
 from typing import AsyncGenerator, Protocol, Sequence, Any, Union, Optional
 
-from optimed.core.domain import PatientContext, KPIEvent, ChatMessage, DiagnosisResult, User, UserSession, UserAction, UserEHRConnection
+from optimed.core.domain import (
+    PatientContext, 
+    KPIEvent, 
+    ChatMessage, 
+    DiagnosisResult, 
+    WebSearchResponse,
+    User, 
+    UserSession, 
+    UserAction, 
+    UserEHRConnection, 
+    DICOMImage, 
+    ImagePixelData, 
+    ImageUploadRequest,
+    DICOMMetadata,
+    ImageDimensions,
+    WindowLevel)
 
 # core/ports.py
 #
@@ -47,6 +62,32 @@ class KPIEventSink(Protocol):
         """Flush any buffered events."""
         ...
 
+
+class ImageEmbeddingService(Protocol):
+    """Service for creating embeddings from DICOM images."""
+    
+    async def create_image_embedding(self, pixel_data: ImagePixelData) -> Sequence[float]:
+        """Create vector embedding from DICOM pixel data."""
+        ...
+    
+    async def create_metadata_embedding(self, metadata: DICOMMetadata) -> Sequence[float]:
+        """Create vector embedding from DICOM metadata."""
+        ...
+
+
+class VisionLLMClient(Protocol):
+    """LLM client capable of analyzing images."""
+    
+    async def analyze_dicom_image(
+        self, 
+        pixel_data: ImagePixelData, 
+        metadata: DICOMMetadata,
+        query: str,
+        patient_context: Optional[PatientContext] = None
+    ) -> str:
+        """Analyze a DICOM image and provide medical insights."""
+        ...
+    
 
 class LLMClient(Protocol):
 
@@ -106,6 +147,24 @@ class VectorStore(Protocol):
         """Update an existing embedding vector's metadata or embedding."""
         ...
 
+    async def store_dicom_embedding(
+        self,
+        image_id: str,
+        embedding: Sequence[float],
+        metadata: dict[str, Any]
+    ) -> str:
+        """Store a DICOM image embedding with metadata."""
+        ...
+
+    async def search_similar_dicom(
+        self,
+        query_embedding: Sequence[float],
+        limit: int = 5,
+        similarity_threshold: float = 0.7
+    ) -> list[dict[str, Any]]:
+        """Search for similar DICOM images by embedding."""
+        ... 
+
 
 class DiagnosticEngine(Protocol):
     """Pure-domain service used by LangGraph; orchestrates everything."""
@@ -123,6 +182,19 @@ class DiagnosticEngine(Protocol):
         """Access to the underlying vector store."""
         ...
 
+class ImageAnalysisEngine(Protocol):
+    """Service for analyzing DICOM images and generating insights."""
+
+    async def analyze(
+        self,
+        pixel_data: ImagePixelData,
+        metadata: DICOMMetadata,
+        query: str,
+        user_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> str:
+        ...
 
 class AuthenticationProvider(Protocol):
     """Generic authentication provider interface."""
@@ -255,4 +327,135 @@ class UserRepository(Protocol):
     
     async def log_action(self, action: UserAction) -> UserAction:
         """Log a user action."""
+        ...
+
+class ImageRepository(Protocol):
+    """Repository for managing DICOM images."""
+
+    async def save_image(self, image: DICOMImage) -> None:
+        """Save a DICOM image."""
+        ...
+    
+    async def get_image_by_id(self, image_id: str) -> Optional[DICOMImage]:
+        """Get a DICOM image by its ID."""
+        ...
+    
+    async def get_images_by_user(self, user_id: str) -> Sequence[DICOMImage]:
+        """Get all DICOM images uploaded by a user."""
+        ...
+    
+    async def get_images_by_patient(self, patient_id: str) -> Sequence[DICOMImage]:
+        """Get all DICOM images associated with a patient."""
+        ...
+
+    async def update_image(self, image: DICOMImage) -> None:
+        """Update an existing DICOM image."""
+        ...
+
+    async def delete_image(self, image_id: str) -> None:
+        """Delete a DICOM image by its ID."""
+        ...
+    
+
+class ImageStorage(Protocol):
+    """Port for DICOM image file storage"""
+
+    async def store_image_file(self, image_id: str, file_content: bytes) -> str:
+        """Store the raw DICOM file content and return the storage path."""
+        ...
+
+    async def get_image_file(self, storage_path: str) -> bytes:
+        """Retrieve the raw DICOM file content from storage."""
+        ...
+    
+    async def store_pixel_data(self, pixel_data: ImagePixelData) -> None:
+        """Store pixel data for a DICOM image."""
+        ...
+
+    async def get_pixel_data(self, image_id: str) -> Optional[ImagePixelData]:
+        """Get pixel data for a DICOM image by its ID."""
+        ...
+
+    async def delete_image_file(self, storage_path: str) -> None:
+        """Delete the stored DICOM file."""
+        ...
+
+class DICOMProcessor(Protocol):
+    """Port for processing DICOM images."""
+
+    async def extract_metadata(self, file_content: bytes) -> DICOMMetadata:
+        """Extract metadata from a DICOM file."""
+        ...
+    async def extract_pixel_data(self, file_content: bytes, image_id: str) -> ImagePixelData:
+        """Extract pixel data from a DICOM file."""
+        ...
+    
+    async def get_image_dimensions(self, file_content: bytes) -> ImageDimensions:
+        """Get dimensions of the DICOM image."""
+        ...
+    
+    async def get_default_window_level(self, file_content: bytes) -> WindowLevel:
+        """Get the default window/level settings for the DICOM image."""
+        ...
+    
+    async def validate_dicom_file(self, file_content: bytes) -> bool:
+        """Validate if the file content is a valid DICOM file."""
+        ...
+    
+
+    
+
+class ImageService(Protocol):
+    """Service for processing and managing DICOM images."""
+
+    async def upload_image(self, upload_request: ImageUploadRequest) -> DICOMImage:
+        """Process and upload a DICOM image."""
+        ...
+
+    async def get_image(self, image_id: str, user_id: str) -> Optional[DICOMImage]:
+        """Get a DICOM image by its ID and user ID."""
+        ...
+    
+    async def get_image_pixel_data(
+        self,
+        image_id: str,
+        user_id: str,
+        window_level: Optional[WindowLevel] = None
+    ) -> Optional[ImagePixelData]:
+        """Get pixel data for a DICOM image with optional windowing."""
+        ...
+    
+    async def list_user_images(self, user_id: str) -> Sequence[DICOMImage]:
+        """List all DICOM images uploaded by a user."""
+        ... 
+    
+    async def list_patient_images(self, patient_id: str, user_id: str) -> Sequence[DICOMImage]:
+        """List all DICOM images associated with a patient."""
+        ...
+
+    async def delete_image(self, image_id: str, user_id: str) -> None:
+        """Delete a DICOM image by its ID."""
+        ...
+    
+
+class WebSearchService(Protocol):
+    """Service for performing web searches and retrieving results."""
+
+    async def search(
+        self, 
+        query: str, 
+        max_results: int = 10,
+        patient_context: Optional[str] = None,
+        search_intent: Optional[str] = None
+    ) -> WebSearchResponse:
+        """Perform a web search and return structured results."""
+        ...
+    
+    async def evaluate_search_need(
+        self, 
+        user_query: str, 
+        patient_context: Optional[str] = None,
+        chat_history: Optional[list[str]] = None
+    ) -> bool:
+        """Evaluate if web search is needed for the given query."""
         ...

@@ -2,6 +2,7 @@ import asyncpg # type: ignore
 from pgvector.asyncpg import register_vector # type: ignore
 from typing import Sequence, Any
 from optimed.core.ports import VectorStore
+from datetime import datetime, timezone
 import uuid
 import json
 
@@ -211,6 +212,63 @@ class PGVectorAdapter(VectorStore):
             await conn.execute(
                 f"UPDATE embeddings SET {set_sql} WHERE id = $1", *values
             )
+    
+    async def store_dicom_embedding(
+        self,
+        image_id: str,
+        embedding: Sequence[float],
+        metadata: dict[str, Any]
+    ) -> str:
+        """Store DICOM image embedding."""
+            
+        embedding_id = f"dicom_{image_id}_{uuid.uuid4()}"
+        
+        if self._pool is None:
+            self._pool = await self._get_pool()
+
+        if self._pool is None:
+            raise RuntimeError("Connection pool is not initialized")
+
+        async with self._pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO embeddings (id, embedding, metadata, created_at)
+                VALUES ($1, $2, $3, $4)
+            """, embedding_id, embedding, json.dumps(metadata), datetime.now(timezone.utc))
+        
+        return embedding_id
+    
+    async def search_similar_dicom(
+        self,
+        query_embedding: Sequence[float],
+        limit: int = 5,
+        similarity_threshold: float = 0.7
+    ) -> list[dict[str, Any]]:
+        """Search for similar DICOM images by embedding."""
+        
+        if self._pool is None:
+            self._pool = await self._get_pool()
+
+        if self._pool is None:
+            return []
+
+        async with self._pool.acquire() as conn:
+            results = await conn.fetch("""
+                SELECT id, metadata, 1 - (embedding <=> $1) as similarity
+                FROM embeddings 
+                WHERE metadata->>'type' = 'dicom'
+                AND 1 - (embedding <=> $1) > $2
+                ORDER BY embedding <=> $1
+                LIMIT $3
+            """, query_embedding, similarity_threshold, limit)
+            
+            return [
+                {
+                    'embedding_id': row['id'],
+                    'metadata': json.loads(row['metadata']),
+                    'similarity': float(row['similarity'])
+                }
+                for row in results
+            ]
 
         
 

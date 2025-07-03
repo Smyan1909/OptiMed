@@ -43,6 +43,40 @@ export type LoginResponse = {
   message: string;
 };
 
+interface DICOMImage {
+  image_id: string;
+  patient_id?: string;
+  user_id: string;
+  filename: string;
+  file_size: number;
+  metadata: Record<string, string>;
+  dimensions: {
+    width: number;
+    height: number;
+    depth?: number;
+    pixel_spacing_x?: number;
+    pixel_spacing_y?: number;
+    slice_thickness?: number;
+  };
+  default_window_level: {
+    center: number;
+    width: number;
+  };
+  status: string;
+  uploaded_at: string;
+  processed_at?: string;
+  storage_path?: string;
+}
+
+interface DICOMPixelData {
+  image_id: string;
+  image_data_base64: string;
+  original_dtype: string;
+  photometric_interpretation?: string;
+  statistics: Record<string, any>;
+}
+
+
 export async function initiateEHRLogin(
   fhirServerUrl: string,
   clientId: string,
@@ -107,10 +141,12 @@ export async function fetchPatient(id: string): Promise<PatientDetail> {
   return res.json();
 }
 
-function getSessionHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json'
-  };
+function getSessionHeaders(excludeContentType = false): Record<string, string> {
+  const headers: Record<string, string> = {};
+  
+  if (!excludeContentType) {
+    headers['Content-Type'] = 'application/json';
+  }
   
   if (typeof window !== 'undefined') {
     const sessionId = localStorage.getItem('session_id');
@@ -192,5 +228,119 @@ export async function chatWithUser(request: ChatRequest): Promise<any> {
     const errorText = await res.text();
     throw new Error(`Chat failed: ${res.status} - ${errorText}`);
   }
+  return res.json();
+}
+
+
+export async function uploadDICOMImage(file: File, patientId?: string): Promise<{ image_id: string; message: string; image: DICOMImage }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (patientId) {
+    formData.append('patient_id', patientId);
+  }
+
+  const res = await fetch('/api/dicom/upload', {
+    method: 'POST',
+    headers: getSessionHeaders(true), // Pass true to exclude Content-Type for FormData
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Upload failed: ${res.status} - ${errorText}`);
+  }
+  return res.json();
+}
+
+export async function listDICOMImages(): Promise<{ images: DICOMImage[] }> {
+  const res = await fetch('/api/dicom/images', {
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to load images: ${res.status} - ${errorText}`);
+  }
+  return res.json();
+}
+
+export async function getDICOMImage(imageId: string): Promise<DICOMImage> {
+  const res = await fetch(`/api/dicom/images/${imageId}`, {
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to load image: ${res.status} - ${errorText}`);
+  }
+  return res.json();
+}
+
+export async function getDICOMPixelData(
+  imageId: string, 
+  windowCenter?: number, 
+  windowWidth?: number
+): Promise<DICOMPixelData> {
+  const params = new URLSearchParams();
+  if (windowCenter !== undefined) params.set('window_center', windowCenter.toString());
+  if (windowWidth !== undefined) params.set('window_width', windowWidth.toString());
+  
+  const queryString = params.toString();
+  const url = `/api/dicom/images/${imageId}/pixel-data${queryString ? '?' + queryString : ''}`;
+
+  const res = await fetch(url, {
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to load pixel data: ${res.status} - ${errorText}`);
+  }
+  return res.json();
+}
+
+export async function deleteDICOMImage(imageId: string): Promise<{ message: string }> {
+  const res = await fetch(`/api/dicom/images/${imageId}`, {
+    method: 'DELETE',
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to delete image: ${res.status} - ${errorText}`);
+  }
+  return res.json();
+}
+
+export async function analyzeDICOMImage(imageId: string, query: string, patientId?: string) {
+  const body: any = { query };
+  if (patientId) {
+    body.patient_id = patientId;
+  }
+
+  const res = await fetch(`/api/dicom/images/${imageId}/analyze`, {
+    method: 'POST',
+    headers: getSessionHeaders(),
+    body: JSON.stringify(body)
+  });
+  
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Analysis failed: ${res.status} - ${errorText}`);
+  }
+  
+  return res.json();
+}
+
+export async function findSimilarDICOMImages(imageId: string, limit: number = 5) {
+  const res = await fetch(`/api/dicom/images/${imageId}/similar?limit=${limit}`, {
+    headers: getSessionHeaders()
+  });
+  
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Search failed: ${res.status} - ${errorText}`);
+  }
+  
   return res.json();
 }
