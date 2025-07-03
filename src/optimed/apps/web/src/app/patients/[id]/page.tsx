@@ -20,6 +20,7 @@ function PatientDetailContent() {
   const [error, setError] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
   const [chatKey, setChatKey] = useState(0); // Force ChatBox re-render
+  const [sessionsKey, setSessionsKey] = useState(0); // Force SessionsList re-render
 
   const patientId = params?.id as string;
 
@@ -51,6 +52,7 @@ function PatientDetailContent() {
   const handleNewSession = () => {
     setSelectedSessionId(undefined);
     setChatKey(prev => prev + 1); // Force ChatBox to reset for new session
+    setSessionsKey(prev => prev + 1); // Force SessionsList to reload
   };
 
   if (loading) {
@@ -212,6 +214,7 @@ function PatientDetailContent() {
             <div className="flex h-[600px]">
               {/* Sessions List Sidebar */}
               <SessionsList
+                key={sessionsKey}
                 patientId={patientId}
                 selectedSessionId={selectedSessionId}
                 onSessionSelect={handleSessionSelect}

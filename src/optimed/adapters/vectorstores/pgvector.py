@@ -594,6 +594,7 @@ class PGVectorAdapter(VectorStore):
         for row in rows:
             try:
                 raw_content = row["content"]
+                metadata = json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
                 
                 if isinstance(raw_content, str):
                     try:
@@ -606,11 +607,29 @@ class PGVectorAdapter(VectorStore):
                 message_content = content_data.get("content", "")
                 message_role = content_data.get("role", "user")
                 
+                # Fix timestamp handling
+                timestamp_value = metadata.get("timestamp")
+                if timestamp_value:
+                    try:
+                        # If it's a string of digits (milliseconds), convert it
+                        if isinstance(timestamp_value, str) and timestamp_value.isdigit():
+                            timestamp_ms = int(timestamp_value)
+                            timestamp_iso = datetime.fromtimestamp(timestamp_ms / 1000).isoformat()
+                        # If it's already a proper timestamp format, use it
+                        elif isinstance(timestamp_value, str):
+                            timestamp_iso = timestamp_value
+                        else:
+                            timestamp_iso = str(timestamp_value)
+                    except:
+                        timestamp_iso = datetime.now().isoformat()
+                else:
+                    timestamp_iso = datetime.now().isoformat()
+                
                 result.append({
                     "content": message_content,
                     "role": message_role,
-                    "timestamp": content_data.get("timestamp", ""),
-                    "metadata": json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
+                    "timestamp": timestamp_iso,
+                    "metadata": metadata
                 })
                 
             except Exception as e:

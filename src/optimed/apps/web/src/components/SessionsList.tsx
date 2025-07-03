@@ -40,17 +40,45 @@ export default function SessionsList({
         include_all_patient_sessions: showAllSessions
       };
       
-      console.log('Loading sessions with request:', request); // Add debugging
+      console.log('Loading sessions with request:', request);
       
       const data = await listSessions(request);
-      console.log('Sessions loaded:', data); // Add debugging
+      console.log('Sessions loaded:', data);
       setSessions(data);
+      
+      // Auto-select the most recent session if none is selected and we have sessions
+      if (!selectedSessionId && data.length > 0) {
+        const mostRecentSession = data[0]; // They're ordered by last_message_at DESC
+        onSessionSelect(mostRecentSession.session_id);
+      }
     } catch (err: any) {
       console.error('Failed to load sessions:', err);
       setError(err.message || 'Failed to load sessions');
     } finally {
       setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    loadSessions();
+  }, [patientId, user?.user_id, showAllSessions]);
+
+  // Add a new function to get user info
+  const getUserDisplay = (userId: string): string => {
+    if (!userId) return 'Unknown User';
+    
+    // If it's the current user
+    if (userId === user?.user_id) {
+      return 'You';
+    }
+    
+    // Extract a readable name from the user ID
+    if (userId.startsWith('ehr_user_')) {
+      return 'EHR User';
+    }
+    
+    // For other user IDs, show a shortened version
+    return userId.substring(0, 12) + '...';
   };
 
   const handleCreateNewSession = async () => {
@@ -184,6 +212,15 @@ export default function SessionsList({
                       <h4 className="text-sm font-medium text-gray-900 truncate">
                         {session.session_title}
                       </h4>
+                      
+                      {/* Add creator info */}
+                      <div className="mt-1 text-xs text-gray-500">
+                        <span>Created by {getUserDisplay(session.created_by_user_id)}</span>
+                        {session.last_participant_id && session.last_participant_id !== session.created_by_user_id && (
+                          <span> • Last: {getUserDisplay(session.last_participant_id)}</span>
+                        )}
+                      </div>
+                      
                       <div className="mt-1 flex items-center space-x-2 text-xs text-gray-500">
                         <span>{session.message_count} messages</span>
                         <span>•</span>

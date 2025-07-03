@@ -157,7 +157,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
             const formattedMessages = data.messages.map((msg: any) => ({
               sender: msg.role === 'user' ? 'user' : 'system',
               text: msg.content,
-              timestamp: new Date(msg.timestamp || Date.now()).toLocaleTimeString()
+              timestamp: msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString()
             }));
             setMessages(formattedMessages);
           }
