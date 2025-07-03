@@ -9,6 +9,12 @@ __all__ = [
     "Channel",
     "NotificationStatus",
     "Severity",
+    "ChatRole",
+    "UserRole",
+    "UserStatus",
+    "ImageModalityType",
+    "ImageStatus",
+    "JournalEntryType",  # Add this line
 ]
 
 
@@ -107,3 +113,12 @@ class ImageStatus(str, Enum):
     PROCESSING = "PROCESSING"
     READY = "READY"
     ERROR = "ERROR"
+
+class JournalEntryType(str, Enum):
+    """Types of journal entries."""
+    NOTE = "note"
+    OBSERVATION = "observation"
+    TREATMENT = "treatment"
+    DIAGNOSIS = "diagnosis"
+    ASSESSMENT = "assessment"
+    PLAN = "plan"

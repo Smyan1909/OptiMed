@@ -1,4 +1,1 @@
-adapters
-apps
-core
-infrastructure
+optimed

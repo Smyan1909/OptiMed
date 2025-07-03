@@ -17,7 +17,10 @@ from optimed.core.domain import (
     ImageUploadRequest,
     DICOMMetadata,
     ImageDimensions,
-    WindowLevel)
+    WindowLevel,
+    JournalEntry,
+    JournalEntryCreate,
+    JournalEntryUpdate )
 
 # core/ports.py
 #
@@ -50,6 +53,26 @@ class FHIRRepository(Protocol):
         """Fetch observations of a specific category for a patient."""
         ...
 
+    # Journal/Notes methods
+    async def get_patient_journal_entries(self, patient_id: str) -> Sequence[JournalEntry]:
+        """Get all journal entries for a patient from FHIR DocumentReference resources."""
+        ...
+    
+    async def create_journal_entry(self, entry: JournalEntryCreate, user: User) -> JournalEntry:
+        """Create a new journal entry as FHIR DocumentReference."""
+        ...
+    
+    async def get_journal_entry_by_id(self, entry_id: str) -> Optional[JournalEntry]:
+        """Get a specific journal entry by ID."""
+        ...
+    
+    async def update_journal_entry(self, entry_id: str, updates: JournalEntryUpdate, user: User) -> JournalEntry:
+        """Update an existing journal entry."""
+        ...
+    
+    async def delete_journal_entry(self, entry_id: str, user: User) -> bool:
+        """Delete a journal entry."""
+        ...
 
 
 class KPIEventSink(Protocol):
@@ -459,3 +482,6 @@ class WebSearchService(Protocol):
     ) -> bool:
         """Evaluate if web search is needed for the given query."""
         ...
+
+
+
