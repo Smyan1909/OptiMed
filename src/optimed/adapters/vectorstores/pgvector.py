@@ -2,6 +2,7 @@ import asyncpg # type: ignore
 from pgvector.asyncpg import register_vector # type: ignore
 from typing import Sequence, Any
 from optimed.core.ports import VectorStore
+from optimed.core.domain import ChatSession, SessionParticipant
 from datetime import datetime, timezone
 import uuid
 import json
@@ -269,6 +270,384 @@ class PGVectorAdapter(VectorStore):
                 }
                 for row in results
             ]
+    
+    async def get_sessions_for_patient(
+        self, 
+        patient_id: str | None = None,
+        limit: int = 50,
+        include_general: bool = False
+    ) -> list[ChatSession]:
+        """Get all chat sessions for a patient (regardless of user)."""
+        
+        # Build query conditions
+        where_conditions = ["metadata->>'namespace' = 'session_info'"]
+        params = []
+        
+        if patient_id:
+            where_conditions.append(f"metadata->>'patient_id' = ${len(params) + 1}")
+            params.append(patient_id)
+        elif not include_general:
+            where_conditions.append("metadata->>'patient_id' != 'general_chat'")
+        
+        where_clause = " AND ".join(where_conditions)
+        
+        query = f"""
+            SELECT content, metadata, created_at
+            FROM embeddings 
+            WHERE {where_clause}
+            ORDER BY (metadata->>'last_message_at')::bigint DESC
+            LIMIT {limit}
+        """
+        
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, *params)
+        
+        return self._parse_session_rows(rows)
+    
+    async def get_user_sessions_for_patient(
+        self, 
+        user_id: str, 
+        patient_id: str | None = None,
+        limit: int = 50
+    ) -> list[ChatSession]:
+        """Get sessions where user has participated for a specific patient."""
+        
+        # Build query conditions - user must be creator OR participant
+        where_conditions = [
+            "metadata->>'namespace' = 'session_info'",
+            f"(metadata->>'created_by_user_id' = $1 OR content::jsonb->'participants' ? $1)"
+        ]
+        params = [user_id]
+        
+        if patient_id:
+            where_conditions.append(f"metadata->>'patient_id' = ${len(params) + 1}")
+            params.append(patient_id)
+        else:
+            where_conditions.append("metadata->>'patient_id' = 'general_chat'")
+        
+        where_clause = " AND ".join(where_conditions)
+        
+        query = f"""
+            SELECT content, metadata, created_at
+            FROM embeddings 
+            WHERE {where_clause}
+            ORDER BY (metadata->>'last_message_at')::bigint DESC
+            LIMIT {limit}
+        """
+        
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, *params)
+        
+        return self._parse_session_rows(rows)
+    
+    async def add_user_to_session(
+        self,
+        session_id: str,
+        user_id: str
+    ) -> bool:
+        """Add a user as a participant to an existing session."""
+        
+        current_timestamp = str(int(datetime.now().timestamp() * 1000))
+        
+        # First check if user is already a participant
+        check_query = """
+            SELECT content::jsonb->'participants' ? $2 as is_participant
+            FROM embeddings 
+            WHERE metadata->>'namespace' = 'session_info' 
+            AND metadata->>'session_id' = $1
+        """
+        
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            check_result = await conn.fetchval(check_query, session_id, user_id)
+            
+            if check_result:  # User is already a participant
+                return False
+            
+            # Add user to participants array
+            update_query = """
+                UPDATE embeddings 
+                SET 
+                    content = jsonb_set(
+                        content::jsonb, 
+                        '{participants}', 
+                        COALESCE(content::jsonb->'participants', '[]'::jsonb) || to_jsonb($2::text)
+                    ),
+                    metadata = jsonb_set(
+                        metadata::jsonb, 
+                        '{last_participant_id}', 
+                        to_jsonb($3::text)
+                    )
+                WHERE metadata->>'namespace' = 'session_info' 
+                AND metadata->>'session_id' = $1
+            """
+            
+            result = await conn.execute(update_query, session_id, user_id, user_id)
+            return result != "UPDATE 0"
+    
+    async def get_session_participants(
+        self,
+        session_id: str
+    ) -> list[SessionParticipant]:
+        """Get all participants of a session."""
+        
+        # Get session info first
+        session_query = """
+            SELECT content, metadata
+            FROM embeddings 
+            WHERE metadata->>'namespace' = 'session_info'
+            AND metadata->>'session_id' = $1
+            LIMIT 1
+        """
+        
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            session_row = await conn.fetchrow(session_query, session_id)
+        
+        if not session_row:
+            return []
+        
+        try:
+            content_data = json.loads(session_row["content"]) if isinstance(session_row["content"], str) else session_row["content"]
+            participants_ids = content_data.get("participants", [])
+            
+            # Get participation details from chat history
+            participants = []
+            for user_id in participants_ids:
+                # Get user's first and last message in this session
+                participation_query = """
+                    SELECT 
+                        MIN((metadata->>'timestamp')::bigint) as first_message,
+                        MAX((metadata->>'timestamp')::bigint) as last_message,
+                        COUNT(*) as message_count
+                    FROM embeddings 
+                    WHERE metadata->>'namespace' = 'chat_history'
+                    AND metadata->>'session_id' = $1
+                    AND metadata->>'user_id' = $2
+                """
+                
+                async with pool.acquire() as conn:
+                    participation_row = await conn.fetchrow(participation_query, session_id, user_id)
+                
+                if participation_row and participation_row["message_count"] > 0:
+                    participants.append(SessionParticipant(
+                        user_id=user_id,
+                        session_id=session_id,
+                        first_joined_at=datetime.fromtimestamp(int(participation_row["first_message"]) / 1000),
+                        last_active_at=datetime.fromtimestamp(int(participation_row["last_message"]) / 1000),
+                        message_count=int(participation_row["message_count"])
+                    ))
+                    
+            return participants
+            
+        except Exception as e:
+            print(f"Error parsing session participants: {e}")
+            return []
+    
+    async def create_chat_session(
+        self,
+        user_id: str,
+        patient_id: str | None,
+        mode: str,
+        session_title: str | None = None
+    ) -> str:
+        """Create a new chat session and return session_id."""
+        
+        session_id = f"{mode}_{patient_id or 'general'}_{user_id}_{int(datetime.now().timestamp() * 1000)}"
+        current_timestamp = str(int(datetime.now().timestamp() * 1000))
+        
+        if not session_title:
+            session_title = f"{mode.title()} Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        
+        session_data = {
+            "session_id": session_id,
+            "created_at": current_timestamp,
+            "session_title": session_title,
+            "message_count": 0,
+            "mode": mode,
+            "is_active": True,
+            "participants": [user_id]  # Creator is first participant
+        }
+        
+        # Store session info in vector store using upsert
+        await self.upsert(
+            embedding_id=f"session_{session_id}",
+            embedding=[0.0] * 1024,  # Use correct dimensions for your database
+            object_type="session_info",
+            object_id=session_id,
+            content=session_data,
+            metadata={
+                "namespace": "session_info",
+                "session_id": session_id,
+                "created_by_user_id": user_id,
+                "patient_id": patient_id or "general_chat",
+                "created_at": current_timestamp,
+                "last_message_at": current_timestamp,
+                "last_participant_id": user_id,
+                "mode": mode
+            }
+        )
+        
+        return session_id
+    
+    async def update_session_activity(
+        self,
+        session_id: str,
+        user_id: str,
+        message_count_increment: int = 1
+    ) -> None:
+        """Update session's last activity and user participation."""
+        
+        current_timestamp = str(int(datetime.now().timestamp() * 1000))
+        
+        # First, ensure user is in participants list
+        await self.add_user_to_session(session_id, user_id)
+        
+        # Then update session activity
+        query = """
+            UPDATE embeddings 
+            SET 
+                content = jsonb_set(
+                    jsonb_set(content::jsonb, '{message_count}', 
+                        to_jsonb(((content->>'message_count')::int + $2)::text)),
+                    '{last_message_at}', to_jsonb($3::text)
+                ),
+                metadata = jsonb_set(
+                    jsonb_set(metadata::jsonb, '{last_message_at}', to_jsonb($3::text)),
+                    '{last_participant_id}', to_jsonb($4::text)
+                )
+            WHERE metadata->>'namespace' = 'session_info' 
+            AND metadata->>'session_id' = $1
+        """
+        
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(query, session_id, message_count_increment, current_timestamp, user_id)
+    
+
+    async def get_session_info(self, session_id: str) -> ChatSession | None:
+        """Get session information by session_id."""
+        
+        query = """
+            SELECT content, metadata
+            FROM embeddings 
+            WHERE metadata->>'namespace' = 'session_info'
+            AND metadata->>'session_id' = $1
+            LIMIT 1
+        """
+        
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(query, session_id)
+        
+        if not row:
+            return None
+            
+        try:
+            content_data = json.loads(row["content"]) if isinstance(row["content"], str) else row["content"]
+            metadata = json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
+            
+            return ChatSession(
+                session_id=session_id,
+                patient_id=metadata.get("patient_id") if metadata.get("patient_id") != "general_chat" else None,
+                created_by_user_id=metadata.get("created_by_user_id"),
+                participants=content_data.get("participants", []),
+                created_at=datetime.fromtimestamp(int(content_data.get("created_at", 0)) / 1000),
+                last_message_at=datetime.fromtimestamp(int(metadata.get("last_message_at", 0)) / 1000),
+                session_title=content_data.get("session_title", "Untitled Session"),
+                message_count=int(content_data.get("message_count", 0)),
+                mode=content_data.get("mode", "chat"),
+                is_active=content_data.get("is_active", True),
+                last_participant_id=metadata.get("last_participant_id")
+            )
+        except Exception as e:
+            print(f"Error parsing session info: {e}")
+            return None
+    
+    async def get_session_messages(
+        self,
+        session_id: str,
+        limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Get all messages for a specific session."""
+        
+        query = """
+            SELECT content, metadata
+            FROM embeddings 
+            WHERE metadata->>'namespace' = 'chat_history'
+            AND metadata->>'session_id' = $1
+            ORDER BY 
+                CASE WHEN metadata->>'timestamp' ~ '^[0-9]+$' 
+                    THEN (metadata->>'timestamp')::bigint 
+                    ELSE 0 
+                END ASC
+            LIMIT $2
+        """
+        
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, session_id, limit)
+        
+        result = []
+        for row in rows:
+            try:
+                raw_content = row["content"]
+                
+                if isinstance(raw_content, str):
+                    try:
+                        content_data = json.loads(raw_content)
+                    except json.JSONDecodeError:
+                        content_data = {"content": raw_content, "role": "user"}
+                else:
+                    content_data = raw_content
+                
+                message_content = content_data.get("content", "")
+                message_role = content_data.get("role", "user")
+                
+                result.append({
+                    "content": message_content,
+                    "role": message_role,
+                    "timestamp": content_data.get("timestamp", ""),
+                    "metadata": json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
+                })
+                
+            except Exception as e:
+                print(f"Error parsing message row: {e}")
+                continue
+        
+        return result
+    
+
+    def _parse_session_rows(self, rows) -> list[ChatSession]:
+        """Helper method to parse session rows into ChatSession objects."""
+        sessions = []
+        for row in rows:
+            try:
+                content_data = json.loads(row["content"]) if isinstance(row["content"], str) else row["content"]
+                metadata = json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
+                
+                session = ChatSession(
+                    session_id=content_data.get("session_id"),
+                    patient_id=metadata.get("patient_id") if metadata.get("patient_id") != "general_chat" else None,
+                    created_by_user_id=metadata.get("created_by_user_id"),
+                    participants=content_data.get("participants", []),
+                    created_at=datetime.fromtimestamp(int(content_data.get("created_at", 0)) / 1000),
+                    last_message_at=datetime.fromtimestamp(int(metadata.get("last_message_at", 0)) / 1000),
+                    session_title=content_data.get("session_title", "Untitled Session"),
+                    message_count=int(content_data.get("message_count", 0)),
+                    mode=content_data.get("mode", "chat"),
+                    is_active=content_data.get("is_active", True),
+                    last_participant_id=metadata.get("last_participant_id")
+                )
+                sessions.append(session)
+            except Exception as e:
+                print(f"Error parsing session row: {e}")
+                continue
+                
+        return sessions
+    
 
         
 

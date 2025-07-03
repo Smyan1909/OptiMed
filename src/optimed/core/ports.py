@@ -17,7 +17,9 @@ from optimed.core.domain import (
     ImageUploadRequest,
     DICOMMetadata,
     ImageDimensions,
-    WindowLevel)
+    WindowLevel,
+    ChatSession,
+    SessionParticipant)
 
 # core/ports.py
 #
@@ -164,7 +166,71 @@ class VectorStore(Protocol):
     ) -> list[dict[str, Any]]:
         """Search for similar DICOM images by embedding."""
         ... 
+    
+    async def get_sessions_for_patient(
+        self, 
+        patient_id: str | None = None,
+        limit: int = 50,
+        include_general: bool = False
+    ) -> list[ChatSession]:
+        """Get all chat sessions for a patient (regardless of user)."""
+        ...
+    
+    async def get_user_sessions_for_patient(
+        self, 
+        user_id: str, 
+        patient_id: str | None = None,
+        limit: int = 50
+    ) -> list[ChatSession]:
+        """Get sessions where user has participated for a specific patient."""
+        ...
+    
+    async def add_user_to_session(
+        self,
+        session_id: str,
+        user_id: str
+    ) -> bool:
+        """Add a user as a participant to an existing session."""
+        ...
+    
+    async def get_session_participants(
+        self,
+        session_id: str
+    ) -> list[SessionParticipant]:
+        """Get all participants of a session."""
+        ...
+    
+    async def create_chat_session(
+        self,
+        user_id: str,
+        patient_id: str | None,
+        mode: str,
+        session_title: str | None = None
+    ) -> str:
+        """Create a new chat session and return session_id."""
+        ...
+    
+    async def update_session_activity(
+        self,
+        session_id: str,
+        user_id: str,
+        message_count_increment: int = 1
+    ) -> None:
+        """Update session's last activity and user participation."""
+        ...
 
+    async def get_session_info(self, session_id: str) -> ChatSession | None:
+        """Get session information by session_id."""
+        ...
+    
+    async def get_session_messages(
+        self,
+        session_id: str,
+        limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Get all messages for a specific session."""
+        ...
+    
 
 class DiagnosticEngine(Protocol):
     """Pure-domain service used by LangGraph; orchestrates everything."""

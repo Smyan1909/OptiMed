@@ -533,8 +533,51 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 
         return _builder.compile()
 
+    async def get_or_create_session(
+        self, 
+        user_id: str, 
+        patient_id: str | None, 
+        mode: str,
+        session_id: str | None = None,
+        allow_join_existing: bool = True
+    ) -> str:
+        """Get existing session or create a new one, with multi-user support."""
+        
+        if session_id:
+            # Verify session exists
+            session_info = await self._vec.get_session_info(session_id)
+            if session_info:
+                # Add user to session if not already a participant
+                if user_id not in session_info.participants:
+                    if allow_join_existing:
+                        success = await self._vec.add_user_to_session(session_id, user_id)
+                        if success:
+                            print(f"[session] User {user_id} joined existing session {session_id}")
+                        else:
+                            print(f"[session] Failed to add user {user_id} to session {session_id}")
+                    else:
+                        print(f"[session] User {user_id} not allowed to join session {session_id}")
+                        return await self._vec.create_chat_session(user_id, patient_id, mode)
+                
+                return session_id
+        
+        # Create new session
+        return await self._vec.create_chat_session(
+            user_id=user_id,
+            patient_id=patient_id,
+            mode=mode
+        )
 
     async def run(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, user_id: str | None = None, session_id: str | None = None) -> Union[DiagnosisResult,  dict]:
+
+        if user_id:
+            session_id = await self.get_or_create_session(
+                user_id=user_id,
+                patient_id=patient.patient_id if patient else None,
+                mode="chat" if chat_mode else "diagnose",
+                session_id=session_id,
+                allow_join_existing=True  # Allow users to join existing sessions
+            )
 
         prompt = user_prompt or self._default_prompt
         if patient is not None:
@@ -552,6 +595,9 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 "user_id": user_id,
                 "session_id": session_id
             })
+        
+        if session_id and user_id:
+            await self._vec.update_session_activity(session_id=session_id, user_id=user_id)
         
         if patient is not None:
             if hasattr(data, "model_dump"):

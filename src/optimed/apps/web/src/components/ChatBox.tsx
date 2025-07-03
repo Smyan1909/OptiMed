@@ -14,6 +14,7 @@ interface Message {
 interface ChatBoxProps {
   mode: "chat" | "diagnose";
   patientId?: string;
+  sessionId?: string | null; // Optional session ID for diagnosis mode
 }
 
 const parseLinksInText = (text: string, isUser: boolean = false) => {
@@ -99,12 +100,14 @@ const getAuthHeaders = () => {
   return headers;
 };
 
-export default function ChatBox({ mode, patientId }: ChatBoxProps) {
+export default function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   
-  // FIX: Create persistent session ID per patient/mode combination
+  // Use provided sessionId or generate one
   const [sessionId] = useState(() => {
+    if (propSessionId) return propSessionId;
+    
     if (typeof window !== 'undefined') {
       const key = `chat_session_${mode}_${patientId || 'general'}`;
       let existing = localStorage.getItem(key);
@@ -119,18 +122,29 @@ export default function ChatBox({ mode, patientId }: ChatBoxProps) {
   
   const { user } = useUser();
 
-  // Load chat history on component mount
+  // Update sessionId when prop changes
+  useEffect(() => {
+    if (propSessionId && propSessionId !== sessionId) {
+      // Clear messages when switching sessions
+      setMessages([]);
+    }
+  }, [propSessionId]);
+
+  // Use propSessionId if provided, otherwise use generated sessionId
+  const currentSessionId = propSessionId || sessionId;
+
+  // Load chat history on component mount or session change
   useEffect(() => {
     const loadHistory = async () => {
       try {
-        console.log(`Loading history for session: ${sessionId}, patient: ${patientId}`);
+        console.log(`Loading history for session: ${currentSessionId}, patient: ${patientId}`);
         
         const response = await fetch('/api/chat-history', {
           method: 'POST',
           headers: getAuthHeaders(),
           body: JSON.stringify({ 
             patient_id: patientId,
-            session_id: sessionId,
+            session_id: currentSessionId,
             mode: mode
           })
         });
@@ -157,30 +171,9 @@ export default function ChatBox({ mode, patientId }: ChatBoxProps) {
     if ((mode === 'diagnose' && patientId) || mode === 'chat') {
       loadHistory();
     }
-  }, [sessionId, patientId, mode]);
+  }, [currentSessionId, patientId, mode]);
 
-  // Clear messages when patient changes (but not on initial load)
-  useEffect(() => {
-    if (patientId) {
-      // Only clear if we're switching patients, not on initial load
-      const key = `chat_session_${mode}_${patientId}`;
-      if (!localStorage.getItem(key)) {
-        setMessages([]);
-      }
-    }
-  }, [patientId, mode]);
-
-  // Add welcome message when starting diagnosis mode (only if no history)
-  useEffect(() => {
-    if (mode === "diagnose" && patientId && messages.length === 0) {
-      setMessages([{
-        sender: "system",
-        text: `Hello! I'm OptiMed AI, ready to help with patient ${patientId}'s diagnosis. Ask me anything about their condition, symptoms, or potential treatments. What would you like to discuss?`,
-        timestamp: new Date().toLocaleTimeString()
-      }]);
-    }
-  }, [mode, patientId, messages.length]);
-
+  // ... rest of existing code, but use currentSessionId in sendMessage
   const sendMessage = async (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
@@ -200,7 +193,7 @@ export default function ChatBox({ mode, patientId }: ChatBoxProps) {
       ...prev,
       { sender: "system", text: "OptiMed is thinking...", loading: true, timestamp },
     ]);
-    
+
     try {
       // 3) Call appropriate backend endpoint
       const endpoint = mode === "chat" ? "/api/chat" : "/api/diagnose";
@@ -212,7 +205,7 @@ export default function ChatBox({ mode, patientId }: ChatBoxProps) {
           user_prompt: userText,
           chat_mode: mode === "chat",
           user_id: user?.user_id,
-          session_id: sessionId  // Use the consistent session ID
+          session_id: currentSessionId  // Use the current session ID
         }),
       });
       
