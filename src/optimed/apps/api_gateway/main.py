@@ -1423,8 +1423,8 @@ async def update_journal_entry(
                 update_data["entry_type"] = JournalEntryType(request.entry_type)
             except ValueError:
                 raise HTTPException(status_code=400, detail=f"Invalid entry type: {request.entry_type}")
-        
-        update_request = JournalEntryUpdate(**update_data)
+
+        update_request = JournalEntryUpdate(**update_data)  # type: ignore
         entry = await fhir_repo.update_journal_entry(entry_id, update_request, current_user)
         
         return JournalEntryResponse(
