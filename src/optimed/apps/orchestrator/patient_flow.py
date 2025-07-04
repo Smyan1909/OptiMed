@@ -4,6 +4,7 @@ import uuid
 import json
 import time
 from typing import List, Any, Union, AsyncGenerator, Optional
+from datetime import datetime
 
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
@@ -74,8 +75,10 @@ class FlowState(BaseModel): # Potentially add
     web_search_performed: bool = False  # Add this
 
     chat_mode: bool = False # If True, we are in chat mode and not diagnosing a patient
-
     chat_history: List[ChatMessage] = Field(default_factory=list)
+
+    needs_cross_session_search: bool = False
+    relevant_cross_session_history: List[dict] = Field(default_factory=list)
 
     user_id: str | None = None  # Optional user ID for tracking who initiated the diagnosis
     user_context: User | None = None  # Optional user context for additional information
@@ -205,7 +208,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             """Conditional function to determine if web search should be performed."""
             return state.web_search_performed
 
-        async def load_chat_history(state: FlowState) -> FlowState:
+        async def load_current_session_history(state: FlowState) -> FlowState:
             """Load chat history for the patient if available."""
             if state.patient_id and state.session_id:
                 try:
@@ -224,15 +227,142 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                             content = item.get("content", "")
                             chat_messages.append(ChatMessage(role=role, content=content))
                         except Exception as e:
-                            print(f"[load_chat_history] Error parsing item: {e}")
+                            print(f"[load_current_session_history] Error parsing item: {e}")
                             continue
                             
                     state.chat_history = chat_messages
                 except Exception as e:
-                    print(f"[load_chat_history] Error loading chat history: {e}")
+                    print(f"[load_current_session_history] Error loading chat history: {e}")
                     state.chat_history = []
             else:
                 state.chat_history = []
+
+            return state
+
+        async def evaluate_cross_session_history_need(state: FlowState) -> FlowState:
+            """Evaluate if cross-session chat history would be helpful for context."""
+            try:
+                # Use LLM to determine if historical context from other sessions would help
+                evaluation_prompt = f"""
+                Analyze this user query to determine if consulting previous conversations from other sessions would be helpful:
+                
+                Query: "{state.user_prompt}"
+                Patient ID: {state.patient_id or "General chat"}
+                Current session history length: {len(state.chat_history)}
+                
+                Consider if the query:
+                - References information that might have been discussed before ("we talked about this before", "as mentioned previously")
+                - Asks about follow-up on treatments or conditions discussed in past sessions
+                - Would benefit from understanding the patient's historical care progression
+                - Seeks clarification on decisions made in previous consultations
+                - Asks about medication changes, test results, or ongoing conditions
+                - References "last time", "before", "previously discussed", etc.
+                
+                Respond with only "YES" or "NO".
+                """
+                
+                evaluation_msg = ChatMessage(role=ChatRole.USER, content=evaluation_prompt)
+                response = await self._llm.chat([
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a clinical assistant that determines if historical conversation context is needed."),
+                    evaluation_msg
+                ])
+                
+                needs_cross_session_history = "YES" in response.content.upper()
+                state.needs_cross_session_search = needs_cross_session_history
+                
+                print(f"[cross_session_eval] Cross-session history needed: {needs_cross_session_history} for query: '{state.user_prompt[:50]}...'")
+                
+            except Exception as e:
+                print(f"[cross_session_eval] Error evaluating cross-session history need: {e}")
+                state.needs_cross_session_search = False
+            
+            return state
+
+        async def search_cross_session_history(state: FlowState) -> FlowState:
+            """Search across all previous sessions for relevant context."""
+            if not state.needs_cross_session_search:
+                state.relevant_cross_session_history = []
+                return state
+                
+            try:
+                # Use embedding-based search to find relevant historical conversations
+                query_embedding = await embed(state.user_prompt)
+                
+                # Search for relevant chat history across all sessions
+                if state.patient_id:
+                    # Patient-specific cross-session search
+                    rows = await self._vec.similarity_search(
+                        query_embedding,
+                        top_k=8,  # Get more results to filter through
+                        filter_={
+                            "namespace": "chat_history", 
+                            "patient_id": str(state.patient_id)
+                        },
+                    )
+                else:
+                    # General chat cross-session search for this user
+                    rows = await self._vec.similarity_search(
+                        query_embedding,
+                        top_k=8,
+                        filter_={
+                            "namespace": "chat_history",
+                            "user_id": str(state.user_id)
+                        },
+                    )
+                
+                # Parse and filter the results
+                relevant_history = []
+                current_session_id = state.session_id
+                
+                for row in rows:
+                    try:
+                        # Extract content and metadata
+                        content_text = row[2] if len(row) > 2 else row[1]
+                        
+                        # Parse if it's JSON
+                        if isinstance(content_text, str) and content_text.strip().startswith('{'):
+                            content_data = json.loads(content_text)
+                            session_id_from_content = content_data.get("session_id")
+                            role = content_data.get("role", "user")
+                            message_content = content_data.get("content", "")
+                            timestamp = content_data.get("timestamp")
+                        else:
+                            # Simple text content
+                            message_content = content_text
+                            session_id_from_content = None
+                            role = "user"
+                            timestamp = None
+                        
+                        # Skip if it's from current session (we already have that)
+                        if session_id_from_content == current_session_id:
+                            continue
+                            
+                        # Skip empty content
+                        if not message_content or len(message_content.strip()) < 10:
+                            continue
+                        
+                        # Add relevant historical context
+                        relevant_history.append({
+                            "content": message_content,
+                            "role": role,
+                            "session_id": session_id_from_content,
+                            "timestamp": timestamp,
+                            "similarity_score": row[0] if len(row) > 0 else 0.0
+                        })
+                        
+                    except Exception as e:
+                        print(f"[cross_session_search] Error parsing history row: {e}")
+                        continue
+                
+                # Sort by similarity score and take the most relevant
+                relevant_history.sort(key=lambda x: x.get("similarity_score", 0.0), reverse=True)
+                state.relevant_cross_session_history = relevant_history[:5]  # Keep top 5 most relevant
+                
+                print(f"[cross_session_search] Found {len(state.relevant_cross_session_history)} relevant historical conversations")
+                
+            except Exception as e:
+                print(f"[cross_session_search] Error searching cross-session history: {e}")
+                state.relevant_cross_session_history = []
 
             return state
 
@@ -429,26 +559,57 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 )
                 messages.append(user_info)
 
-            history = state.chat_history[-25:]
-
-            if history:
-                # Add a clear header
+            current_history = state.chat_history[-15:]  # Recent current session history
+            if current_history:
                 history_header = ChatMessage(
                     role=ChatRole.USER,
-                    content=f"=== PREVIOUS CONVERSATION HISTORY FOR PATIENT {state.patient_id} ==="
+                    content="=== CURRENT SESSION HISTORY ==="
                 )
                 messages.append(history_header)
                 
-                # Add the actual history
-                for i, msg in enumerate(history):
+                for msg in current_history:
                     messages.append(msg)
                 
-                # Add footer to make it clear
                 history_footer = ChatMessage(
                     role=ChatRole.USER,
-                    content="=== END OF CONVERSATION HISTORY ==="
+                    content="=== END OF CURRENT SESSION HISTORY ==="
                 )
                 messages.append(history_footer)
+
+            # Add cross-session relevant history if available
+            if state.relevant_cross_session_history:
+                cross_session_header = ChatMessage(
+                    role=ChatRole.USER,
+                    content="=== RELEVANT PREVIOUS CONVERSATIONS (FROM OTHER SESSIONS) ==="
+                )
+                messages.append(cross_session_header)
+                
+                for historical_item in state.relevant_cross_session_history:
+                    # Format the historical context nicely
+                    session_info = f"Session: {historical_item.get('session_id', 'unknown')}"
+                    timestamp_info = ""
+                    if historical_item.get('timestamp'):
+                        try:
+                            timestamp_ms = int(historical_item['timestamp'])
+                            timestamp_dt = datetime.fromtimestamp(timestamp_ms / 1000)
+                            timestamp_info = f" | Date: {timestamp_dt.strftime('%Y-%m-%d %H:%M')}"
+                        except Exception:
+                            pass
+                    
+                    role = historical_item.get('role', 'user').upper()
+                    content = historical_item.get('content', '')
+                    
+                    historical_msg = ChatMessage(
+                        role=ChatRole.USER,
+                        content=f"[{session_info}{timestamp_info}] {role}: {content}"
+                    )
+                    messages.append(historical_msg)
+                
+                cross_session_footer = ChatMessage(
+                    role=ChatRole.USER,
+                    content="=== END OF PREVIOUS CONVERSATIONS ==="
+                )
+                messages.append(cross_session_footer)
 
 
             if state.patient_ctx:
@@ -605,11 +766,16 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         def has_patient(state: FlowState) -> bool:
             return state.patient_id is not None and state.patient_id.strip() != ""
 
+        def needs_cross_session_search(state: FlowState) -> bool:
+            """Conditional function to determine if cross-session search should be performed."""
+            return state.needs_cross_session_search
 
         _builder = StateGraph(FlowState)
         _builder.add_node("check_patient", check_patient_exists)  # New decision node
         _builder.add_node("load_user_context", load_user_context)  # Load user context if available
-        _builder.add_node("load_chat_history", load_chat_history)
+        _builder.add_node("load_current_session_history", load_current_session_history)
+        _builder.add_node("evaluate_cross_session_history_need", evaluate_cross_session_history_need)  
+        _builder.add_node("search_cross_session_history", search_cross_session_history)
         _builder.add_node("fetch_patient", fetch_patient)
         _builder.add_node("intelligent_retrieve_chunks", intelligent_retrieve_chunks)
         _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
@@ -627,15 +793,28 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
             "check_patient",
             has_patient,
             {
-                True: "load_chat_history",      # Patient ID provided -> fetch details
-                False: "retrieve_chunks"    # No patient ID -> skip to chunks
+                True: "load_current_session_history",      # Patient ID provided -> fetch details
+                False: "evaluate_cross_session_history_need"    # No patient ID -> skip to chunks
             }
         )
 
         # Linear flow after patient fetch
-        _builder.add_edge("load_chat_history", "fetch_patient")
-        _builder.add_edge("fetch_patient", "retrieve_chunks")
+        _builder.add_edge("load_current_session_history", "fetch_patient")
+        _builder.add_edge("fetch_patient", "evaluate_cross_session_history_need")
+
+        _builder.add_conditional_edges(
+            "evaluate_cross_session_history_need",
+             needs_cross_session_search,
+            {
+                True: "search_cross_session_history",
+                False: "retrieve_chunks"
+            }
+        )
+
+        _builder.add_edge("search_cross_session_history", "retrieve_chunks")
         _builder.add_edge("retrieve_chunks", "evaluate_web_search_need")
+
+
         _builder.add_conditional_edges(
             "evaluate_web_search_need",
             needs_web_search,
@@ -651,8 +830,51 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 
         return _builder.compile()
 
+    async def get_or_create_session(
+        self, 
+        user_id: str, 
+        patient_id: str | None, 
+        mode: str,
+        session_id: str | None = None,
+        allow_join_existing: bool = True
+    ) -> str:
+        """Get existing session or create a new one, with multi-user support."""
+        
+        if session_id:
+            # Verify session exists
+            session_info = await self._vec.get_session_info(session_id)
+            if session_info:
+                # Add user to session if not already a participant
+                if user_id not in session_info.participants:
+                    if allow_join_existing:
+                        success = await self._vec.add_user_to_session(session_id, user_id)
+                        if success:
+                            print(f"[session] User {user_id} joined existing session {session_id}")
+                        else:
+                            print(f"[session] Failed to add user {user_id} to session {session_id}")
+                    else:
+                        print(f"[session] User {user_id} not allowed to join session {session_id}")
+                        return await self._vec.create_chat_session(user_id, patient_id, mode)
+                
+                return session_id
+        
+        # Create new session
+        return await self._vec.create_chat_session(
+            user_id=user_id,
+            patient_id=patient_id,
+            mode=mode
+        )
 
     async def run(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, user_id: str | None = None, session_id: str | None = None) -> Union[DiagnosisResult,  dict]:
+
+        if user_id:
+            session_id = await self.get_or_create_session(
+                user_id=user_id,
+                patient_id=patient.patient_id if patient else None,
+                mode="chat" if chat_mode else "diagnose",
+                session_id=session_id,
+                allow_join_existing=True  # Allow users to join existing sessions
+            )
 
         prompt = user_prompt or self._default_prompt
         if patient is not None:
@@ -670,6 +892,9 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 "user_id": user_id,
                 "session_id": session_id
             })
+        
+        if session_id and user_id:
+            await self._vec.update_session_activity(session_id=session_id, user_id=user_id)
         
         if patient is not None:
             if hasattr(data, "model_dump"):
@@ -737,11 +962,28 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 "citations_included": False
             }
         
+        cross_session_info = {}
+        if data.get("relevant_cross_session_history"):
+            cross_session_info = {
+                "cross_session_search_performed": True,
+                "historical_sessions_consulted": len(set(item.get("session_id") for item in data["relevant_cross_session_history"] if item.get("session_id"))),
+                "historical_messages_found": len(data["relevant_cross_session_history"]),
+                "oldest_reference": min((item.get("timestamp") for item in data["relevant_cross_session_history"] if item.get("timestamp")), default=None)
+            }
+        else:
+            cross_session_info = {
+                "cross_session_search_performed": data.get("needs_cross_session_search", False),
+                "historical_sessions_consulted": 0,
+                "historical_messages_found": 0,
+                "oldest_reference": None
+            }
+
         return {
             "explanation": data["llm_response"].content if data["llm_response"] else "",
             "created_by_user_id": data.get("user_id"),
             "is_ai_generated": True,
             "web_search_info": web_search_info,
+            "cross_session_history_info": cross_session_info,
         }
     
     @property

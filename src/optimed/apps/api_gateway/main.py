@@ -131,6 +131,31 @@ class DICOMUploadResponse(BaseModel):
     message: str
     image: DICOMImageResponse
 
+
+class SessionListRequest(BaseModel):
+    patient_id: str | None = None
+    user_id: str | None = None
+    include_all_patient_sessions: bool = False
+
+class SessionOut(BaseModel):
+    session_id: str
+    patient_id: str | None
+    created_by_user_id: str
+    participants: list[str]
+    created_at: str
+    last_message_at: str
+    session_title: str
+    message_count: int
+    mode: str
+    is_active: bool
+    last_participant_id: str | None
+    user_can_join: bool = True
+
+class SessionCreateRequest(BaseModel):
+    patient_id: str | None = None
+    mode: str = "chat"
+    session_title: str | None = None
+
 async def get_current_user(
     x_session_id: str = Header(None, alias="X-Session-ID")
 ) -> Optional[User]:
@@ -193,6 +218,128 @@ async def get_user_fhir_repository(user_ctx: dict = Depends(get_user_context)) -
 async def health():
     """Simple health check endpoint."""
     return {"status": "ok"}
+
+@app.post("/sessions/list", response_model=List[SessionOut])
+async def list_user_sessions(
+    req: SessionListRequest,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Get sessions for a user or all sessions for a patient."""
+    
+    user_id = user_ctx.get("user_id") or req.user_id
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User ID required")
+    
+    try:
+        if req.include_all_patient_sessions and req.patient_id:
+            # Get ALL sessions for the patient (regardless of user)
+            sessions = await _engine.vector_store.get_sessions_for_patient(
+                patient_id=req.patient_id
+            )
+        else:
+            # Get only sessions where user has participated
+            sessions = await _engine.vector_store.get_user_sessions_for_patient(
+                user_id=user_id,
+                patient_id=req.patient_id
+            )
+        
+        return [
+            SessionOut(
+                session_id=session.session_id,
+                patient_id=session.patient_id,
+                created_by_user_id=session.created_by_user_id,
+                participants=session.participants,
+                created_at=session.created_at.isoformat(),
+                last_message_at=session.last_message_at.isoformat(),
+                session_title=session.session_title,
+                message_count=session.message_count,
+                mode=session.mode,
+                is_active=session.is_active,
+                last_participant_id=session.last_participant_id,
+                user_can_join=user_id not in session.participants
+            )
+            for session in sessions
+        ]
+        
+    except Exception as e:
+        print(f"[API] Error listing sessions: {e}")
+        raise HTTPException(status_code=500, detail="Could not load sessions")
+
+@app.post("/sessions/create")
+async def create_new_session(
+    request: SessionCreateRequest,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Create a new chat session."""
+    
+    user_id = user_ctx.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User ID required")
+    
+    try:
+        session_id = await _engine.vector_store.create_chat_session(
+            user_id=user_id,
+            patient_id=request.patient_id,
+            mode=request.mode,
+            session_title=request.session_title
+        )
+        
+        return {"session_id": session_id, "message": "Session created successfully"}
+        
+    except Exception as e:
+        print(f"[API] Error creating session: {e}")
+        raise HTTPException(status_code=500, detail="Could not create session")
+
+@app.post("/sessions/{session_id}/join")
+async def join_session(
+    session_id: str,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Join an existing session."""
+    
+    user_id = user_ctx.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User ID required")
+    
+    try:
+        success = await _engine.vector_store.add_user_to_session(session_id, user_id)
+        
+        if success:
+            return {"message": "Successfully joined session", "session_id": session_id}
+        else:
+            return {"message": "Already a participant in this session", "session_id": session_id}
+        
+    except Exception as e:
+        print(f"[API] Error joining session: {e}")
+        raise HTTPException(status_code=500, detail="Could not join session")
+
+@app.get("/sessions/{session_id}/participants")
+async def get_session_participants(
+    session_id: str,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Get all participants of a session."""
+    
+    try:
+        participants = await _engine.vector_store.get_session_participants(session_id)
+        
+        return {
+            "session_id": session_id,
+            "participants": [
+                {
+                    "user_id": p.user_id,
+                    "first_joined_at": p.first_joined_at.isoformat(),
+                    "last_active_at": p.last_active_at.isoformat(),
+                    "message_count": p.message_count
+                }
+                for p in participants
+            ]
+        }
+        
+    except Exception as e:
+        print(f"[API] Error getting session participants: {e}")
+        raise HTTPException(status_code=500, detail="Could not get session participants")
+
 
 @app.get("/status/repository")
 async def get_repository_status(
