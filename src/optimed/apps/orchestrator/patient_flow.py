@@ -62,6 +62,11 @@ class FlowState(BaseModel): # Potentially add
 
     patient_ctx: PatientContext | None = None
     retrieved_chunks: List[str] = Field(default_factory=list)
+
+    chunk_analysis: dict[str, Any] = Field(default_factory=dict)
+    filtered_chunks: List[dict[str, Any]] = Field(default_factory=list)
+    retrieval_reasoning: str = ""
+
     llm_response: ChatMessage | None = None
 
     retrieved_web: List[str] = Field(default_factory=list) # This is for future use, if we want to retrieve web data To be implemented later
@@ -295,6 +300,119 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             state.retrieved_chunks = patient_specific_chunks
             return state
 
+        async def intelligent_retrieve_chunks(state: FlowState) -> FlowState:
+            """Intelligently retrieve and filter chunks based on LLM analysis."""
+            
+            # Step 1: Initial similarity search (broader search)
+            if state.patient_id:
+                q_vec = await embed(state.user_prompt)
+                rows = await self._vec.similarity_search(
+                    q_vec,
+                    top_k=10,  # Get more candidates initially
+                    filter_={
+                        "namespace": "clinical", 
+                        "patient_id": str(state.patient_id)
+                    },
+                )
+            else:
+                rows = []
+
+            if not rows and state.patient_ctx:
+                # Fallback to patient context
+                state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
+                state.chunk_analysis = {"method": "fallback", "reason": "No chunks found, using patient context"}
+                return state
+
+            # Step 2: Prepare chunks for LLM analysis
+            candidate_chunks = []
+            for i, row in enumerate(rows):
+                chunk_text = row[2] if len(row) > 2 else row[1]
+                similarity_score = row[0] if len(row) > 0 else 0.0
+                
+                # Verify patient relevance
+                if state.patient_ctx:
+                    patient_name = state.patient_ctx.name
+                    if str(state.patient_id) in chunk_text or patient_name in chunk_text:
+                        candidate_chunks.append({
+                            "id": f"chunk_{i}",
+                            "content": chunk_text[:500],  # Limit for analysis
+                            "similarity_score": similarity_score,
+                            "full_content": chunk_text
+                        })
+
+            if not candidate_chunks:
+                state.retrieved_chunks = []
+                state.chunk_analysis = {"method": "none", "reason": "No relevant chunks found"}
+                return state
+
+            # Step 3: LLM-based chunk analysis and selection
+            chunk_analysis_prompt = f"""
+            You are analyzing medical data chunks to determine which ones are relevant for answering this query:
+
+            QUERY: "{state.user_prompt}"
+            
+            PATIENT CONTEXT: {state.patient_ctx.name if state.patient_ctx else "Unknown"} (ID: {state.patient_id})
+            
+            AVAILABLE CHUNKS:
+            {chr(10).join([f"CHUNK {chunk['id']}: {chunk['content'][:300]}..." for chunk in candidate_chunks])}
+
+            For each chunk, analyze:
+            1. Relevance to the specific query (0-10 scale)
+            2. Clinical importance for this case (0-10 scale)  
+            3. Whether it contains information that directly helps answer the query
+            4. Whether it provides necessary context or background
+
+            Return a JSON response with:
+            {{
+                "selected_chunks": ["chunk_1", "chunk_3", ...],
+                "reasoning": "Brief explanation of why these chunks were selected",
+                "relevance_analysis": {{
+                    "chunk_1": {{"relevance": 8, "importance": 7, "reason": "Contains relevant lab results"}},
+                    "chunk_2": {{"relevance": 3, "importance": 4, "reason": "General background, not specific to query"}},
+                    ...
+                }},
+                "query_type": "diagnostic|follow_up|general_inquiry|medication|test_results"
+            }}
+
+            RULES:
+            - Select 2-5 most relevant chunks maximum
+            - Prioritize recent/specific information over general background
+            - For diagnostic queries, focus on symptoms, vitals, and test results
+            - For medication queries, focus on current medications and allergies
+            - For follow-up queries, include previous relevant treatments/outcomes
+            """
+
+            try:
+                analysis_response = await self._llm.chat([
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information analyst. Analyze and select the most relevant data chunks for clinical queries."),
+                    ChatMessage(role=ChatRole.USER, content=chunk_analysis_prompt)
+                ], json_mode=True)
+
+                analysis_data = json.loads(analysis_response.content)
+                
+                # Extract selected chunks
+                selected_chunk_ids = analysis_data.get("selected_chunks", [])
+                selected_chunks = []
+                
+                for chunk in candidate_chunks:
+                    if chunk["id"] in selected_chunk_ids:
+                        selected_chunks.append(chunk["full_content"])
+
+                state.retrieved_chunks = selected_chunks
+                state.chunk_analysis = analysis_data
+                state.retrieval_reasoning = analysis_data.get("reasoning", "")
+                
+                print(f"[intelligent_retrieve] Selected {len(selected_chunks)} chunks out of {len(candidate_chunks)} candidates")
+                print(f"[intelligent_retrieve] Reasoning: {state.retrieval_reasoning}")
+
+            except Exception as e:
+                print(f"[intelligent_retrieve] Error in LLM analysis: {e}, falling back to similarity-based selection")
+                # Fallback to top similarity scores
+                top_chunks = sorted(candidate_chunks, key=lambda x: x["similarity_score"], reverse=True)[:3]
+                state.retrieved_chunks = [chunk["full_content"] for chunk in top_chunks]
+                state.chunk_analysis = {"method": "fallback_similarity", "error": str(e)}
+
+            return state
 
         async def diagnose(state: FlowState) -> FlowState:
 
@@ -493,7 +611,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_node("load_user_context", load_user_context)  # Load user context if available
         _builder.add_node("load_chat_history", load_chat_history)
         _builder.add_node("fetch_patient", fetch_patient)
-        _builder.add_node("retrieve_chunks", retrieve_chunks)
+        _builder.add_node("intelligent_retrieve_chunks", intelligent_retrieve_chunks)
         _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
         _builder.add_node("perform_web_search", perform_web_search)
         _builder.add_node("diagnose", diagnose)
