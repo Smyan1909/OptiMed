@@ -32,6 +32,35 @@ export type ChatRequest = {
   session_id?: string;
 };
 
+export interface JournalEntry {
+  entry_id: string;
+  patient_id: string;
+  title: string;
+  content: string;
+  entry_type: JournalEntryType;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  author_name: string;
+  author_role: string;
+}
+
+export enum JournalEntryType {
+  NOTE = "note",
+  OBSERVATION = "observation",
+  TREATMENT = "treatment",
+  DIAGNOSIS = "diagnosis",
+  ASSESSMENT = "assessment",
+  PLAN = "plan"
+}
+
+export interface JournalEntryCreate {
+  patient_id: string;
+  title: string;
+  content: string;
+  entry_type: JournalEntryType;
+}
+
 export type LoginRequest = {
   username: string;
   password: string;
@@ -342,5 +371,41 @@ export async function findSimilarDICOMImages(imageId: string, limit: number = 5)
     throw new Error(`Search failed: ${res.status} - ${errorText}`);
   }
   
+  return res.json();
+}
+
+export async function fetchPatientJournalEntries(patientId: string): Promise<JournalEntry[]> {
+  const res = await fetch(`/api/patients/${patientId}/journal`, {
+    headers: getSessionHeaders()
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error('Failed to fetch journal entries:', res.status, errorText);
+    throw new Error(`Failed to load journal entries: ${errorText}`);
+  }
+  return res.json();
+}
+
+export async function createJournalEntry(patientId: string, entry: JournalEntryCreate): Promise<JournalEntry> {
+  const res = await fetch(`/api/patients/${patientId}/journal`, {
+    method: 'POST',
+    headers: getSessionHeaders(),
+    body: JSON.stringify(entry)
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to create journal entry: ${errorText}`);
+  }
+  return res.json();
+}
+
+export async function fetchJournalEntry(patientId: string, entryId: string): Promise<JournalEntry> {
+  const res = await fetch(`/api/patients/${patientId}/journal/${entryId}`, {
+    headers: getSessionHeaders()
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to load journal entry: ${errorText}`);
+  }
   return res.json();
 }

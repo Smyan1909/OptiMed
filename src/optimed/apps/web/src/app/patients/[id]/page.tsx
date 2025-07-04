@@ -9,6 +9,8 @@ import { fetchPatient, PatientDetail, diagnoseWithUser, chatWithUser } from "@/l
 import { useUser } from '@/contexts/UserContext';
 import ChatBox from "@/components/ChatBox";
 import { Badge } from "@/components/ui/badge";
+import JournalList from "@/components/journal/JournalList"; 
+
 
 function PatientDetailContent() {
   const params = useParams();
@@ -176,28 +178,36 @@ function PatientDetailContent() {
             </div>
           </div>
 
-          {/* AI Diagnosis Chat Section */}
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-bold text-gray-900">AI Diagnostic Assistant</h2>
-                  <p className="text-sm text-gray-700 font-medium">Have a continuous conversation about this patient's diagnosis</p>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Badge variant="default" className="px-3 py-1">
-                    🤖 AI Assistant
-                  </Badge>
-                  <Badge variant="outline" className="px-3 py-1">
-                    👨‍⚕️ {user?.display_name}
-                  </Badge>
-                </div>
-              </div>
+          {/* Two-column layout: Journal and AI Chat */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Journal Section */}
+            <div className="space-y-6">
+              <JournalList patientId={patientId} />
             </div>
             
-            <div className="p-6">
-              <div className="h-[600px]">
-                <ChatBox mode="diagnose" patientId={patientId} />
+            {/* AI Diagnosis Chat Section */}
+            <div className="bg-white shadow rounded-lg">
+              <div className="px-6 py-4 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-900">AI Diagnostic Assistant</h2>
+                    <p className="text-sm text-gray-700 font-medium">Have a continuous conversation about this patient's diagnosis</p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Badge variant="default" className="px-3 py-1">
+                      🤖 AI Assistant
+                    </Badge>
+                    <Badge variant="outline" className="px-3 py-1">
+                      👨‍⚕️ {user?.display_name}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="p-6">
+                <div className="h-[600px]">
+                  <ChatBox mode="diagnose" patientId={patientId} />
+                </div>
               </div>
             </div>
           </div>

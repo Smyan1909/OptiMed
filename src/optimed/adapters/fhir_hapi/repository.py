@@ -200,7 +200,7 @@ class HAPIFHIRRepository(FHIRRepository):
         self,
         *,
         base_url: str | None = None,
-        timeout: float = 10.0,
+        timeout: float = 60.0,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self._base = (base_url or FHIR_BASE_URL).rstrip("/")
@@ -288,7 +288,6 @@ class HAPIFHIRRepository(FHIRRepository):
             # Try to fetch from FHIR server first
             r = await self._client.get("/DocumentReference", params={
                 "subject": f"Patient/{patient_id}",
-                "category": "clinical-note",
                 "_sort": "-date",
                 "_count": "50"
             })
