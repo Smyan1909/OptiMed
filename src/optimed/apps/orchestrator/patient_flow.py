@@ -301,7 +301,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                         top_k=8,
                         filter_={
                             "namespace": "chat_history",
-                            "user_id": state.user_id
+                            "user_id": str(state.user_id)
                         },
                     )
                 

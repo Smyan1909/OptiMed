@@ -281,7 +281,7 @@ class PGVectorAdapter(VectorStore):
         
         # Build query conditions
         where_conditions = ["metadata->>'namespace' = 'session_info'"]
-        params = []
+        params: list[Any] = []
         
         if patient_id:
             where_conditions.append(f"metadata->>'patient_id' = ${len(params) + 1}")
