@@ -61,7 +61,30 @@ class ChatMessage(FrozenModel):
     def is_from_staff(self) -> bool:
         """Check if the message is from a staff member (doctor, nurse, etc.)."""
         return self.user_id is not None and self.user_role is not None
-    
+
+class ChatSession(FrozenModel):
+    """Represents a chat session between users and AI about a patient."""
+    session_id: str
+    patient_id: str | None
+    created_by_user_id: str
+    participants: List[str]  # Add this field
+    created_at: datetime
+    last_message_at: datetime
+    session_title: str
+    message_count: int
+    mode: str  # "chat" or "diagnose"
+    is_active: bool = True
+    last_participant_id: str | None = None  # Track who last participated
+
+class SessionParticipant(FrozenModel):
+    """Represents a participant in a chat session."""
+    user_id: str
+    session_id: str
+    first_joined_at: datetime
+    last_active_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    message_count: int
+
+
 class WebSearchQuery(FrozenModel):
     """Represents a web search query."""
     query_id: str

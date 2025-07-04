@@ -72,6 +72,33 @@ export type LoginResponse = {
   message: string;
 };
 
+export type Session = {
+  session_id: string;
+  patient_id: string | null;
+  created_by_user_id: string;
+  participants: string[];
+  created_at: string;
+  last_message_at: string;
+  session_title: string;
+  message_count: number;
+  mode: string;
+  is_active: boolean;
+  last_participant_id: string | null;
+  user_can_join: boolean;
+};
+
+export type SessionListRequest = {
+  patient_id?: string | null;
+  user_id?: string | null;
+  include_all_patient_sessions?: boolean;
+};
+
+export type SessionCreateRequest = {
+  patient_id?: string | null;
+  mode?: string;
+  session_title?: string | null;
+};
+
 interface DICOMImage {
   image_id: string;
   patient_id?: string;
@@ -105,6 +132,48 @@ interface DICOMPixelData {
   statistics: Record<string, any>;
 }
 
+
+// Session management functions
+export async function listSessions(request: SessionListRequest): Promise<Session[]> {
+  const res = await fetch('/api/sessions/list', {
+    method: 'POST',
+    headers: getSessionHeaders(),
+    body: JSON.stringify(request)
+  });
+  
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to list sessions: ${res.status} - ${errorText}`);
+  }
+  return res.json();
+}
+
+export async function createSession(request: SessionCreateRequest): Promise<{ session_id: string; message: string }> {
+  const res = await fetch('/api/sessions/create', {
+    method: 'POST',
+    headers: getSessionHeaders(),
+    body: JSON.stringify(request)
+  });
+  
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to create session: ${res.status} - ${errorText}`);
+  }
+  return res.json();
+}
+
+export async function joinSession(sessionId: string): Promise<{ message: string; session_id: string }> {
+  const res = await fetch(`/api/sessions/${sessionId}/join`, {
+    method: 'POST',
+    headers: getSessionHeaders()
+  });
+  
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to join session: ${res.status} - ${errorText}`);
+  }
+  return res.json();
+}
 
 export async function initiateEHRLogin(
   fhirServerUrl: string,

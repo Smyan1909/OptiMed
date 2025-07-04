@@ -1,6 +1,6 @@
 from .clinical import PatientContext, BedState, Encounter, JournalEntry, JournalEntryCreate, JournalEntryUpdate
 from .diagnosis import DiagnosisResult
-from .info import InfoEvent, Notification, CommThread, ChatMessage, WebSearchQuery, WebSearchResult, WebSearchResponse
+from .info import InfoEvent, Notification, CommThread, ChatMessage, WebSearchQuery, WebSearchResult, WebSearchResponse, ChatSession, SessionParticipant
 from .kpi import KPIEvent, Alert
 from .users import User, UserAction, UserSession, UserEHRConnection
 from .image import DICOMMetadata, ImageDimensions, WindowLevel, DICOMImage, ImagePixelData, ImageUploadRequest
@@ -39,6 +39,8 @@ __all__ = [
     "Notification",
     "CommThread",
     "ChatMessage",
+    "ChatSession",
+    "SessionParticipant",
     # kpi
     "KPIEvent",
     "Alert",

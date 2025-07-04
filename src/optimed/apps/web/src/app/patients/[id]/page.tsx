@@ -12,10 +12,9 @@ import { Badge } from "@/components/ui/badge";
 import JournalList from "@/components/journal/JournalList"; 
 
 
-function PatientDetailContent() {
+function JournalPageContent() {
   const params = useParams();
-  const router = useRouter();
-  const { user } = useUser();
+  const patientId = params?.id as string;
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -105,7 +104,15 @@ function PatientDetailContent() {
                 <span className="text-gray-400">/</span>
               </li>
               <li>
-                <span className="text-gray-900 font-medium">{patient?.name}</span>
+                <Link href={`/patients/${patientId}`} className="text-blue-600 hover:text-blue-800 font-medium">
+                  {patient?.name}
+                </Link>
+              </li>
+              <li>
+                <span className="text-gray-400">/</span>
+              </li>
+              <li>
+                <span className="text-gray-900 font-medium">Journal</span>
               </li>
             </ol>
           </nav>
@@ -121,11 +128,16 @@ function PatientDetailContent() {
                     </span>
                   </div>
                   <div className="ml-4">
-                    <h1 className="text-2xl font-bold text-gray-900">{patient?.name}</h1>
+                    <h1 className="text-2xl font-bold text-gray-900">{patient?.name} - Journal</h1>
                     <p className="text-gray-700 font-medium">Patient ID: {patient?.id}</p>
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="flex items-center space-x-3">
+                  <Link href={`/patients/${patientId}`}>
+                    <button className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors">
+                      ← Back to Patient
+                    </button>
+                  </Link>
                   <Badge variant="success" className="text-sm px-3 py-1">
                     ✅ Active
                   </Badge>
@@ -133,46 +145,20 @@ function PatientDetailContent() {
               </div>
             </div>
             
-            {/* Patient Info Grid */}
-            <div className="px-6 py-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Quick Patient Info */}
+            <div className="px-6 py-4 bg-gray-50">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                 <div>
-                  <h3 className="text-sm font-bold text-gray-900 mb-2">Demographics</h3>
-                  <div className="space-y-1">
-                    <p className="text-sm text-gray-900 font-medium">Age: {patient?.age} years</p>
-                    <p className="text-sm text-gray-900 font-medium">Sex: {patient?.sex}</p>
-                    <p className="text-sm text-gray-900 font-medium">Unit: {patient?.care_unit}</p>
-                  </div>
+                  <span className="font-medium text-gray-700">Age:</span>
+                  <span className="ml-2 text-gray-900">{patient?.age} years</span>
                 </div>
-                
                 <div>
-                  <h3 className="text-sm font-bold text-gray-900 mb-2">Vital Signs</h3>
-                  <div className="space-y-1">
-                    {patient?.vitals && Object.keys(patient.vitals).length > 0 ? (
-                      Object.entries(patient.vitals).map(([key, value]) => (
-                        <p key={key} className="text-sm text-gray-900 font-medium">
-                          {key}: <Badge variant="outline" className="ml-1">{value}</Badge>
-                        </p>
-                      ))
-                    ) : (
-                      <p className="text-sm text-gray-600 font-medium">No vitals recorded</p>
-                    )}
-                  </div>
+                  <span className="font-medium text-gray-700">Sex:</span>
+                  <span className="ml-2 text-gray-900">{patient?.sex}</span>
                 </div>
-                
                 <div>
-                  <h3 className="text-sm font-bold text-gray-900 mb-2">Lab Results</h3>
-                  <div className="space-y-1">
-                    {patient?.labs && Object.keys(patient.labs).length > 0 ? (
-                      Object.entries(patient.labs).map(([key, value]) => (
-                        <p key={key} className="text-sm text-gray-900 font-medium">
-                          {key}: <Badge variant="secondary" className="ml-1">{value}</Badge>
-                        </p>
-                      ))
-                    ) : (
-                      <p className="text-sm text-gray-600 font-medium">No lab results</p>
-                    )}
-                  </div>
+                  <span className="font-medium text-gray-700">Unit:</span>
+                  <span className="ml-2 text-gray-900">{patient?.care_unit}</span>
                 </div>
               </div>
             </div>
@@ -217,10 +203,10 @@ function PatientDetailContent() {
   );
 }
 
-export default function PatientDetailPage() {
+export default function JournalPage() {
   return (
     <ProtectedRoute>
-      <PatientDetailContent />
+      <JournalPageContent />
     </ProtectedRoute>
   );
 }
