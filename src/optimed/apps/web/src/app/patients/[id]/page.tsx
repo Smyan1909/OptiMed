@@ -5,19 +5,22 @@ import { Header } from '@/components/Header';
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { fetchPatient, PatientDetail, diagnoseWithUser, chatWithUser } from "@/lib/api";
+import { fetchPatient, PatientDetail } from "@/lib/api";
 import { useUser } from '@/contexts/UserContext';
 import ChatBox from "@/components/ChatBox";
+import SessionsList from "@/components/SessionsList";
 import { Badge } from "@/components/ui/badge";
-import JournalList from "@/components/journal/JournalList"; 
 
-
-function JournalPageContent() {
+function PatientDetailContent() {
   const params = useParams();
-  const patientId = params?.id as string;
+  const router = useRouter();
+  const { user } = useUser();
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
+  const [chatKey, setChatKey] = useState(0); // Force ChatBox re-render
+  const [sessionsKey, setSessionsKey] = useState(0); // Force SessionsList re-render
 
   const patientId = params?.id as string;
 
@@ -40,6 +43,17 @@ function JournalPageContent() {
 
     loadPatient();
   }, [patientId]);
+
+  const handleSessionSelect = (sessionId: string) => {
+    setSelectedSessionId(sessionId);
+    setChatKey(prev => prev + 1); // Force ChatBox to reload with new session
+  };
+
+  const handleNewSession = () => {
+    setSelectedSessionId(undefined);
+    setChatKey(prev => prev + 1); // Force ChatBox to reset for new session
+    setSessionsKey(prev => prev + 1); // Force SessionsList to reload
+  };
 
   if (loading) {
     return (
@@ -104,15 +118,7 @@ function JournalPageContent() {
                 <span className="text-gray-400">/</span>
               </li>
               <li>
-                <Link href={`/patients/${patientId}`} className="text-blue-600 hover:text-blue-800 font-medium">
-                  {patient?.name}
-                </Link>
-              </li>
-              <li>
-                <span className="text-gray-400">/</span>
-              </li>
-              <li>
-                <span className="text-gray-900 font-medium">Journal</span>
+                <span className="text-gray-900 font-medium">{patient?.name}</span>
               </li>
             </ol>
           </nav>
@@ -128,14 +134,15 @@ function JournalPageContent() {
                     </span>
                   </div>
                   <div className="ml-4">
-                    <h1 className="text-2xl font-bold text-gray-900">{patient?.name} - Journal</h1>
+                    <h1 className="text-2xl font-bold text-gray-900">{patient?.name}</h1>
                     <p className="text-gray-700 font-medium">Patient ID: {patient?.id}</p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-3">
-                  <Link href={`/patients/${patientId}`}>
-                    <button className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors">
-                      ← Back to Patient
+                  <Link href={`/patients/${patientId}/journal`}>
+                    <button className="flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors">
+                      <span>📋</span>
+                      <span>View Journal</span>
                     </button>
                   </Link>
                   <Badge variant="success" className="text-sm px-3 py-1">
@@ -145,55 +152,90 @@ function JournalPageContent() {
               </div>
             </div>
             
-            {/* Quick Patient Info */}
-            <div className="px-6 py-4 bg-gray-50">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            {/* Patient Info Grid */}
+            <div className="px-6 py-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div>
-                  <span className="font-medium text-gray-700">Age:</span>
-                  <span className="ml-2 text-gray-900">{patient?.age} years</span>
+                  <h3 className="text-sm font-bold text-gray-900 mb-2">Demographics</h3>
+                  <div className="space-y-1">
+                    <p className="text-sm text-gray-900 font-medium">Age: {patient?.age} years</p>
+                    <p className="text-sm text-gray-900 font-medium">Sex: {patient?.sex}</p>
+                    <p className="text-sm text-gray-900 font-medium">Unit: {patient?.care_unit}</p>
+                  </div>
                 </div>
+                
                 <div>
-                  <span className="font-medium text-gray-700">Sex:</span>
-                  <span className="ml-2 text-gray-900">{patient?.sex}</span>
+                  <h3 className="text-sm font-bold text-gray-900 mb-2">Vital Signs</h3>
+                  <div className="space-y-1">
+                    {patient?.vitals && Object.keys(patient.vitals).length > 0 ? (
+                      Object.entries(patient.vitals).map(([key, value]) => (
+                        <p key={key} className="text-sm text-gray-900 font-medium">
+                          {key}: <Badge variant="outline" className="ml-1">{value}</Badge>
+                        </p>
+                      ))
+                    ) : (
+                      <p className="text-sm text-gray-600 font-medium">No vitals recorded</p>
+                    )}
+                  </div>
                 </div>
+                
                 <div>
-                  <span className="font-medium text-gray-700">Unit:</span>
-                  <span className="ml-2 text-gray-900">{patient?.care_unit}</span>
+                  <h3 className="text-sm font-bold text-gray-900 mb-2">Lab Results</h3>
+                  <div className="space-y-1">
+                    {patient?.labs && Object.keys(patient.labs).length > 0 ? (
+                      Object.entries(patient.labs).map(([key, value]) => (
+                        <p key={key} className="text-sm text-gray-900 font-medium">
+                          {key}: <Badge variant="secondary" className="ml-1">{value}</Badge>
+                        </p>
+                      ))
+                    ) : (
+                      <p className="text-sm text-gray-600 font-medium">No lab results</p>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Two-column layout: Journal and AI Chat */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Journal Section */}
-            <div className="space-y-6">
-              <JournalList patientId={patientId} />
-            </div>
-            
-            {/* AI Diagnosis Chat Section */}
-            <div className="bg-white shadow rounded-lg">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-lg font-bold text-gray-900">AI Diagnostic Assistant</h2>
-                    <p className="text-sm text-gray-700 font-medium">Have a continuous conversation about this patient's diagnosis</p>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Badge variant="default" className="px-3 py-1">
-                      🤖 AI Assistant
-                    </Badge>
-                    <Badge variant="outline" className="px-3 py-1">
-                      👨‍⚕️ {user?.display_name}
-                    </Badge>
-                  </div>
+          {/* AI Diagnosis Chat Section with Sessions */}
+          <div className="bg-white shadow rounded-lg">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">AI Diagnostic Assistant</h2>
+                  <p className="text-sm text-gray-700 font-medium">Have a continuous conversation about this patient's diagnosis</p>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Badge variant="default" className="px-3 py-1">
+                    🤖 AI Assistant
+                  </Badge>
+                  <Badge variant="outline" className="px-3 py-1">
+                    👨‍⚕️ {user?.display_name}
+                  </Badge>
                 </div>
               </div>
+            </div>
+            
+            {/* Sessions and Chat Layout */}
+            <div className="flex h-[600px]">
+              {/* Sessions List Sidebar */}
+              <SessionsList
+                key={sessionsKey}
+                patientId={patientId}
+                selectedSessionId={selectedSessionId}
+                onSessionSelect={handleSessionSelect}
+                onNewSession={handleNewSession}
+                mode="diagnose"
+              />
               
-              <div className="p-6">
-                <div className="h-[600px]">
-                  <ChatBox mode="diagnose" patientId={patientId} />
-                </div>
+              {/* Chat Area */}
+              <div className="flex-1 flex flex-col">
+                <ChatBox 
+                  key={chatKey}
+                  mode="diagnose" 
+                  patientId={patientId}
+                  sessionId={selectedSessionId}
+                />
               </div>
             </div>
           </div>
@@ -203,10 +245,10 @@ function JournalPageContent() {
   );
 }
 
-export default function JournalPage() {
+export default function PatientDetailPage() {
   return (
     <ProtectedRoute>
-      <JournalPageContent />
+      <PatientDetailContent />
     </ProtectedRoute>
   );
 }
