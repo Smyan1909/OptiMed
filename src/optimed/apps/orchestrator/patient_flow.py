@@ -63,6 +63,11 @@ class FlowState(BaseModel): # Potentially add
 
     patient_ctx: PatientContext | None = None
     retrieved_chunks: List[str] = Field(default_factory=list)
+
+    chunk_analysis: dict[str, Any] = Field(default_factory=dict)
+    filtered_chunks: List[dict[str, Any]] = Field(default_factory=list)
+    retrieval_reasoning: str = ""
+
     llm_response: ChatMessage | None = None
 
     retrieved_web: List[str] = Field(default_factory=list) # This is for future use, if we want to retrieve web data To be implemented later
@@ -361,70 +366,225 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
 
             return state
 
-        async def retrieve_chunks(state: FlowState) -> FlowState:
-            # 0) If we have patient_ctx, ensure it’s in the vector DB under “clinical” + patient_id
-            if state.patient_ctx:
-                # serialize patient context once
-                patient_json = state.patient_ctx.model_dump_json(indent=2)
-                try:
-                    # embed the patient JSON to get a real vector
-                    patient_vec = await embed(patient_json)
-                    existing = await self._vec.similarity_search(
-                        patient_vec,
-                        top_k=1,
-                        filter_={"namespace": "clinical", "patient_id": str(state.patient_id)},
+        async def store_patient_chunks(state: FlowState) -> FlowState:
+            """Store patient context as chunks in the vector database for future retrieval."""
+            if not state.patient_ctx:
+                return state
+                
+            try:
+                patient_id = str(state.patient_id)
+                
+                # Check if we already have chunks for this patient
+                existing_chunks = await self._vec.similarity_search(
+                    await embed("patient context"),
+                    top_k=1,
+                    filter_={
+                        "namespace": "clinical",
+                        "patient_id": patient_id
+                    }
+                )
+                
+                if existing_chunks:
+                    print(f"[store_chunks] Patient {patient_id} chunks already exist, skipping storage")
+                    return state
+                
+                # Break down patient context into meaningful chunks
+                patient_data = state.patient_ctx
+                
+                # 1. Demographics chunk
+                demographics_text = f"""
+                Patient Demographics:
+                Name: {patient_data.name}
+                Age: {patient_data.age}
+                Sex: {patient_data.sex}
+                Patient ID: {patient_id}
+                """
+                
+                await embed_and_store(
+                    namespace="clinical",
+                    object_type="Demographics",
+                    object_id=f"{patient_id}_demographics",
+                    text={"content": demographics_text.strip()},
+                    metadata={
+                        "patient_id": patient_id,
+                        "data_type": "demographics",
+                        "timestamp": str(int(time.time() * 1000))
+                    }
+                )
+                
+                # 2. Vitals chunk (if available)
+                if patient_data.vitals:
+                    vitals_text = f"""
+                    Patient Vitals for {patient_data.name} (ID: {patient_id}):
+                    {chr(10).join([f"{key}: {value}" for key, value in patient_data.vitals.items()])}
+                    """
+                    
+                    await embed_and_store(
+                        namespace="clinical",
+                        object_type="Vitals",
+                        object_id=f"{patient_id}_vitals",
+                        text={"content": vitals_text.strip()},
+                        metadata={
+                            "patient_id": patient_id,
+                            "data_type": "vitals",
+                            "timestamp": str(int(time.time() * 1000))
+                        }
                     )
-                except Exception as e:
-                    # if embedding or search fails, log and treat as "not found"
-                    print(f"[retrieve_chunks] existence check failed: {e}")
-                    existing = []
+                
+                # 3. Labs chunk (if available)
+                if patient_data.labs:
+                    labs_text = f"""
+                    Laboratory Results for {patient_data.name} (ID: {patient_id}):
+                    {chr(10).join([f"{key}: {value}" for key, value in patient_data.labs.items()])}
+                    """
+                    
+                    await embed_and_store(
+                        namespace="clinical",
+                        object_type="Labs",
+                        object_id=f"{patient_id}_labs",
+                        text={"content": labs_text.strip()},
+                        metadata={
+                            "patient_id": patient_id,
+                            "data_type": "labs",
+                            "timestamp": str(int(time.time() * 1000))
+                        }
+                    )
+                
+                # 4. Complete patient context as a single chunk for fallback
+                complete_context = patient_data.model_dump_json(indent=2)
+                await embed_and_store(
+                    namespace="clinical",
+                    object_type="PatientContext",
+                    object_id=f"{patient_id}_complete",
+                    text={"content": f"Complete patient context for {patient_data.name} (ID: {patient_id}):\n{complete_context}"},
+                    metadata={
+                        "patient_id": patient_id,
+                        "data_type": "complete_context",
+                        "timestamp": str(int(time.time() * 1000))
+                    }
+                )
+                
+                print(f"[store_chunks] Successfully stored clinical chunks for patient {patient_id}")
+                
+            except Exception as e:
+                print(f"[store_chunks] Error storing patient chunks: {e}")
+            
+            return state
 
-                if not existing:
-                    try:
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="PatientContext",
-                            object_id=str(state.patient_id),
-                            text={"content": patient_json},
-                            metadata={"patient_id": state.patient_id},
-                        )
-                    except Exception as e:
-                        print(f"[retrieve_chunks] embed_and_store failed: {e}")
-
-            # 1) ONLY search for THIS patient's data
+        async def intelligent_retrieve_chunks(state: FlowState) -> FlowState:
+            """Intelligently retrieve and filter chunks based on LLM analysis."""
+            
+            # Step 1: Initial similarity search (broader search)
             if state.patient_id:
                 q_vec = await embed(state.user_prompt)
                 rows = await self._vec.similarity_search(
                     q_vec,
-                    top_k=3,  # Reduced from 5
+                    top_k=10,  # Get more candidates initially
                     filter_={
                         "namespace": "clinical", 
-                        "patient_id": str(state.patient_id)  # CRUCIAL: Only this patient
+                        "patient_id": str(state.patient_id)
                     },
                 )
             else:
                 rows = []
 
-            # 2) If no patient-specific rows, use patient context directly
             if not rows and state.patient_ctx:
+                # Fallback to patient context
+                print("[intelligent_retrieve_chunks] fallback to patient context as no chunks found")
                 state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
+                state.chunk_analysis = {"method": "fallback", "reason": "No chunks found, using patient context"}
                 return state
 
-            # 3) Extract text and ensure it's from the right patient
-            patient_specific_chunks = []
-            if state.patient_ctx:
-                for row in rows:
-                    chunk_text = row[2] if len(row) > 2 else row[1]
-                    # Verify this chunk is actually about our patient
-                    patient_name = state.patient_ctx.name if state.patient_ctx else ""
+            # Step 2: Prepare chunks for LLM analysis
+            candidate_chunks = []
+            for i, row in enumerate(rows):
+                chunk_text = row[2] if len(row) > 2 else row[1]
+                similarity_score = row[0] if len(row) > 0 else 0.0
+                
+                # Verify patient relevance
+                if state.patient_ctx:
+                    patient_name = state.patient_ctx.name
                     if str(state.patient_id) in chunk_text or patient_name in chunk_text:
-                        patient_specific_chunks.append(chunk_text)
-                    else:
-                        print(f"[retrieve_chunks] Filtered out chunk not related to patient {state.patient_id}")
-            
-            state.retrieved_chunks = patient_specific_chunks
-            return state
+                        candidate_chunks.append({
+                            "id": f"chunk_{i}",
+                            "content": chunk_text[:500],  # Limit for analysis
+                            "similarity_score": similarity_score,
+                            "full_content": chunk_text
+                        })
 
+            if not candidate_chunks:
+                state.retrieved_chunks = []
+                state.chunk_analysis = {"method": "none", "reason": "No relevant chunks found"}
+                return state
+
+            # Step 3: LLM-based chunk analysis and selection
+            chunk_analysis_prompt = f"""
+            You are analyzing medical data chunks to determine which ones are relevant for answering this query:
+
+            QUERY: "{state.user_prompt}"
+            
+            PATIENT CONTEXT: {state.patient_ctx.name if state.patient_ctx else "Unknown"} (ID: {state.patient_id})
+            
+            AVAILABLE CHUNKS:
+            {chr(10).join([f"CHUNK {chunk['id']}: {chunk['content'][:300]}..." for chunk in candidate_chunks])}
+
+            For each chunk, analyze:
+            1. Relevance to the specific query (0-10 scale)
+            2. Clinical importance for this case (0-10 scale)  
+            3. Whether it contains information that directly helps answer the query
+            4. Whether it provides necessary context or background
+
+            Return a JSON response with:
+            {{
+                "selected_chunks": ["chunk_1", "chunk_3", ...],
+                "reasoning": "Brief explanation of why these chunks were selected",
+                "relevance_analysis": {{
+                    "chunk_1": {{"relevance": 8, "importance": 7, "reason": "Contains relevant lab results"}},
+                    "chunk_2": {{"relevance": 3, "importance": 4, "reason": "General background, not specific to query"}},
+                    ...
+                }},
+                "query_type": "diagnostic|follow_up|general_inquiry|medication|test_results"
+            }}
+
+            RULES:
+            - Select 2-5 most relevant chunks maximum
+            - Prioritize recent/specific information over general background
+            - For diagnostic queries, focus on symptoms, vitals, and test results
+            - For medication queries, focus on current medications and allergies
+            - For follow-up queries, include previous relevant treatments/outcomes
+            """
+
+            try:
+                analysis_response = await self._llm.chat([
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information analyst. Analyze and select the most relevant data chunks for clinical queries."),
+                    ChatMessage(role=ChatRole.USER, content=chunk_analysis_prompt)
+                ], json_mode=True)
+
+                analysis_data = json.loads(analysis_response.content)
+                
+                # Extract selected chunks
+                selected_chunk_ids = analysis_data.get("selected_chunks", [])
+                selected_chunks = []
+                
+                for chunk in candidate_chunks:
+                    if chunk["id"] in selected_chunk_ids:
+                        selected_chunks.append(chunk["full_content"])
+
+                state.retrieved_chunks = selected_chunks
+                state.chunk_analysis = analysis_data
+                state.retrieval_reasoning = analysis_data.get("reasoning", "")
+                
+                print(f"[intelligent_retrieve] Selected {len(selected_chunks)} chunks out of {len(candidate_chunks)} candidates")
+                print(f"[intelligent_retrieve] Reasoning: {state.retrieval_reasoning}")
+
+            except Exception as e:
+                print(f"[intelligent_retrieve] Error in LLM analysis: {e}, falling back to similarity-based selection")
+                # Fallback to top similarity scores
+                top_chunks = sorted(candidate_chunks, key=lambda x: x["similarity_score"], reverse=True)[:3]
+                state.retrieved_chunks = [chunk["full_content"] for chunk in top_chunks]
+                state.chunk_analysis = {"method": "fallback_similarity", "error": str(e)}
+
+            return state
 
         async def diagnose(state: FlowState) -> FlowState:
 
@@ -503,11 +663,23 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             
 
             if state.retrieved_chunks:
+                chunk_context = "Relevant clinical notes"
+                if state.retrieval_reasoning:
+                    chunk_context += f" (Selected because: {state.retrieval_reasoning})"
+                
                 docs = ChatMessage(
                     role=ChatRole.USER,
-                    content="Relevant notes:\n" + "\n---\n".join(state.retrieved_chunks),
+                    content=f"{chunk_context}:\n" + "\n---\n".join(state.retrieved_chunks),
                 )
                 messages.append(docs)
+
+            # Include chunk analysis metadata for transparency
+            if state.chunk_analysis and state.chunk_analysis.get("query_type"):
+                analysis_info = ChatMessage(
+                    role=ChatRole.USER,
+                    content=f"Query type identified: {state.chunk_analysis['query_type']}"
+                )
+                messages.append(analysis_info)
 
             if state.web_search_response and state.web_search_response.results:
                 # Create a more detailed and instructional web search message
@@ -619,12 +791,31 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                     prompt = (
                         "Return JSON with fields primary_icd, differential (list), "
                         f"confidence (0-1) for the following medical diagnosis:\n\n{state.llm_response.content if state.llm_response else ''}\n\n"
+                        "Format the differential as a simple list of strings (ICD codes only), not objects with descriptions."
                     )
                     parsed = await self._llm.chat([SYSTEM_MSG_DIAGNOSE, ChatMessage(role=ChatRole.USER, content=prompt)], json_mode=True)
                     data = json.loads(parsed.content)
-                    state.primary_icd = data["primary_icd"] or "Unknown"
-                    state.differential = data["differential"] or []
-                    state.confidence = data["confidence"] or 0.0
+                    
+                    # Handle primary ICD
+                    primary_icd = data.get("primary_icd", "Unknown")
+                    if isinstance(primary_icd, dict):
+                        state.primary_icd = primary_icd.get("icd", "Unknown")
+                    else:
+                        state.primary_icd = primary_icd or "Unknown"
+                    
+                    # Handle differential - ensure it's a list of strings
+                    differential = data.get("differential", [])
+                    if differential and isinstance(differential[0], dict):
+                        # Convert from dict format to string format
+                        state.differential = [
+                            item.get("icd", "Unknown") if isinstance(item, dict) else str(item)
+                            for item in differential
+                        ]
+                    else:
+                        state.differential = [str(item) for item in differential] if differential else []
+                    
+                    state.confidence = data.get("confidence", 0.0)
+                    
                 except Exception as e:
                     print(f"[parse_icd] Error parsing ICD: {e}")
                     # Fallback values in case of error
@@ -659,7 +850,8 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_node("evaluate_cross_session_history_need", evaluate_cross_session_history_need)  
         _builder.add_node("search_cross_session_history", search_cross_session_history)
         _builder.add_node("fetch_patient", fetch_patient)
-        _builder.add_node("retrieve_chunks", retrieve_chunks)
+        _builder.add_node("store_patient_chunks", store_patient_chunks)
+        _builder.add_node("intelligent_retrieve_chunks", intelligent_retrieve_chunks)
         _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
         _builder.add_node("perform_web_search", perform_web_search)
         _builder.add_node("diagnose", diagnose)
@@ -682,19 +874,20 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 
         # Linear flow after patient fetch
         _builder.add_edge("load_current_session_history", "fetch_patient")
-        _builder.add_edge("fetch_patient", "evaluate_cross_session_history_need")
+        _builder.add_edge("fetch_patient", "store_patient_chunks")
+        _builder.add_edge("store_patient_chunks", "evaluate_cross_session_history_need")
 
         _builder.add_conditional_edges(
             "evaluate_cross_session_history_need",
              needs_cross_session_search,
             {
                 True: "search_cross_session_history",
-                False: "retrieve_chunks"
+                False: "intelligent_retrieve_chunks"
             }
         )
 
-        _builder.add_edge("search_cross_session_history", "retrieve_chunks")
-        _builder.add_edge("retrieve_chunks", "evaluate_web_search_need")
+        _builder.add_edge("search_cross_session_history", "intelligent_retrieve_chunks")
+        _builder.add_edge("intelligent_retrieve_chunks", "evaluate_web_search_need")
 
 
         _builder.add_conditional_edges(
