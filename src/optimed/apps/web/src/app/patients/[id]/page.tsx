@@ -5,9 +5,10 @@ import { Header } from '@/components/Header';
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { fetchPatient, PatientDetail, diagnoseWithUser, chatWithUser } from "@/lib/api";
+import { fetchPatient, PatientDetail } from "@/lib/api";
 import { useUser } from '@/contexts/UserContext';
 import ChatBox from "@/components/ChatBox";
+import SessionsList from "@/components/SessionsList";
 import { Badge } from "@/components/ui/badge";
 
 function PatientDetailContent() {
@@ -17,6 +18,9 @@ function PatientDetailContent() {
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
+  const [chatKey, setChatKey] = useState(0); // Force ChatBox re-render
+  const [sessionsKey, setSessionsKey] = useState(0); // Force SessionsList re-render
 
   const patientId = params?.id as string;
 
@@ -39,6 +43,17 @@ function PatientDetailContent() {
 
     loadPatient();
   }, [patientId]);
+
+  const handleSessionSelect = (sessionId: string) => {
+    setSelectedSessionId(sessionId);
+    setChatKey(prev => prev + 1); // Force ChatBox to reload with new session
+  };
+
+  const handleNewSession = () => {
+    setSelectedSessionId(undefined);
+    setChatKey(prev => prev + 1); // Force ChatBox to reset for new session
+    setSessionsKey(prev => prev + 1); // Force SessionsList to reload
+  };
 
   if (loading) {
     return (
@@ -176,7 +191,7 @@ function PatientDetailContent() {
             </div>
           </div>
 
-          {/* AI Diagnosis Chat Section */}
+          {/* AI Diagnosis Chat Section with Sessions */}
           <div className="bg-white shadow rounded-lg">
             <div className="px-6 py-4 border-b border-gray-200">
               <div className="flex items-center justify-between">
@@ -195,9 +210,26 @@ function PatientDetailContent() {
               </div>
             </div>
             
-            <div className="p-6">
-              <div className="h-[600px]">
-                <ChatBox mode="diagnose" patientId={patientId} />
+            {/* Sessions and Chat Layout */}
+            <div className="flex h-[600px]">
+              {/* Sessions List Sidebar */}
+              <SessionsList
+                key={sessionsKey}
+                patientId={patientId}
+                selectedSessionId={selectedSessionId}
+                onSessionSelect={handleSessionSelect}
+                onNewSession={handleNewSession}
+                mode="diagnose"
+              />
+              
+              {/* Chat Area */}
+              <div className="flex-1 flex flex-col">
+                <ChatBox 
+                  key={chatKey}
+                  mode="diagnose" 
+                  patientId={patientId}
+                  sessionId={selectedSessionId}
+                />
               </div>
             </div>
           </div>
