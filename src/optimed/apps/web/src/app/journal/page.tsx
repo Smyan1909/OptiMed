@@ -2,7 +2,7 @@
 
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { Header } from '@/components/Header';
-import { useParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { fetchPatient, PatientDetail } from '@/lib/api';
@@ -10,8 +10,8 @@ import JournalList from '@/components/journal/JournalList';
 import { Badge } from '@/components/ui/badge';
 
 function JournalPageContent() {
-  const params = useParams();
-  const patientId = params?.id as string;
+  const params = useSearchParams();
+  const patientId = params.get('id');
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -161,7 +161,7 @@ function JournalPageContent() {
 
           {/* Journal Section */}
           <div className="mb-6">
-            <JournalList patientId={patientId} />
+            {patientId && <JournalList patientId={patientId} />}
           </div>
         </div>
       </main>
