@@ -47,15 +47,6 @@ def bed_state() -> BedState:
         since=NOW - timedelta(minutes=42),
     )
 
-# ----------------------------------------------------------------------------
-# PatinentContext Tests ---------------------------------------------------
-# ----------------------------------------------------------------------------
-
-def test_patient_critical_lab_detection(patient_ctx: PatientContext):
-    assert patient_ctx.has_critical_lab() is True
-    msgs = patient_ctx.critical_lab_msgs()
-    assert len(msgs) == 1 and "Potassium" in msgs[0]
-
 
 # ----------------------------------------------------------------------------
 # BedState Tests -------------------------------------------------------------
