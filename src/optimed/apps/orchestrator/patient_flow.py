@@ -445,7 +445,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             if current_history:
                 history_header = ChatMessage(
                     role=ChatRole.USER,
-                    content=f"=== CURRENT SESSION HISTORY ==="
+                    content="=== CURRENT SESSION HISTORY ==="
                 )
                 messages.append(history_header)
                 
@@ -462,7 +462,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             if state.relevant_cross_session_history:
                 cross_session_header = ChatMessage(
                     role=ChatRole.USER,
-                    content=f"=== RELEVANT PREVIOUS CONVERSATIONS (FROM OTHER SESSIONS) ==="
+                    content="=== RELEVANT PREVIOUS CONVERSATIONS (FROM OTHER SESSIONS) ==="
                 )
                 messages.append(cross_session_header)
                 
@@ -475,7 +475,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                             timestamp_ms = int(historical_item['timestamp'])
                             timestamp_dt = datetime.fromtimestamp(timestamp_ms / 1000)
                             timestamp_info = f" | Date: {timestamp_dt.strftime('%Y-%m-%d %H:%M')}"
-                        except:
+                        except Exception:
                             pass
                     
                     role = historical_item.get('role', 'user').upper()

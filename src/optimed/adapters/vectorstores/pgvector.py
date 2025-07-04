@@ -316,7 +316,7 @@ class PGVectorAdapter(VectorStore):
         # Build query conditions - user must be creator OR participant
         where_conditions = [
             "metadata->>'namespace' = 'session_info'",
-            f"(metadata->>'created_by_user_id' = $1 OR content::jsonb->'participants' ? $1)"
+            "(metadata->>'created_by_user_id' = $1 OR content::jsonb->'participants' ? $1)"
         ]
         params = [user_id]
         
@@ -349,7 +349,6 @@ class PGVectorAdapter(VectorStore):
     ) -> bool:
         """Add a user as a participant to an existing session."""
         
-        current_timestamp = str(int(datetime.now().timestamp() * 1000))
         
         # First check if user is already a participant
         check_query = """
@@ -620,7 +619,7 @@ class PGVectorAdapter(VectorStore):
                             timestamp_iso = timestamp_value
                         else:
                             timestamp_iso = str(timestamp_value)
-                    except:
+                    except Exception:
                         timestamp_iso = datetime.now().isoformat()
                 else:
                     timestamp_iso = datetime.now().isoformat()
