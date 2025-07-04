@@ -9,11 +9,8 @@ import httpx
 from fhir.resources.patient import Patient # type: ignore[import-untyped]
 from fhir.resources.observation import Observation # type: ignore[import-untyped]
 
-from optimed.core.domain import PatientContext
+from optimed.core.domain import PatientContext, JournalEntry, User
 from optimed.core.ports import FHIRRepository
-
-from optimed.core.domain import PatientContext, JournalEntry, JournalEntryCreate, JournalEntryUpdate, JournalEntryType, User
-from datetime import datetime, timezone
 import uuid
 
 """
@@ -173,7 +170,7 @@ def _parse_fhir_document_reference(fhir_resource: dict) -> JournalEntry:
     if isinstance(created_at, str):
         try:
             created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-        except:
+        except (ValueError, TypeError):
             created_at = datetime.now(timezone.utc)
     
     return JournalEntry(
@@ -315,8 +312,8 @@ class HAPIFHIRRepository(FHIRRepository):
             
             # Sort by creation date descending
             return sorted(entries, key=lambda e: e.created_at, reverse=True)
-            
-        except Exception as e:
+        except Exception:
+
             # Fallback to in-memory storage only
             entries = []
             for entry_data in self._journal_entries.values():

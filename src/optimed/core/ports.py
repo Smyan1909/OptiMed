@@ -20,7 +20,6 @@ from optimed.core.domain import (
     WindowLevel,
     ChatSession,
     SessionParticipant,
-    WindowLevel,
     JournalEntry,
     JournalEntryCreate,
     JournalEntryUpdate )
