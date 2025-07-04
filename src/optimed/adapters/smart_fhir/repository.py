@@ -8,7 +8,6 @@ import httpx
 from fhir.resources.patient import Patient  # type: ignore[import-untyped]
 from fhir.resources.observation import Observation  # type: ignore[import-untyped]
 
-from optimed.core.domain import PatientContext, UserEHRConnection
 from optimed.core.ports import FHIRRepository, AuthenticatedFHIRRepository, AuthenticationProvider
 from optimed.core.domain import PatientContext, UserEHRConnection, JournalEntry, JournalEntryCreate, JournalEntryUpdate, JournalEntryType, User
 import uuid
@@ -82,7 +81,7 @@ def _parse_smart_fhir_document_reference(fhir_resource: dict) -> JournalEntry:
     if isinstance(created_at, str):
         try:
             created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-        except:
+        except Exception:
             created_at = datetime.now(timezone.utc)
     
     return JournalEntry(
@@ -378,7 +377,6 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
         try:
             r = await self._client.get("/DocumentReference", params={
                 "subject": f"Patient/{patient_id}",
-                "category": "clinical-note",
                 "_sort": "-date",
                 "_count": "50"
             })

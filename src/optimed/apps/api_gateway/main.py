@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus
 from optimed.core.ports import FHIRRepository
 from optimed.apps.orchestrator.factory import create_app_dependencies
-from optimed.core.domain import JournalEntry, JournalEntryCreate, JournalEntryUpdate, JournalEntryType
+from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalEntryType
 
 
 from pydantic import BaseModel

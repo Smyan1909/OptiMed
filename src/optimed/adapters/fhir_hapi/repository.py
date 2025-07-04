@@ -9,7 +9,7 @@ import httpx
 from fhir.resources.patient import Patient # type: ignore[import-untyped]
 from fhir.resources.observation import Observation # type: ignore[import-untyped]
 
-from optimed.core.domain import PatientContext, JournalEntry, User
+from optimed.core.domain import PatientContext, JournalEntry, User, JournalEntryType, JournalEntryCreate, JournalEntryUpdate
 from optimed.core.ports import FHIRRepository
 import uuid
 
