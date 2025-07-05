@@ -2,7 +2,7 @@
 
 import { useState, useEffect, FormEvent } from "react";
 import { useUser } from '@/contexts/UserContext';
-
+import ReactMarkdown from 'react-markdown';
 
 interface Message {
   sender: "user" | "system";
@@ -78,16 +78,122 @@ interface MessageContentProps {
 }
 
 const MessageContent = ({ text, isUser }: MessageContentProps) => {
-  const processedText = parseLinksInText(text, isUser); // Add the isUser parameter here
+  // Custom components for markdown rendering
+  const markdownComponents = {
+    // Links
+    a: ({ href, children }: any) => (
+      <a 
+        href={href} 
+        target="_blank" 
+        rel="noopener noreferrer" 
+        className={isUser 
+          ? "text-blue-200 hover:text-blue-100 underline font-medium transition-colors duration-200 break-words"
+          : "text-blue-600 hover:text-blue-800 underline font-medium transition-colors duration-200 break-words"
+        }
+      >
+        {children}
+        <svg className="w-3 h-3 inline ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+        </svg>
+      </a>
+    ),
+    // Headers
+    h1: ({ children }: any) => (
+      <h1 className={`text-xl font-bold mb-2 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+        {children}
+      </h1>
+    ),
+    h2: ({ children }: any) => (
+      <h2 className={`text-lg font-bold mb-2 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+        {children}
+      </h2>
+    ),
+    h3: ({ children }: any) => (
+      <h3 className={`text-md font-bold mb-1 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+        {children}
+      </h3>
+    ),
+    // Emphasis
+    strong: ({ children }: any) => (
+      <strong className={`font-bold ${isUser ? 'text-white' : 'text-gray-900'}`}>
+        {children}
+      </strong>
+    ),
+    em: ({ children }: any) => (
+      <em className={`italic ${isUser ? 'text-white' : 'text-gray-900'}`}>
+        {children}
+      </em>
+    ),
+    // Code
+    code: ({ children, className }: any) => {
+      const isCodeBlock = className?.includes('language-');
+      if (isCodeBlock) {
+        return (
+          <pre className={`bg-gray-800 text-green-400 p-3 rounded-lg overflow-x-auto text-sm my-2 ${isUser ? 'bg-gray-700' : 'bg-gray-800'}`}>
+            <code className="font-mono">{children}</code>
+          </pre>
+        );
+      }
+      return (
+        <code className={`px-1 py-0.5 rounded text-sm font-mono ${
+          isUser 
+            ? 'bg-blue-700 text-blue-100' 
+            : 'bg-gray-200 text-gray-800'
+        }`}>
+          {children}
+        </code>
+      );
+    },
+    // Lists
+    ul: ({ children }: any) => (
+      <ul className={`list-disc list-inside my-2 space-y-1 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+        {children}
+      </ul>
+    ),
+    ol: ({ children }: any) => (
+      <ol className={`list-decimal list-inside my-2 space-y-1 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+        {children}
+      </ol>
+    ),
+    li: ({ children }: any) => (
+      <li className={`${isUser ? 'text-white' : 'text-gray-900'}`}>
+        {children}
+      </li>
+    ),
+    // Blockquotes
+    blockquote: ({ children }: any) => (
+      <blockquote className={`border-l-4 pl-4 my-2 italic ${
+        isUser 
+          ? 'border-blue-300 text-blue-100' 
+          : 'border-gray-400 text-gray-700'
+      }`}>
+        {children}
+      </blockquote>
+    ),
+    // Paragraphs
+    p: ({ children }: any) => (
+      <p className={`mb-2 last:mb-0 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+        {children}
+      </p>
+    ),
+    // Horizontal rule
+    hr: () => (
+      <hr className={`my-3 border-t ${
+        isUser ? 'border-blue-300' : 'border-gray-300'
+      }`} />
+    ),
+  };
   
   return (
-    <div 
-      className={`font-medium whitespace-pre-wrap ${isUser ? 'text-white' : 'text-gray-900'}`}
-      dangerouslySetInnerHTML={{ __html: processedText }}
-    />
+    <div className={`font-medium ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <ReactMarkdown components={markdownComponents}>
+        {text}
+      </ReactMarkdown>
+    </div>
   );
 };
 
+// ...existing code...
 const getAuthHeaders = () => {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -101,6 +207,7 @@ const getAuthHeaders = () => {
 };
 
 export default function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
+  // ...existing code...
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   
