@@ -312,9 +312,9 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 # Store image if repository is available
                 if self._generated_image_repo and generated_image:
                     await self._generated_image_repo.store_generated_image(generated_image)
-                
-                print(f"[image_generation] Successfully generated image: {generated_image.generation_id}")
-                
+
+                print(f"[image_generation] Successfully generated image: {generated_image.generation_id}") if generated_image else print("[image_generation] No image generated")
+
             except Exception as e:
                 print(f"[image_generation] Error generating image: {e}")
                 # Don't fail the entire flow for image generation errors
