@@ -132,6 +132,31 @@ interface DICOMPixelData {
   statistics: Record<string, any>;
 }
 
+export interface GeneratedImageInfo {
+  image_generated: boolean;
+  image_id?: string;
+  image_prompt?: string;
+  generation_metadata?: Record<string, any>;
+  model_info?: Record<string, any>;
+}
+
+export interface ImageGenerationRequest {
+  prompt: string;
+  width?: number;
+  height?: number;
+  patient_id?: string;
+}
+
+export interface GeneratedImageResponse {
+  success: boolean;
+  image_id: string;
+  prompt: string;
+  created_at: string;
+  metadata: Record<string, any>;
+  model_info: Record<string, any>;
+}
+
+
 
 // Session management functions
 export async function listSessions(request: SessionListRequest): Promise<Session[]> {
@@ -476,5 +501,65 @@ export async function fetchJournalEntry(patientId: string, entryId: string): Pro
     const errorText = await res.text();
     throw new Error(`Failed to load journal entry: ${errorText}`);
   }
+  return res.json();
+}
+
+export async function generateImage(request: ImageGenerationRequest): Promise<GeneratedImageResponse> {
+  const res = await fetch('/api/images/generate', {
+    method: 'POST',
+    headers: getSessionHeaders(),
+    body: JSON.stringify(request)
+  });
+  
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Image generation failed: ${res.status} - ${errorText}`);
+  }
+  
+  return res.json();
+}
+
+export async function getGeneratedImageUrl(imageId: string): Promise<string> {
+  // For generated images, we can directly use the API route with session headers
+  return `/api/images/generated/${imageId}`;
+}
+
+export async function downloadGeneratedImage(imageId: string, filename?: string): Promise<void> {
+  try {
+    // Create request with proper headers
+    const response = await fetch(`/api/images/generated/${imageId}`, {
+      headers: getSessionHeaders()
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to download image: ${response.status}`);
+    }
+    
+    const blob = await response.blob();
+    
+    // Create a temporary anchor element and trigger download
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename || `generated_image_${imageId}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Error downloading image:', error);
+    throw error;
+  }
+}
+
+export async function checkImageGenerationStatus(): Promise<{ enabled: boolean; available: boolean; message: string }> {
+  const res = await fetch('/api/images/service/status', {
+    headers: getSessionHeaders()
+  });
+  
+  if (!res.ok) {
+    return { enabled: false, available: false, message: 'Service check failed' };
+  }
+  
   return res.json();
 }

@@ -1,9 +1,9 @@
 from .clinical import PatientContext, BedState, Encounter, JournalEntry, JournalEntryCreate, JournalEntryUpdate
-from .diagnosis import DiagnosisResult
+from .diagnosis import DiagnosisResult, WebSearchInfo, CrossSessionHistoryInfo, GeneratedImageInfo
 from .info import InfoEvent, Notification, CommThread, ChatMessage, WebSearchQuery, WebSearchResult, WebSearchResponse, ChatSession, SessionParticipant
 from .kpi import KPIEvent, Alert
 from .users import User, UserAction, UserSession, UserEHRConnection
-from .image import DICOMMetadata, ImageDimensions, WindowLevel, DICOMImage, ImagePixelData, ImageUploadRequest
+from .image import DICOMMetadata, ImageDimensions, WindowLevel, DICOMImage, ImagePixelData, ImageUploadRequest, ImageGenerationContext, GeneratedImage, ImageGenerationRequest
 from .enums import (
     BedStatus,
     EncounterStatus,
@@ -16,7 +16,8 @@ from .enums import (
     UserStatus,
     ImageModalityType,
     ImageStatus,
-    JournalEntryType  # Only import the enum here
+    JournalEntryType,
+    GeneratedImagePurpose  # Only import the enum here
 )
 
 """OptiMed domain entities (v0).
@@ -53,8 +54,12 @@ __all__ = [
     "Severity",
     "ChatRole",
     "JournalEntryType",
+    "GeneratedImagePurpose",
     # diagnosis
     "DiagnosisResult",
+    "WebSearchInfo",
+    "CrossSessionHistoryInfo",
+    "GeneratedImageInfo",
     # users
     "User",
     "UserAction",
@@ -71,6 +76,9 @@ __all__ = [
     "ImageUploadRequest",
     "ImageModalityType",
     "ImageStatus",
+    "ImageGenerationContext",
+    "GeneratedImage",
+    "ImageGenerationRequest",
     # web search 
     "WebSearchQuery",
     "WebSearchResult",

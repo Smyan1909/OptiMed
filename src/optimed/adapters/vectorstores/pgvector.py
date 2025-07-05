@@ -161,16 +161,27 @@ class PGVectorAdapter(VectorStore):
                 message_content = content_data.get("content", "")
                 message_role = content_data.get("role", "user")
                 
-                result.append({
+                # Extract generated image information if present
+                generated_image = content_data.get("generated_image")
+                
+                message_data = {
                     "content": message_content,
                     "role": message_role,
                     "timestamp": content_data.get("timestamp", ""),
                     "metadata": json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
-                })
+                }
+                
+                # Add generated image info if available
+                if generated_image:
+                    message_data["generated_image"] = generated_image
+                    
+                
+                result.append(message_data)
                 
             except Exception as e:
                 print(f"Error parsing row in get_chat_history: {e}")
                 continue
+        
         
         return result
 

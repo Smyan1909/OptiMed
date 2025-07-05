@@ -9,9 +9,9 @@ from datetime import datetime
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
-from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse
+from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, ImageGenerationRequest, GeneratedImage, ImageGenerationContext, WebSearchInfo, CrossSessionHistoryInfo, GeneratedImageInfo, GeneratedImagePurpose
 
-from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService
+from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, ImageGenerationService, GeneratedImageRepository
 
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
 
@@ -86,11 +86,25 @@ class FlowState(BaseModel): # Potentially add
     user_context: User | None = None  # Optional user context for additional information
     session_id: str | None = None  # Optional session ID for tracking the conversation
 
+    # Image generation fields
+    image_generation_needed: bool = False
+    image_generation_prompt: str = ""
+    generated_image: Optional[GeneratedImage] = None
+    image_generation_context: Optional[ImageGenerationContext] = None
+
 
 class LangGraphDiagnosticEngine(DiagnosticEngine):
     """Concrete engine that streams or returns full result."""
 
-    def __init__(self, fhir_repo: FHIRRepository, vector_store: VectorStore, llm_client: LLMClient, user_repo: UserRepository, connection_service: UserEHRConnectionService, web_search_service: WebSearchService, default_prompt: str = "Provide the most likely diagnosis"):
+    def __init__(self, fhir_repo: FHIRRepository, 
+                 vector_store: VectorStore, 
+                 llm_client: LLMClient, 
+                 user_repo: UserRepository, 
+                 connection_service: UserEHRConnectionService, 
+                 web_search_service: WebSearchService,
+                 image_generation_service: ImageGenerationService | None = None,
+                 generated_image_repo: GeneratedImageRepository | None = None, 
+                 default_prompt: str = "Provide the most likely diagnosis"):
         self._fhir = fhir_repo
         self._vec = vector_store
         self._llm = llm_client
@@ -98,6 +112,9 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
         self._connection_service = connection_service
         self._web_search = web_search_service
         self._default_prompt = default_prompt
+        self._image_generation = image_generation_service
+        self._generated_image_repo = generated_image_repo
+
         self._compiled_graph = self._build_graph()
 
     def _build_graph(self) -> Any:
@@ -209,6 +226,105 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
         def needs_web_search(state: FlowState) -> bool:
             """Conditional function to determine if web search should be performed."""
             return state.web_search_performed
+
+        async def evaluate_image_generation_need(state: FlowState) -> FlowState:
+            """Evaluate if image generation would be helpful for this query."""
+            if not self._image_generation:
+                state.image_generation_needed = False
+                return state
+            
+            try:
+                # Check if service is available
+                if not await self._image_generation.is_available():
+                    print("[image_generation] Service not available")
+                    state.image_generation_needed = False
+                    return state
+                
+                # Convert chat history from ChatMessage objects to dictionaries
+                chat_history_dicts = []
+                if state.chat_history:
+                    for chat_msg in state.chat_history:
+                        if hasattr(chat_msg, 'role') and hasattr(chat_msg, 'content'):
+                            # It's a ChatMessage object, convert to dict
+                            chat_dict = {
+                                "role": chat_msg.role.value if hasattr(chat_msg.role, 'value') else str(chat_msg.role),
+                                "content": chat_msg.content,
+                                "timestamp": chat_msg.timestamp.isoformat() if hasattr(chat_msg, 'timestamp') and chat_msg.timestamp else None,
+                                "user_id": getattr(chat_msg, 'user_id', None),
+                                "metadata": getattr(chat_msg, 'metadata', {})
+                            }
+                            chat_history_dicts.append(chat_dict)
+                        elif isinstance(chat_msg, dict):
+                            # It's already a dict, use as-is
+                            chat_history_dicts.append(chat_msg)
+                
+                # Create context for evaluation
+                context = ImageGenerationContext(
+                    user_query=state.user_prompt,
+                    patient_context=state.patient_ctx,
+                    chat_history=chat_history_dicts,
+                    medical_context=state.retrieved_chunks[0] if state.retrieved_chunks else None,
+                    generation_purpose=GeneratedImagePurpose.EDUCATIONAL  # Default purpose, can be changed later
+                )
+                
+                state.image_generation_context = context
+                
+                # Evaluate need
+                should_generate, image_prompt = await self._image_generation.evaluate_generation_need(context)
+                
+                state.image_generation_needed = should_generate
+                state.image_generation_prompt = image_prompt or ""
+                
+                print(f"[image_generation] Generation needed: {should_generate}")
+                if should_generate:
+                    print(f"[image_generation] Prompt: {image_prompt}")
+                
+            except Exception as e:
+                print(f"[image_generation] Error evaluating generation need: {e}")
+                import traceback
+                traceback.print_exc()
+                state.image_generation_needed = False
+            
+            return state
+        
+        async def generate_image(state: FlowState) -> FlowState:
+            """Generate an image if needed."""
+            if not state.image_generation_needed or not state.image_generation_prompt:
+                return state
+            
+            try:
+                # Create generation request
+                request = ImageGenerationRequest(
+                    prompt=state.image_generation_prompt,
+                    width=1024,  # Higher resolution for Stability AI
+                    height=1024,
+                    guidance_scale=7.5,
+                    num_inference_steps=30,  # Good balance of quality vs speed
+                    user_id=state.user_id,
+                    patient_id=state.patient_id,
+                    session_id=state.session_id
+                )
+                
+                # Generate image
+                generated_image = await self._image_generation.generate_image(request) if self._image_generation else None
+                state.generated_image = generated_image
+                
+                # Store image if repository is available
+                if self._generated_image_repo and generated_image:
+                    await self._generated_image_repo.store_generated_image(generated_image)
+
+                print(f"[image_generation] Successfully generated image: {generated_image.generation_id}") if generated_image else print("[image_generation] No image generated")
+
+            except Exception as e:
+                print(f"[image_generation] Error generating image: {e}")
+                # Don't fail the entire flow for image generation errors
+                state.generated_image = None
+            
+            return state
+
+        def needs_image_generation(state: FlowState) -> bool:
+            """Conditional function to determine if image generation should be performed."""
+            return state.image_generation_needed
 
         async def load_current_session_history(state: FlowState) -> FlowState:
             """Load chat history for the patient if available."""
@@ -641,7 +757,33 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     ChatMessage(role=ChatRole.USER, content=chunk_analysis_prompt)
                 ], json_mode=True)
 
-                analysis_data = json.loads(analysis_response.content)
+                if not analysis_response or not analysis_response.content:
+                    print("[intelligent_retrieve] Empty response from LLM, using fallback")
+                    raise ValueError("Empty response from LLM")
+
+                # Strip whitespace and check if content is empty
+                response_content = analysis_response.content.strip()
+                if not response_content:
+                    print("[intelligent_retrieve] Empty content in response, using fallback")
+                    raise ValueError("Empty content in response")
+
+                # Remove markdown code block markers if present
+                if response_content.startswith("```json"):
+                    # Find the end of the opening marker
+                    start_idx = response_content.find('\n') + 1
+                    # Find the closing marker
+                    end_idx = response_content.rfind("```")
+                    if start_idx > 0 and end_idx > start_idx:
+                        response_content = response_content[start_idx:end_idx].strip()
+                elif response_content.startswith("```"):
+                    # Handle generic code blocks
+                    start_idx = response_content.find('\n') + 1
+                    end_idx = response_content.rfind("```")
+                    if start_idx > 0 and end_idx > start_idx:
+                        response_content = response_content[start_idx:end_idx].strip()
+
+
+                analysis_data = json.loads(response_content)
                 
                 # Extract selected chunks
                 selected_chunk_ids = analysis_data.get("selected_chunks", [])
@@ -680,6 +822,102 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 state.chunk_analysis = {"method": "fallback_similarity", "error": str(e)}
 
             return state
+        
+        async def store_user_message(state: FlowState) -> FlowState:
+            """Store the user message in chat history."""
+            if not state.user_prompt:
+                return state
+            
+            try:
+                # Create user message
+                user_message = ChatMessage(
+                    role=ChatRole.USER,
+                    content=state.user_prompt,
+                    timestamp=datetime.now(),
+                    user_id=state.user_id,
+                    metadata={}
+                )
+                
+                # Store user message
+                await self._vec.upsert(
+                    embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_{state.user_id}",
+                    embedding=await embed(state.user_prompt),
+                    object_type="chat_message",
+                    object_id=str(state.session_id),
+                    content={
+                        "role": user_message.role.value,
+                        "content": user_message.content,
+                        "timestamp": str(int(user_message.timestamp.timestamp() * 1000)),
+                        "user_id": state.user_id
+                    },
+                    metadata={
+                        "namespace": "chat_history",
+                        "patient_id": state.patient_id or "general_chat",
+                        "session_id": state.session_id,
+                        "timestamp": str(int(user_message.timestamp.timestamp() * 1000)),
+                        "user_id": state.user_id,
+                        "message_type": "user"
+                    }
+                )
+                
+            except Exception as e:
+                print(f"[store_user_message] Error: {e}")
+            
+            return state
+
+        async def store_assistant_response(state: FlowState) -> FlowState:
+            """Store the assistant response and any generated image in chat history."""
+            if not state.llm_response:
+                return state
+                
+            try:
+                # Prepare image info if available
+                image_info = None
+                if state.generated_image:
+                    image_info = {
+                        "image_generated": True,
+                        "image_id": state.generated_image.generation_id,
+                        "image_prompt": state.generated_image.prompt,
+                        "generation_metadata": state.generated_image.metadata,
+                        "model_info": state.generated_image.model_info
+                    }
+                else:
+                    image_info = {"image_generated": False}
+                
+                # Create assistant message content
+                message_content = {
+                    "role": ChatRole.ASSISTANT.value,
+                    "content": state.llm_response.content,
+                    "timestamp": str(int(time.time() * 1000)),
+                    "user_id": state.user_id,
+                    "generated_image": image_info  # Include image info in message content
+                }
+                
+                # Store assistant message with image information
+                await self._vec.upsert(
+                    embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_assistant",
+                    embedding=await embed(state.llm_response.content),
+                    object_type="chat_message",
+                    object_id=str(state.session_id),
+                    content=message_content,
+                    metadata={
+                        "namespace": "chat_history",
+                        "patient_id": state.patient_id or "general_chat",
+                        "session_id": state.session_id,
+                        "timestamp": str(int(time.time() * 1000)),
+                        "user_id": state.user_id,
+                        "message_type": "assistant",
+                        "has_generated_image": str(bool(state.generated_image))  # Add flag for easier querying
+                    }
+                )
+                
+                print(f"[store_assistant_response] Stored message with image info: {bool(state.generated_image)}")
+                
+            except Exception as e:
+                print(f"[store_assistant_response] Error: {e}")
+            
+            return state
+
 
         async def diagnose(state: FlowState) -> FlowState:
 
@@ -795,6 +1033,21 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 
 === END OF WEB SEARCH RESULTS ===""")
                 messages.append(web_info)
+            
+
+            if state.generated_image:
+                image_context = ChatMessage(
+                    role=ChatRole.USER,
+                    content=f"""Generated Educational Image Available:
+                    
+An educational medical illustration has been generated to help visualize the concepts discussed:
+- Image ID: {state.generated_image.generation_id}
+- Generated from prompt: {state.generated_image.prompt}
+- Purpose: Educational visualization to aid understanding
+
+Please reference this generated image in your response when relevant and explain how it relates to the medical concepts being discussed. Let the user know they can view the image through the interface."""
+                )
+                messages.append(image_context)
 
             user = ChatMessage(
                 role=ChatRole.USER,
@@ -807,55 +1060,6 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 
             state.llm_response = await self._llm.chat(messages)
 
-            #state.chat_history.extend([user, state.llm_response])
-
-            current_timestamp = str(int(time.time() * 1000))
-
-            await embed_and_store(
-                namespace="chat_history",
-                object_type="ChatMessage",
-                object_id=str(uuid.uuid4()),
-                text={
-                    "content": user.content, 
-                    "role": user.role.value,
-                    "timestamp": current_timestamp,  # Add timestamp to content
-                    "session_id": state.session_id,  # Include session ID in metadata
-                    "user_id": state.user_id,  # Include user ID in metadata
-                    "user_role": state.user_context.role.value if state.user_context else None,  # Include user role
-                    "user_name": state.user_context.display_name if state.user_context else "Unknown User"
-                },
-                metadata={
-                    "patient_id": state.patient_id if state.patient_id else "general_chat",
-                    "session_id": state.session_id,  # Include session ID in metadata
-                    "role": user.role.value,
-                    "timestamp": current_timestamp,
-                    "namespace": "chat_history",
-                    "user_id": state.user_id,  # Include user ID in metadata
-                    "user_role": state.user_context.role.value if state.user_context else None,  # Include user role
-                },
-            )
-
-            await embed_and_store(
-                namespace="chat_history",
-                object_type="AssistantReply",
-                object_id=str(uuid.uuid4()),
-                text={
-                    "content": state.llm_response.content if state.llm_response else "", 
-                    "role": ChatRole.ASSISTANT.value,
-                    "timestamp": str(int(time.time() * 1000) + 1),  # Assistant comes after user
-                    "session_id": state.session_id,  # Include session ID in metadata
-                    "responding_to_user": state.user_id,  # Include user ID in metadata
-                    "responding_to_role": state.user_context.role.value if state.user_context else None,  # Include user role
-                },
-                metadata={
-                    "patient_id": state.patient_id if state.patient_id else "general_chat",
-                    "session_id": state.session_id,  # Include session ID in metadata
-                    "role": ChatRole.ASSISTANT.value,
-                    "timestamp": str(int(time.time() * 1000) + 1),
-                    "namespace": "chat_history",
-                    "responding_to_user": state.user_id,  # Include user ID in metadata
-                }
-            )
 
             if state.user_id and state.user_context:
                 action = UserAction(
@@ -889,7 +1093,39 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                         "Format the differential as a simple list of strings (ICD codes only), not objects with descriptions."
                     )
                     parsed = await self._llm.chat([SYSTEM_MSG_DIAGNOSE, ChatMessage(role=ChatRole.USER, content=prompt)], json_mode=True)
-                    data = json.loads(parsed.content)
+
+                    if not parsed or not parsed.content:
+                        print("[parse_icd] Empty response from LLM, using fallback values")
+                        raise ValueError("Empty response from LLM")
+
+                    # Strip whitespace and check if content is empty
+                    response_content = parsed.content.strip()
+                    if not response_content:
+                        print("[parse_icd] Empty content in response, using fallback values")
+                        raise ValueError("Empty content in response")
+
+                    # Remove markdown code block markers if present
+                    if response_content.startswith("```json"):
+                        # Find the end of the opening marker
+                        start_idx = response_content.find('\n') + 1
+                        # Find the closing marker
+                        end_idx = response_content.rfind("```")
+                        if start_idx > 0 and end_idx > start_idx:
+                            response_content = response_content[start_idx:end_idx].strip()
+                    elif response_content.startswith("```"):
+                        # Handle generic code blocks
+                        start_idx = response_content.find('\n') + 1
+                        end_idx = response_content.rfind("```")
+                        if start_idx > 0 and end_idx > start_idx:
+                            response_content = response_content[start_idx:end_idx].strip()
+
+                    # Try to parse JSON
+                    try:
+                        data = json.loads(response_content)
+                    except json.JSONDecodeError as json_err:
+                        print(f"[parse_icd] JSON parsing failed: {json_err}")
+                        print(f"[parse_icd] Raw response content: {response_content[:500]}...")
+                        raise json_err
                     
                     # Handle primary ICD
                     primary_icd = data.get("primary_icd", "Unknown")
@@ -941,6 +1177,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder = StateGraph(FlowState)
         _builder.add_node("check_patient", check_patient_exists)  # New decision node
         _builder.add_node("load_user_context", load_user_context)  # Load user context if available
+        _builder.add_node("store_user_message", store_user_message)
         _builder.add_node("load_current_session_history", load_current_session_history)
         _builder.add_node("evaluate_cross_session_history_need", evaluate_cross_session_history_need)  
         _builder.add_node("search_cross_session_history", search_cross_session_history)
@@ -949,13 +1186,18 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_node("intelligent_retrieve_chunks", intelligent_retrieve_chunks)
         _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
         _builder.add_node("perform_web_search", perform_web_search)
+        _builder.add_node("evaluate_image_generation_need", evaluate_image_generation_need)
+        _builder.add_node("generate_image", generate_image)
         _builder.add_node("diagnose", diagnose)
+        _builder.add_node("store_assistant_response", store_assistant_response)
         _builder.add_node("parse_icd", parse_icd)
 
         _builder.set_entry_point("load_user_context")  # Start with loading user context
 
         # Add edges for user context loading
-        _builder.add_edge("load_user_context", "check_patient")
+        _builder.add_edge("load_user_context", "store_user_message")
+        _builder.add_edge("store_user_message", "check_patient")
+
 
         # Conditional logic right at the start
         _builder.add_conditional_edges(
@@ -982,8 +1224,19 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         )
 
         _builder.add_edge("search_cross_session_history", "intelligent_retrieve_chunks")
-        _builder.add_edge("intelligent_retrieve_chunks", "evaluate_web_search_need")
+        _builder.add_edge("intelligent_retrieve_chunks", "evaluate_image_generation_need")
 
+
+        _builder.add_conditional_edges(
+            "evaluate_image_generation_need",
+            needs_image_generation,
+            {
+                True: "generate_image",
+                False: "evaluate_web_search_need"
+            }
+        )
+
+        _builder.add_edge("generate_image", "evaluate_web_search_need")
 
         _builder.add_conditional_edges(
             "evaluate_web_search_need",
@@ -995,7 +1248,8 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         )
 
         _builder.add_edge("perform_web_search", "diagnose")
-        _builder.add_edge("diagnose", "parse_icd")
+        _builder.add_edge("diagnose", "store_assistant_response")
+        _builder.add_edge("store_assistant_response", "parse_icd")
         _builder.add_edge("parse_icd", END)
 
         return _builder.compile()
@@ -1090,14 +1344,73 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 
     def _to_output(self, data: dict[str, Any]) -> DiagnosisResult:
         """Convert raw dict emitted by compiled_graph to DiagnosisResult."""
+        
+        # Handle web search info
+        web_search_info = WebSearchInfo()
+        if data.get("web_search_response"):
+            web_response = data["web_search_response"]
+            
+            # Check if the response actually contains citations
+            response_content = data["llm_response"].content if data["llm_response"] else ""
+            citations_found = []
+            
+            for result in web_response.results[:5]:
+                if result.url in response_content or result.title in response_content:
+                    citations_found.append(result.url)
+            
+            web_search_info = WebSearchInfo(
+                web_search_performed=True,
+                sources_consulted=[result.url for result in web_response.results[:5]],
+                sources_cited_in_response=citations_found,
+                search_summary=web_response.summary,
+                source_count=len(web_response.results),
+                citations_included=len(citations_found) > 0
+            )
+        
+        # Handle cross-session history info
+        cross_session_info = CrossSessionHistoryInfo()
+        if data.get("relevant_cross_session_history"):
+            cross_session_info = CrossSessionHistoryInfo(
+                cross_session_search_performed=True,
+                historical_sessions_consulted=len(set(item.get("session_id") for item in data["relevant_cross_session_history"] if item.get("session_id"))),
+                historical_messages_found=len(data["relevant_cross_session_history"]),
+                oldest_reference=min((item.get("timestamp") for item in data["relevant_cross_session_history"] if item.get("timestamp")), default=None)
+            )
+        else:
+            cross_session_info = CrossSessionHistoryInfo(
+                cross_session_search_performed=data.get("needs_cross_session_search", False),
+                historical_sessions_consulted=0,
+                historical_messages_found=0,
+                oldest_reference=None
+            )
+        
+        # Handle generated image info
+        generated_image_info = GeneratedImageInfo()
+        if data.get("generated_image"):
+            generated_image = data["generated_image"]
+            generated_image_info = GeneratedImageInfo(
+                image_generated=True,
+                image_id=generated_image.generation_id,
+                image_prompt=generated_image.prompt,
+                generation_metadata=generated_image.metadata,
+                model_info=generated_image.model_info
+            )
+        
         return DiagnosisResult(
             patient_id=data["patient_id"],
             primary_icd=data["primary_icd"], 
             differential=data["differential"],
             confidence=data["confidence"],
             explanation=data["llm_response"].content if data["llm_response"] else "",
-            created_by_user_id=data.get("user_id"),  # Use user_id from state if available
-            is_ai_generated=True,  # Always true for LangGraph engine
+            created_by_user_id=data.get("user_id"),
+            is_ai_generated=True,
+            session_id=data.get("session_id"),
+            web_search_info=web_search_info,
+            cross_session_history_info=cross_session_info,
+            generated_image=generated_image_info,
+            retrieved_chunks=data.get("retrieved_chunks", []),
+            retrieval_reasoning=data.get("retrieval_reasoning"),
+            timestamp=data.get("timestamp", datetime.now().isoformat())
         )
 
     def chat_output(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -1148,12 +1461,29 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 "oldest_reference": None
             }
 
+        generated_image_info = {}
+        if data.get("generated_image"):
+            generated_image = data["generated_image"]
+            generated_image_info = {
+                "image_generated": True,
+                "image_id": generated_image.generation_id,
+                "image_prompt": generated_image.prompt,
+                "generation_metadata": generated_image.metadata,
+                "model_info": generated_image.model_info
+            }
+        else:
+            generated_image_info = {
+                "image_generated": False
+            }
+
         return {
             "explanation": data["llm_response"].content if data["llm_response"] else "",
             "created_by_user_id": data.get("user_id"),
             "is_ai_generated": True,
             "web_search_info": web_search_info,
             "cross_session_history_info": cross_session_info,
+            "generated_image": generated_image_info,
+            "session_id": data.get("session_id"),
         }
     
     @property

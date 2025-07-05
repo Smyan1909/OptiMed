@@ -122,3 +122,10 @@ class JournalEntryType(str, Enum):
     DIAGNOSIS = "diagnosis"
     ASSESSMENT = "assessment"
     PLAN = "plan"
+
+class GeneratedImagePurpose(str, Enum):
+    """Purpose of generated medical images."""
+    EDUCATIONAL = "educational"
+    DIAGNOSTIC_AID = "diagnostic_aid"
+    ILLUSTRATION = "illustration"
+    

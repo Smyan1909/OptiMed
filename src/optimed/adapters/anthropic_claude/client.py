@@ -29,7 +29,7 @@ class AnthropicClaudeClient(LLMClient, VisionLLMClient):
     def __init__(
             self,
             *,
-            model: str = "claude-3-5-sonnet-20241022",
+            model: str = "claude-sonnet-4-20250514",
             api_key: str | None = None,
             timeout: float | None = None,
     ) -> None:
@@ -66,7 +66,16 @@ class AnthropicClaudeClient(LLMClient, VisionLLMClient):
                 })
         
         if json_mode:
-            json_instruction = "Please respond with valid JSON only. Do not include any text outside of the JSON structure."
+            json_instruction = """Please respond with valid JSON only. Do not include any text outside of the JSON structure. 
+
+IMPORTANT: Your response must be properly formatted JSON that can be parsed. If you cannot provide the requested information, return a valid JSON object with appropriate null/empty values rather than no response at all.
+
+Example format:
+{
+    "field1": "value1",
+    "field2": ["item1", "item2"],
+    "field3": 0.5
+}"""
             if system_prompt is not None:
                 system_prompt = f"{system_prompt}\n\n{json_instruction}"
             else:
