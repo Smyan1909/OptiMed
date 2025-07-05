@@ -21,6 +21,7 @@ function PatientDetailContent() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
   const [chatKey, setChatKey] = useState(0); // Force ChatBox re-render
   const [sessionsKey, setSessionsKey] = useState(0); // Force SessionsList re-render
+  
 
   const patientId = params?.id as string;
 
@@ -138,7 +139,13 @@ function PatientDetailContent() {
                     <p className="text-gray-700 font-medium">Patient ID: {patient?.id}</p>
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="flex items-center space-x-3">
+                  <Link href={`/journal?id=${patientId}`}>
+                    <button className="flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors">
+                      <span>📋</span>
+                      <span>View Journal</span>
+                    </button>
+                  </Link>
                   <Badge variant="success" className="text-sm px-3 py-1">
                     ✅ Active
                   </Badge>

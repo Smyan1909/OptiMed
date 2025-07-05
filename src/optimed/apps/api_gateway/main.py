@@ -17,6 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus
 from optimed.core.ports import FHIRRepository
 from optimed.apps.orchestrator.factory import create_app_dependencies
+from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalEntryType
+
 
 from pydantic import BaseModel
 
@@ -32,7 +34,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+class JournalEntryRequest(BaseModel):
+    patient_id: str
+    title: str
+    content: str
+    entry_type: str
 
+class JournalEntryResponse(BaseModel):
+    entry_id: str
+    patient_id: str
+    title: str
+    content: str
+    entry_type: str
+    created_by: str
+    created_at: str
+    updated_at: str
+    author_name: str
+    author_role: str
+
+class JournalEntryUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    entry_type: Optional[str] = None
 class ChatRequest(BaseModel):
     patient_id: str | None = None
     user_prompt: str | None = None
@@ -1303,3 +1326,141 @@ async def find_similar_dicom_images(
     except Exception as e:
         print(f"[ERROR] Similar image search failed: {e}")
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+    
+
+@app.get("/patients/{patient_id}/journal", response_model=List[JournalEntryResponse])
+async def get_patient_journal(
+    patient_id: str,
+    user_ctx: dict = Depends(get_user_context),
+    fhir_repo: FHIRRepository = Depends(get_user_fhir_repository)
+):
+    """Get journal entries for a patient."""
+    try:
+        entries = await fhir_repo.get_patient_journal_entries(patient_id)
+        return [
+            JournalEntryResponse(
+                entry_id=entry.entry_id,
+                patient_id=entry.patient_id,
+                title=entry.title,
+                content=entry.content,
+                entry_type=entry.entry_type.value,
+                created_by=entry.created_by,
+                created_at=entry.created_at.isoformat(),
+                updated_at=entry.updated_at.isoformat(),
+                author_name=entry.author_name,
+                author_role=entry.author_role
+            )
+            for entry in entries
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load journal: {e}")
+
+@app.post("/patients/{patient_id}/journal", response_model=JournalEntryResponse)
+async def create_journal_entry(
+    patient_id: str,
+    request: JournalEntryRequest,
+    user_ctx: dict = Depends(get_user_context),
+    fhir_repo: FHIRRepository = Depends(get_user_fhir_repository)
+):
+    """Create a new journal entry."""
+    try:
+        current_user = user_ctx.get("user")
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        # Validate entry type
+        try:
+            entry_type = JournalEntryType(request.entry_type)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid entry type: {request.entry_type}")
+        
+        create_request = JournalEntryCreate(
+            patient_id=patient_id,
+            title=request.title,
+            content=request.content,
+            entry_type=entry_type
+        )
+        
+        entry = await fhir_repo.create_journal_entry(create_request, current_user)
+        
+        return JournalEntryResponse(
+            entry_id=entry.entry_id,
+            patient_id=entry.patient_id,
+            title=entry.title,
+            content=entry.content,
+            entry_type=entry.entry_type.value,
+            created_by=entry.created_by,
+            created_at=entry.created_at.isoformat(),
+            updated_at=entry.updated_at.isoformat(),
+            author_name=entry.author_name,
+            author_role=entry.author_role
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create journal entry: {e}")
+
+@app.put("/patients/{patient_id}/journal/{entry_id}", response_model=JournalEntryResponse)
+async def update_journal_entry(
+    patient_id: str,
+    entry_id: str,
+    request: JournalEntryUpdateRequest,
+    user_ctx: dict = Depends(get_user_context),
+    fhir_repo: FHIRRepository = Depends(get_user_fhir_repository)
+):
+    """Update a journal entry."""
+    try:
+        current_user = user_ctx.get("user")
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        # Validate entry type if provided
+        update_data = {}
+        if request.title is not None:
+            update_data["title"] = request.title
+        if request.content is not None:
+            update_data["content"] = request.content
+        if request.entry_type is not None:
+            try:
+                update_data["entry_type"] = JournalEntryType(request.entry_type)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid entry type: {request.entry_type}")
+
+        update_request = JournalEntryUpdate(**update_data)  # type: ignore
+        entry = await fhir_repo.update_journal_entry(entry_id, update_request, current_user)
+        
+        return JournalEntryResponse(
+            entry_id=entry.entry_id,
+            patient_id=entry.patient_id,
+            title=entry.title,
+            content=entry.content,
+            entry_type=entry.entry_type.value,
+            created_by=entry.created_by,
+            created_at=entry.created_at.isoformat(),
+            updated_at=entry.updated_at.isoformat(),
+            author_name=entry.author_name,
+            author_role=entry.author_role
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update journal entry: {e}")
+
+@app.delete("/patients/{patient_id}/journal/{entry_id}")
+async def delete_journal_entry(
+    patient_id: str,
+    entry_id: str,
+    user_ctx: dict = Depends(get_user_context),
+    fhir_repo: FHIRRepository = Depends(get_user_fhir_repository)
+):
+    """Delete a journal entry."""
+    try:
+        current_user = user_ctx.get("user")
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        deleted = await fhir_repo.delete_journal_entry(entry_id, current_user)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Journal entry not found")
+        
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete journal entry: {e}")

@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional
 from urllib.parse import urlencode
 import httpx
 
+
 from optimed.core.ports import AuthenticationProvider
 
 class SMARTAuthProvider(AuthenticationProvider):
@@ -107,3 +108,6 @@ class SMARTAuthProvider(AuthenticationProvider):
                 return {"valid": response.status_code == 200}
         except Exception:
             return {"valid": False}
+        
+
+    

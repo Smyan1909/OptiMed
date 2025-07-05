@@ -8,8 +8,12 @@ import httpx
 from fhir.resources.patient import Patient  # type: ignore[import-untyped]
 from fhir.resources.observation import Observation  # type: ignore[import-untyped]
 
-from optimed.core.domain import PatientContext, UserEHRConnection
 from optimed.core.ports import FHIRRepository, AuthenticatedFHIRRepository, AuthenticationProvider
+from optimed.core.domain import PatientContext, UserEHRConnection, JournalEntry, JournalEntryCreate, JournalEntryUpdate, JournalEntryType, User
+import uuid
+import base64
+
+
 
 """
 optimed.adapters.smart_fhir.repository
@@ -19,6 +23,79 @@ SMART on FHIR adapter that implements the FHIRRepository protocol with OAuth2 au
 for secure access to EHR systems.
 """
 
+def _map_entry_type_to_fhir_type(entry_type: JournalEntryType) -> str:
+    """Map journal entry type to FHIR DocumentReference type."""
+    type_mapping = {
+        JournalEntryType.NOTE: "11506-3",  # Progress note
+        JournalEntryType.OBSERVATION: "11502-2",  # Laboratory report
+        JournalEntryType.TREATMENT: "18842-5",  # Discharge summary
+        JournalEntryType.DIAGNOSIS: "11488-4",  # Consultation note
+        JournalEntryType.ASSESSMENT: "51847-2",  # Evaluation note
+        JournalEntryType.PLAN: "18776-5"   # Plan of care note
+    }
+    return type_mapping.get(entry_type, "11506-3")
+
+def _map_fhir_type_to_entry_type(fhir_type: str) -> JournalEntryType:
+    """Map FHIR DocumentReference type back to journal entry type."""
+    type_mapping = {
+        "11506-3": JournalEntryType.NOTE,
+        "11502-2": JournalEntryType.OBSERVATION, 
+        "18842-5": JournalEntryType.TREATMENT,
+        "11488-4": JournalEntryType.DIAGNOSIS,
+        "51847-2": JournalEntryType.ASSESSMENT,
+        "18776-5": JournalEntryType.PLAN
+    }
+    return type_mapping.get(fhir_type, JournalEntryType.NOTE)
+
+def _parse_smart_fhir_document_reference(fhir_resource: dict) -> JournalEntry:
+    """Parse FHIR DocumentReference resource into JournalEntry."""
+    entry_id = fhir_resource["id"]
+    patient_id = fhir_resource["subject"]["reference"].split("/")[-1]
+    
+    # Extract entry type
+    type_code = fhir_resource["type"]["coding"][0]["code"]
+    entry_type = _map_fhir_type_to_entry_type(type_code)
+    
+    # Extract title and content
+    title = fhir_resource.get("description", "Untitled Entry")
+    content = ""
+    if fhir_resource.get("content") and fhir_resource["content"][0].get("attachment"):
+        attachment = fhir_resource["content"][0]["attachment"]
+        if attachment.get("data"):
+            try:
+                content = base64.b64decode(attachment["data"]).decode('utf-8')
+            except Exception:
+                content = attachment.get("title", "")
+    
+    # Extract author information
+    author_display = "Unknown Author"
+    author_id = "unknown"
+    if fhir_resource.get("author") and len(fhir_resource["author"]) > 0:
+        author = fhir_resource["author"][0]
+        author_display = author.get("display", "Unknown Author")
+        if author.get("reference"):
+            author_id = author["reference"].split("/")[-1]
+    
+    # Extract timestamps
+    created_at = fhir_resource.get("date", datetime.now(timezone.utc).isoformat())
+    if isinstance(created_at, str):
+        try:
+            created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+        except Exception:
+            created_at = datetime.now(timezone.utc)
+    
+    return JournalEntry(
+        entry_id=entry_id,
+        patient_id=patient_id,
+        title=title,
+        content=content,
+        entry_type=entry_type,
+        created_by=author_id,
+        created_at=created_at,
+        updated_at=created_at,
+        author_name=author_display,
+        author_role="Practitioner"
+    )
 def _age_from_birthdate(date) -> int:
     """Calculate age in years from FHIR birthDate."""
     if not date:
@@ -289,3 +366,176 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
         
     async def __aexit__(self, *exc):
         await self.close()
+
+
+    
+    # Journal methods implementation
+    async def get_patient_journal_entries(self, patient_id: str) -> Sequence[JournalEntry]:
+        """Get all journal entries for a patient from FHIR DocumentReference resources."""
+        await self._ensure_token_valid()
+        
+        try:
+            r = await self._client.get("/DocumentReference", params={
+                "subject": f"Patient/{patient_id}",
+                "_sort": "-date",
+                "_count": "50"
+            })
+            r.raise_for_status()
+            bundle = r.json()
+            
+            entries = []
+            if bundle.get("entry"):
+                for entry in bundle["entry"]:
+                    try:
+                        fhir_resource = entry["resource"]
+                        entries.append(_parse_smart_fhir_document_reference(fhir_resource))
+                    except Exception as e:
+                        # Skip invalid entries
+                        print(f"Failed to parse DocumentReference: {e}")
+                        continue
+            
+            return entries
+            
+        except Exception as e:
+            print(f"Failed to fetch journal entries from FHIR server: {e}")
+            return []
+
+    async def create_journal_entry(self, entry: JournalEntryCreate, user: User) -> JournalEntry:
+        """Create a new journal entry as FHIR DocumentReference."""
+        await self._ensure_token_valid()
+        
+        entry_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        
+        # Create FHIR DocumentReference structure
+        fhir_resource = {
+            "resourceType": "DocumentReference",
+            "meta": {
+                "profile": ["http://hl7.org/fhir/StructureDefinition/DocumentReference"]
+            },
+            "identifier": [
+                {
+                    "system": "http://optimed.local/journal-entries",
+                    "value": entry_id
+                }
+            ],
+            "status": "current",
+            "type": {
+                "coding": [
+                    {
+                        "system": "http://loinc.org",
+                        "code": _map_entry_type_to_fhir_type(entry.entry_type),
+                        "display": entry.entry_type.value.title()
+                    }
+                ]
+            },
+            "category": [
+                {
+                    "coding": [
+                        {
+                            "system": "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category",
+                            "code": "clinical-note",
+                            "display": "Clinical Note"
+                        }
+                    ]
+                }
+            ],
+            "subject": {
+                "reference": f"Patient/{entry.patient_id}"
+            },
+            "date": now.isoformat(),
+            "author": [
+                {
+                    "reference": f"Practitioner/{user.user_id}",
+                    "display": user.display_name
+                }
+            ],
+            "description": entry.title,
+            "content": [
+                {
+                    "attachment": {
+                        "contentType": "text/plain",
+                        "data": base64.b64encode(entry.content.encode('utf-8')).decode('ascii'),
+                        "title": entry.title
+                    }
+                }
+            ],
+            "context": {
+                "period": {
+                    "start": now.isoformat()
+                }
+            }
+        }
+        
+        try:
+            r = await self._client.post("/DocumentReference", json=fhir_resource)
+            r.raise_for_status()
+            created_resource = r.json()
+            return _parse_smart_fhir_document_reference(created_resource)
+        except Exception as e:
+            raise ValueError(f"Failed to create journal entry: {e}")
+
+    async def get_journal_entry_by_id(self, entry_id: str) -> Optional[JournalEntry]:
+        """Get a specific journal entry by ID."""
+        await self._ensure_token_valid()
+        
+        try:
+            r = await self._client.get(f"/DocumentReference/{entry_id}")
+            r.raise_for_status()
+            fhir_resource = r.json()
+            return _parse_smart_fhir_document_reference(fhir_resource)
+        except Exception:
+            return None
+
+    async def update_journal_entry(self, entry_id: str, updates: JournalEntryUpdate, user: User) -> JournalEntry:
+        """Update an existing journal entry."""
+        await self._ensure_token_valid()
+        
+        # Get existing entry
+        try:
+            r = await self._client.get(f"/DocumentReference/{entry_id}")
+            r.raise_for_status()
+            existing_resource = r.json()
+        except Exception:
+            raise ValueError(f"Journal entry {entry_id} not found")
+        
+        # Update the resource
+        update_data = updates.model_dump(exclude_unset=True)
+        
+        if "title" in update_data:
+            existing_resource["description"] = update_data["title"]
+            if existing_resource.get("content") and existing_resource["content"][0].get("attachment"):
+                existing_resource["content"][0]["attachment"]["title"] = update_data["title"]
+        
+        if "content" in update_data:
+            if existing_resource.get("content") and existing_resource["content"][0].get("attachment"):
+                existing_resource["content"][0]["attachment"]["data"] = base64.b64encode(
+                    update_data["content"].encode('utf-8')
+                ).decode('ascii')
+        
+        if "entry_type" in update_data:
+            existing_resource["type"]["coding"][0]["code"] = _map_entry_type_to_fhir_type(update_data["entry_type"])
+            existing_resource["type"]["coding"][0]["display"] = update_data["entry_type"].value.title()
+        
+        # Update timestamp
+        existing_resource["date"] = datetime.now(timezone.utc).isoformat()
+        
+        try:
+            r = await self._client.put(f"/DocumentReference/{entry_id}", json=existing_resource)
+            r.raise_for_status()
+            updated_resource = r.json()
+            return _parse_smart_fhir_document_reference(updated_resource)
+        except Exception as e:
+            raise ValueError(f"Failed to update journal entry: {e}")
+
+    async def delete_journal_entry(self, entry_id: str, user: User) -> bool:
+        """Delete a journal entry."""
+        await self._ensure_token_valid()
+        
+        try:
+            r = await self._client.delete(f"/DocumentReference/{entry_id}")
+            return r.status_code in [200, 204]
+        except Exception:
+            return False
+
+    # ...existing methods...

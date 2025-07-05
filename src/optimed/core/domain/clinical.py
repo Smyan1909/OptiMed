@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 
 from pydantic import Field
 
-from .enums import BedStatus, EncounterStatus
+from .enums import BedStatus, EncounterStatus, JournalEntryType
 from .mixins import FrozenModel
 
 """Domain models for clinical data in the hospital system."""
@@ -34,7 +34,9 @@ class PatientContext(FrozenModel):
         """Returns list of critical lab messages."""
         msgs: List[str] = []
         if self.has_critical_lab():
-            msgs.append(f"Potassium critical: {self.labs.get('K⁺') or self.labs.get('K+')}")
+            k = self.labs.get("K⁺") or self.labs.get("K+", None)
+            if k is not None and float(k) >= 6.0:
+                msgs.append(f"Critical hyperkalemia: K+ = {k} mmol/L (normal: 3.5-5.0)")
         return msgs
     
 
@@ -60,8 +62,46 @@ class Encounter(FrozenModel):
     discharge_ts: Optional[datetime] = None
     bed_history: List[BedState] = Field(default_factory=list)
 
-
     def length_of_stay(self, now: Optional[datetime] = None) -> timedelta:
-        end = self.discharge_ts or now or datetime.now(timezone.utc)
-        return end - self.admit_ts
+        """Calculate length of stay."""
+        end_time = self.discharge_ts or now or datetime.now(timezone.utc)
+        return end_time - self.admit_ts
+
+class JournalEntry(FrozenModel):
+    """Medical journal entry for patient care documentation."""
+    
+    entry_id: str
+    patient_id: str
+    title: str
+    content: str
+    entry_type: JournalEntryType
+    created_by: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    author_name: str
+    author_role: str
+    
+    def is_recent(self, hours: int = 24) -> bool:
+        """Check if entry was created within the last N hours."""
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        return self.created_at >= cutoff
+    
+    def word_count(self) -> int:
+        """Count words in the content."""
+        return len(self.content.split())
+
+class JournalEntryCreate(FrozenModel):
+    """Request model for creating a new journal entry."""
+    
+    patient_id: str
+    title: str
+    content: str
+    entry_type: JournalEntryType
+
+class JournalEntryUpdate(FrozenModel):
+    """Request model for updating an existing journal entry."""
+    
+    title: Optional[str] = None
+    content: Optional[str] = None
+    entry_type: Optional[JournalEntryType] = None
 

@@ -1,4 +1,4 @@
-from .clinical import PatientContext, BedState, Encounter
+from .clinical import PatientContext, BedState, Encounter, JournalEntry, JournalEntryCreate, JournalEntryUpdate
 from .diagnosis import DiagnosisResult
 from .info import InfoEvent, Notification, CommThread, ChatMessage, WebSearchQuery, WebSearchResult, WebSearchResponse, ChatSession, SessionParticipant
 from .kpi import KPIEvent, Alert
@@ -16,6 +16,7 @@ from .enums import (
     UserStatus,
     ImageModalityType,
     ImageStatus,
+    JournalEntryType  # Only import the enum here
 )
 
 """OptiMed domain entities (v0).
@@ -28,8 +29,11 @@ service layers.
 __all__ = [
     # clinical
     "PatientContext",
-    "Encounter",
     "BedState",
+    "Encounter",
+    "JournalEntry",
+    "JournalEntryCreate", 
+    "JournalEntryUpdate",
     # info
     "InfoEvent",
     "Notification",
@@ -48,6 +52,7 @@ __all__ = [
     "NotificationStatus",
     "Severity",
     "ChatRole",
+    "JournalEntryType",
     # diagnosis
     "DiagnosisResult",
     # users
