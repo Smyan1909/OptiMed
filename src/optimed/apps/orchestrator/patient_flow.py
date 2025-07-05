@@ -9,7 +9,7 @@ from datetime import datetime
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
-from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, ImageGenerationRequest, GeneratedImage, ImageGenerationContext, WebSearchInfo, CrossSessionHistoryInfo, GeneratedImageInfo
+from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, ImageGenerationRequest, GeneratedImage, ImageGenerationContext, WebSearchInfo, CrossSessionHistoryInfo, GeneratedImageInfo, GeneratedImagePurpose
 
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, ImageGenerationService, GeneratedImageRepository
 
@@ -264,7 +264,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     patient_context=state.patient_ctx,
                     chat_history=chat_history_dicts,
                     medical_context=state.retrieved_chunks[0] if state.retrieved_chunks else None,
-                    generation_purpose="educational"
+                    generation_purpose=GeneratedImagePurpose.EDUCATIONAL  # Default purpose, can be changed later
                 )
                 
                 state.image_generation_context = context
@@ -843,7 +843,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_{state.user_id}",
                     embedding=await embed(state.user_prompt),
                     object_type="chat_message",
-                    object_id=state.session_id,
+                    object_id=str(state.session_id),
                     content={
                         "role": user_message.role.value,
                         "content": user_message.content,
@@ -898,7 +898,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_assistant",
                     embedding=await embed(state.llm_response.content),
                     object_type="chat_message",
-                    object_id=state.session_id,
+                    object_id=str(state.session_id),
                     content=message_content,
                     metadata={
                         "namespace": "chat_history",
@@ -1060,7 +1060,7 @@ Please reference this generated image in your response when relevant and explain
 
             state.llm_response = await self._llm.chat(messages)
 
-            
+
             if state.user_id and state.user_context:
                 action = UserAction(
                     action_id=str(uuid.uuid4()),

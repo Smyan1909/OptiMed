@@ -269,6 +269,17 @@ class DiagnosticEngine(Protocol):
         """Run the diagnostic engine with streaming support."""
         ...
 
+    async def get_or_create_session(
+        self, 
+        user_id: str, 
+        patient_id: str | None, 
+        mode: str,
+        session_id: str | None = None,
+        allow_join_existing: bool = True
+    ) -> str:
+        """Get existing session or create a new one, with multi-user support."""
+        ...
+
     @property
     def vector_store(self) -> VectorStore:
         """Access to the underlying vector store."""

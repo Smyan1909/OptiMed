@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import asyncpg
-from typing import Optional
+from typing import Optional, Any
 from optimed.core.domain import GeneratedImage
 from optimed.core.ports import GeneratedImageRepository
 
@@ -195,7 +195,7 @@ class PostgresGeneratedImageRepository(GeneratedImageRepository):
                 WHERE to_tsvector('english', prompt) @@ plainto_tsquery('english', $1)
                 """
                 
-                params = [search_query]
+                params: list[Any] = [search_query]
                 
                 if user_id:
                     base_query += " AND metadata->>'user_id' = $2"
