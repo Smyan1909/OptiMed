@@ -822,6 +822,102 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 state.chunk_analysis = {"method": "fallback_similarity", "error": str(e)}
 
             return state
+        
+        async def store_user_message(state: FlowState) -> FlowState:
+            """Store the user message in chat history."""
+            if not state.user_prompt:
+                return state
+            
+            try:
+                # Create user message
+                user_message = ChatMessage(
+                    role=ChatRole.USER,
+                    content=state.user_prompt,
+                    timestamp=datetime.now(),
+                    user_id=state.user_id,
+                    metadata={}
+                )
+                
+                # Store user message
+                await self._vec.upsert(
+                    embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_{state.user_id}",
+                    embedding=await embed(state.user_prompt),
+                    object_type="chat_message",
+                    object_id=state.session_id,
+                    content={
+                        "role": user_message.role.value,
+                        "content": user_message.content,
+                        "timestamp": str(int(user_message.timestamp.timestamp() * 1000)),
+                        "user_id": state.user_id
+                    },
+                    metadata={
+                        "namespace": "chat_history",
+                        "patient_id": state.patient_id or "general_chat",
+                        "session_id": state.session_id,
+                        "timestamp": str(int(user_message.timestamp.timestamp() * 1000)),
+                        "user_id": state.user_id,
+                        "message_type": "user"
+                    }
+                )
+                
+            except Exception as e:
+                print(f"[store_user_message] Error: {e}")
+            
+            return state
+
+        async def store_assistant_response(state: FlowState) -> FlowState:
+            """Store the assistant response and any generated image in chat history."""
+            if not state.llm_response:
+                return state
+                
+            try:
+                # Prepare image info if available
+                image_info = None
+                if state.generated_image:
+                    image_info = {
+                        "image_generated": True,
+                        "image_id": state.generated_image.generation_id,
+                        "image_prompt": state.generated_image.prompt,
+                        "generation_metadata": state.generated_image.metadata,
+                        "model_info": state.generated_image.model_info
+                    }
+                else:
+                    image_info = {"image_generated": False}
+                
+                # Create assistant message content
+                message_content = {
+                    "role": ChatRole.ASSISTANT.value,
+                    "content": state.llm_response.content,
+                    "timestamp": str(int(time.time() * 1000)),
+                    "user_id": state.user_id,
+                    "generated_image": image_info  # Include image info in message content
+                }
+                
+                # Store assistant message with image information
+                await self._vec.upsert(
+                    embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_assistant",
+                    embedding=await embed(state.llm_response.content),
+                    object_type="chat_message",
+                    object_id=state.session_id,
+                    content=message_content,
+                    metadata={
+                        "namespace": "chat_history",
+                        "patient_id": state.patient_id or "general_chat",
+                        "session_id": state.session_id,
+                        "timestamp": str(int(time.time() * 1000)),
+                        "user_id": state.user_id,
+                        "message_type": "assistant",
+                        "has_generated_image": str(bool(state.generated_image))  # Add flag for easier querying
+                    }
+                )
+                
+                print(f"[store_assistant_response] Stored message with image info: {bool(state.generated_image)}")
+                
+            except Exception as e:
+                print(f"[store_assistant_response] Error: {e}")
+            
+            return state
+
 
         async def diagnose(state: FlowState) -> FlowState:
 
@@ -964,56 +1060,7 @@ Please reference this generated image in your response when relevant and explain
 
             state.llm_response = await self._llm.chat(messages)
 
-            #state.chat_history.extend([user, state.llm_response])
-
-            current_timestamp = str(int(time.time() * 1000))
-
-            await embed_and_store(
-                namespace="chat_history",
-                object_type="ChatMessage",
-                object_id=str(uuid.uuid4()),
-                text={
-                    "content": user.content, 
-                    "role": user.role.value,
-                    "timestamp": current_timestamp,  # Add timestamp to content
-                    "session_id": state.session_id,  # Include session ID in metadata
-                    "user_id": state.user_id,  # Include user ID in metadata
-                    "user_role": state.user_context.role.value if state.user_context else None,  # Include user role
-                    "user_name": state.user_context.display_name if state.user_context else "Unknown User"
-                },
-                metadata={
-                    "patient_id": state.patient_id if state.patient_id else "general_chat",
-                    "session_id": state.session_id,  # Include session ID in metadata
-                    "role": user.role.value,
-                    "timestamp": current_timestamp,
-                    "namespace": "chat_history",
-                    "user_id": state.user_id,  # Include user ID in metadata
-                    "user_role": state.user_context.role.value if state.user_context else None,  # Include user role
-                },
-            )
-
-            await embed_and_store(
-                namespace="chat_history",
-                object_type="AssistantReply",
-                object_id=str(uuid.uuid4()),
-                text={
-                    "content": state.llm_response.content if state.llm_response else "", 
-                    "role": ChatRole.ASSISTANT.value,
-                    "timestamp": str(int(time.time() * 1000) + 1),  # Assistant comes after user
-                    "session_id": state.session_id,  # Include session ID in metadata
-                    "responding_to_user": state.user_id,  # Include user ID in metadata
-                    "responding_to_role": state.user_context.role.value if state.user_context else None,  # Include user role
-                },
-                metadata={
-                    "patient_id": state.patient_id if state.patient_id else "general_chat",
-                    "session_id": state.session_id,  # Include session ID in metadata
-                    "role": ChatRole.ASSISTANT.value,
-                    "timestamp": str(int(time.time() * 1000) + 1),
-                    "namespace": "chat_history",
-                    "responding_to_user": state.user_id,  # Include user ID in metadata
-                }
-            )
-
+            
             if state.user_id and state.user_context:
                 action = UserAction(
                     action_id=str(uuid.uuid4()),
@@ -1130,6 +1177,7 @@ Please reference this generated image in your response when relevant and explain
         _builder = StateGraph(FlowState)
         _builder.add_node("check_patient", check_patient_exists)  # New decision node
         _builder.add_node("load_user_context", load_user_context)  # Load user context if available
+        _builder.add_node("store_user_message", store_user_message)
         _builder.add_node("load_current_session_history", load_current_session_history)
         _builder.add_node("evaluate_cross_session_history_need", evaluate_cross_session_history_need)  
         _builder.add_node("search_cross_session_history", search_cross_session_history)
@@ -1141,12 +1189,15 @@ Please reference this generated image in your response when relevant and explain
         _builder.add_node("evaluate_image_generation_need", evaluate_image_generation_need)
         _builder.add_node("generate_image", generate_image)
         _builder.add_node("diagnose", diagnose)
+        _builder.add_node("store_assistant_response", store_assistant_response)
         _builder.add_node("parse_icd", parse_icd)
 
         _builder.set_entry_point("load_user_context")  # Start with loading user context
 
         # Add edges for user context loading
-        _builder.add_edge("load_user_context", "check_patient")
+        _builder.add_edge("load_user_context", "store_user_message")
+        _builder.add_edge("store_user_message", "check_patient")
+
 
         # Conditional logic right at the start
         _builder.add_conditional_edges(
@@ -1197,7 +1248,8 @@ Please reference this generated image in your response when relevant and explain
         )
 
         _builder.add_edge("perform_web_search", "diagnose")
-        _builder.add_edge("diagnose", "parse_icd")
+        _builder.add_edge("diagnose", "store_assistant_response")
+        _builder.add_edge("store_assistant_response", "parse_icd")
         _builder.add_edge("parse_icd", END)
 
         return _builder.compile()

@@ -447,11 +447,21 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
           console.log('Loaded chat history:', data);
           
           if (data.messages && data.messages.length > 0) {
-            const formattedMessages = data.messages.map((msg: any) => ({
-              sender: msg.role === 'user' ? 'user' : 'system',
-              text: msg.content,
-              timestamp: msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString()
-            }));
+            const formattedMessages = data.messages.map((msg: any) => {
+              const formattedMessage: Message = {
+                sender: msg.role === 'user' ? 'user' : 'system',
+                text: msg.content,
+                timestamp: msg.timestamp ? new Date(parseInt(msg.timestamp)).toLocaleTimeString() : new Date().toLocaleTimeString()
+              };
+              
+              // Add generated image info if present
+              if (msg.generated_image && msg.generated_image.image_generated) {
+                formattedMessage.generatedImage = msg.generated_image;
+                console.log('📸 Found image in chat history:', msg.generated_image.image_id);
+              }
+              
+              return formattedMessage;
+            });
             setMessages(formattedMessages);
           }
         }
