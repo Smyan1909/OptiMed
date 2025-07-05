@@ -14,6 +14,34 @@ import uuid
 import base64
 
 
+VITAL_CODES = {
+    "8867-4": "Heart rate",
+    "59408-5": "Respiratory rate",
+    "8480-6": "Systolic BP",
+    "8462-4": "Diastolic BP",
+    "8310-5": "Body temperature",
+    "2708-6": "Oxygen saturation",
+    "9279-1": "Respiratory rate",
+    "8287-5": "Head circumference",
+    "29463-7": "Body weight",
+    "8302-2": "Body height",
+}
+
+CRITICAL_LAB_CODES = {
+    "2823-3": "Potassium",
+    "2339-0": "Glucose",
+    "2951-2": "Sodium",
+    "6298-4": "Potassium",
+    "33747-0": "Hemoglobin A1c",
+    "718-7": "Hemoglobin",
+    "4544-3": "Hematocrit",
+    "6690-2": "White blood cells",
+    "777-3": "Platelets",
+    "2160-0": "Creatinine",
+    "3094-0": "BUN",
+    "1751-7": "Albumin",
+    "1975-2": "Bilirubin",
+}
 
 """
 optimed.adapters.smart_fhir.repository
@@ -118,19 +146,49 @@ def _fhir_name_to_str(p: Patient) -> str:
     return " ".join(parts).strip() or "Unknown"
 
 def _obs_bundle_to_dict(entries: list[Observation]) -> dict[str, str]:
-    """Convert a list of Observations to a dict of code → value"""
-    out: dict[str, str] = {}
+    """Convert observation bundle to dict with human-readable names."""
+    result = {}
     for obs in entries:
-        if not obs.code or not obs.code.coding:
-            continue
-        code = obs.code.coding[0].code
-        if not obs.valueQuantity:
-            continue
-        value = obs.valueQuantity.value
-        unit = obs.valueQuantity.unit 
-        out[code] = f"{value} {unit}"
+        if obs.code and obs.code.coding:
+            # Get the LOINC code
+            loinc_code = None
+            for coding in obs.code.coding:
+                if coding.system == "http://loinc.org":
+                    loinc_code = coding.code
+                    break
+            
+            if loinc_code:
+                # Determine if this is a vital or lab based on our mappings
+                if loinc_code in VITAL_CODES:
+                    display_name = VITAL_CODES[loinc_code]
+                elif loinc_code in CRITICAL_LAB_CODES:
+                    display_name = CRITICAL_LAB_CODES[loinc_code]
+                else:
+                    # Fallback to the display name from FHIR or the code itself
+                    display_name = obs.code.coding[0].display or loinc_code
+                
+                # Get the value
+                value_str = "N/A"
+                if obs.valueQuantity:
+                    unit = obs.valueQuantity.unit or ""
+                    value_str = f"{obs.valueQuantity.value} {unit}".strip()
+                elif obs.valueString:
+                    value_str = obs.valueString
+                elif obs.valueCodeableConcept:
+                    if obs.valueCodeableConcept.text:
+                        value_str = obs.valueCodeableConcept.text
+                
+                result[display_name] = value_str
+    
+    return result
 
-    return out
+def get_display_name(code: str, code_type: str = "vital") -> str:
+    """Get human readable name for a LOINC code."""
+    if code_type == "vital":
+        return VITAL_CODES.get(code, code)
+    elif code_type == "lab":
+        return CRITICAL_LAB_CODES.get(code, code)
+    return code
 
 def _to_patient_ctx(
         patient: Patient,

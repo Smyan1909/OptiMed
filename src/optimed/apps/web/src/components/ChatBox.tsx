@@ -191,7 +191,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     // 2) Add thinking placeholder
     setMessages((prev) => [
       ...prev,
-      { sender: "system", text: "OptiMed is thinking...", loading: true, timestamp },
+      { sender: "system", text: "CLARA is thinking...", loading: true, timestamp },
     ]);
 
     try {
@@ -247,7 +247,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   };
 
   const getEmptyStateText = () => {
-    if (mode === "chat") return "Start chatting with OptiMed...";
+    if (mode === "chat") return "Start chatting with CLARA...";
     if (mode === "diagnose" && patientId) return "AI diagnosis assistant ready for patient consultation";
     return "Enter patient details to begin diagnosis...";
   };
