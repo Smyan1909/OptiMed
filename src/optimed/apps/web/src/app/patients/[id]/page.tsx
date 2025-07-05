@@ -140,6 +140,12 @@ function PatientDetailContent() {
                   </div>
                 </div>
                 <div className="flex items-center space-x-3">
+                  <Link href={`/vitals?id=${patientId}`}>
+                    <button className="flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
+                      <span>📊</span>
+                      <span>View Vitals & Labs</span>
+                    </button>
+                  </Link>
                   <Link href={`/journal?id=${patientId}`}>
                     <button className="flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors">
                       <span>📋</span>
@@ -153,46 +159,20 @@ function PatientDetailContent() {
               </div>
             </div>
             
-            {/* Patient Info Grid */}
-            <div className="px-6 py-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Patient Demographics Only */}
+            <div className="px-6 py-4 bg-gray-50">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                 <div>
-                  <h3 className="text-sm font-bold text-gray-900 mb-2">Demographics</h3>
-                  <div className="space-y-1">
-                    <p className="text-sm text-gray-900 font-medium">Age: {patient?.age} years</p>
-                    <p className="text-sm text-gray-900 font-medium">Sex: {patient?.sex}</p>
-                    <p className="text-sm text-gray-900 font-medium">Unit: {patient?.care_unit}</p>
-                  </div>
+                  <span className="font-medium text-gray-700">Age:</span>
+                  <span className="ml-2 text-gray-900">{patient?.age} years</span>
                 </div>
-                
                 <div>
-                  <h3 className="text-sm font-bold text-gray-900 mb-2">Vital Signs</h3>
-                  <div className="space-y-1">
-                    {patient?.vitals && Object.keys(patient.vitals).length > 0 ? (
-                      Object.entries(patient.vitals).map(([key, value]) => (
-                        <p key={key} className="text-sm text-gray-900 font-medium">
-                          {key}: <Badge variant="outline" className="ml-1">{value}</Badge>
-                        </p>
-                      ))
-                    ) : (
-                      <p className="text-sm text-gray-600 font-medium">No vitals recorded</p>
-                    )}
-                  </div>
+                  <span className="font-medium text-gray-700">Sex:</span>
+                  <span className="ml-2 text-gray-900">{patient?.sex}</span>
                 </div>
-                
                 <div>
-                  <h3 className="text-sm font-bold text-gray-900 mb-2">Lab Results</h3>
-                  <div className="space-y-1">
-                    {patient?.labs && Object.keys(patient.labs).length > 0 ? (
-                      Object.entries(patient.labs).map(([key, value]) => (
-                        <p key={key} className="text-sm text-gray-900 font-medium">
-                          {key}: <Badge variant="secondary" className="ml-1">{value}</Badge>
-                        </p>
-                      ))
-                    ) : (
-                      <p className="text-sm text-gray-600 font-medium">No lab results</p>
-                    )}
-                  </div>
+                  <span className="font-medium text-gray-700">Unit:</span>
+                  <span className="ml-2 text-gray-900">{patient?.care_unit}</span>
                 </div>
               </div>
             </div>
