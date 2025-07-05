@@ -385,86 +385,148 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 )
                 
                 if existing_chunks:
-                    print(f"[store_chunks] Patient {patient_id} chunks already exist, skipping storage")
-                    return state
+                    print(f"[store_chunks] Patient {patient_id} chunks already exist, checking for new journal entries")
+                    # Still proceed to check for new journal entries
+                else:
+                    print(f"[store_chunks] Creating new chunks for patient {patient_id}")
                 
                 # Break down patient context into meaningful chunks
                 patient_data = state.patient_ctx
                 
-                # 1. Demographics chunk
-                demographics_text = f"""
-                Patient Demographics:
-                Name: {patient_data.name}
-                Age: {patient_data.age}
-                Sex: {patient_data.sex}
-                Patient ID: {patient_id}
-                """
-                
-                await embed_and_store(
-                    namespace="clinical",
-                    object_type="Demographics",
-                    object_id=f"{patient_id}_demographics",
-                    text={"content": demographics_text.strip()},
-                    metadata={
-                        "patient_id": patient_id,
-                        "data_type": "demographics",
-                        "timestamp": str(int(time.time() * 1000))
-                    }
-                )
-                
-                # 2. Vitals chunk (if available)
-                if patient_data.vitals:
-                    vitals_text = f"""
-                    Patient Vitals for {patient_data.name} (ID: {patient_id}):
-                    {chr(10).join([f"{key}: {value}" for key, value in patient_data.vitals.items()])}
+                # 1. Demographics chunk (only if no existing chunks)
+                if not existing_chunks:
+                    demographics_text = f"""
+                    Patient Demographics:
+                    Name: {patient_data.name}
+                    Age: {patient_data.age}
+                    Sex: {patient_data.sex}
+                    Patient ID: {patient_id}
                     """
                     
                     await embed_and_store(
                         namespace="clinical",
-                        object_type="Vitals",
-                        object_id=f"{patient_id}_vitals",
-                        text={"content": vitals_text.strip()},
+                        object_type="Demographics",
+                        object_id=f"{patient_id}_demographics",
+                        text={"content": demographics_text.strip()},
                         metadata={
                             "patient_id": patient_id,
-                            "data_type": "vitals",
+                            "data_type": "demographics",
                             "timestamp": str(int(time.time() * 1000))
                         }
                     )
-                
-                # 3. Labs chunk (if available)
-                if patient_data.labs:
-                    labs_text = f"""
-                    Laboratory Results for {patient_data.name} (ID: {patient_id}):
-                    {chr(10).join([f"{key}: {value}" for key, value in patient_data.labs.items()])}
-                    """
                     
+                    # 2. Vitals chunk (if available)
+                    if patient_data.vitals:
+                        vitals_text = f"""
+                        Patient Vitals for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.vitals.items()])}
+                        """
+                        
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Vitals",
+                            object_id=f"{patient_id}_vitals",
+                            text={"content": vitals_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "vitals",
+                                "timestamp": str(int(time.time() * 1000))
+                            }
+                        )
+                    
+                    # 3. Labs chunk (if available)
+                    if patient_data.labs:
+                        labs_text = f"""
+                        Laboratory Results for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.labs.items()])}
+                        """
+                        
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Labs",
+                            object_id=f"{patient_id}_labs",
+                            text={"content": labs_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "labs",
+                                "timestamp": str(int(time.time() * 1000))
+                            }
+                        )
+                    
+                    # 4. Complete patient context as a single chunk for fallback
+                    complete_context = patient_data.model_dump_json(indent=2)
                     await embed_and_store(
                         namespace="clinical",
-                        object_type="Labs",
-                        object_id=f"{patient_id}_labs",
-                        text={"content": labs_text.strip()},
+                        object_type="PatientContext",
+                        object_id=f"{patient_id}_complete",
+                        text={"content": f"Complete patient context for {patient_data.name} (ID: {patient_id}):\n{complete_context}"},
                         metadata={
                             "patient_id": patient_id,
-                            "data_type": "labs",
+                            "data_type": "complete_context",
                             "timestamp": str(int(time.time() * 1000))
                         }
                     )
+
+                # 5. Fetch and store recent journal entries
+                try:
+                    # Try to use user's EHR connection first
+                    fhir_repo = self._fhir
+                    if state.user_id:
+                        try:
+                            user_fhir_repo = await self._connection_service.create_fhir_repository(
+                                state.user_id, 
+                                "smart_fhir"
+                            )
+                            if user_fhir_repo:
+                                fhir_repo = user_fhir_repo
+                        except Exception as e:
+                            print(f"[store_chunks] Failed to use SMART connection for journal: {e}")
+
+                    # Fetch journal entries for this patient
+                    journal_entries = await fhir_repo.get_patient_journal_entries(patient_id)
+                    
+                    if journal_entries:
+                        print(f"[store_chunks] Found {len(journal_entries)} journal entries for patient {patient_id}")
+                        
+                        # Store each journal entry as a separate chunk
+                        for entry in journal_entries:
+                            journal_text = f"""
+                            Journal Entry: {entry.title}
+                            Type: {entry.entry_type.value}
+                            Author: {entry.author_name} ({entry.author_role})
+                            Date: {entry.created_at.strftime('%Y-%m-%d %H:%M')}
+                            Patient: {patient_data.name} (ID: {patient_id})
+                            
+                            Content:
+                            {entry.content}
+                            """
+                            
+                            await embed_and_store(
+                                namespace="clinical",
+                                object_type="JournalEntry",
+                                object_id=f"{patient_id}_journal_{entry.entry_id}",
+                                text={"content": journal_text.strip()},
+                                metadata={
+                                    "patient_id": patient_id,
+                                    "data_type": "journal_entry",
+                                    "entry_type": entry.entry_type.value,
+                                    "entry_id": entry.entry_id,
+                                    "author_name": entry.author_name,
+                                    "author_role": entry.author_role,
+                                    "created_at": entry.created_at.isoformat(),
+                                    "timestamp": str(int(entry.created_at.timestamp() * 1000))
+                                }
+                            )
+                        
+                        print(f"[store_chunks] Successfully stored {len(journal_entries)} journal entries")
+                    else:
+                        print(f"[store_chunks] No journal entries found for patient {patient_id}")
+                        
+                except Exception as journal_error:
+                    print(f"[store_chunks] Error fetching/storing journal entries: {journal_error}")
+                    # Continue without journal entries - don't fail the entire process
                 
-                # 4. Complete patient context as a single chunk for fallback
-                complete_context = patient_data.model_dump_json(indent=2)
-                await embed_and_store(
-                    namespace="clinical",
-                    object_type="PatientContext",
-                    object_id=f"{patient_id}_complete",
-                    text={"content": f"Complete patient context for {patient_data.name} (ID: {patient_id}):\n{complete_context}"},
-                    metadata={
-                        "patient_id": patient_id,
-                        "data_type": "complete_context",
-                        "timestamp": str(int(time.time() * 1000))
-                    }
-                )
-                
-                print(f"[store_chunks] Successfully stored clinical chunks for patient {patient_id}")
+                print(f"[store_chunks] Successfully processed chunks for patient {patient_id}")
                 
             except Exception as e:
                 print(f"[store_chunks] Error storing patient chunks: {e}")
@@ -479,7 +541,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 q_vec = await embed(state.user_prompt)
                 rows = await self._vec.similarity_search(
                     q_vec,
-                    top_k=10,  # Get more candidates initially
+                    top_k=15,  # Increased to accommodate journal entries
                     filter_={
                         "namespace": "clinical", 
                         "patient_id": str(state.patient_id)
@@ -501,15 +563,21 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 chunk_text = row[2] if len(row) > 2 else row[1]
                 similarity_score = row[0] if len(row) > 0 else 0.0
                 
+                # Extract metadata if available (for data type identification)
+                metadata = row[3] if len(row) > 3 else {}
+                data_type = metadata.get("data_type", "unknown") if isinstance(metadata, dict) else "unknown"
+                
                 # Verify patient relevance
                 if state.patient_ctx:
                     patient_name = state.patient_ctx.name
                     if str(state.patient_id) in chunk_text or patient_name in chunk_text:
                         candidate_chunks.append({
                             "id": f"chunk_{i}",
-                            "content": chunk_text[:500],  # Limit for analysis
+                            "content": chunk_text[:600],  # Increased limit for journal entries
                             "similarity_score": similarity_score,
-                            "full_content": chunk_text
+                            "full_content": chunk_text,
+                            "data_type": data_type,
+                            "metadata": metadata
                         })
 
             if not candidate_chunks:
@@ -525,38 +593,49 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             
             PATIENT CONTEXT: {state.patient_ctx.name if state.patient_ctx else "Unknown"} (ID: {state.patient_id})
             
-            AVAILABLE CHUNKS:
-            {chr(10).join([f"CHUNK {chunk['id']}: {chunk['content'][:300]}..." for chunk in candidate_chunks])}
+            AVAILABLE CHUNKS (including demographics, vitals, labs, and journal entries):
+            {chr(10).join([f"CHUNK {chunk['id']} ({chunk.get('data_type', 'unknown')}): {chunk['content'][:400]}..." for chunk in candidate_chunks])}
 
             For each chunk, analyze:
             1. Relevance to the specific query (0-10 scale)
             2. Clinical importance for this case (0-10 scale)  
             3. Whether it contains information that directly helps answer the query
             4. Whether it provides necessary context or background
+            5. Data freshness and clinical timeline relevance
+
+            CHUNK TYPES AVAILABLE:
+            - demographics: Basic patient information
+            - vitals: Current vital signs and measurements
+            - labs: Laboratory test results
+            - journal_entry: Clinical notes, observations, treatments, diagnoses, assessments, and care plans
+            - complete_context: Full patient overview
 
             Return a JSON response with:
             {{
                 "selected_chunks": ["chunk_1", "chunk_3", ...],
                 "reasoning": "Brief explanation of why these chunks were selected",
                 "relevance_analysis": {{
-                    "chunk_1": {{"relevance": 8, "importance": 7, "reason": "Contains relevant lab results"}},
+                    "chunk_1": {{"relevance": 8, "importance": 7, "reason": "Contains recent clinical assessment"}},
                     "chunk_2": {{"relevance": 3, "importance": 4, "reason": "General background, not specific to query"}},
                     ...
                 }},
-                "query_type": "diagnostic|follow_up|general_inquiry|medication|test_results"
+                "query_type": "diagnostic|follow_up|general_inquiry|medication|test_results|care_planning|clinical_notes"
             }}
 
             RULES:
-            - Select 2-5 most relevant chunks maximum
-            - Prioritize recent/specific information over general background
-            - For diagnostic queries, focus on symptoms, vitals, and test results
-            - For medication queries, focus on current medications and allergies
-            - For follow-up queries, include previous relevant treatments/outcomes
+            - Select 3-6 most relevant chunks maximum
+            - Prioritize recent journal entries for current clinical status
+            - For diagnostic queries, include recent journal entries, symptoms, vitals, and test results
+            - For medication queries, focus on current medications, allergies, and relevant journal notes
+            - For follow-up queries, include previous treatments/outcomes from journal entries
+            - For care planning, prioritize recent assessments and treatment notes
+            - Always include patient demographics for context
+            - Journal entries often contain the most current and detailed clinical information
             """
 
             try:
                 analysis_response = await self._llm.chat([
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information analyst. Analyze and select the most relevant data chunks for clinical queries."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information analyst. Analyze and select the most relevant data chunks for clinical queries, paying special attention to journal entries which contain detailed clinical information."),
                     ChatMessage(role=ChatRole.USER, content=chunk_analysis_prompt)
                 ], json_mode=True)
 
@@ -577,11 +656,25 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 print(f"[intelligent_retrieve] Selected {len(selected_chunks)} chunks out of {len(candidate_chunks)} candidates")
                 print(f"[intelligent_retrieve] Reasoning: {state.retrieval_reasoning}")
 
+                # Log which data types were selected for debugging
+                selected_data_types = []
+                for chunk in candidate_chunks:
+                    if chunk["id"] in selected_chunk_ids:
+                        selected_data_types.append(chunk.get("data_type", "unknown"))
+                print(f"[intelligent_retrieve] Selected data types: {selected_data_types}")
+
             except Exception as e:
                 print(f"[intelligent_retrieve] Error in LLM analysis: {e}, falling back to similarity-based selection")
-                # Fallback to top similarity scores
-                top_chunks = sorted(candidate_chunks, key=lambda x: x["similarity_score"], reverse=True)[:3]
-                state.retrieved_chunks = [chunk["full_content"] for chunk in top_chunks]
+                # Fallback to top similarity scores, but prioritize journal entries
+                journal_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") == "journal_entry"]
+                other_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") != "journal_entry"]
+                
+                # Take top journal entries and top other chunks
+                top_journal = sorted(journal_chunks, key=lambda x: x["similarity_score"], reverse=True)[:2]
+                top_other = sorted(other_chunks, key=lambda x: x["similarity_score"], reverse=True)[:3]
+                
+                fallback_chunks = top_journal + top_other
+                state.retrieved_chunks = [chunk["full_content"] for chunk in fallback_chunks]
                 state.chunk_analysis = {"method": "fallback_similarity", "error": str(e)}
 
             return state
