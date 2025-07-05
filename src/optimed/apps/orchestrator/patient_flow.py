@@ -306,11 +306,11 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 )
                 
                 # Generate image
-                generated_image = await self._image_generation.generate_image(request)
+                generated_image = await self._image_generation.generate_image(request) if self._image_generation else None
                 state.generated_image = generated_image
                 
                 # Store image if repository is available
-                if self._generated_image_repo:
+                if self._generated_image_repo and generated_image:
                     await self._generated_image_repo.store_generated_image(generated_image)
                 
                 print(f"[image_generation] Successfully generated image: {generated_image.generation_id}")
