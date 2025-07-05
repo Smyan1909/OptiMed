@@ -1,9 +1,11 @@
 from __future__ import annotations
 from .mixins import FrozenModel
-from .enums import ImageModalityType, ImageStatus
+from .enums import ImageModalityType, ImageStatus, GeneratedImagePurpose
+from .clinical import PatientContext
 from typing import Optional, Dict, List, Any 
 from datetime import datetime
-from pydantic import field_validator
+from pydantic import field_validator, Field
+import uuid
 import numpy as np 
 
 
@@ -168,3 +170,35 @@ class ImageUploadRequest(FrozenModel):
         
         if len(self.file_content) > 100 * 1024 * 1024:  # 100MB limit
             raise ValueError("File size cannot exceed 100MB")
+
+
+class ImageGenerationRequest(FrozenModel):
+    """Request for image generation."""
+    prompt: str
+    negative_prompt: Optional[str] = None
+    width: int = 512
+    height: int = 512
+    guidance_scale: float = 7.5
+    num_inference_steps: int = 50
+    seed: Optional[int] = None
+    user_id: Optional[str] = None
+    patient_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+class GeneratedImage(FrozenModel):
+    """Generated image data."""
+    image_data: bytes
+    image_format: str = "png"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    generation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    created_at: datetime = Field(default_factory=datetime.now)
+    prompt: str = ""
+    model_info: Dict[str, Any] = Field(default_factory=dict)
+
+class ImageGenerationContext(FrozenModel):
+    """Context for image generation."""
+    user_query: str
+    patient_context: Optional[PatientContext] = None
+    chat_history: List[Dict[str, Any]] = Field(default_factory=list)
+    medical_context: Optional[str] = None
+    generation_purpose: GeneratedImagePurpose = GeneratedImagePurpose.EDUCATIONAL

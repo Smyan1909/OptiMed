@@ -1,5 +1,5 @@
 import os
-from typing import Tuple, Callable
+from typing import Tuple, Callable, Optional
 from optimed.apps.orchestrator.patient_flow import LangGraphDiagnosticEngine
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
 from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
@@ -8,13 +8,15 @@ from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
 from optimed.adapters.anthropic_claude.client import AnthropicClaudeClient
 from optimed.adapters.user_repository.pg_user_repository import PGUserRepository
 from optimed.adapters.user_repository.pg_ehr_connection_repository import PGUserEHRConnectionRepository
-from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine
+from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine, ImageGenerationService, GeneratedImageRepository
 from optimed.adapters.dicom.pydicom_processor import PyDICOMProcessor
 from optimed.adapters.dicom.image_service import ImageServiceImpl
 from optimed.adapters.dicom.pg_image_repository import PostgreSQLImageRepository
 from optimed.adapters.dicom.image_storage import FileSystemImageStorage
 from optimed.adapters.dicom.image_embedding_service import DICOMImageEmbeddingService
 from optimed.adapters.web_search.web_service import TavilyWebSearchService
+from optimed.adapters.image_generation.stabilityai_client import StabilityAIClient
+from optimed.adapters.image_generation.repository import PostgresGeneratedImageRepository
 from optimed.apps.orchestrator.image_flow import LangGraphImageAnalysisEngine
 from optimed.core.domain import UserEHRConnection
 from datetime import datetime, timezone
@@ -49,7 +51,16 @@ def create_smart_fhir_repository() -> SMARTFHIRRepository:
     return SMARTFHIRRepository(dummy_connection, auth_provider)
 
 
-def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, UserEHRConnectionService, Callable[[], ImageServiceImpl], ImageAnalysisEngine]:
+def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, 
+                                                      FHIRRepository, 
+                                                      VectorStore, 
+                                                      UserRepository, 
+                                                      UserEHRConnectionRepository, 
+                                                      UserEHRConnectionService, 
+                                                      Callable[[], ImageServiceImpl], 
+                                                      ImageAnalysisEngine,
+                                                      Optional[ImageGenerationService],
+                                                      Optional[GeneratedImageRepository]]:
     """Factory function to wire up all application dependencies."""
 
     # Load environment variables from .env file
@@ -61,6 +72,22 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, FHIRRepo
     llm_client = AnthropicClaudeClient()
     user_repo: UserRepository = PGUserRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
     
+    # Initialize image generation service if configured
+    image_generation_service: Optional[ImageGenerationService] = None
+    generated_image_repo: Optional[GeneratedImageRepository] = None
+
+    stability_api_key = os.getenv("STABILITY_API_KEY")
+    if stability_api_key and os.getenv("IMAGE_GENERATION_ENABLED", "false").lower() == "true":
+        try:
+            image_generation_service = StabilityAIClient(
+                api_key=stability_api_key,
+                llm_client=llm_client
+            )
+            generated_image_repo = PostgresGeneratedImageRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
+            print("Image generation service (Stability AI) initialized")
+        except Exception as e:
+            print(f"Warning: Could not initialize image generation service: {e}")
+
     # New EHR connection dependencies
     connection_repo: UserEHRConnectionRepository = PGUserEHRConnectionRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
     connection_service = UserEHRConnectionService(connection_repo)
@@ -102,7 +129,9 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, FHIRRepo
         llm_client=llm_client,
         user_repo=user_repo,
         connection_service=connection_service,
-        web_search_service=web_search_service
+        web_search_service=web_search_service,
+        image_generation_service=image_generation_service,
+        generated_image_repo=generated_image_repo,
     )
     
-    return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine
+    return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine, image_generation_service, generated_image_repo

@@ -17,6 +17,9 @@ from optimed.core.domain import (
     ImageUploadRequest,
     DICOMMetadata,
     ImageDimensions,
+    ImageGenerationContext,
+    ImageGenerationRequest,
+    GeneratedImage,
     WindowLevel,
     ChatSession,
     SessionParticipant,
@@ -549,5 +552,49 @@ class WebSearchService(Protocol):
         """Evaluate if web search is needed for the given query."""
         ...
 
+class ImageGenerationService(Protocol):
+    """Service for generating images using AI models like Stable Diffusion."""
+    
+    async def generate_image(self, request: ImageGenerationRequest) -> GeneratedImage:
+        """Generate an image based on the request."""
+        ...
+    
+    async def evaluate_generation_need(
+        self, 
+        context: ImageGenerationContext
+    ) -> tuple[bool, Optional[str]]:
+        """Evaluate if image generation would be helpful and return prompt if needed."""
+        ...
+    
+    async def is_available(self) -> bool:
+        """Check if the image generation service is available."""
+        ...
 
+class GeneratedImageRepository(Protocol):
+    """Repository for storing and retrieving generated images."""
+    
+    async def store_generated_image(self, image: GeneratedImage) -> str:
+        """Store generated image and return its ID."""
+        ...
+    
+    async def get_generated_image(self, image_id: str) -> Optional[GeneratedImage]:
+        """Retrieve a generated image by ID."""
+        ...
+    
+    async def get_user_generated_images(
+        self, 
+        user_id: str, 
+        limit: int = 10
+    ) -> list[GeneratedImage]:
+        """Get generated images for a user."""
+        ...
+
+    async def search_generated_images_by_prompt(
+        self, 
+        search_query: str, 
+        user_id: Optional[str] = None,
+        limit: int = 10
+    ) -> list[GeneratedImage]:
+        """Search generated images by prompt text using full-text search."""
+        ...
 

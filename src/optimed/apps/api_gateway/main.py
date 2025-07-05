@@ -11,10 +11,10 @@ from PIL import Image
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode
 from typing import AsyncGenerator, Dict, Optional, Any, List
-from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, Header, Depends, File, Form, Body # type: ignore
+from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, Header, Depends, File, Form, Body, Response # type: ignore
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus
+from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus, ImageGenerationRequest, GeneratedImage
 from optimed.core.ports import FHIRRepository
 from optimed.apps.orchestrator.factory import create_app_dependencies
 from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalEntryType
@@ -22,7 +22,7 @@ from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalE
 
 from pydantic import BaseModel
 
-_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine = create_app_dependencies()
+_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo = create_app_dependencies()
 
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
@@ -56,6 +56,7 @@ class JournalEntryUpdateRequest(BaseModel):
     title: Optional[str] = None
     content: Optional[str] = None
     entry_type: Optional[str] = None
+
 class ChatRequest(BaseModel):
     patient_id: str | None = None
     user_prompt: str | None = None
@@ -178,6 +179,12 @@ class SessionCreateRequest(BaseModel):
     patient_id: str | None = None
     mode: str = "chat"
     session_title: str | None = None
+
+class ImageGenerationRequestModel(BaseModel):
+    prompt: str
+    width: int = 1024
+    height: int = 1024
+    patient_id: Optional[str] = None
 
 async def get_current_user(
     x_session_id: str = Header(None, alias="X-Session-ID")
@@ -1464,3 +1471,162 @@ async def delete_journal_entry(
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete journal entry: {e}")
+    
+
+
+@app.post("/images/generate")
+async def generate_image(
+    request: ImageGenerationRequestModel,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Generate an educational image using AI."""
+    try:
+        if not _image_generation_service:
+            raise HTTPException(status_code=503, detail="Image generation service not available")
+        
+        user_id = user_ctx.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User authentication required")
+        
+        # Get or create session for image generation
+        session_id = await _engine.get_or_create_session(
+            user_id=user_id,
+            patient_id=request.patient_id,
+            mode="image_generation"
+        )
+        
+        # Create generation request
+        gen_request = ImageGenerationRequest(
+            prompt=request.prompt,
+            width=request.width,
+            height=request.height,
+            user_id=user_id,
+            patient_id=request.patient_id,
+            session_id=session_id
+        )
+        
+        # Generate image
+        generated_image = await _image_generation_service.generate_image(gen_request)
+        
+        # Store image
+        if _generated_image_repo:
+            await _generated_image_repo.store_generated_image(generated_image)
+        
+        return {
+            "success": True,
+            "image_id": generated_image.generation_id,
+            "prompt": generated_image.prompt,
+            "created_at": generated_image.created_at.isoformat(),
+            "metadata": generated_image.metadata,
+            "model_info": generated_image.model_info
+        }
+        
+    except Exception as e:
+        print(f"Error generating image: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/images/generated/{image_id}")
+async def get_generated_image(
+    image_id: str,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Retrieve a generated image by ID."""
+    try:
+        user_id = user_ctx.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User authentication required")
+        
+        if not _generated_image_repo:
+            raise HTTPException(status_code=404, detail="Image repository not available")
+        
+        generated_image = await _generated_image_repo.get_generated_image(image_id)
+        if not generated_image:
+            raise HTTPException(status_code=404, detail="Image not found")
+        
+        # Check if user has access to this image
+        if generated_image.metadata.get("user_id") != user_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        return Response(
+            content=generated_image.image_data,
+            media_type=f"image/{generated_image.image_format}",
+            headers={
+                "Content-Disposition": f"attachment; filename=generated_{image_id}.{generated_image.image_format}",
+                "Cache-Control": "public, max-age=31536000"  # Cache for 1 year
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error retrieving image: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/images/user/{user_id}")
+async def get_user_generated_images(
+    user_id: str,
+    limit: int = Query(10, description="Maximum number of images to return"),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Get generated images for a user."""
+    try:
+        current_user_id = user_ctx.get("user_id")
+        if not current_user_id:
+            raise HTTPException(status_code=401, detail="User authentication required")
+        
+        # Only allow users to see their own images
+        if current_user_id != user_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        if not _generated_image_repo:
+            raise HTTPException(status_code=404, detail="Image repository not available")
+        
+        images = await _generated_image_repo.get_user_generated_images(user_id, limit)
+        
+        return {
+            "images": [
+                {
+                    "image_id": img.generation_id,
+                    "prompt": img.prompt,
+                    "created_at": img.created_at.isoformat(),
+                    "metadata": img.metadata,
+                    "model_info": img.model_info
+                }
+                for img in images
+            ]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error retrieving user images: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/images/service/status")
+async def get_image_generation_status(
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Get the status of the image generation service."""
+    try:
+        if not _image_generation_service:
+            return {
+                "enabled": False,
+                "available": False,
+                "message": "Image generation service not configured"
+            }
+        
+        available = await _image_generation_service.is_available()
+        
+        return {
+            "enabled": True,
+            "available": available,
+            "message": "Service available" if available else "Service unavailable"
+        }
+        
+    except Exception as e:
+        print(f"Error checking image generation status: {e}")
+        return {
+            "enabled": True,
+            "available": False,
+            "message": f"Error checking service: {str(e)}"
+        }
