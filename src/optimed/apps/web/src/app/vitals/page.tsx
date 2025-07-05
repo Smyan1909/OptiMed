@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { fetchPatient, PatientDetail } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
+import { getDisplayName, formatLabValue, formatVitalValue } from '@/lib/codeMapping';
 
 function VitalsPageContent() {
   const params = useSearchParams();
@@ -171,12 +172,19 @@ function VitalsPageContent() {
               <div className="p-6">
                 {patient?.vitals && Object.keys(patient.vitals).length > 0 ? (
                   <div className="space-y-4">
-                    {Object.entries(patient.vitals).map(([key, value]) => (
-                      <div key={key} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-b-0">
-                        <span className="text-sm font-medium text-gray-700">{key}</span>
-                        <Badge variant="outline" className="text-sm">{value}</Badge>
-                      </div>
-                    ))}
+                    {Object.entries(patient.vitals).map(([key, value]) => {
+                      // The key should now be human-readable from the backend
+                      // But we can add additional formatting if needed
+                      const displayName = key.includes('-') ? getDisplayName(key, 'vital') : key;
+                      const formattedValue = formatVitalValue(key, value);
+                      
+                      return (
+                        <div key={key} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-b-0">
+                          <span className="text-sm font-medium text-gray-700">{displayName}</span>
+                          <Badge variant="outline" className="text-sm">{formattedValue}</Badge>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="text-center py-8">
@@ -198,12 +206,19 @@ function VitalsPageContent() {
               <div className="p-6">
                 {patient?.labs && Object.keys(patient.labs).length > 0 ? (
                   <div className="space-y-4">
-                    {Object.entries(patient.labs).map(([key, value]) => (
-                      <div key={key} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-b-0">
-                        <span className="text-sm font-medium text-gray-700">{key}</span>
-                        <Badge variant="secondary" className="text-sm">{value}</Badge>
-                      </div>
-                    ))}
+                    {Object.entries(patient.labs).map(([key, value]) => {
+                      // The key should now be human-readable from the backend
+                      // But we can add additional formatting if needed
+                      const displayName = key.includes('-') ? getDisplayName(key, 'lab') : key;
+                      const formattedValue = formatLabValue(key, value);
+                      
+                      return (
+                        <div key={key} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-b-0">
+                          <span className="text-sm font-medium text-gray-700">{displayName}</span>
+                          <Badge variant="secondary" className="text-sm">{formattedValue}</Badge>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="text-center py-8">
