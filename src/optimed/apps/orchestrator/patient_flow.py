@@ -102,8 +102,8 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                  user_repo: UserRepository, 
                  connection_service: UserEHRConnectionService, 
                  web_search_service: WebSearchService,
-                 image_generation_service: ImageGenerationService,
-                 generated_image_repo: GeneratedImageRepository, 
+                 image_generation_service: ImageGenerationService | None = None,
+                 generated_image_repo: GeneratedImageRepository | None = None, 
                  default_prompt: str = "Provide the most likely diagnosis"):
         self._fhir = fhir_repo
         self._vec = vector_store
