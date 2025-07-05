@@ -564,7 +564,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 similarity_score = row[0] if len(row) > 0 else 0.0
                 
                 # Extract metadata if available (for data type identification)
-                metadata = row[3] if len(row) > 3 else {}
+                metadata: dict[str, Any] = row[3] if len(row) > 3 else {}
                 data_type = metadata.get("data_type", "unknown") if isinstance(metadata, dict) else "unknown"
                 
                 # Verify patient relevance
