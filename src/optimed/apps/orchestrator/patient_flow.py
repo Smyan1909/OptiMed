@@ -641,7 +641,33 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     ChatMessage(role=ChatRole.USER, content=chunk_analysis_prompt)
                 ], json_mode=True)
 
-                analysis_data = json.loads(analysis_response.content)
+                if not analysis_response or not analysis_response.content:
+                    print("[intelligent_retrieve] Empty response from LLM, using fallback")
+                    raise ValueError("Empty response from LLM")
+
+                # Strip whitespace and check if content is empty
+                response_content = analysis_response.content.strip()
+                if not response_content:
+                    print("[intelligent_retrieve] Empty content in response, using fallback")
+                    raise ValueError("Empty content in response")
+
+                # Remove markdown code block markers if present
+                if response_content.startswith("```json"):
+                    # Find the end of the opening marker
+                    start_idx = response_content.find('\n') + 1
+                    # Find the closing marker
+                    end_idx = response_content.rfind("```")
+                    if start_idx > 0 and end_idx > start_idx:
+                        response_content = response_content[start_idx:end_idx].strip()
+                elif response_content.startswith("```"):
+                    # Handle generic code blocks
+                    start_idx = response_content.find('\n') + 1
+                    end_idx = response_content.rfind("```")
+                    if start_idx > 0 and end_idx > start_idx:
+                        response_content = response_content[start_idx:end_idx].strip()
+
+
+                analysis_data = json.loads(response_content)
                 
                 # Extract selected chunks
                 selected_chunk_ids = analysis_data.get("selected_chunks", [])
@@ -889,7 +915,39 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                         "Format the differential as a simple list of strings (ICD codes only), not objects with descriptions."
                     )
                     parsed = await self._llm.chat([SYSTEM_MSG_DIAGNOSE, ChatMessage(role=ChatRole.USER, content=prompt)], json_mode=True)
-                    data = json.loads(parsed.content)
+
+                    if not parsed or not parsed.content:
+                        print("[parse_icd] Empty response from LLM, using fallback values")
+                        raise ValueError("Empty response from LLM")
+
+                    # Strip whitespace and check if content is empty
+                    response_content = parsed.content.strip()
+                    if not response_content:
+                        print("[parse_icd] Empty content in response, using fallback values")
+                        raise ValueError("Empty content in response")
+
+                    # Remove markdown code block markers if present
+                    if response_content.startswith("```json"):
+                        # Find the end of the opening marker
+                        start_idx = response_content.find('\n') + 1
+                        # Find the closing marker
+                        end_idx = response_content.rfind("```")
+                        if start_idx > 0 and end_idx > start_idx:
+                            response_content = response_content[start_idx:end_idx].strip()
+                    elif response_content.startswith("```"):
+                        # Handle generic code blocks
+                        start_idx = response_content.find('\n') + 1
+                        end_idx = response_content.rfind("```")
+                        if start_idx > 0 and end_idx > start_idx:
+                            response_content = response_content[start_idx:end_idx].strip()
+
+                    # Try to parse JSON
+                    try:
+                        data = json.loads(response_content)
+                    except json.JSONDecodeError as json_err:
+                        print(f"[parse_icd] JSON parsing failed: {json_err}")
+                        print(f"[parse_icd] Raw response content: {response_content[:500]}...")
+                        raise json_err
                     
                     # Handle primary ICD
                     primary_icd = data.get("primary_icd", "Unknown")
