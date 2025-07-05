@@ -39,14 +39,15 @@ class TavilyWebSearchService(WebSearchService):
         Query: "{user_query}"
         {context_info}
         
-        Web search should be recommended if:
+        Web search is needed if:
         - Query asks about recent drug approvals, new treatments, or current guidelines
         - Query needs specific dosing information not in patient context
         - Query asks about rare conditions or cutting-edge research
         - Query needs current safety alerts or contraindications
-        - Query asks about web search 
-        - Query asks about up to date information
-        
+        - Query asks about web search
+        - Query asks about up-to-date information
+        - Query mentions web search, search engine, or online resources
+
         Web search is NOT needed if:
         - Query can be answered with patient context alone
         - Query is about general medical knowledge
@@ -84,6 +85,7 @@ class TavilyWebSearchService(WebSearchService):
         
         try:
             # Enhance query for medical context
+           
             enhanced_query = await self._enhance_medical_query(query, patient_context)
             
             # Make Tavily API call
@@ -104,7 +106,9 @@ class TavilyWebSearchService(WebSearchService):
                 "max_results": max_results
             }
             
-            response = await self.client.post(f"{self.base_url}/search", json=payload)
+            
+            response = await self.client.post(f"{self.base_url}/search", json=payload, timeout=60.0)
+            
             response.raise_for_status()
             data = response.json()
             
@@ -123,9 +127,12 @@ class TavilyWebSearchService(WebSearchService):
                 results.append(result)
                 sources_used.append(item.get("url", ""))
             
+            
             # Generate summary using LLM
             summary = await self._generate_summary(query, results, patient_context)
             
+            
+
             search_time = int((time.time() - start_time) * 1000)
             
             return WebSearchResponse(

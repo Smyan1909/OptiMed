@@ -109,7 +109,7 @@ export default function LoginPage() {
             </div>
           </div>
           <div>
-            <CardTitle className="text-2xl font-bold text-gray-900">OptiMed</CardTitle>
+            <CardTitle className="text-2xl font-bold text-gray-900">CLARA</CardTitle>
             <CardDescription className="text-gray-600">
               Choose your preferred sign-in method
             </CardDescription>

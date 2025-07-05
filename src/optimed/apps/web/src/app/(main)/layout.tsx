@@ -1,19 +1,27 @@
-import { Header } from "@/components/Header";
-import { ProtectedRoute } from "@/components/ProtectedRoute";
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import "./globals.css";
+import { UserProvider } from "@/contexts/UserContext";
 
-export default function MainLayout({
+const inter = Inter({ subsets: ["latin"] });
+
+export const metadata: Metadata = {
+  title: "CLARA - AI Medical Diagnostic Assistant",
+  description: "Advanced AI-powered medical diagnostic system",
+};
+
+export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   return (
-    <ProtectedRoute>
-      <div className="min-h-screen bg-gray-50">
-        <Header />
-        <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+    <html lang="en">
+      <body className={inter.className}>
+        <UserProvider>
           {children}
-        </main>
-      </div>
-    </ProtectedRoute>
+        </UserProvider>
+      </body>
+    </html>
   );
 }
