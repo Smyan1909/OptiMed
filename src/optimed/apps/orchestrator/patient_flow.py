@@ -139,7 +139,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
     def _build_graph(self) -> Any:
         """Build the LangGraph state graph for diagnosis."""
 
-        @streaming_step("fetch_patient", "Retrieving patient data from medical records")
+        @streaming_step("fetch_patient")
         async def fetch_patient(state: FlowState) -> FlowState:
             # Try to use user's EHR connection first
             fhir_repo = self._fhir
@@ -159,7 +159,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             state.patient_ctx = await fhir_repo.get_patient(str(state.patient_id))
             return state
 
-        @streaming_step("load_user_context", "Loading user profile and permissions")
+        @streaming_step("load_user_context")
         async def load_user_context(state: FlowState) -> FlowState:
             """Load user context if available."""
             if state.user_id:
@@ -173,7 +173,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             
             return state
 
-        @streaming_step("evaluate_web_search_need", "Checking if medical research is required")
+        @streaming_step("evaluate_web_search_need")
         async def evaluate_web_search_need(state: FlowState) -> FlowState:
             """Evaluate if web search is needed for this query."""
             try:
@@ -202,7 +202,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             
             return state
 
-        @streaming_step("perform_web_search", "Searching latest medical literature and guidelines")
+        @streaming_step("perform_web_search")
         async def perform_web_search(state: FlowState) -> FlowState:
             """Perform web search if needed."""
             try:
@@ -249,7 +249,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             """Conditional function to determine if web search should be performed."""
             return state.web_search_performed
 
-        @streaming_step("evaluate_image_generation_need", "Determining if visual aids would help explain concepts")
+        @streaming_step("evaluate_image_generation_need")
         async def evaluate_image_generation_need(state: FlowState) -> FlowState:
             """Evaluate if image generation would be helpful for this query."""
             if not self._image_generation:
@@ -310,7 +310,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             
             return state
         
-        @streaming_step("generate_image", "Creating educational medical illustration", is_long_running=True, estimated_time="30-60 seconds")
+        @streaming_step("generate_image",  is_long_running=True, estimated_time="30-60 seconds")
         async def generate_image(state: FlowState) -> FlowState:
             """Generate an image if needed."""
             if not state.image_generation_needed or not state.image_generation_prompt:
@@ -350,7 +350,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             """Conditional function to determine if image generation should be performed."""
             return state.image_generation_needed
 
-        @streaming_step("load_current_session_history", "Loading chat history for the current session")
+        @streaming_step("load_current_session_history")
         async def load_current_session_history(state: FlowState) -> FlowState:
             """Load chat history for the patient if available."""
             if state.patient_id and state.session_id:
@@ -383,7 +383,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             return state
         
 
-        @streaming_step("evaluate_cross_session_history_need", "Evaluating if cross-session chat history is needed")
+        @streaming_step("evaluate_cross_session_history_need")
         async def evaluate_cross_session_history_need(state: FlowState) -> FlowState:
             """Evaluate if cross-session chat history would be helpful for context."""
             try:
@@ -423,7 +423,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             
             return state
 
-        @streaming_step("search_cross_session_history", "Searching cross-session chat history for relevant information that might help with the current query")
+        @streaming_step("search_cross_session_history")
         async def search_cross_session_history(state: FlowState) -> FlowState:
             """Search across all previous sessions for relevant context."""
             if not state.needs_cross_session_search:
@@ -679,7 +679,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             
             return state
 
-        @streaming_step("intelligent_retrieve_chunks", "Analyzing clinical records for relevant information")
+        @streaming_step("intelligent_retrieve_chunks")
         async def intelligent_retrieve_chunks(state: FlowState) -> FlowState:
             """Intelligently retrieve and filter chunks based on LLM analysis."""
             
@@ -957,7 +957,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             
             return state
 
-        @streaming_step("diagnose", "AI analyzing all information and formulating response")
+        @streaming_step("diagnose")
         async def diagnose(state: FlowState) -> FlowState:
 
 
@@ -1432,7 +1432,7 @@ Please reference this generated image in your response when relevant and explain
                     if isinstance(node_output, dict):
                         current_state = node_output
                         
-                        # Emit status updates for step changes
+                        # Emit status updates for step changes with auto-generated detailed descriptions
                         if (previous_state is None or 
                             current_state.get("current_step") != previous_state.get("current_step") or
                             current_state.get("step_status") != previous_state.get("step_status")):
@@ -1440,8 +1440,8 @@ Please reference this generated image in your response when relevant and explain
                             status_update = {
                                 "type": "status",
                                 "step": current_state.get("current_step", ""),
+                                "description": current_state.get("step_details", ""),  # Use auto-generated details
                                 "status": current_state.get("step_status", ""),
-                                "details": current_state.get("step_details", ""),
                                 "progress": current_state.get("progress_percentage", 0.0),
                                 "timestamp": datetime.now().isoformat()
                             }
@@ -1450,6 +1450,7 @@ Please reference this generated image in your response when relevant and explain
                             if current_state.get("current_step") == "generate_image":
                                 if current_state.get("step_status") == "in_progress":
                                     status_update["is_long_running"] = True
+                                    status_update["estimated_time"] = "30-60 seconds"
                                 elif current_state.get("step_status") == "completed" and current_state.get("generated_image"):
                                     status_update["image_generated"] = True
                                     status_update["image_id"] = current_state["generated_image"].generation_id

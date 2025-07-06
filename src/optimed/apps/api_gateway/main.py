@@ -841,7 +841,7 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
                 status_data = {
                     "type": "status",
                     "step": update.get("step", "Processing"),
-                    "description": update.get("details", ""),
+                    "description": update.get("description", ""),
                     "timestamp": datetime.now().isoformat(),
                     "estimated_time": update.get("estimated_time"),
                     "is_long_running": update.get("is_long_running", False)
