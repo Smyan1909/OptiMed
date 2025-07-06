@@ -1456,7 +1456,7 @@ Please reference this generated image in your response when relevant and explain
                             
                             yield status_update
                         
-                        # Emit reasoning steps as they become available
+                        # NEW: Emit reasoning steps as they become available from the streaming LLM
                         if current_state.get("reasoning_steps"):
                             for i, step in enumerate(current_state["reasoning_steps"]):
                                 step_id = f"{current_state.get('session_id', 'unknown')}_{i}"
@@ -1465,18 +1465,16 @@ Please reference this generated image in your response when relevant and explain
                                         "type": "reasoning",
                                         "step_number": i + 1,
                                         "total_steps": len(current_state["reasoning_steps"]),
-                                        "content": step,
+                                        "content": step,  # This is the actual reasoning content
                                         "timestamp": datetime.now().isoformat()
                                     }
                                     yield reasoning_update
                                     reasoning_emitted.add(step_id)
-                                    
                         
-                        # Emit full reasoning when complete
+                        # Emit reasoning complete when LLM finishes thinking
                         if (current_state.get("llm_reasoning") and 
-                            not current_state.get("reasoning_complete") and
-                            previous_state and 
-                            not previous_state.get("llm_reasoning")):
+                            current_state.get("reasoning_complete") and
+                            (not previous_state or not previous_state.get("reasoning_complete"))):
                             
                             reasoning_complete_update = {
                                 "type": "reasoning_complete",
@@ -1484,13 +1482,10 @@ Please reference this generated image in your response when relevant and explain
                                 "timestamp": datetime.now().isoformat()
                             }
                             yield reasoning_complete_update
-                            
-                            # Mark reasoning as complete to avoid re-emission
-                            current_state["reasoning_complete"] = True
                         
                         previous_state = current_state
             
-            # Emit final completion
+            # Emit final completion with image info
             final_response_content = ""
             if previous_state and previous_state.get("llm_response"):
                 final_response_content = previous_state["llm_response"].content if hasattr(previous_state["llm_response"], 'content') else str(previous_state["llm_response"])
@@ -1509,10 +1504,13 @@ Please reference this generated image in your response when relevant and explain
                 completion_update["reasoning"] = previous_state["llm_reasoning"]
                 completion_update["reasoning_steps"] = previous_state.get("reasoning_steps", [])
             
+            # Include image information in completion
             if previous_state and previous_state.get("generated_image"):
                 completion_update["generated_image"] = {
                     "image_id": previous_state["generated_image"].generation_id,
-                    "prompt": previous_state["generated_image"].prompt
+                    "prompt": previous_state["generated_image"].prompt,
+                    "created_at": previous_state["generated_image"].created_at.isoformat() if hasattr(previous_state["generated_image"], 'created_at') else None,
+                    "metadata": previous_state["generated_image"].metadata if hasattr(previous_state["generated_image"], 'metadata') else {}
                 }
             
             yield completion_update

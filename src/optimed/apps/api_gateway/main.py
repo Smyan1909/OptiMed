@@ -835,31 +835,72 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
             user_id=user_id, 
             session_id=session_id
         ):
-            # Format different types of updates
+
+
             if update.get("type") == "status":
-                yield f"event: status\n"
-                yield f"data: {json.dumps(update)}\n\n"
+                status_data = {
+                    "type": "status",
+                    "step": update.get("step", "Processing"),
+                    "description": update.get("details", ""),
+                    "timestamp": datetime.now().isoformat(),
+                    "estimated_time": update.get("estimated_time"),
+                    "is_long_running": update.get("is_long_running", False)
+                }
+                yield f"data: {json.dumps(status_data)}\n\n"
+                
             elif update.get("type") == "reasoning":
-                yield f"event: reasoning\n"
-                yield f"data: {json.dumps(update)}\n\n"
+                # Fix: Extract reasoning content from the correct field
+                reasoning_content = update.get("content", "") or update.get("reasoning", "")
+                reasoning_data = {
+                    "type": "reasoning",
+                    "reasoning": reasoning_content,
+                    "step": update.get("step", ""),
+                    "step_number": update.get("step_number", 0),
+                    "total_steps": update.get("total_steps", 0),
+                    "timestamp": datetime.now().isoformat()
+                }
+
+                yield f"data: {json.dumps(reasoning_data)}\n\n"
+                
             elif update.get("type") == "reasoning_complete":
-                yield f"event: reasoning_complete\n"
-                yield f"data: {json.dumps(update)}\n\n"
+                complete_data = {
+                    "type": "reasoning_complete",
+                    "timestamp": datetime.now().isoformat()
+                }
+                yield f"data: {json.dumps(complete_data)}\n\n"
+                
             elif update.get("type") == "completion":
-                yield f"event: completion\n"
-                yield f"data: {json.dumps(update)}\n\n"
+                # Fix: Extract final response from the correct field
+                final_content = (
+                    update.get("final_response", "") or 
+                    update.get("content", "") or 
+                    ""
+                )
+                completion_data = {
+                    "type": "completion",
+                    "content": final_content,
+                    "session_id": session_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "metadata": update.get("metadata", {}),
+                    # Add image information if available
+                    "generated_image": update.get("generated_image")
+                }
+
+                yield f"data: {json.dumps(completion_data)}\n\n"
+                
             else:
-                yield f"event: update\n"
+                # Handle any other update types
                 yield f"data: {json.dumps(update)}\n\n"
             
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)  # Smaller delay for more responsive updates
+            
     except Exception as e:
+        print(f"[ERROR] Stream error: {e}")
         error_update = {
             "type": "error",
             "error": str(e),
             "timestamp": datetime.now().isoformat()
         }
-        yield f"event: error\n"
         yield f"data: {json.dumps(error_update)}\n\n"
 
 
@@ -910,6 +951,8 @@ async def diagnose_stream(
             "Connection": "keep-alive",
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Expose-Headers": "*"
         }
     )
 
