@@ -406,8 +406,9 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     currentStep,
     currentDescription,
     reasoning,
-    currentReasoning, // Add this
+    currentReasoning,
     finalResponse,
+    generatedImage, // Add this - it was missing!
     error: streamError,
     progress,
     startStream,
@@ -471,6 +472,13 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                 timestamp: msg.timestamp ? new Date(parseInt(msg.timestamp)).toLocaleTimeString() : new Date().toLocaleTimeString()
               };
               
+              // Add reasoning if present
+              if (msg.reasoning) {
+                formattedMessage.reasoning = msg.reasoning;
+                formattedMessage.reasoningSteps = msg.reasoning_steps || [];
+                console.log('🧠 Found reasoning in chat history');
+              }
+              
               // Add generated image info if present
               if (msg.generated_image && msg.generated_image.image_generated) {
                 formattedMessage.generatedImage = msg.generated_image;
@@ -494,7 +502,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   }, [currentSessionId, patientId, mode]);
 
   useEffect(() => {
-    console.log('📧 Final response effect:', { finalResponse, isStreaming, reasoning });
+    console.log('📧 Final response effect:', { finalResponse, isStreaming, reasoning, generatedImage });
     if (finalResponse && !isStreaming) {
       console.log('✅ Adding final response to messages:', finalResponse);
       setMessages((prev) => {
@@ -504,6 +512,19 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
           return prev;
         }
         
+        // Convert streaming generatedImage format to Message generatedImage format
+        let formattedGeneratedImage: GeneratedImageInfo | undefined = undefined;
+        if (generatedImage) {
+          formattedGeneratedImage = {
+            image_generated: true,
+            image_id: generatedImage.image_id,
+            image_prompt: generatedImage.prompt,
+            generation_metadata: generatedImage.metadata || {},
+            model_info: {}
+          };
+          console.log('🖼️ Including generated image in message:', formattedGeneratedImage);
+        }
+        
         return [
           ...prev,
           { 
@@ -511,12 +532,13 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
             text: finalResponse,
             timestamp: new Date().toLocaleTimeString(),
             reasoning: reasoning.join('\n'),
-            reasoningSteps: reasoning
+            reasoningSteps: reasoning,
+            generatedImage: formattedGeneratedImage
           }
         ];
       });
     }
-  }, [finalResponse, isStreaming, reasoning]);
+  }, [finalResponse, isStreaming, reasoning, generatedImage]);
 
 
   // Handle streaming errors

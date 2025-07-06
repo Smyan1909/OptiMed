@@ -216,6 +216,7 @@ export const useStreamingChat = () => {
         case 'completion':
           console.log('✅ Completion received with content:', update.content);
           console.log('🖼️ Generated image:', update.generated_image);
+          console.log('🧠 Reasoning steps:', prev.reasoning);
           
           if (reasoningTimeoutRef.current) {
             clearTimeout(reasoningTimeoutRef.current);
