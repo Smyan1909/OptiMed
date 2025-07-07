@@ -472,11 +472,16 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                 timestamp: msg.timestamp ? new Date(parseInt(msg.timestamp)).toLocaleTimeString() : new Date().toLocaleTimeString()
               };
               
-              // Add reasoning if present
-              if (msg.reasoning) {
-                formattedMessage.reasoning = msg.reasoning;
+              // Add reasoning from multiple possible sources
+              if (msg.reasoning || msg.reasoning_steps) {
+                console.log('🧠 Found reasoning in chat history:', {
+                  reasoning: !!msg.reasoning,
+                  reasoningSteps: msg.reasoning_steps?.length || 0
+                });
+                
+                // Use reasoning from content first, then from steps
+                formattedMessage.reasoning = msg.reasoning || (msg.reasoning_steps ? msg.reasoning_steps.join('\n') : '');
                 formattedMessage.reasoningSteps = msg.reasoning_steps || [];
-                console.log('🧠 Found reasoning in chat history');
               }
               
               // Add generated image info if present
@@ -488,6 +493,10 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
               return formattedMessage;
             });
             setMessages(formattedMessages);
+            
+            // Log reasoning data for debugging
+            const messagesWithReasoning: Message[] = formattedMessages.filter((msg: Message) => msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0));
+            console.log(`📊 Loaded ${formattedMessages.length} messages, ${messagesWithReasoning.length} with reasoning`);
           }
         }
       } catch (error) {

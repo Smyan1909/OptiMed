@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { 
   Upload, 
   ZoomIn, 
@@ -16,7 +18,9 @@ import {
   Pause,
   ImageIcon,
   Brain,
-  Search
+  Search,
+  Copy,
+  Check
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -79,6 +83,121 @@ interface DICOMViewerProps {
   className?: string;
 }
 
+const DICOMAnalysisMarkdownComponents = {
+  // Style headings for medical context
+  h1: ({ children }: any) => (
+    <h1 className="text-xl font-bold text-gray-900 mt-6 mb-3 border-b-2 border-blue-200 pb-2">
+      {children}
+    </h1>
+  ),
+  h2: ({ children }: any) => (
+    <h2 className="text-lg font-semibold text-gray-900 mt-5 mb-3 text-blue-900">
+      {children}
+    </h2>
+  ),
+  h3: ({ children }: any) => (
+    <h3 className="text-base font-medium text-gray-900 mt-4 mb-2 text-blue-800">
+      {children}
+    </h3>
+  ),
+  
+  // Style paragraphs for readability
+  p: ({ children }: any) => (
+    <p className="text-gray-700 leading-relaxed mb-3 text-sm">
+      {children}
+    </p>
+  ),
+  
+  // Style lists for findings and diagnoses
+  ul: ({ children }: any) => (
+    <ul className="list-disc list-inside space-y-2 ml-4 mb-4 text-gray-700">
+      {children}
+    </ul>
+  ),
+  ol: ({ children }: any) => (
+    <ol className="list-decimal list-inside space-y-2 ml-4 mb-4 text-gray-700">
+      {children}
+    </ol>
+  ),
+  li: ({ children }: any) => (
+    <li className="text-sm leading-relaxed">
+      {children}
+    </li>
+  ),
+  
+  // Style code for measurements and technical details
+  code: ({ inline, children }: any) => {
+    if (inline) {
+      return (
+        <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono border">
+          {children}
+        </code>
+      );
+    }
+    return (
+      <pre className="bg-gray-100 text-gray-800 p-4 rounded-lg text-sm font-mono overflow-x-auto mb-4 border">
+        <code>{children}</code>
+      </pre>
+    );
+  },
+  
+  // Style blockquotes for important findings
+  blockquote: ({ children }: any) => (
+    <blockquote className="border-l-4 border-orange-400 bg-orange-50 pl-4 py-2 my-4 italic text-orange-900">
+      {children}
+    </blockquote>
+  ),
+  
+  // Style emphasis for medical terminology
+  strong: ({ children }: any) => (
+    <strong className="font-semibold text-gray-900 bg-yellow-100 px-1 rounded">
+      {children}
+    </strong>
+  ),
+  
+  em: ({ children }: any) => (
+    <em className="italic text-blue-800 font-medium">
+      {children}
+    </em>
+  ),
+  
+  // Style links for references
+  a: ({ href, children }: any) => (
+    <a 
+      href={href} 
+      target="_blank" 
+      rel="noopener noreferrer" 
+      className="text-blue-600 hover:text-blue-800 underline font-medium"
+    >
+      {children}
+    </a>
+  ),
+  
+  // Style tables for structured findings
+  table: ({ children }: any) => (
+    <div className="overflow-x-auto mb-4">
+      <table className="min-w-full border-collapse border border-gray-300 bg-white rounded-lg">
+        {children}
+      </table>
+    </div>
+  ),
+  th: ({ children }: any) => (
+    <th className="border border-gray-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-900 text-left">
+      {children}
+    </th>
+  ),
+  td: ({ children }: any) => (
+    <td className="border border-gray-300 px-4 py-2 text-sm text-gray-700">
+      {children}
+    </td>
+  ),
+  
+  // Custom component for medical findings
+  hr: () => (
+    <hr className="my-6 border-t-2 border-gray-200" />
+  ),
+};
+
 export function DICOMViewer({ className }: DICOMViewerProps) {
   const [selectedImage, setSelectedImage] = useState<DICOMImage | null>(null);
   const [uploadedImages, setUploadedImages] = useState<DICOMImage[]>([]);
@@ -114,6 +233,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const playIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Load images and patients on component mount
   useEffect(() => {
@@ -183,6 +303,18 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
     } catch (error) {
       console.error('Failed to load patient details:', error);
       setSelectedPatient(null);
+    }
+  };
+
+  const handleCopyAnalysis = async () => {
+    if (!analysisResult) return;
+    
+    try {
+      await navigator.clipboard.writeText(analysisResult);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy analysis:', error);
     }
   };
 
@@ -889,45 +1021,83 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
         </div>
       )}
 
-      {/* Full-Width Analysis Results Section */}
+      {/* Enhanced Full-Width Analysis Results Section with Markdown */}
       {analysisResult && (
         <div className="mt-8 bg-white border border-gray-200 rounded-lg shadow-lg">
           <div className="border-b border-gray-200 p-4">
-            <h3 className="text-lg font-medium text-gray-900 flex items-center">
-              <Brain className="h-5 w-5 mr-2 text-blue-600" />
-              AI Analysis Results
-              {selectedPatient && selectedPatientId !== 'no-patient' && (
-                <span className="ml-2 text-sm text-gray-500">
-                  for {selectedPatient.name}
-                </span>
-              )}
-            </h3>
-          </div>
-          <div className="p-6">
-            <div className="prose max-w-none">
-              <div className="bg-gray-50 p-6 rounded-lg border">
-                <div className="text-base text-gray-700 whitespace-pre-wrap leading-relaxed">
-                  {analysisResult}
-                </div>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-medium text-gray-900 flex items-center">
+                <Brain className="h-5 w-5 mr-2 text-blue-600" />
+                AI Medical Image Analysis
+                {selectedPatient && selectedPatientId !== 'no-patient' && (
+                  <span className="ml-2 text-sm text-gray-500">
+                    for {selectedPatient.name}
+                  </span>
+                )}
+              </h3>
+              <div className="flex items-center space-x-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopyAnalysis}
+                  className="border-gray-300"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="h-4 w-4 mr-1" />
+                      Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-4 w-4 mr-1" />
+                      Copy
+                    </>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAnalysisResult(null)}
+                  className="border-red-300 text-red-600 hover:bg-red-50"
+                >
+                  Clear
+                </Button>
               </div>
             </div>
+            {selectedImage && (
+              <div className="mt-2 flex items-center space-x-2 text-sm text-gray-600">
+                <Badge variant="outline" className="text-xs">
+                  {selectedImage.metadata.Modality || 'Unknown Modality'}
+                </Badge>
+                <span>•</span>
+                <span>{selectedImage.filename}</span>
+                <span>•</span>
+                <span>
+                  {selectedImage.dimensions.width} × {selectedImage.dimensions.height}
+                  {selectedImage.dimensions.depth && ` × ${selectedImage.dimensions.depth}`}
+                </span>
+              </div>
+            )}
           </div>
+          
+          <div className="p-6">
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-6">
+              <div className="dicom-analysis-markdown prose max-w-none">
+                <ReactMarkdown
+                  components={DICOMAnalysisMarkdownComponents}
+                  remarkPlugins={[remarkGfm]}
+                >
+                  {analysisResult}
+                </ReactMarkdown>
+              </div>
+            </div>
+          </div>          
           <div className="border-t border-gray-200 p-4 bg-gray-50">
             <div className="flex justify-between items-center text-sm text-gray-500">
               <span>Analysis completed at {new Date().toLocaleString()}</span>
-              <div className="flex space-x-4">
-                <button 
-                  onClick={() => navigator.clipboard.writeText(analysisResult)}
-                  className="text-blue-600 hover:text-blue-800 font-medium"
-                >
-                  Copy Results
-                </button>
-                <button 
-                  onClick={() => setAnalysisResult(null)}
-                  className="text-red-600 hover:text-red-800 font-medium"
-                >
-                  Clear Results
-                </button>
+              <div className="flex items-center space-x-1 text-xs">
+                <Brain className="h-3 w-3" />
+                <span>AI-powered medical image analysis</span>
               </div>
             </div>
           </div>
