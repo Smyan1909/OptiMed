@@ -142,19 +142,15 @@ function PatientDetailContent() {
                 <div className="flex items-center space-x-3">
                   <Link href={`/vitals?id=${patientId}`}>
                     <button className="flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
-                      <span>📊</span>
                       <span>View Vitals & Labs</span>
                     </button>
                   </Link>
                   <Link href={`/journal?id=${patientId}`}>
                     <button className="flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors">
-                      <span>📋</span>
                       <span>View Journal</span>
                     </button>
                   </Link>
-                  <Badge variant="success" className="text-sm px-3 py-1">
-                    ✅ Active
-                  </Badge>
+
                 </div>
               </div>
             </div>
@@ -188,10 +184,10 @@ function PatientDetailContent() {
                 </div>
                 <div className="flex items-center space-x-2">
                   <Badge variant="default" className="px-3 py-1">
-                    🤖 AI Assistant
+                    {user?.display_name}
                   </Badge>
                   <Badge variant="outline" className="px-3 py-1">
-                    👨‍⚕️ {user?.display_name}
+                    CLARA
                   </Badge>
                 </div>
               </div>
