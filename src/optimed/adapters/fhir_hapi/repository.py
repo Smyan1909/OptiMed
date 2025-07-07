@@ -67,7 +67,6 @@ IMAGING_CODES = {
     "18726-0": "Radiology report",
     "18748-4": "Diagnostic imaging study",
     "18747-6": "CT scan",
-    "18748-4": "MRI scan",
     "36643-5": "Ultrasound",
     "30954-2": "X-ray",
     "18745-0": "Cardiac catheterization",
