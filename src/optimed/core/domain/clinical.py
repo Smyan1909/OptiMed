@@ -19,6 +19,16 @@ class PatientContext(FrozenModel):
     care_unit: str
     vitals: Dict[str, str] = {}
     labs: Dict[str, str] = {}
+
+    imaging: Dict[str, str] = {}  # e.g. {"CT Chest": "2023-10-01"}
+    exam: Dict[str, str] = {}  # e.g. {"Abdomen": "Normal"}
+    procedure: Dict[str, str] = {}  # e.g. {"Appendectomy": "2023-10-02"}
+    social_history: Dict[str, str] = {}  # e.g. {"Smoking": "None", "Alcohol": "Occasional"}
+    medications: Dict[str, str] = {}  # e.g. {"Aspirin": "81 mg daily"}
+    allergies: Dict[str, str] = {}  # e.g. {"Penicillin": "Rash"}
+    diagnoses: Dict[str, str] = {}  # e.g. {"Hypertension": "Controlled"}
+
+    
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def has_critical_lab(self) -> bool:
