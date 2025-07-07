@@ -60,7 +60,7 @@ class StreamingStatus:
             "search_cross_session_history": "Searching previous conversations across all sessions for relevant context",
             "diagnose": "AI model analyzing all available information to provide comprehensive response...",
             "store_user_message": f"Storing user message in chat history for session {getattr(self.state, 'session_id', 'unknown')}",
-            "store_assistant_response": f"Saving AI response and reasoning to chat history"
+            "store_assistant_response": "Saving AI response and reasoning to chat history"
         }
         
         return descriptions.get(step_lower, f"Starting {self.step_name}...")
@@ -132,7 +132,7 @@ class StreamingStatus:
                 return "AI analysis completed"
         
         elif step_lower == "store_user_message":
-            return f"User message stored in chat history"
+            return "User message stored in chat history"
         
         elif step_lower == "store_assistant_response":
             reasoning_stored = hasattr(self.state, 'llm_reasoning') and getattr(self.state, 'llm_reasoning', '')

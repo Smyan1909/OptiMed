@@ -932,7 +932,7 @@ async def diagnose_stream(
                     "error": f"Patient not found: {error_message}",
                     "timestamp": datetime.now().isoformat()
                 }
-                yield f"event: error\n"
+                yield "event: error\n"
                 yield f"data: {json.dumps(error_data)}\n\n"
             
             return StreamingResponse(error_stream(), media_type="text/event-stream")
