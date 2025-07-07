@@ -353,7 +353,6 @@ class HAPIFHIRRepository(FHIRRepository):
 
     async def get_patient(self, patient_id: str) -> PatientContext:
         """Get patient context by ID."""
-        await self._ensure_token_valid()
         
         patient = await self._get_patient_resource(patient_id)
         
