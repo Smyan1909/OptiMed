@@ -1,6 +1,6 @@
 from __future__ import annotations
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from pydantic import Field
 
@@ -55,7 +55,7 @@ class ChatMessage(FrozenModel):
     user_id: Optional[str] = None  # User ID of the sender
     user_role: Optional[UserRole] = None  # Role of the user (e.g., doctor, nurse)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    metadata: Dict[str, str] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
     @property
     def is_from_staff(self) -> bool:

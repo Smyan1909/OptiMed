@@ -235,8 +235,6 @@ async def get_user_fhir_repository(user_ctx: dict = Depends(get_user_context)) -
                 print(f"[DEBUG] ❌ create_fhir_repository returned None for user {current_user.username}")
         except Exception as e:
             print(f"[API] ❌ Failed to create SMART FHIR repo for user {current_user.username}: {e}")
-            import traceback
-            traceback.print_exc()
     else:
         print("[DEBUG] No current user found, using default repository")
     
@@ -827,21 +825,173 @@ async def clear_patient_chat_history(patient_id: str = Path(..., description="Th
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not clear chat history: {e}")
 
-async def _event_stream(patient: PatientContext) -> AsyncGenerator[str, None]:
-    async for delta in _engine.run_stream(patient):
-        yield f"data: {delta}\n\n"
-        await asyncio.sleep(0.1)  # Simulate async delay for streaming
+async def _event_stream(patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[str, None]:
+    """Stream events from the diagnostic engine."""
+    try:
+        async for update in _engine.run_stream(
+            patient=patient, 
+            user_prompt=user_prompt, 
+            chat_mode=chat_mode, 
+            user_id=user_id, 
+            session_id=session_id
+        ):
+
+
+            if update.get("type") == "status":
+                status_data = {
+                    "type": "status",
+                    "step": update.get("step", "Processing"),
+                    "description": update.get("description", ""),
+                    "timestamp": datetime.now().isoformat(),
+                    "estimated_time": update.get("estimated_time"),
+                    "is_long_running": update.get("is_long_running", False)
+                }
+                yield f"data: {json.dumps(status_data)}\n\n"
+                
+            elif update.get("type") == "reasoning":
+                # Fix: Extract reasoning content from the correct field
+                reasoning_content = update.get("content", "") or update.get("reasoning", "")
+                reasoning_data = {
+                    "type": "reasoning",
+                    "reasoning": reasoning_content,
+                    "step": update.get("step", ""),
+                    "step_number": update.get("step_number", 0),
+                    "total_steps": update.get("total_steps", 0),
+                    "timestamp": datetime.now().isoformat()
+                }
+
+                yield f"data: {json.dumps(reasoning_data)}\n\n"
+                
+            elif update.get("type") == "reasoning_complete":
+                complete_data = {
+                    "type": "reasoning_complete",
+                    "timestamp": datetime.now().isoformat()
+                }
+                yield f"data: {json.dumps(complete_data)}\n\n"
+                
+            elif update.get("type") == "completion":
+                # Fix: Extract final response from the correct field
+                final_content = (
+                    update.get("final_response", "") or 
+                    update.get("content", "") or 
+                    ""
+                )
+                completion_data = {
+                    "type": "completion",
+                    "content": final_content,
+                    "session_id": session_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "metadata": update.get("metadata", {}),
+                    # Add image information if available
+                    "generated_image": update.get("generated_image")
+                }
+
+                yield f"data: {json.dumps(completion_data)}\n\n"
+                
+            else:
+                # Handle any other update types
+                yield f"data: {json.dumps(update)}\n\n"
+            
+            await asyncio.sleep(0.05)  # Smaller delay for more responsive updates
+            
+    except Exception as e:
+        print(f"[ERROR] Stream error: {e}")
+        error_update = {
+            "type": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+        yield f"data: {json.dumps(error_update)}\n\n"
 
 
 @app.post("/diagnose/stream")
-async def diagnose_stream(req: ChatRequest):
-    try:
-        patient = await _fhir.get_patient(str(req.patient_id)) # Cast to str to avoid type errors
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Patient not found: {e}")
-    
-    return StreamingResponse(_event_stream(patient), media_type="text/event-stream")
+async def diagnose_stream(
+    req: ChatRequest,
+    user_ctx: dict = Depends(get_user_context),
+    fhir_repo: FHIRRepository = Depends(get_user_fhir_repository)
+):
+    """Stream diagnosis process with real-time status updates."""
+    user_id = user_ctx.get("user_id") or req.user_id
+    current_user = user_ctx.get("user")
 
+    if current_user:
+        print(f"[API] Streaming diagnosis request from {current_user.display_name} ({current_user.role.value})")
+
+    patient_ctx = None
+    if req.patient_id:
+        try:
+            patient_ctx = await fhir_repo.get_patient(str(req.patient_id))
+        except Exception as e:
+            # Capture the error message in the outer scope
+            error_message = str(e)
+            
+            # Return error as SSE
+            async def error_stream():
+                error_data = {
+                    "type": "error",
+                    "error": f"Patient not found: {error_message}",
+                    "timestamp": datetime.now().isoformat()
+                }
+                yield "event: error\n"
+                yield f"data: {json.dumps(error_data)}\n\n"
+            
+            return StreamingResponse(error_stream(), media_type="text/event-stream")
+    
+    return StreamingResponse(
+        _event_stream(
+            patient=patient_ctx,
+            user_prompt=req.user_prompt, 
+            chat_mode=req.chat_mode, 
+            user_id=user_id, 
+            session_id=req.session_id
+        ), 
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Expose-Headers": "*"
+        }
+    )
+
+@app.post("/chat/stream")
+async def chat_stream(
+    req: ChatRequest,
+    user_ctx: dict = Depends(get_user_context),
+    fhir_repo: FHIRRepository = Depends(get_user_fhir_repository)
+):
+    """Stream chat process with real-time status updates."""
+    user_id = user_ctx.get("user_id") or req.user_id
+    current_user = user_ctx.get("user")
+
+    if current_user:
+        print(f"[API] Streaming chat request from {current_user.display_name} ({current_user.role.value})")
+
+    patient_ctx = None
+    if req.patient_id:
+        try:
+            patient_ctx = await fhir_repo.get_patient(req.patient_id)
+        except Exception as e:
+            print(f"Could not fetch patient {req.patient_id}: {e}")
+    
+    return StreamingResponse(
+        _event_stream(
+            patient=patient_ctx,
+            user_prompt=req.user_prompt, 
+            chat_mode=True,  # Always true for chat
+            user_id=user_id, 
+            session_id=req.session_id
+        ), 
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
 
 @app.post("/chat", response_model=dict)
 async def chat(

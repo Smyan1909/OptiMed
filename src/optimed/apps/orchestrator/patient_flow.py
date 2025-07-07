@@ -1,4 +1,6 @@
 from __future__ import annotations
+from .streaming_decorators import streaming_step
+from .streaming_llm import StreamingLLMWrapper
 
 import uuid 
 import json
@@ -92,6 +94,21 @@ class FlowState(BaseModel): # Potentially add
     generated_image: Optional[GeneratedImage] = None
     image_generation_context: Optional[ImageGenerationContext] = None
 
+    # Reasoning fields
+    llm_reasoning: str = ""
+    reasoning_steps: List[str] = Field(default_factory=list)
+    current_reasoning_step: int = 0
+    reasoning_complete: bool = False
+
+    # Streaming status fields
+    current_step: str = ""
+    step_status: str = ""  # "starting", "in_progress", "completed", "error"
+    step_details: str = ""
+    progress_percentage: float = 0.0
+    total_steps: int = 12  # Approximate number of steps
+    completed_steps: int = 0
+    streaming_updates: List[dict] = Field(default_factory=list)
+
 
 class LangGraphDiagnosticEngine(DiagnosticEngine):
     """Concrete engine that streams or returns full result."""
@@ -108,6 +125,8 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
         self._fhir = fhir_repo
         self._vec = vector_store
         self._llm = llm_client
+        self._streaming_llm = StreamingLLMWrapper(llm_client=llm_client)
+
         self._user_repo = user_repo
         self._connection_service = connection_service
         self._web_search = web_search_service
@@ -119,6 +138,8 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
 
     def _build_graph(self) -> Any:
         """Build the LangGraph state graph for diagnosis."""
+
+        @streaming_step("fetch_patient")
         async def fetch_patient(state: FlowState) -> FlowState:
             # Try to use user's EHR connection first
             fhir_repo = self._fhir
@@ -138,7 +159,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             state.patient_ctx = await fhir_repo.get_patient(str(state.patient_id))
             return state
 
-
+        @streaming_step("load_user_context")
         async def load_user_context(state: FlowState) -> FlowState:
             """Load user context if available."""
             if state.user_id:
@@ -151,8 +172,8 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     state.user_context = None
             
             return state
-            
-        
+
+        @streaming_step("evaluate_web_search_need")
         async def evaluate_web_search_need(state: FlowState) -> FlowState:
             """Evaluate if web search is needed for this query."""
             try:
@@ -181,6 +202,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             
             return state
 
+        @streaming_step("perform_web_search")
         async def perform_web_search(state: FlowState) -> FlowState:
             """Perform web search if needed."""
             try:
@@ -227,6 +249,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             """Conditional function to determine if web search should be performed."""
             return state.web_search_performed
 
+        @streaming_step("evaluate_image_generation_need")
         async def evaluate_image_generation_need(state: FlowState) -> FlowState:
             """Evaluate if image generation would be helpful for this query."""
             if not self._image_generation:
@@ -287,6 +310,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             
             return state
         
+        @streaming_step("generate_image",  is_long_running=True, estimated_time="30-60 seconds")
         async def generate_image(state: FlowState) -> FlowState:
             """Generate an image if needed."""
             if not state.image_generation_needed or not state.image_generation_prompt:
@@ -326,6 +350,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             """Conditional function to determine if image generation should be performed."""
             return state.image_generation_needed
 
+        @streaming_step("load_current_session_history")
         async def load_current_session_history(state: FlowState) -> FlowState:
             """Load chat history for the patient if available."""
             if state.patient_id and state.session_id:
@@ -356,7 +381,9 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 state.chat_history = []
 
             return state
+        
 
+        @streaming_step("evaluate_cross_session_history_need")
         async def evaluate_cross_session_history_need(state: FlowState) -> FlowState:
             """Evaluate if cross-session chat history would be helpful for context."""
             try:
@@ -396,6 +423,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             
             return state
 
+        @streaming_step("search_cross_session_history")
         async def search_cross_session_history(state: FlowState) -> FlowState:
             """Search across all previous sessions for relevant context."""
             if not state.needs_cross_session_search:
@@ -651,6 +679,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             
             return state
 
+        @streaming_step("intelligent_retrieve_chunks")
         async def intelligent_retrieve_chunks(state: FlowState) -> FlowState:
             """Intelligently retrieve and filter chunks based on LLM analysis."""
             
@@ -835,10 +864,10 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     content=state.user_prompt,
                     timestamp=datetime.now(),
                     user_id=state.user_id,
-                    metadata={}
+                    metadata={}  # Keep metadata empty for user messages or ensure all values are strings
                 )
                 
-                # Store user message
+                # Store user message - ALL METADATA VALUES MUST BE STRINGS
                 await self._vec.upsert(
                     embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_{state.user_id}",
                     embedding=await embed(state.user_prompt),
@@ -848,20 +877,22 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                         "role": user_message.role.value,
                         "content": user_message.content,
                         "timestamp": str(int(user_message.timestamp.timestamp() * 1000)),
-                        "user_id": state.user_id
+                        "user_id": state.user_id or ""
                     },
                     metadata={
                         "namespace": "chat_history",
                         "patient_id": state.patient_id or "general_chat",
-                        "session_id": state.session_id,
+                        "session_id": state.session_id or "",
                         "timestamp": str(int(user_message.timestamp.timestamp() * 1000)),
-                        "user_id": state.user_id,
+                        "user_id": state.user_id or "",
                         "message_type": "user"
                     }
                 )
                 
             except Exception as e:
                 print(f"[store_user_message] Error: {e}")
+                import traceback
+                traceback.print_exc()
             
             return state
 
@@ -869,10 +900,17 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             """Store the assistant response and any generated image in chat history."""
             if not state.llm_response:
                 return state
-                
+            
             try:
-                # Prepare image info if available
-                image_info = None
+                # Prepare message content
+                message_content = {
+                    "role": state.llm_response.role.value,
+                    "content": state.llm_response.content,
+                    "timestamp": str(int(time.time() * 1000)),
+                    "user_id": state.user_id,
+                }
+                
+                # Add generated image info if available
                 if state.generated_image:
                     image_info = {
                         "image_generated": True,
@@ -881,44 +919,45 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                         "generation_metadata": state.generated_image.metadata,
                         "model_info": state.generated_image.model_info
                     }
-                else:
-                    image_info = {"image_generated": False}
+                    message_content["generated_image"] = image_info # type: ignore
                 
-                # Create assistant message content
-                message_content = {
-                    "role": ChatRole.ASSISTANT.value,
-                    "content": state.llm_response.content,
+                # Prepare metadata - ALL VALUES MUST BE STRINGS
+                metadata = {
+                    "namespace": "chat_history",
+                    "patient_id": state.patient_id or "general_chat",
+                    "session_id": state.session_id or "",
                     "timestamp": str(int(time.time() * 1000)),
-                    "user_id": state.user_id,
-                    "generated_image": image_info  # Include image info in message content
+                    "user_id": state.user_id or "",
+                    "message_type": "assistant"
                 }
                 
-                # Store assistant message with image information
+                # Add reasoning steps as JSON string if available - CONVERT LIST TO STRING
+                if hasattr(state, 'reasoning_steps') and state.reasoning_steps:
+                    metadata["reasoning_steps"] = json.dumps(state.reasoning_steps)
+                
+                # Add web search info if available - CONVERT TO STRINGS
+                if state.web_search_response:
+                    metadata["web_search_performed"] = "true"
+                    metadata["source_count"] = str(len(state.web_search_response.results))
+                
+                # Store assistant message
                 await self._vec.upsert(
                     embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_assistant",
                     embedding=await embed(state.llm_response.content),
                     object_type="chat_message",
                     object_id=str(state.session_id),
                     content=message_content,
-                    metadata={
-                        "namespace": "chat_history",
-                        "patient_id": state.patient_id or "general_chat",
-                        "session_id": state.session_id,
-                        "timestamp": str(int(time.time() * 1000)),
-                        "user_id": state.user_id,
-                        "message_type": "assistant",
-                        "has_generated_image": str(bool(state.generated_image))  # Add flag for easier querying
-                    }
+                    metadata=metadata
                 )
-                
-                print(f"[store_assistant_response] Stored message with image info: {bool(state.generated_image)}")
                 
             except Exception as e:
                 print(f"[store_assistant_response] Error: {e}")
+                import traceback
+                traceback.print_exc()
             
             return state
 
-
+        @streaming_step("diagnose")
         async def diagnose(state: FlowState) -> FlowState:
 
 
@@ -1058,7 +1097,9 @@ Please reference this generated image in your response when relevant and explain
 
             messages.append(user)
 
-            state.llm_response = await self._llm.chat(messages)
+            reasoning_prompt = self._create_reasoning_prompt(state)
+
+            state.llm_response = await self._streaming_llm.chat_with_reasoning(messages=messages, state=state, reasoning_prompt=reasoning_prompt)
 
 
             if state.user_id and state.user_context:
@@ -1254,6 +1295,26 @@ Please reference this generated image in your response when relevant and explain
 
         return _builder.compile()
 
+
+    def _create_reasoning_prompt(self, state: FlowState) -> str:
+        """Create a reasoning prompt based on the current context."""
+        if state.chat_mode:
+            return """Think through this medical conversation step by step:
+1. What is the user asking about?
+2. What relevant medical information do I have available?
+3. What key points should I address in my response?
+4. How can I provide helpful, accurate medical guidance?
+5. Are there any important warnings or considerations to mention?"""
+        else:
+            return """Think through this diagnostic case step by step:
+1. What are the key symptoms and findings presented?
+2. What patient history and context is relevant?
+3. What are the most likely diagnostic possibilities?
+4. What evidence supports or refutes each possibility?
+5. What is my primary diagnosis and why?
+6. What differential diagnoses should be considered?
+7. What additional testing or follow-up might be needed?"""
+
     async def get_or_create_session(
         self, 
         user_id: str, 
@@ -1328,17 +1389,132 @@ Please reference this generated image in your response when relevant and explain
         else:
             return self.chat_output(data)
 
-    def run_stream(self, patient: PatientContext, user_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
+    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Return an async generator that yields chunks as they stream from the graph."""
 
         async def _stream_generator():
-            prompt = user_prompt or self._default_prompt
+            if user_id:
+                session_id_final = await self.get_or_create_session(
+                    user_id=user_id,
+                    patient_id=patient.patient_id if patient else None,
+                    mode="chat" if chat_mode else "diagnose",
+                    session_id=session_id,
+                    allow_join_existing=True
+                )
+            else:
+                session_id_final = session_id
 
-            async for update in self._compiled_graph.astream({
-                "patient_id": patient.patient_id,
-                "user_prompt": prompt,
-            }):
-                yield update
+            prompt = user_prompt or self._default_prompt
+            
+            # Create initial input
+            if patient is not None:
+                initial_input = {
+                    "patient_id": patient.patient_id,
+                    "user_prompt": prompt,
+                    "chat_mode": chat_mode,
+                    "user_id": user_id,
+                    "session_id": session_id_final
+                }
+            else:
+                initial_input = {
+                    "user_prompt": prompt,
+                    "chat_mode": chat_mode,
+                    "user_id": user_id,
+                    "session_id": session_id_final
+                }
+
+            previous_state = None
+            reasoning_emitted = set()  # Track which reasoning steps we've emitted
+            
+            async for update in self._compiled_graph.astream(initial_input):
+                # Extract the current state from the update
+                for node_name, node_output in update.items():
+                    if isinstance(node_output, dict):
+                        current_state = node_output
+                        
+                        # Emit status updates for step changes with auto-generated detailed descriptions
+                        if (previous_state is None or 
+                            current_state.get("current_step") != previous_state.get("current_step") or
+                            current_state.get("step_status") != previous_state.get("step_status")):
+                            
+                            status_update = {
+                                "type": "status",
+                                "step": current_state.get("current_step", ""),
+                                "description": current_state.get("step_details", ""),  # Use auto-generated details
+                                "status": current_state.get("step_status", ""),
+                                "progress": current_state.get("progress_percentage", 0.0),
+                                "timestamp": datetime.now().isoformat()
+                            }
+                            
+                            # Add special flags for important events
+                            if current_state.get("current_step") == "generate_image":
+                                if current_state.get("step_status") == "in_progress":
+                                    status_update["is_long_running"] = True
+                                    status_update["estimated_time"] = "30-60 seconds"
+                                elif current_state.get("step_status") == "completed" and current_state.get("generated_image"):
+                                    status_update["image_generated"] = True
+                                    status_update["image_id"] = current_state["generated_image"].generation_id
+                            
+                            yield status_update
+                        
+                        # NEW: Emit reasoning steps as they become available from the streaming LLM
+                        if current_state.get("reasoning_steps"):
+                            for i, step in enumerate(current_state["reasoning_steps"]):
+                                step_id = f"{current_state.get('session_id', 'unknown')}_{i}"
+                                if step_id not in reasoning_emitted:
+                                    reasoning_update = {
+                                        "type": "reasoning",
+                                        "step_number": i + 1,
+                                        "total_steps": len(current_state["reasoning_steps"]),
+                                        "content": step,  # This is the actual reasoning content
+                                        "timestamp": datetime.now().isoformat()
+                                    }
+                                    yield reasoning_update
+                                    reasoning_emitted.add(step_id)
+                        
+                        # Emit reasoning complete when LLM finishes thinking
+                        if (current_state.get("llm_reasoning") and 
+                            current_state.get("reasoning_complete") and
+                            (not previous_state or not previous_state.get("reasoning_complete"))):
+                            
+                            reasoning_complete_update = {
+                                "type": "reasoning_complete",
+                                "full_reasoning": current_state["llm_reasoning"],
+                                "timestamp": datetime.now().isoformat()
+                            }
+                            yield reasoning_complete_update
+                        
+                        previous_state = current_state
+            
+            # Emit final completion with image info
+            final_response_content = ""
+            if previous_state and previous_state.get("llm_response"):
+                final_response_content = previous_state["llm_response"].content if hasattr(previous_state["llm_response"], 'content') else str(previous_state["llm_response"])
+            
+            completion_update = {
+                "type": "completion",
+                "status": "completed",
+                "details": "Analysis complete",
+                "progress": 100.0,
+                "timestamp": datetime.now().isoformat(),
+                "final_response": final_response_content
+            }
+            
+            # Include reasoning in completion
+            if previous_state and previous_state.get("llm_reasoning"):
+                completion_update["reasoning"] = previous_state["llm_reasoning"]
+                completion_update["reasoning_steps"] = previous_state.get("reasoning_steps", [])
+            
+            # Include image information in completion
+            if previous_state and previous_state.get("generated_image"):
+                completion_update["generated_image"] = {
+                    "image_id": previous_state["generated_image"].generation_id,
+                    "prompt": previous_state["generated_image"].prompt,
+                    "created_at": previous_state["generated_image"].created_at.isoformat() if hasattr(previous_state["generated_image"], 'created_at') else None,
+                    "metadata": previous_state["generated_image"].metadata if hasattr(previous_state["generated_image"], 'metadata') else {}
+                }
+            
+            yield completion_update
 
         return _stream_generator()
 

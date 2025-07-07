@@ -157,6 +157,15 @@ class PGVectorAdapter(VectorStore):
                 else:
                     content_data = raw_content
                 
+                raw_metadata = row["metadata"]
+                if isinstance(raw_metadata, str):
+                    try:
+                        metadata = json.loads(raw_metadata)
+                    except json.JSONDecodeError:
+                        metadata = {}
+                else:
+                    metadata = raw_metadata or {}
+                    
                 # Extract the actual message content and role
                 message_content = content_data.get("content", "")
                 message_role = content_data.get("role", "user")
@@ -171,6 +180,22 @@ class PGVectorAdapter(VectorStore):
                     "metadata": json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
                 }
                 
+                if message_role == "assistant":
+                    # Extract reasoning steps from metadata
+                    if metadata.get("reasoning_steps"):
+                        try:
+                            reasoning_steps_data = json.loads(metadata["reasoning_steps"])
+                            message_data["reasoning_steps"] = reasoning_steps_data
+                            # Create a combined reasoning string from steps
+                            message_data["reasoning"] = "\n".join(reasoning_steps_data) if reasoning_steps_data else ""
+                            print(f"[DEBUG] Extracted reasoning with {len(reasoning_steps_data)} steps from metadata")
+                        except json.JSONDecodeError as e:
+                            print(f"[DEBUG] Failed to parse reasoning_steps from metadata: {e}")
+                    
+                    # Also check if there's reasoning in the content itself (fallback)
+                    if hasattr(content_data.get("generated_image"), "reasoning"):
+                        message_data["reasoning"] = content_data["generated_image"]["reasoning"]
+
                 # Add generated image info if available
                 if generated_image:
                     message_data["generated_image"] = generated_image
