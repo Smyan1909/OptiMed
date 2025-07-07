@@ -247,8 +247,8 @@ const GeneratedImageDisplay = ({ imageInfo }: { imageInfo: GeneratedImageInfo })
   // DEBUG: Log what we received
   useEffect(() => {
     console.log('🖼️ GeneratedImageDisplay received:', imageInfo);
-    console.log('🖼️ Image generated?', imageInfo.image_generated);
-    console.log('🖼️ Image ID?', imageInfo.image_id);
+    console.log('Image generated?', imageInfo.image_generated);
+    console.log('Image ID?', imageInfo.image_id);
   }, [imageInfo]);
 
   // Load image with proper headers
@@ -256,7 +256,7 @@ const GeneratedImageDisplay = ({ imageInfo }: { imageInfo: GeneratedImageInfo })
     if (imageInfo.image_generated && imageInfo.image_id) {
       const loadImageWithHeaders = async () => {
         try {
-          console.log('🖼️ Loading image with headers:', imageInfo.image_id);
+          console.log('Loading image with headers:', imageInfo.image_id);
           const response = await fetch(`/api/images/generated/${imageInfo.image_id}`, {
             headers: getAuthHeaders()
           });
@@ -265,13 +265,13 @@ const GeneratedImageDisplay = ({ imageInfo }: { imageInfo: GeneratedImageInfo })
             const blob = await response.blob();
             const url = URL.createObjectURL(blob);
             setImageUrl(url);
-            console.log('✅ Image loaded successfully');
+            console.log('Image loaded successfully');
           } else {
-            console.error('❌ Failed to load image:', response.status, response.statusText);
+            console.error('Failed to load image:', response.status, response.statusText);
             setImageError(true);
           }
         } catch (error) {
-          console.error('❌ Error loading image:', error);
+          console.error('Error loading image:', error);
           setImageError(true);
         } finally {
           setImageLoading(false);
@@ -647,7 +647,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
 
   const getEmptyStateText = () => {
     if (mode === "chat") return "Start chatting with CLARA...";
-    if (mode === "diagnose" && patientId) return "AI diagnosis assistant ready for patient consultation";
+    if (mode === "diagnose" && patientId) return "CLARA FÄRDIGA GÅ";
     return "Enter patient details to begin diagnosis...";
   };
 
@@ -670,7 +670,6 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.length === 0 && !isStreaming && (
           <div className="text-center py-8">
-            <div className="text-gray-500 text-lg mb-2">🤖</div>
             <p className="text-gray-600 font-medium italic">
               {getEmptyStateText()}
             </p>

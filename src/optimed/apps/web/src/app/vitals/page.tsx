@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { fetchPatient, PatientDetail } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { getDisplayName, formatLabValue, formatVitalValue } from '@/lib/codeMapping';
+import { Heart, Activity, Beaker } from 'lucide-react';
 
 function VitalsPageContent() {
   const params = useSearchParams();
@@ -133,9 +134,6 @@ function VitalsPageContent() {
                       ← Back to Patient
                     </button>
                   </Link>
-                  <Badge variant="success" className="text-sm px-3 py-1">
-                    ✅ Active
-                  </Badge>
                 </div>
               </div>
             </div>
@@ -159,77 +157,96 @@ function VitalsPageContent() {
             </div>
           </div>
 
-          {/* Vitals and Labs Section */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          {/* Enhanced Vitals and Labs Section */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 mb-6">
             {/* Vital Signs */}
-            <div className="bg-white shadow rounded-lg">
-              <div className="px-6 py-4 border-b border-gray-200">
+            <div className="bg-white shadow-sm rounded-lg border border-gray-200">
+              <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-red-50 to-pink-50">
                 <h2 className="text-lg font-bold text-gray-900 flex items-center">
-                  <span className="mr-2">💓</span>
+                  <Heart className="h-5 w-5 mr-2 text-red-500" />
                   Vital Signs
+                  {patient?.vitals && Object.keys(patient.vitals).length > 0 && (
+                    <Badge variant="secondary" className="ml-2 text-xs">
+                      {Object.keys(patient.vitals).length} readings
+                    </Badge>
+                  )}
                 </h2>
               </div>
               <div className="p-6">
                 {patient?.vitals && Object.keys(patient.vitals).length > 0 ? (
-                  <div className="space-y-4">
+                  <div className="space-y-3">
                     {Object.entries(patient.vitals).map(([key, value]) => {
-                      // The key should now be human-readable from the backend
-                      // But we can add additional formatting if needed
                       const displayName = key.includes('-') ? getDisplayName(key, 'vital') : key;
                       const formattedValue = formatVitalValue(key, value);
                       
                       return (
-                        <div key={key} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-b-0">
-                          <span className="text-sm font-medium text-gray-700">{displayName}</span>
-                          <Badge variant="outline" className="text-sm">{formattedValue}</Badge>
+                        <div key={key} className="flex items-center justify-between py-3 px-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors min-h-[50px]">
+                          <div className="flex items-center flex-1">
+                            <span className="text-sm font-medium text-gray-700 flex-1">{displayName}</span>
+                          </div>
+                          <Badge variant="outline" className="text-sm font-semibold ml-4">{formattedValue}</Badge>
                         </div>
                       );
                     })}
                   </div>
                 ) : (
-                  <div className="text-center py-8">
-                    <span className="text-gray-400 text-4xl mb-2 block">📊</span>
-                    <p className="text-gray-500">No vital signs recorded</p>
+                  <div className="text-center py-12">
+                    <div className="h-16 w-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Activity className="h-8 w-8 text-gray-400" />
+                    </div>
+                    <h3 className="text-sm font-medium text-gray-900 mb-1">No Vital Signs</h3>
+                    <p className="text-sm text-gray-500">No vital signs recorded for this patient</p>
                   </div>
                 )}
               </div>
             </div>
 
             {/* Lab Results */}
-            <div className="bg-white shadow rounded-lg">
-              <div className="px-6 py-4 border-b border-gray-200">
+            <div className="bg-white shadow-sm rounded-lg border border-gray-200">
+              <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
                 <h2 className="text-lg font-bold text-gray-900 flex items-center">
-                  <span className="mr-2">🧪</span>
+                  <Beaker className="h-5 w-5 mr-2 text-blue-500" />
                   Lab Results
+                  {patient?.labs && Object.keys(patient.labs).length > 0 && (
+                    <Badge variant="secondary" className="ml-2 text-xs">
+                      {Object.keys(patient.labs).length} tests
+                    </Badge>
+                  )}
                 </h2>
               </div>
               <div className="p-6">
                 {patient?.labs && Object.keys(patient.labs).length > 0 ? (
-                  <div className="space-y-4">
+                  <div className="space-y-3">
                     {Object.entries(patient.labs).map(([key, value]) => {
-                      // The key should now be human-readable from the backend
-                      // But we can add additional formatting if needed
                       const displayName = key.includes('-') ? getDisplayName(key, 'lab') : key;
                       const formattedValue = formatLabValue(key, value);
                       
                       return (
-                        <div key={key} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-b-0">
-                          <span className="text-sm font-medium text-gray-700">{displayName}</span>
-                          <Badge variant="secondary" className="text-sm">{formattedValue}</Badge>
+                        <div key={key} className="flex items-center justify-between py-3 px-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors min-h-[50px]">
+                          <div className="flex items-center flex-1">
+                            <span className="text-sm font-medium text-gray-700 flex-1">{displayName}</span>
+                          </div>
+                          <Badge variant="outline" className="text-sm font-semibold ml-4">{formattedValue}</Badge>
                         </div>
                       );
                     })}
                   </div>
                 ) : (
-                  <div className="text-center py-8">
-                    <span className="text-gray-400 text-4xl mb-2 block">🔬</span>
-                    <p className="text-gray-500">No lab results available</p>
+                  <div className="text-center py-12">
+                    <div className="h-16 w-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Beaker className="h-8 w-8 text-gray-400" />
+                    </div>
+                    <h3 className="text-sm font-medium text-gray-900 mb-1">No Lab Results</h3>
+                    <p className="text-sm text-gray-500">No laboratory results available for this patient</p>
                   </div>
                 )}
               </div>
+            
+
             </div>
-          </div>
+          </div>    
         </div>
+
       </main>
     </div>
   );

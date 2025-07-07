@@ -133,9 +133,6 @@ function JournalPageContent() {
                       ← Back to Patient
                     </button>
                   </Link>
-                  <Badge variant="success" className="text-sm px-3 py-1">
-                    ✅ Active
-                  </Badge>
                 </div>
               </div>
             </div>
