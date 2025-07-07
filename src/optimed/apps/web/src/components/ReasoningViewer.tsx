@@ -21,10 +21,8 @@ const MarkdownComponents = {
   // Style paragraphs
   p: ({ children }: any) => <p className="text-sm text-blue-900 leading-relaxed mb-2">{children}</p>,
   
-  // Style lists
-  ul: ({ children }: any) => <ul className="list-disc list-inside space-y-1 ml-2 mb-2">{children}</ul>,
-  ol: ({ children }: any) => <ol className="list-decimal list-inside space-y-1 ml-2 mb-2">{children}</ol>,
-  li: ({ children }: any) => <li className="text-sm text-blue-900">{children}</li>,
+  // Style lists - FIXED: Remove list-inside to preserve automatic numbering
+  ul: ({ children }: any) => <ul className="list-disc list-outside ml-6 space-y-1 mb-2">{children}</ul>,
   
   // Style code blocks
   code: ({ inline, children }: any) => {

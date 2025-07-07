@@ -84,117 +84,67 @@ interface DICOMViewerProps {
 }
 
 const DICOMAnalysisMarkdownComponents = {
-  // Style headings for medical context
-  h1: ({ children }: any) => (
-    <h1 className="text-xl font-bold text-gray-900 mt-6 mb-3 border-b-2 border-blue-200 pb-2">
-      {children}
-    </h1>
-  ),
-  h2: ({ children }: any) => (
-    <h2 className="text-lg font-semibold text-gray-900 mt-5 mb-3 text-blue-900">
-      {children}
-    </h2>
-  ),
-  h3: ({ children }: any) => (
-    <h3 className="text-base font-medium text-gray-900 mt-4 mb-2 text-blue-800">
-      {children}
-    </h3>
-  ),
+  // Style headings
+  h1: ({ children }: any) => <h1 className="text-lg font-bold text-blue-900 mt-4 mb-2">{children}</h1>,
+  h2: ({ children }: any) => <h2 className="text-base font-semibold text-blue-900 mt-3 mb-2">{children}</h2>,
+  h3: ({ children }: any) => <h3 className="text-sm font-medium text-blue-900 mt-2 mb-1">{children}</h3>,
   
-  // Style paragraphs for readability
-  p: ({ children }: any) => (
-    <p className="text-gray-700 leading-relaxed mb-3 text-sm">
-      {children}
-    </p>
-  ),
+  // Style paragraphs
+  p: ({ children }: any) => <p className="text-sm text-blue-900 leading-relaxed mb-2">{children}</p>,
   
-  // Style lists for findings and diagnoses
-  ul: ({ children }: any) => (
-    <ul className="list-disc list-inside space-y-2 ml-4 mb-4 text-gray-700">
-      {children}
-    </ul>
-  ),
-  ol: ({ children }: any) => (
-    <ol className="list-decimal list-inside space-y-2 ml-4 mb-4 text-gray-700">
-      {children}
-    </ol>
-  ),
-  li: ({ children }: any) => (
-    <li className="text-sm leading-relaxed">
-      {children}
-    </li>
-  ),
+  // Style lists - FIXED: Remove list-inside to preserve automatic numbering
+  ul: ({ children }: any) => <ul className="list-disc ml-6 space-y-1 mb-2">{children}</ul>,
   
-  // Style code for measurements and technical details
+  // Style code blocks
   code: ({ inline, children }: any) => {
     if (inline) {
-      return (
-        <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-xs font-mono border">
-          {children}
-        </code>
-      );
+      return <code className="bg-blue-100 text-blue-800 px-1 py-0.5 rounded text-xs font-mono">{children}</code>;
     }
     return (
-      <pre className="bg-gray-100 text-gray-800 p-4 rounded-lg text-sm font-mono overflow-x-auto mb-4 border">
+      <pre className="bg-blue-100 text-blue-800 p-3 rounded text-xs font-mono overflow-x-auto mb-2">
         <code>{children}</code>
       </pre>
     );
   },
   
-  // Style blockquotes for important findings
+  // Style blockquotes
   blockquote: ({ children }: any) => (
-    <blockquote className="border-l-4 border-orange-400 bg-orange-50 pl-4 py-2 my-4 italic text-orange-900">
+    <blockquote className="border-l-4 border-blue-300 pl-3 italic text-blue-800 mb-2">
       {children}
     </blockquote>
   ),
   
-  // Style emphasis for medical terminology
-  strong: ({ children }: any) => (
-    <strong className="font-semibold text-gray-900 bg-yellow-100 px-1 rounded">
-      {children}
-    </strong>
-  ),
+  // Style strong/bold text
+  strong: ({ children }: any) => <strong className="font-semibold text-blue-900">{children}</strong>,
   
-  em: ({ children }: any) => (
-    <em className="italic text-blue-800 font-medium">
-      {children}
-    </em>
-  ),
+  // Style emphasis/italic text
+  em: ({ children }: any) => <em className="italic text-blue-800">{children}</em>,
   
-  // Style links for references
+  // Style links
   a: ({ href, children }: any) => (
     <a 
       href={href} 
       target="_blank" 
       rel="noopener noreferrer" 
-      className="text-blue-600 hover:text-blue-800 underline font-medium"
+      className="text-blue-600 hover:text-blue-800 underline"
     >
       {children}
     </a>
   ),
   
-  // Style tables for structured findings
+  // Style tables
   table: ({ children }: any) => (
-    <div className="overflow-x-auto mb-4">
-      <table className="min-w-full border-collapse border border-gray-300 bg-white rounded-lg">
-        {children}
-      </table>
+    <div className="overflow-x-auto mb-2">
+      <table className="min-w-full border-collapse border border-blue-200">{children}</table>
     </div>
   ),
   th: ({ children }: any) => (
-    <th className="border border-gray-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-900 text-left">
+    <th className="border border-blue-200 bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-900 text-left">
       {children}
     </th>
   ),
   td: ({ children }: any) => (
-    <td className="border border-gray-300 px-4 py-2 text-sm text-gray-700">
-      {children}
-    </td>
-  ),
-  
-  // Custom component for medical findings
-  hr: () => (
-    <hr className="my-6 border-t-2 border-gray-200" />
+    <td className="border border-blue-200 px-2 py-1 text-xs text-blue-900">{children}</td>
   ),
 };
 
