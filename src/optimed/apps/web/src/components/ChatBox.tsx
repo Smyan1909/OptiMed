@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, FormEvent } from "react";
+import { useState, useEffect, FormEvent, useRef } from "react";
 import { useUser } from '@/contexts/UserContext';
 import { Download, Image as ImageIcon, ExternalLink } from 'lucide-react';
 import { getGeneratedImageUrl, downloadGeneratedImage } from '@/lib/api';
@@ -32,6 +32,8 @@ export interface GeneratedImageResponse {
   metadata: Record<string, any>;
   model_info: Record<string, any>;
 }
+
+
 
 interface Message {
   sender: "user" | "system";
@@ -247,7 +249,7 @@ const GeneratedImageDisplay = ({ imageInfo }: { imageInfo: GeneratedImageInfo })
   // DEBUG: Log what we received
   useEffect(() => {
     console.log('🖼️ GeneratedImageDisplay received:', imageInfo);
-    console.log('Image generated?', imageInfo.image_generated);
+    console.log(' Image generated?', imageInfo.image_generated);
     console.log('Image ID?', imageInfo.image_id);
   }, [imageInfo]);
 
@@ -401,6 +403,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   // ...existing code...
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const {
     isStreaming,
     currentStep,
@@ -432,6 +435,15 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   });
   
   const { user } = useUser();
+
+  // Auto-scroll to bottom när nya meddelanden kommer
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isStreaming]);
 
   // Update sessionId when prop changes
   useEffect(() => {
@@ -633,65 +645,70 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   }, [streamError]);
 
   return (
-    <div className="flex flex-col h-full border rounded-lg bg-white shadow-sm">
-      {/* Chat Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {messages.length === 0 && !isStreaming && (
-          <div className="text-center py-8">
-            <p className="text-gray-600 font-medium italic">
-              {getEmptyStateText()}
-            </p>
-          </div>
-        )}
-        
-        {messages.map((msg, idx) => (
-          <div key={idx} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
-            <div className="max-w-[80%]">
-              <div className={`px-4 py-3 rounded-lg ${
-                msg.sender === "user" 
-                  ? "bg-blue-600 text-white" 
-                  : "bg-gray-100 text-gray-900 border"
-              }`}>
-                <MessageContent text={msg.text} isUser={msg.sender === "user"} />
-              </div>
-              
-              {/* Display generated image if available */}
-              {msg.generatedImage && (
-                <GeneratedImageDisplay imageInfo={msg.generatedImage} />
-              )}
-              
-              {/* Display reasoning viewer for system messages */}
-              {msg.sender === "system" && (msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)) && (
-                <ReasoningViewer 
-                  reasoning={msg.reasoning || ''} 
-                  reasoningSteps={msg.reasoningSteps} 
-                />
-              )}
-              
-              {msg.timestamp && (
-                <div className={`text-xs mt-1 ${
-                  msg.sender === "user" ? "text-right text-gray-500" : "text-left text-gray-500"
-                }`}>
-                  {msg.timestamp}
-                </div>
-              )}
+    <div className="flex flex-col h-full bg-white max-h-full overflow-hidden">
+      {/* Chat Messages Area - bara denna del scrollar */}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
+        <div className="p-4 space-y-3">
+          {messages.length === 0 && !isStreaming && (
+            <div className="text-center py-8">
+              <p className="text-gray-600 font-medium italic">
+                {getEmptyStateText()}
+              </p>
             </div>
-          </div>
-        ))}
+          )}
+          
+          {messages.map((msg, idx) => (
+            <div key={idx} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
+              <div className="max-w-[80%]">
+                <div className={`px-4 py-3 rounded-lg ${
+                  msg.sender === "user" 
+                    ? "bg-blue-600 text-white" 
+                    : "bg-gray-100 text-gray-900 border"
+                }`}>
+                  <MessageContent text={msg.text} isUser={msg.sender === "user"} />
+                </div>
+                
+                {/* Display generated image if available */}
+                {msg.generatedImage && (
+                  <GeneratedImageDisplay imageInfo={msg.generatedImage} />
+                )}
+                
+                {/* Display reasoning viewer for system messages */}
+                {msg.sender === "system" && (msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)) && (
+                  <ReasoningViewer 
+                    reasoning={msg.reasoning || ''} 
+                    reasoningSteps={msg.reasoningSteps} 
+                  />
+                )}
+                
+                {msg.timestamp && (
+                  <div className={`text-xs mt-1 ${
+                    msg.sender === "user" ? "text-right text-gray-500" : "text-left text-gray-500"
+                  }`}>
+                    {msg.timestamp}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
 
-        {/* Streaming Progress - simplified to show only steps */}
-        <StreamingProgress
-          isStreaming={isStreaming}
-          currentStep={currentStep}
-          currentDescription={currentDescription}
-          progress={progress}
-          reasoning={reasoning}
-          currentReasoning={currentReasoning}
-        />
+          {/* Streaming Progress */}
+          <StreamingProgress
+            isStreaming={isStreaming}
+            currentStep={currentStep}
+            currentDescription={currentDescription}
+            progress={progress}
+            reasoning={reasoning}
+            currentReasoning={currentReasoning}
+          />
+
+          {/* Invisible scroll target */}
+          <div ref={messagesEndRef} />
+        </div>
       </div>
 
-      {/* Input Form */}
-      <div className="border-t bg-gray-50 p-4">
+      {/* Input Form - fast längst ner, scrollar INTE */}
+      <div className="border-t bg-gray-50 p-4 flex-shrink-0">
         <form onSubmit={sendMessage} className="flex gap-3">
           <input
             type="text"
