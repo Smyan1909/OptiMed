@@ -919,7 +919,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                         "generation_metadata": state.generated_image.metadata,
                         "model_info": state.generated_image.model_info
                     }
-                    message_content["generated_image"] = image_info
+                    message_content["generated_image"] = image_info # type: ignore
                 
                 # Prepare metadata - ALL VALUES MUST BE STRINGS
                 metadata = {

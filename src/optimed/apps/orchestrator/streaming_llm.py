@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Any
 from optimed.core.domain import ChatMessage, ChatRole
 from optimed.core.ports import LLMClient
 
@@ -8,7 +8,7 @@ class StreamingLLMWrapper:
     def __init__(self, llm_client: LLMClient):
         self.llm_client = llm_client
         self.current_reasoning = ""
-        self.reasoning_steps = []
+        self.reasoning_steps: List[Any] = []
     
     async def chat_with_reasoning(
         self, 

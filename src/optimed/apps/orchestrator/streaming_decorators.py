@@ -135,7 +135,7 @@ class StreamingStatus:
             return "User message stored in chat history"
         
         elif step_lower == "store_assistant_response":
-            reasoning_stored = hasattr(self.state, 'llm_reasoning') and getattr(self.state, 'llm_reasoning', '')
+            reasoning_stored = hasattr(self.state, 'llm_reasoning') and getattr(self.state, 'llm_reasoning', '') # type: ignore 
             image_stored = hasattr(self.state, 'generated_image') and getattr(self.state, 'generated_image', None)
             return f"AI response saved to chat history{' with reasoning' if reasoning_stored else ''}{' and image' if image_stored else ''}"
         
