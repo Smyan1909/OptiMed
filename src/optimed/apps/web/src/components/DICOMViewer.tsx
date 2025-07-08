@@ -384,6 +384,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
     
     setIsLoading(true);
     try {
+      
       const data = await getDICOMPixelData(
         selectedImage.image_id,
         windowCenter,

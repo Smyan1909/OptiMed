@@ -25,10 +25,19 @@ async def test_get_patient_stub(monkeypatch: Any, _load_fixture: Any) -> None:
         params = kwargs.get("params", {})
         category = params.get("category")
 
-        if category == "vital-signs":
-            return FakeResp(vitals_json)
-        if category == "laboratory":
-            return FakeResp(labs_json)
+        # Handle /Observation requests with different categories
+        if path == "/Observation":
+            if category == "vital-signs":
+                return FakeResp(vitals_json)
+            if category == "laboratory":
+                return FakeResp(labs_json)
+            # Return empty bundles for other observation categories
+            if category in ["imaging", "exam", "procedure", "social-history"]:
+                return FakeResp({"resourceType": "Bundle", "type": "searchset", "entry": []})
+
+        # Handle other FHIR resource requests
+        if path in ["/MedicationRequest", "/AllergyIntolerance", "/Condition"]:
+            return FakeResp({"resourceType": "Bundle", "type": "searchset", "entry": []})
 
         raise AssertionError(f"Unexpected URL {path} with params={params}")
     

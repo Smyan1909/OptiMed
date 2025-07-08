@@ -43,6 +43,69 @@ CRITICAL_LAB_CODES = {
     "1975-2": "Bilirubin",
 }
 
+IMAGING_CODES = {
+    "18726-0": "Radiology report",
+    "18748-4": "Diagnostic imaging study",
+    "18747-6": "CT scan",
+    "36643-5": "Ultrasound",
+    "30954-2": "X-ray",
+    "18745-0": "Cardiac catheterization",
+    "18746-8": "Colonoscopy",
+}
+
+EXAM_CODES = {
+    "8716-3": "Physical examination",
+    "10210-3": "Physical findings",
+    "8302-2": "Body height",
+    "29463-7": "Body weight",
+    "39156-5": "Body mass index",
+    "8867-4": "Heart rate",
+    "8480-6": "Systolic blood pressure",
+    "8462-4": "Diastolic blood pressure",
+    "8310-5": "Body temperature",
+    "33747-0": "General appearance",
+}
+
+PROCEDURE_CODES = {
+    "47519-4": "History of procedures",
+    "8716-3": "Surgical procedure",
+    "18776-5": "Treatment plan",
+    "33747-0": "Procedure performed",
+    "72133-2": "Procedure indication",
+    "59776-5": "Procedure outcome",
+}
+
+SOCIAL_HISTORY_CODES = {
+    "72166-2": "Tobacco smoking status",
+    "11331-6": "History of occupational exposure",
+    "76689-9": "Sex assigned at birth",
+    "72133-2": "Social history",
+    "229819007": "Tobacco use",
+    "160573003": "Alcohol intake",
+    "182836005": "Review of systems",
+    "408512008": "Body piercing",
+    "228273003": "Finding relating to drug misuse",
+}
+
+MEDICATION_CODES = {
+    "10160-0": "History of medication use",
+    "8716-3": "Medication administration",
+    "182836005": "Drug therapy",
+}
+
+ALLERGY_CODES = {
+    "48765-2": "Allergies and adverse reactions",
+    "10155-0": "History of allergic reaction",
+    "420134006": "Propensity to adverse reactions",
+}
+
+DIAGNOSIS_CODES = {
+    "11348-0": "History of past illness",
+    "10154-3": "Chief complaint",
+    "46239-0": "Reason for encounter",
+    "8716-3": "Problem list",
+}
+
 """
 optimed.adapters.smart_fhir.repository
 -------------------------------------
@@ -149,36 +212,61 @@ def _obs_bundle_to_dict(entries: list[Observation]) -> dict[str, str]:
     """Convert observation bundle to dict with human-readable names."""
     result = {}
     for obs in entries:
-        if obs.code and obs.code.coding:
-            # Get the LOINC code
-            loinc_code = None
-            for coding in obs.code.coding:
-                if coding.system == "http://loinc.org":
-                    loinc_code = coding.code
-                    break
-            
-            if loinc_code:
-                # Determine if this is a vital or lab based on our mappings
-                if loinc_code in VITAL_CODES:
-                    display_name = VITAL_CODES[loinc_code]
-                elif loinc_code in CRITICAL_LAB_CODES:
-                    display_name = CRITICAL_LAB_CODES[loinc_code]
-                else:
-                    # Fallback to the display name from FHIR or the code itself
-                    display_name = obs.code.coding[0].display or loinc_code
-                
-                # Get the value
-                value_str = "N/A"
-                if obs.valueQuantity:
-                    unit = obs.valueQuantity.unit or ""
-                    value_str = f"{obs.valueQuantity.value} {unit}".strip()
-                elif obs.valueString:
-                    value_str = obs.valueString
-                elif obs.valueCodeableConcept:
-                    if obs.valueCodeableConcept.text:
-                        value_str = obs.valueCodeableConcept.text
-                
+        # Handle both Observation objects and dict representations
+        if isinstance(obs, dict):
+            # Handle dict-based observations (from medications, allergies, diagnoses)
+            if obs.get("code") and obs["code"].get("coding"):
+                coding = obs["code"]["coding"][0]
+                display_name = coding.get("display", "Unknown")
+                value_str = obs.get("valueString", "N/A")
                 result[display_name] = value_str
+        else:
+            # Handle actual Observation objects
+            if obs.code and obs.code.coding:
+                # Get the LOINC code
+                loinc_code = None
+                for coding in obs.code.coding:
+                    if coding.system == "http://loinc.org":
+                        loinc_code = coding.code
+                        break
+                
+                if loinc_code:
+                    # Determine category based on our mappings
+                    display_name = None
+                    if loinc_code in VITAL_CODES:
+                        display_name = VITAL_CODES[loinc_code]
+                    elif loinc_code in CRITICAL_LAB_CODES:
+                        display_name = CRITICAL_LAB_CODES[loinc_code]
+                    elif loinc_code in IMAGING_CODES:
+                        display_name = IMAGING_CODES[loinc_code]
+                    elif loinc_code in EXAM_CODES:
+                        display_name = EXAM_CODES[loinc_code]
+                    elif loinc_code in PROCEDURE_CODES:
+                        display_name = PROCEDURE_CODES[loinc_code]
+                    elif loinc_code in SOCIAL_HISTORY_CODES:
+                        display_name = SOCIAL_HISTORY_CODES[loinc_code]
+                    elif loinc_code in MEDICATION_CODES:
+                        display_name = MEDICATION_CODES[loinc_code]
+                    elif loinc_code in ALLERGY_CODES:
+                        display_name = ALLERGY_CODES[loinc_code]
+                    elif loinc_code in DIAGNOSIS_CODES:
+                        display_name = DIAGNOSIS_CODES[loinc_code]
+                    else:
+                        # Fallback to the display name from FHIR or the code itself
+                        display_name = obs.code.coding[0].display or loinc_code
+                    
+                    # Get the value
+                    value_str = "N/A"
+                    if obs.valueQuantity:
+                        unit = obs.valueQuantity.unit or ""
+                        value_str = f"{obs.valueQuantity.value} {unit}".strip()
+                    elif obs.valueString:
+                        value_str = obs.valueString
+                    elif obs.valueCodeableConcept:
+                        if obs.valueCodeableConcept.text:
+                            value_str = obs.valueCodeableConcept.text
+                    
+                    result[display_name] = value_str
     
     return result
 
@@ -194,13 +282,17 @@ def _to_patient_ctx(
         patient: Patient,
         vitals: list[Observation] | None = None,
         labs: list[Observation] | None = None,
+        imaging: list[Observation] | None = None,
+        exam: list[Observation] | None = None,
+        procedure: list[Observation] | None = None,
+        social_history: list[Observation] | None = None,
+        medications: list[Observation] | None = None,
+        allergies: list[Observation] | None = None,
+        diagnoses: list[Observation] | None = None,
 ) -> PatientContext:
-    """Convert FHIR Patient + vitals/labs to PatientContext domain model."""
+    """Convert FHIR Patient + observations to PatientContext domain model."""
     if not patient.id:
         raise ValueError("Patient must have an ID")
-
-    vitals_dict = _obs_bundle_to_dict(vitals or [])
-    labs_dict = _obs_bundle_to_dict(labs or [])
 
     return PatientContext(
         patient_id=patient.id,
@@ -208,8 +300,15 @@ def _to_patient_ctx(
         age=_age_from_birthdate(patient.birthDate),
         sex=patient.gender or "unknown",
         care_unit="UNKNOWN",  # May need enhancement with SMART on FHIR data
-        vitals=vitals_dict,
-        labs=labs_dict,
+        vitals=_obs_bundle_to_dict(vitals or []),
+        labs=_obs_bundle_to_dict(labs or []),
+        imaging=_obs_bundle_to_dict(imaging or []),
+        exam=_obs_bundle_to_dict(exam or []),
+        procedure=_obs_bundle_to_dict(procedure or []),
+        social_history=_obs_bundle_to_dict(social_history or []),
+        medications=_obs_bundle_to_dict(medications or []),
+        allergies=_obs_bundle_to_dict(allergies or []),
+        diagnoses=_obs_bundle_to_dict(diagnoses or []),
     )
 
 class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
@@ -352,7 +451,20 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
         patient = await self._get_patient_resource(patient_id)
         vitals = await self._get_observations(patient_id, category="vital-signs")
         labs = await self._get_observations(patient_id, category="laboratory")
-        return _to_patient_ctx(patient, vitals, labs)
+        imaging = await self._get_observations(patient_id, category="imaging")
+        exam = await self._get_observations(patient_id, category="exam")
+        procedure = await self._get_observations(patient_id, category="procedure")
+        social_history = await self._get_observations(patient_id, category="social-history")
+        
+        # For medications, allergies, and diagnoses, use different FHIR resources
+        medications = await self._get_medications(patient_id)
+        allergies = await self._get_allergies(patient_id)
+        diagnoses = await self._get_conditions(patient_id)
+        
+        return _to_patient_ctx(
+            patient, vitals, labs, imaging, exam, procedure, 
+            social_history, medications, allergies, diagnoses
+        )
         
     async def search_patients(self, query: str) -> Sequence[PatientContext]:
         """Search patients by name or identifier."""
@@ -384,6 +496,86 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
         r.raise_for_status()
         return Patient.model_validate(r.json())
     
+    async def _get_medications(self, patient_id: str) -> list[Observation]:
+        """Fetch medication information for a patient."""
+        await self._ensure_token_valid()
+        
+        try:
+            r = await self._client.get("/MedicationRequest", params={
+                "patient": patient_id,
+                "status": "active",
+                "_count": 20
+            })
+            r.raise_for_status()
+            bundle = r.json()
+            
+            # Convert MedicationRequest to Observation-like structure
+            medications = []
+            for entry in bundle.get("entry", []):
+                resource = entry["resource"]
+                # Create a simplified observation for medication
+                med_obs = {
+                    "code": {"coding": [{"code": "10160-0", "display": "Medication"}]},
+                    "valueString": resource.get("medicationCodeableConcept", {}).get("text", "Unknown medication")
+                }
+                medications.append(med_obs)
+            
+            return medications
+        except Exception:
+            return []
+    
+    async def _get_allergies(self, patient_id: str) -> list[Observation]:
+        """Fetch allergy information for a patient."""
+        await self._ensure_token_valid()
+        
+        try:
+            r = await self._client.get("/AllergyIntolerance", params={
+                "patient": patient_id,
+                "_count": 20
+            })
+            r.raise_for_status()
+            bundle = r.json()
+            
+            # Convert AllergyIntolerance to Observation-like structure
+            allergies = []
+            for entry in bundle.get("entry", []):
+                resource = entry["resource"]
+                allergy_obs = {
+                    "code": {"coding": [{"code": "48765-2", "display": "Allergies"}]},
+                    "valueString": resource.get("code", {}).get("text", "Unknown allergy")
+                }
+                allergies.append(allergy_obs)
+            
+            return allergies
+        except Exception:
+            return []
+
+    async def _get_conditions(self, patient_id: str) -> list[Observation]:
+        """Fetch condition/diagnosis information for a patient."""
+        await self._ensure_token_valid()
+        
+        try:
+            r = await self._client.get("/Condition", params={
+                "patient": patient_id,
+                "_count": 20
+            })
+            r.raise_for_status()
+            bundle = r.json()
+            
+            # Convert Condition to Observation-like structure
+            conditions = []
+            for entry in bundle.get("entry", []):
+                resource = entry["resource"]
+                condition_obs = {
+                    "code": {"coding": [{"code": "11348-0", "display": "Diagnosis"}]},
+                    "valueString": resource.get("code", {}).get("text", "Unknown condition")
+                }
+                conditions.append(condition_obs)
+            
+            return conditions
+        except Exception:
+            return []
+
     async def _get_observations(
             self,
             pid: str,

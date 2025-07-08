@@ -42,7 +42,7 @@ export function formatLabValue(key: string, value: string): string {
     const unit = value.replace(match[1], '').trim();
     
     if (!isNaN(numericValue)) {
-      const formattedNumber = numericValue.toFixed(2).replace(/\.?0+$/, '');
+      const formattedNumber = numericValue.toFixed(1).replace(/\.?0+$/, '');
       return unit ? `${formattedNumber} ${unit}` : formattedNumber;
     }
   }
@@ -60,7 +60,25 @@ export function formatVitalValue(key: string, value: string): string {
     const unit = value.replace(match[1], '').trim();
     
     if (!isNaN(numericValue)) {
-      const formattedNumber = numericValue.toFixed(2).replace(/\.?0+$/, '');
+      const formattedNumber = numericValue.toFixed(1).replace(/\.?0+$/, '');
+      return unit ? `${formattedNumber} ${unit}` : formattedNumber;
+    }
+  }
+  
+  // Return original value if no number found
+  return value;
+}
+
+export function formatNumericalValue(value: string): string {
+  // Check if the value contains a number
+  const match = value.match(/(\d+\.?\d*)/);
+  
+  if (match) {
+    const numericValue = parseFloat(match[1]);
+    const unit = value.replace(match[1], '').trim();
+    
+    if (!isNaN(numericValue)) {
+      const formattedNumber = numericValue.toFixed(1).replace(/\.?0+$/, '');
       return unit ? `${formattedNumber} ${unit}` : formattedNumber;
     }
   }

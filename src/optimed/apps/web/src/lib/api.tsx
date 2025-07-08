@@ -1,12 +1,19 @@
 export type Patient = { id: string; name: string; dob?: string; age?: number };
 export type PatientDetail = {
-  id: string
-  name: string
-  age: number
-  sex: string
-  care_unit: string
-  vitals: Record<string,string>
-  labs:   Record<string,string>
+  id: string;
+  name: string;
+  age: number;
+  sex: string;
+  care_unit: string;
+  vitals: Record<string,string>;
+  labs:   Record<string,string>;
+  imaging: Record<string,string>;
+  exam: Record<string,string>;
+  procedure: Record<string,string>;
+  social_history: Record<string,string>;
+  medications: Record<string,string>;
+  allergies: Record<string,string>;
+  diagnoses: Record<string,string>;
 }
 
 export type User = {

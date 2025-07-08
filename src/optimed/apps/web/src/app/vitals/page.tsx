@@ -7,7 +7,8 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { fetchPatient, PatientDetail } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
-import { getDisplayName, formatLabValue, formatVitalValue } from '@/lib/codeMapping';
+import { getDisplayName, formatLabValue, formatVitalValue, formatNumericalValue } from '@/lib/codeMapping';
+import { Heart, Beaker, Camera, Stethoscope, Scissors, UserCheck, Pill, AlertTriangle, FileText } from 'lucide-react';
 
 function VitalsPageContent() {
   const params = useSearchParams();
@@ -82,6 +83,60 @@ function VitalsPageContent() {
     );
   }
 
+  // Helper function to render observation sections
+  const renderObservationSection = (
+    title: string,
+    data: Record<string, string>,
+    icon: React.ReactNode,
+    gradientFrom: string,
+    gradientTo: string,
+    emptyMessage: string,
+    badgeVariant: "default" | "secondary" | "destructive" | "outline" = "outline"
+  ) => (
+    <div className="bg-white shadow-sm rounded-lg border border-gray-200">
+      <div className={`px-6 py-4 border-b border-gray-200 bg-gradient-to-r ${gradientFrom} ${gradientTo}`}>
+        <h2 className="text-lg font-bold text-gray-900 flex items-center">
+          {icon}
+          {title}
+          {data && Object.keys(data).length > 0 && (
+            <Badge variant="secondary" className="ml-2 text-xs">
+              {Object.keys(data).length} {Object.keys(data).length === 1 ? 'entry' : 'entries'}
+            </Badge>
+          )}
+        </h2>
+      </div>
+      <div className="p-6">
+        {data && Object.keys(data).length > 0 ? (
+          <div className="space-y-3">
+            {Object.entries(data).map(([key, value]) => {
+              const displayName = key.includes('-') ? getDisplayName(key, 'vital') : key;
+              const formattedValue = title === 'Vital Signs' ? formatVitalValue(key, value) : 
+                                   title === 'Lab Results' ? formatLabValue(key, value) : 
+                                   formatNumericalValue(value); // Use the new formatter for all other fields
+              
+              return (
+                <div key={key} className="flex items-center justify-between py-3 px-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors min-h-[50px]">
+                  <div className="flex items-center flex-1">
+                    <span className="text-sm font-medium text-gray-700 flex-1">{displayName}</span>
+                  </div>
+                  <Badge variant={badgeVariant} className="text-sm font-semibold ml-4">{formattedValue}</Badge>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-center py-12">
+            <div className="h-16 w-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              {icon}
+            </div>
+            <h3 className="text-sm font-medium text-gray-900 mb-1">No {title}</h3>
+            <p className="text-sm text-gray-500">{emptyMessage}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
@@ -107,7 +162,7 @@ function VitalsPageContent() {
                 <span className="text-gray-400">/</span>
               </li>
               <li>
-                <span className="text-gray-900 font-medium">Vitals & Labs</span>
+                <span className="text-gray-900 font-medium">Clinical Data</span>
               </li>
             </ol>
           </nav>
@@ -123,7 +178,7 @@ function VitalsPageContent() {
                     </span>
                   </div>
                   <div className="ml-4">
-                    <h1 className="text-2xl font-bold text-gray-900">{patient?.name} - Vitals & Labs</h1>
+                    <h1 className="text-2xl font-bold text-gray-900">{patient?.name} - Clinical Data</h1>
                     <p className="text-gray-700 font-medium">Patient ID: {patient?.id}</p>
                   </div>
                 </div>
@@ -133,9 +188,6 @@ function VitalsPageContent() {
                       ← Back to Patient
                     </button>
                   </Link>
-                  <Badge variant="success" className="text-sm px-3 py-1">
-                    ✅ Active
-                  </Badge>
                 </div>
               </div>
             </div>
@@ -159,73 +211,139 @@ function VitalsPageContent() {
             </div>
           </div>
 
-          {/* Vitals and Labs Section */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          {/* Comprehensive Clinical Data Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-6">
+            
             {/* Vital Signs */}
-            <div className="bg-white shadow rounded-lg">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <h2 className="text-lg font-bold text-gray-900 flex items-center">
-                  <span className="mr-2">💓</span>
-                  Vital Signs
-                </h2>
-              </div>
-              <div className="p-6">
-                {patient?.vitals && Object.keys(patient.vitals).length > 0 ? (
-                  <div className="space-y-4">
-                    {Object.entries(patient.vitals).map(([key, value]) => {
-                      // The key should now be human-readable from the backend
-                      // But we can add additional formatting if needed
-                      const displayName = key.includes('-') ? getDisplayName(key, 'vital') : key;
-                      const formattedValue = formatVitalValue(key, value);
-                      
-                      return (
-                        <div key={key} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-b-0">
-                          <span className="text-sm font-medium text-gray-700">{displayName}</span>
-                          <Badge variant="outline" className="text-sm">{formattedValue}</Badge>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="text-center py-8">
-                    <span className="text-gray-400 text-4xl mb-2 block">📊</span>
-                    <p className="text-gray-500">No vital signs recorded</p>
-                  </div>
-                )}
-              </div>
-            </div>
+            {renderObservationSection(
+              'Vital Signs',
+              patient?.vitals || {},
+              <Heart className="h-5 w-5 mr-2 text-red-500" />,
+              'from-red-50',
+              'to-pink-50',
+              'No vital signs recorded for this patient'
+            )}
 
             {/* Lab Results */}
-            <div className="bg-white shadow rounded-lg">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <h2 className="text-lg font-bold text-gray-900 flex items-center">
-                  <span className="mr-2">🧪</span>
-                  Lab Results
-                </h2>
-              </div>
-              <div className="p-6">
-                {patient?.labs && Object.keys(patient.labs).length > 0 ? (
-                  <div className="space-y-4">
-                    {Object.entries(patient.labs).map(([key, value]) => {
-                      // The key should now be human-readable from the backend
-                      // But we can add additional formatting if needed
-                      const displayName = key.includes('-') ? getDisplayName(key, 'lab') : key;
-                      const formattedValue = formatLabValue(key, value);
-                      
-                      return (
-                        <div key={key} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-b-0">
-                          <span className="text-sm font-medium text-gray-700">{displayName}</span>
-                          <Badge variant="secondary" className="text-sm">{formattedValue}</Badge>
-                        </div>
-                      );
-                    })}
+            {renderObservationSection(
+              'Lab Results',
+              patient?.labs || {},
+              <Beaker className="h-5 w-5 mr-2 text-blue-500" />,
+              'from-blue-50',
+              'to-indigo-50',
+              'No laboratory results available for this patient'
+            )}
+
+            {/* Imaging Studies */}
+            {renderObservationSection(
+              'Imaging Studies',
+              patient?.imaging || {},
+              <Camera className="h-5 w-5 mr-2 text-purple-500" />,
+              'from-purple-50',
+              'to-violet-50',
+              'No imaging studies recorded for this patient'
+            )}
+
+            {/* Physical Exam */}
+            {renderObservationSection(
+              'Physical Exam',
+              patient?.exam || {},
+              <Stethoscope className="h-5 w-5 mr-2 text-green-500" />,
+              'from-green-50',
+              'to-emerald-50',
+              'No physical exam findings recorded for this patient'
+            )}
+
+            {/* Procedures */}
+            {renderObservationSection(
+              'Procedures',
+              patient?.procedure || {},
+              <Scissors className="h-5 w-5 mr-2 text-orange-500" />,
+              'from-orange-50',
+              'to-amber-50',
+              'No procedures recorded for this patient'
+            )}
+
+            {/* Social History */}
+            {renderObservationSection(
+              'Social History',
+              patient?.social_history || {},
+              <UserCheck className="h-5 w-5 mr-2 text-cyan-500" />,
+              'from-cyan-50',
+              'to-teal-50',
+              'No social history recorded for this patient'
+            )}
+
+            {/* Medications */}
+            {renderObservationSection(
+              'Medications',
+              patient?.medications || {},
+              <Pill className="h-5 w-5 mr-2 text-indigo-500" />,
+              'from-indigo-50',
+              'to-blue-50',
+              'No medications recorded for this patient'
+            )}
+
+            {/* Allergies */}
+            {renderObservationSection(
+              'Allergies',
+              patient?.allergies || {},
+              <AlertTriangle className="h-5 w-5 mr-2 text-red-500" />,
+              'from-red-50',
+              'to-rose-50',
+              'No known allergies recorded for this patient',
+              'destructive'
+            )}
+
+            {/* Diagnoses */}
+            {renderObservationSection(
+              'Diagnoses',
+              patient?.diagnoses || {},
+              <FileText className="h-5 w-5 mr-2 text-gray-500" />,
+              'from-gray-50',
+              'to-slate-50',
+              'No diagnoses recorded for this patient'
+            )}
+
+          </div>
+
+          {/* Summary Section */}
+          <div className="bg-white shadow rounded-lg">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-lg font-bold text-gray-900">Clinical Data Summary</h2>
+            </div>
+            <div className="p-6">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 text-center">
+                <div className="bg-red-50 p-4 rounded-lg">
+                  <div className="text-2xl font-bold text-red-600">
+                    {patient?.vitals ? Object.keys(patient.vitals).length : 0}
                   </div>
-                ) : (
-                  <div className="text-center py-8">
-                    <span className="text-gray-400 text-4xl mb-2 block">🔬</span>
-                    <p className="text-gray-500">No lab results available</p>
+                  <div className="text-sm text-red-700">Vital Signs</div>
+                </div>
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <div className="text-2xl font-bold text-blue-600">
+                    {patient?.labs ? Object.keys(patient.labs).length : 0}
                   </div>
-                )}
+                  <div className="text-sm text-blue-700">Lab Results</div>
+                </div>
+                <div className="bg-purple-50 p-4 rounded-lg">
+                  <div className="text-2xl font-bold text-purple-600">
+                    {patient?.imaging ? Object.keys(patient.imaging).length : 0}
+                  </div>
+                  <div className="text-sm text-purple-700">Imaging Studies</div>
+                </div>
+                <div className="bg-green-50 p-4 rounded-lg">
+                  <div className="text-2xl font-bold text-green-600">
+                    {patient?.exam ? Object.keys(patient.exam).length : 0}
+                  </div>
+                  <div className="text-sm text-green-700">Exam Findings</div>
+                </div>
+                <div className="bg-orange-50 p-4 rounded-lg">
+                  <div className="text-2xl font-bold text-orange-600">
+                    {patient?.procedure ? Object.keys(patient.procedure).length : 0}
+                  </div>
+                  <div className="text-sm text-orange-700">Procedures</div>
+                </div>
               </div>
             </div>
           </div>
