@@ -20,8 +20,9 @@ export async function GET(
     
     console.log(`Fetching journal entries for patient ${patientId}`);
     
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
     const response = await fetch(
-      `${process.env.API_BASE_URL || 'http://localhost:8000'}/patients/${patientId}/journal`,
+      `${baseUrl}/patients/${patientId}/journal`,
       { headers }
     );
 

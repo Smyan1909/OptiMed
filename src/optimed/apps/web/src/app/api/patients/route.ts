@@ -18,7 +18,8 @@ export async function GET(request: NextRequest) {
       headers['X-Session-ID'] = sessionId;
     }
     
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:8000'}/patients?q=${encodeURIComponent(q)}`, {
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/patients?q=${encodeURIComponent(q)}`, {
       headers
     });
     

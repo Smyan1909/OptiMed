@@ -4,7 +4,8 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:8000'}/auth/ehr-login`, {
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/auth/ehr-login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

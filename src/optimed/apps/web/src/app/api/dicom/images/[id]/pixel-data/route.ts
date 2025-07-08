@@ -26,7 +26,8 @@ export async function GET(
     }
     
     const queryString = queryParams.toString();
-    const url = `${process.env.API_BASE_URL || 'http://localhost:8000'}/dicom/images/${params.imageId}/pixel-data${queryString ? '?' + queryString : ''}`;
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+    const url = `${baseUrl}/dicom/images/${params.imageId}/pixel-data${queryString ? '?' + queryString : ''}`;
     
     const response = await fetch(url, { headers });
     
