@@ -16,7 +16,8 @@ export async function POST(request: NextRequest) {
       headers['X-Session-ID'] = sessionId;
     }
     
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:8000'}/sessions/create`, {
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/sessions/create`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body)

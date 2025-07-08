@@ -18,7 +18,8 @@ export async function GET(
       headers['X-Session-ID'] = sessionId;
     }
     
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:8000'}/images/user/${params.userId}?limit=${limit}`, {
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/images/user/${params.userId}?limit=${limit}`, {
       headers
     });
     

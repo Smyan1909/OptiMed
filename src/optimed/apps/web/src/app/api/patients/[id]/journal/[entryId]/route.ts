@@ -7,8 +7,9 @@ export async function GET(
   try {
     const { patientId, entryId } = params;
     
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
     const response = await fetch(
-      `${process.env.API_BASE_URL || 'http://localhost:8000'}/patients/${patientId}/journal/${entryId}`,
+      `${baseUrl}/patients/${patientId}/journal/${entryId}`,
       {
         headers: {
           'X-Session-ID': request.cookies.get('session-id')?.value || '',

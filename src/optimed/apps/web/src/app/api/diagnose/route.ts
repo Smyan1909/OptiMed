@@ -21,7 +21,8 @@ export async function POST(request: NextRequest) {
     
     console.log(`[API Route] Making request to backend with headers:`, headers);
     
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:8000'}/diagnose`, {
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/diagnose`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body)

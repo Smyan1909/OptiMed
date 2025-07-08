@@ -17,7 +17,8 @@ export async function POST(
       headers['X-Session-ID'] = sessionId;
     }
     
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:8000'}/sessions/${params.sessionId}/join`, {
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/sessions/${params.sessionId}/join`, {
       method: 'POST',
       headers
     });
