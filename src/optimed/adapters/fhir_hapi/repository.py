@@ -377,6 +377,10 @@ class HAPIFHIRRepository(FHIRRepository):
     async def search_patients(self, query: str) -> Sequence[PatientContext]:
         """Search patients by MRN or name."""
         
+        query = query.strip()
+        
+        query = query.split()
+
         r = await self._client.get("/Patient", params={"name": query, "_count": 25})
         r.raise_for_status()
         bundle = r.json()

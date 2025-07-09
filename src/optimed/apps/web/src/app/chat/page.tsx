@@ -14,6 +14,7 @@ function ChatPageContent() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
   const [chatKey, setChatKey] = useState(0); // Force ChatBox re-render
   const [sessionsKey, setSessionsKey] = useState(0); // Force SessionsList re-render
+  const [showSessions, setShowSessions] = useState(true); // Toggle sessions visibility
 
   const handleSessionSelect = (sessionId: string) => {
     setSelectedSessionId(sessionId);
@@ -27,33 +28,27 @@ function ChatPageContent() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
       <Header />
-      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        <div className="px-4 py-6 sm:px-0">
-          {/* Breadcrumb */}
-          <nav className="flex mb-6" aria-label="Breadcrumb">
+      <main className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex flex-col flex-1 overflow-hidden">
+          {/* Breadcrumb - kompakt */}
+          <nav className="flex mb-2 px-6 pt-4 flex-shrink-0" aria-label="Breadcrumb">
             <ol className="flex items-center space-x-4">
               <li>
                 <Link href="/patients" className="text-blue-600 hover:text-blue-800 font-medium">
                   Patients
                 </Link>
               </li>
-              <li>
-                <span className="text-gray-400">/</span>
-              </li>
-              <li>
-                <span className="text-gray-900 font-medium">General Chat</span>
-              </li>
             </ol>
           </nav>
 
-          {/* Page Header */}
-          <div className="mb-8">
+          {/* Page Header - kompakt */}
+          <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0">
             <div className="flex items-center justify-between">
               <div>
-                <h1 className="text-3xl font-bold text-gray-900">Chat with CLARA</h1>
-                <p className="mt-2 text-gray-600">
+                <h1 className="text-2xl font-bold text-gray-900">Chat with CLARA</h1>
+                <p className="mt-1 text-sm text-gray-600">
                   Welcome back, {user?.display_name}. Have a general conversation with your AI assistant.
                 </p>
               </div>
@@ -63,46 +58,43 @@ function ChatPageContent() {
                     ← Back to Patients
                   </button>
                 </Link>
-                <Badge variant="success" className="text-sm px-3 py-1">
-                  General Chat
-                </Badge>
               </div>
             </div>
           </div>
 
-          {/* Chat Interface */}
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-bold text-gray-900">AI Chat Assistant</h2>
-                  <p className="text-sm text-gray-700 font-medium">General health assistant - No specific patient context</p>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Badge variant="default" className="px-3 py-1">
-                    CLARA
-                  </Badge>
-                  <Badge variant="outline" className="px-3 py-1">
-                    {user?.display_name}
-                  </Badge>
-                </div>
-              </div>
+          {/* Chat Interface - tar resten av skärmen */}
+          <div className="bg-white flex-1 flex flex-col min-h-0 overflow-hidden">
+            <div className="px-6 py-2 border-b border-gray-200 flex-shrink-0">
+              <button
+                onClick={() => setShowSessions(!showSessions)}
+                className="flex items-center space-x-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {showSessions ? (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+                  ) : (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                  )}
+                </svg>
+                <span>{showSessions ? 'Hide Sessions' : 'Show Sessions'}</span>
+              </button>
             </div>
             
-            {/* Sessions and Chat Layout */}
-            <div className="flex h-[600px]">
-              {/* Sessions List Sidebar */}
-              <SessionsList
-                key={sessionsKey}
-                patientId={undefined} // No patient for general chat
-                selectedSessionId={selectedSessionId}
-                onSessionSelect={handleSessionSelect}
-                onNewSession={handleNewSession}
-                mode="chat"
-              />
+            {/* Sessions and Chat Layout - tar hela återstående utrymmet */}
+            <div className="flex flex-1 min-h-0 overflow-hidden">
+              {showSessions && (
+                <SessionsList
+                  key={sessionsKey}
+                  patientId={undefined} // No patient for general chat
+                  selectedSessionId={selectedSessionId}
+                  onSessionSelect={handleSessionSelect}
+                  onNewSession={handleNewSession}
+                  mode="chat"
+                />
+              )}
               
-              {/* Chat Area */}
-              <div className="flex-1 flex flex-col">
+              {/* Chat Area - tar upp resten av utrymmet */}
+              <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                 <ChatBox 
                   key={chatKey}
                   mode="chat" 
