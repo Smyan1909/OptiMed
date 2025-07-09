@@ -510,9 +510,11 @@ async def search_patients(
     q: str = Query("", alias="q"),
     fhir_repo: FHIRRepository = Depends(get_user_fhir_repository)
 ):
+    
     try:
         # Use the user-specific repository instead of the global _fhir
         domain_objs = await fhir_repo.search_patients(q)  
+        
         return [
             PatientOut(
                 id=p.patient_id,

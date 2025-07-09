@@ -65,7 +65,6 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
 
     # Load environment variables from .env file
     load_dotenv()
-
     # Create repositories
     fhir_repo: FHIRRepository = HAPIFHIRRepository() if not use_smart else create_smart_fhir_repository()
     vector_store: VectorStore = PGVectorAdapter(dsn=str(os.getenv("PGVECTOR_DSN")))

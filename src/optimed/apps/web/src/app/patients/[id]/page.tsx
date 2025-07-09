@@ -11,6 +11,7 @@ import ChatBox from "@/components/ChatBox";
 import SessionsList from "@/components/SessionsList";
 import { Badge } from "@/components/ui/badge";
 
+
 function PatientDetailContent() {
   const params = useParams();
   const router = useRouter();
@@ -21,7 +22,8 @@ function PatientDetailContent() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
   const [chatKey, setChatKey] = useState(0); // Force ChatBox re-render
   const [sessionsKey, setSessionsKey] = useState(0); // Force SessionsList re-render
-  
+  const [showSessions, setShowSessions] = useState(true); // Toggle sessions visibility
+
 
   const patientId = params?.id as string;
 
@@ -103,12 +105,12 @@ function PatientDetailContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
       <Header />
-      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        <div className="px-4 py-6 sm:px-0">
-          {/* Breadcrumb */}
-          <nav className="flex mb-6" aria-label="Breadcrumb">
+      <main className="flex-1 w-full flex flex-col overflow-hidden">
+        <div className="flex flex-col flex-1 overflow-hidden">
+          {/* Breadcrumb - kompakt */}
+          <nav className="flex mb-2 px-6 pt-4 flex-shrink-0" aria-label="Breadcrumb">
             <ol className="flex items-center space-x-4">
               <li>
                 <Link href="/patients" className="text-blue-600 hover:text-blue-800 font-medium">
@@ -124,89 +126,96 @@ function PatientDetailContent() {
             </ol>
           </nav>
 
-          {/* Patient Header */}
-          <div className="bg-white shadow rounded-lg mb-6">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <div className="h-12 w-12 bg-blue-100 rounded-full flex items-center justify-center">
-                    <span className="text-blue-600 font-bold text-lg">
-                      {patient?.name.split(' ').map(n => n[0]).join('').substring(0, 2)}
-                    </span>
+          {/* Patient Header - extra stor med mer detaljer */}
+          <div className="bg-gradient-to-r from-blue-50 to-white border-b border-gray-200 px-8 py-8 shadow-sm flex-shrink-0">
+            <div className="flex items-start justify-between">
+              <div className="flex items-start">
+                <div className="h-20 w-20 bg-blue-100 rounded-full flex items-center justify-center mr-6 shadow-md">
+                  <span className="text-blue-600 font-bold text-3xl">
+                    {patient?.name.split(' ').map(n => n[0]).join('').substring(0, 2)}
+                  </span>
+                </div>
+                <div>
+                  <h1 className="text-4xl font-bold text-gray-900 mb-2">{patient?.name}</h1>
+                  <div className="grid grid-cols-3 gap-6 text-gray-600 mb-3">
+                    <div>
+                      <span className="text-sm text-gray-500 block">Age</span>
+                      <span className="text-lg font-semibold">{patient?.age} years</span>
+                    </div>
+                    <div>
+                      <span className="text-sm text-gray-500 block">Gender</span>
+                      <span className="text-lg font-semibold">{patient?.sex}</span>
+                    </div>
+                    <div>
+                      <span className="text-sm text-gray-500 block">Care Unit</span>
+                      <span className="text-lg font-semibold">{patient?.care_unit}</span>
+                    </div>
                   </div>
-                  <div className="ml-4">
-                    <h1 className="text-2xl font-bold text-gray-900">{patient?.name}</h1>
-                    <p className="text-gray-700 font-medium">Patient ID: {patient?.id}</p>
+                  <div className="flex items-center space-x-4">
+                    <span className="text-sm text-gray-500">Patient ID: <span className="font-mono">{patientId}</span></span>
+                    <span className="text-sm text-gray-500">•</span>
+                    <span className="text-sm text-gray-500">Last accessed: {new Date().toLocaleDateString()}</span>
                   </div>
                 </div>
+              </div>
+              <div className="flex flex-col items-end space-y-3">
                 <div className="flex items-center space-x-3">
                   <Link href={`/vitals?id=${patientId}`}>
-                    <button className="flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
-                      <span>View Clinical Data</span>
+                    <button className="bg-blue-600 text-white px-8 py-4 text-base font-semibold rounded-xl hover:bg-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl flex items-center space-x-3 group">
+                      <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                      </svg>
+                      <span>Clinical Data</span>
                     </button>
                   </Link>
                   <Link href={`/journal?id=${patientId}`}>
-                    <button className="flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors">
-                      <span>View Journal</span>
+                    <button className="bg-blue-600 text-white px-8 py-4 text-base font-semibold rounded-xl hover:bg-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl flex items-center space-x-3 group">
+                      <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      <span>Medical Journal</span>
                     </button>
                   </Link>
-
                 </div>
-              </div>
-            </div>
-            
-            {/* Patient Demographics Only */}
-            <div className="px-6 py-4 bg-gray-50">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                <div>
-                  <span className="font-medium text-gray-700">Age:</span>
-                  <span className="ml-2 text-gray-900">{patient?.age} years</span>
-                </div>
-                <div>
-                  <span className="font-medium text-gray-700">Sex:</span>
-                  <span className="ml-2 text-gray-900">{patient?.sex}</span>
-                </div>
-                <div>
-                  <span className="font-medium text-gray-700">Unit:</span>
-                  <span className="ml-2 text-gray-900">{patient?.care_unit}</span>
+                <div className="flex flex-col items-end space-y-2">
                 </div>
               </div>
             </div>
           </div>
 
-          {/* AI Diagnosis Chat Section with Sessions */}
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-bold text-gray-900">AI Diagnostic Assistant</h2>
-                  <p className="text-sm text-gray-700 font-medium">Have a continuous conversation about this patient's diagnosis</p>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Badge variant="default" className="px-3 py-1">
-                    {user?.display_name}
-                  </Badge>
-                  <Badge variant="outline" className="px-3 py-1">
-                    CLARA
-                  </Badge>
-                </div>
-              </div>
+          {/* Chat Section - tar resten av skärmen */}
+          <div className="bg-white flex-1 flex flex-col min-h-0 overflow-hidden">
+            <div className="px-6 py-2 border-b border-gray-200 flex-shrink-0">
+              <button
+                onClick={() => setShowSessions(!showSessions)}
+                className="flex items-center space-x-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {showSessions ? (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+                  ) : (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                  )}
+                </svg>
+                <span>{showSessions ? 'Hide Sessions' : 'Show Sessions'}</span>
+              </button>
             </div>
             
-            {/* Sessions and Chat Layout */}
-            <div className="flex h-[600px]">
-              {/* Sessions List Sidebar */}
-              <SessionsList
-                key={sessionsKey}
-                patientId={patientId}
-                selectedSessionId={selectedSessionId}
-                onSessionSelect={handleSessionSelect}
-                onNewSession={handleNewSession}
-                mode="diagnose"
-              />
+            {/* Sessions and Chat Layout - tar resten av utrymmet */}
+            <div className="flex flex-1 min-h-0 overflow-hidden">
+              {showSessions && (
+                <SessionsList
+                  key={sessionsKey}
+                  patientId={patientId}
+                  selectedSessionId={selectedSessionId}
+                  onSessionSelect={handleSessionSelect}
+                  onNewSession={handleNewSession}
+                  mode="diagnose"
+                />
+              )}
               
-              {/* Chat Area */}
-              <div className="flex-1 flex flex-col">
+              {/* Chat Area - tar upp resten av utrymmet */}
+              <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                 <ChatBox 
                   key={chatKey}
                   mode="diagnose" 
