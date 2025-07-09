@@ -442,49 +442,55 @@ async def initiate_ehr_login(req: EHRLoginRequest):
         # Store the temporary session
         await _connection_repo.create_ehr_login_session(session_data)
         
-        auth_params = {
-            "response_type": "code",
-            "client_id": req.client_id,
-            "redirect_uri": redirect_uri,
-            "scope": req.scope,
-            "state": state,
-            "aud": req.fhir_server_url
-        }
+        # Initialize auth_params and auth_url
+        auth_params = {}
+        auth_url = ""
         
         # Construct authorization URL for SMART on FHIR
         fhir_base = req.fhir_server_url.rstrip('/')
         
         # For SMART Health IT sandbox - use the launcher
-        if "launch.smarthealthit.org" in fhir_base:
-            # Remove /fhir suffix and use base URL for auth
+        if "localhost:4013" in fhir_base:
+            # The base URL for the sandbox
+            base_url = fhir_base.replace("/fhir", "")
+            
+            # For provider standalone launch, go directly to authorization endpoint
+            auth_url = f"{base_url}/auth/authorize"
+            
+            # Standard OAuth2 authorization parameters for provider standalone
+            auth_params = {
+                "response_type": "code",
+                "client_id": req.client_id,
+                "redirect_uri": redirect_uri,
+                "scope": req.scope,  # Should be "user/*.cruds" or similar
+                "state": state,
+                "aud": req.fhir_server_url  # FHIR server as audience
+            }
+        elif "launch.smarthealthit.org" in fhir_base:
+            # For public SMART Health IT - provider standalone
             base_url = fhir_base.replace("/fhir", "")
             auth_url = f"{base_url}/auth/authorize"
-
-        elif "localhost:4013" in fhir_base:
-            # Remove any simulation context and use the base URL
-            if "/sim/" in fhir_base:
-                base_url = fhir_base.split("/sim/")[0]
-            else:
-                base_url = fhir_base.replace("/fhir", "")
             
-            # Direct authorization URL
-            auth_url = f"{base_url}/auth/authorize"
-            
-            # Standard SMART on FHIR authorization parameters
             auth_params = {
                 "response_type": "code",
                 "client_id": req.client_id,
                 "redirect_uri": redirect_uri,
                 "scope": req.scope,
                 "state": state,
-                "iss": req.fhir_server_url,
-                "launch": "standalone",
                 "aud": req.fhir_server_url
-            } 
+            }
         else:
-            # For other FHIR servers
+            # For other FHIR servers or direct authorization
             base_url = fhir_base.replace("/fhir", "")
             auth_url = f"{base_url}/auth/authorize"
+            auth_params = {
+                "response_type": "code",
+                "client_id": req.client_id,
+                "redirect_uri": redirect_uri,
+                "scope": req.scope,
+                "state": state,
+                "aud": req.fhir_server_url
+            }
         
         authorization_url = f"{auth_url}?{urlencode(auth_params)}"
         
