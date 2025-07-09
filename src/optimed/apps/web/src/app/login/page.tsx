@@ -72,14 +72,20 @@ export default function LoginPage() {
     setIsEhrConnecting(true);
     setAuthError(null); // Clear any previous errors
     try {
+      // Store EHR parameters in localStorage for the launch page
+      localStorage.setItem('ehr_client_id', ehrClientId);
+      localStorage.setItem('ehr_scope', ehrScope);
+      localStorage.setItem('ehr_redirect_uri', 'http://localhost:8000/auth/ehr-callback');
+      
       const result = await initiateEHRLogin(
         ehrServerUrl,
         ehrClientId,
         ehrScope
       );
       
-      // Store connection info for callback
+      // Store connection info and state for callback
       localStorage.setItem('ehr_login_connection_id', result.connection_id);
+      localStorage.setItem('ehr_state', result.state);
       
       // Redirect to authorization server
       window.location.href = result.authorization_url;

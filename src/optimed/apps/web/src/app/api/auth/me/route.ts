@@ -8,7 +8,8 @@ export async function GET(request: NextRequest) {
   }
   
   try {
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:8000'}/auth/me`, {
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/auth/me`, {
       headers: {
         'X-Session-ID': sessionId,
       }

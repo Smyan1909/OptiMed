@@ -15,8 +15,9 @@ export async function GET(
       headers['X-Session-ID'] = sessionId;
     }
     
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
     const response = await fetch(
-      `${process.env.API_BASE_URL || 'http://localhost:8000'}/dicom/images/${params.imageId}`,
+      `${baseUrl}/dicom/images/${params.imageId}`,
       { headers }
     );
     

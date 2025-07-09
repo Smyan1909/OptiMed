@@ -16,7 +16,8 @@ export async function GET(
       headers['X-Session-ID'] = sessionId;
     }
     
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:8000'}/patients/${params.id}/journal`, {
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/patients/${params.id}/journal`, {
       headers
     });
     

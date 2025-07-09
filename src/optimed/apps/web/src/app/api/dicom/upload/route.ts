@@ -15,7 +15,8 @@ export async function POST(request: NextRequest) {
       headers['X-Session-ID'] = sessionId;
     }
     
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:8000'}/dicom/upload`, {
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/dicom/upload`, {
       method: 'POST',
       headers,
       body: formData // Forward the form data directly

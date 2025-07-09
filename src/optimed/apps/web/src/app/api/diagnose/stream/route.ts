@@ -19,7 +19,8 @@ export async function POST(request: NextRequest) {
     console.log('🔄 Forwarding streaming request to backend:', body);
 
     // Make request to streaming endpoint
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:8000'}/diagnose/stream`, {
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/diagnose/stream`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body)
