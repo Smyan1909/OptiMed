@@ -2,7 +2,7 @@ from __future__ import annotations
 import base64
 import os
 from datetime import datetime, timezone
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Any
 from pydantic import ValidationError
 
 import httpx
@@ -374,9 +374,15 @@ class HAPIFHIRRepository(FHIRRepository):
             social_history, medications, allergies, diagnoses
         )
     
-    async def search_patients(self, query: str) -> Sequence[PatientContext]:
+    async def search_patients(self, query: Any) -> Sequence[PatientContext]:
         """Search patients by MRN or name."""
         
+
+        query = query.strip()
+        
+        query = query.split()
+
+
         r = await self._client.get("/Patient", params={"name": query, "_count": 25})
         r.raise_for_status()
         bundle = r.json()
@@ -486,7 +492,7 @@ class HAPIFHIRRepository(FHIRRepository):
             pid: str,
             *,
             category: str,
-            count: int = 10
+            count: int = 50
     ) -> list[Observation]:
         """Fetch Observations of a given category for a patient."""
         r = await self._client.get(

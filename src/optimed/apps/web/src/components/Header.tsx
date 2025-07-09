@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Stethoscope, Users, MessageSquare, Settings, Images} from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useRouter } from 'next/navigation'; // Import useRouter for navigation
 
 const navigation = [
   { name: 'Patients', href: '/patients', icon: Users },
@@ -19,6 +20,11 @@ const navigation = [
 export function Header() {
   const pathname = usePathname();
   const { user } = useUser();
+  const router = useRouter(); // Nu fungerar detta
+  
+  const handleSettingsClick = () => {
+    router.push('/settings');
+  };
 
   return (
     <header className="bg-white border-b border-gray-200 shadow-sm">

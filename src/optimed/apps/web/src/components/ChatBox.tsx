@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, FormEvent } from "react";
+import { useState, useEffect, FormEvent, useRef } from "react";
 import { useUser } from '@/contexts/UserContext';
 import { Download, Image as ImageIcon, ExternalLink } from 'lucide-react';
 import { getGeneratedImageUrl, downloadGeneratedImage } from '@/lib/api';
@@ -50,13 +50,13 @@ interface Message {
   generatedImage?: GeneratedImageInfo;
   reasoningSteps?: string[];
   reasoning?: string;
-  differentialDiagnoses?: DifferentialDiagnosis[];  // Add this line
+  differentialDiagnoses?: DifferentialDiagnosis[];
 }
 
 interface ChatBoxProps {
   mode: "chat" | "diagnose";
   patientId?: string;
-  sessionId?: string | null; // Optional session ID for diagnosis mode
+  sessionId?: string | null;
 }
 
 const parseLinksInText = (text: string, isUser: boolean = false) => {
@@ -235,7 +235,6 @@ const MessageContent = ({ text, isUser }: MessageContentProps) => {
   );
 };
 
-// ...existing code...
 const getAuthHeaders = () => {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -248,7 +247,6 @@ const getAuthHeaders = () => {
   return headers;
 };
 
-
 const GeneratedImageDisplay = ({ imageInfo }: { imageInfo: GeneratedImageInfo }) => {
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
@@ -257,7 +255,7 @@ const GeneratedImageDisplay = ({ imageInfo }: { imageInfo: GeneratedImageInfo })
   // DEBUG: Log what we received
   useEffect(() => {
     console.log('🖼️ GeneratedImageDisplay received:', imageInfo);
-    console.log('Image generated?', imageInfo.image_generated);
+    console.log(' Image generated?', imageInfo.image_generated);
     console.log('Image ID?', imageInfo.image_id);
   }, [imageInfo]);
 
@@ -437,11 +435,10 @@ const formatTimestamp = (timestamp: string | number): string => {
   }
 };
 
-
 export default function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
-  // ...existing code...
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const {
     isStreaming,
     currentStep,
@@ -449,7 +446,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     reasoning,
     currentReasoning,
     finalResponse,
-    generatedImage, // Add this - it was missing!
+    generatedImage,
     streamDifferentialDiagnoses, // Add this for differential diagnoses
     error: streamError,
     progress,
@@ -474,6 +471,15 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   });
   
   const { user } = useUser();
+
+  // Auto-scroll to bottom when new messages arrive
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isStreaming]);
 
   // Update sessionId when prop changes
   useEffect(() => {
@@ -511,7 +517,6 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
               const formattedMessage: Message = {
                 sender: msg.role === 'user' ? 'user' : 'system',
                 text: msg.content,
-                // Fix timestamp parsing
                 timestamp: msg.timestamp ? formatTimestamp(msg.timestamp) : new Date().toLocaleTimeString()
               };
               
@@ -522,7 +527,6 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                   reasoningSteps: msg.reasoning_steps?.length || 0
                 });
                 
-                // Use reasoning from content first, then from steps
                 formattedMessage.reasoning = msg.reasoning || (msg.reasoning_steps ? msg.reasoning_steps.join('\n') : '');
                 formattedMessage.reasoningSteps = msg.reasoning_steps || [];
               }
@@ -545,7 +549,8 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
             
             // Log reasoning data for debugging
             const messagesWithReasoning: Message[] = formattedMessages.filter((msg: Message) => msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0));
-            console.log(`📊 Loaded ${formattedMessages.length} messages, ${messagesWithReasoning.length} with reasoning`);
+            const messagesWithDifferentials: Message[] = formattedMessages.filter((msg: Message) => msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0);
+            console.log(`📊 Loaded ${formattedMessages.length} messages, ${messagesWithReasoning.length} with reasoning, ${messagesWithDifferentials.length} with differential diagnoses`);
           }
         }
       } catch (error) {
@@ -559,6 +564,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     }
   }, [currentSessionId, patientId, mode]);
 
+  // Update the final response effect to include differential diagnoses
   useEffect(() => {
     console.log('📧 Final response effect:', { 
       finalResponse, 
@@ -611,7 +617,6 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     }
   }, [finalResponse, isStreaming, reasoning, generatedImage, streamDifferentialDiagnoses]);
 
-
   // Handle streaming errors
   useEffect(() => {
     if (streamError) {
@@ -626,7 +631,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
       ]);
     }
   }, [streamError]);
-  // ... rest of existing code, but use currentSessionId in sendMessage
+
   const sendMessage = async (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isStreaming) return;
@@ -681,84 +686,76 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     return "Enter patient details to begin diagnosis...";
   };
 
-  useEffect(() => {
-    if (streamError) {
-      setMessages((prev) => [
-        ...prev,
-        { 
-          sender: "system", 
-          text: `Error: ${streamError}`,
-          timestamp: new Date().toLocaleTimeString()
-        }
-      ]);
-    }
-  }, [streamError]);
-
   return (
-    <div className="flex flex-col h-full border rounded-lg bg-white shadow-sm">
-      {/* Chat Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {messages.length === 0 && !isStreaming && (
-          <div className="text-center py-8">
-            <p className="text-gray-600 font-medium italic">
-              {getEmptyStateText()}
-            </p>
-          </div>
-        )}
-        
-        {messages.map((msg, idx) => (
-          <div key={idx} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
-            <div className="max-w-[80%]">
-              <div className={`px-4 py-3 rounded-lg ${
-                msg.sender === "user" 
-                  ? "bg-blue-600 text-white" 
-                  : "bg-gray-100 text-gray-900 border"
-              }`}>
-                <MessageContent text={msg.text} isUser={msg.sender === "user"} />
-              </div>
-              
-              {/* Display generated image if available */}
-              {msg.generatedImage && (
-                <GeneratedImageDisplay imageInfo={msg.generatedImage} />
-              )}
-              
-              {/* Display differential diagnoses if available */}
-              {msg.sender === "system" && msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0 && (
-                <DifferentialDiagnosisCards diagnoses={msg.differentialDiagnoses} />
-              )}
-              
-              {/* Display reasoning viewer for system messages */}
-              {msg.sender === "system" && (msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)) && (
-                <ReasoningViewer 
-                  reasoning={msg.reasoning || ''} 
-                  reasoningSteps={msg.reasoningSteps} 
-                />
-              )}
-              
-              {msg.timestamp && (
-                <div className={`text-xs mt-1 ${
-                  msg.sender === "user" ? "text-right text-gray-500" : "text-left text-gray-500"
-                }`}>
-                  {msg.timestamp}
-                </div>
-              )}
+    <div className="flex flex-col h-full bg-white max-h-full overflow-hidden">
+      {/* Chat Messages Area - only this part scrolls */}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
+        <div className="p-4 space-y-3">
+          {messages.length === 0 && !isStreaming && (
+            <div className="text-center py-8">
+              <p className="text-gray-600 font-medium italic">
+                {getEmptyStateText()}
+              </p>
             </div>
-          </div>
-        ))}
-        
-        {/* Streaming Progress */}
-        <StreamingProgress
-          isStreaming={isStreaming}
-          currentStep={currentStep}
-          currentDescription={currentDescription}
-          progress={progress}
-          reasoning={reasoning}
-          currentReasoning={currentReasoning}
-        />
+          )}
+          
+          {messages.map((msg, idx) => (
+            <div key={idx} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
+              <div className="max-w-[80%]">
+                <div className={`px-4 py-3 rounded-lg ${
+                  msg.sender === "user" 
+                    ? "bg-blue-600 text-white" 
+                    : "bg-gray-100 text-gray-900 border"
+                }`}>
+                  <MessageContent text={msg.text} isUser={msg.sender === "user"} />
+                </div>
+                
+                {/* Display generated image if available */}
+                {msg.generatedImage && (
+                  <GeneratedImageDisplay imageInfo={msg.generatedImage} />
+                )}
+                
+                {/* Display differential diagnoses if available */}
+                {msg.sender === "system" && msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0 && (
+                  <DifferentialDiagnosisCards diagnoses={msg.differentialDiagnoses} />
+                )}
+                
+                {/* Display reasoning viewer for system messages */}
+                {msg.sender === "system" && (msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)) && (
+                  <ReasoningViewer 
+                    reasoning={msg.reasoning || ''} 
+                    reasoningSteps={msg.reasoningSteps} 
+                  />
+                )}
+                
+                {msg.timestamp && (
+                  <div className={`text-xs mt-1 ${
+                    msg.sender === "user" ? "text-right text-gray-500" : "text-left text-gray-500"
+                  }`}>
+                    {msg.timestamp}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {/* Streaming Progress */}
+          <StreamingProgress
+            isStreaming={isStreaming}
+            currentStep={currentStep}
+            currentDescription={currentDescription}
+            progress={progress}
+            reasoning={reasoning}
+            currentReasoning={currentReasoning}
+          />
+
+          {/* Invisible scroll target */}
+          <div ref={messagesEndRef} />
+        </div>
       </div>
 
-      {/* Input Form */}
-      <div className="border-t bg-gray-50 p-4">
+      {/* Input Form - fixed at bottom, doesn't scroll */}
+      <div className="border-t bg-gray-50 p-4 flex-shrink-0">
         <form onSubmit={sendMessage} className="flex gap-3">
           <input
             type="text"
