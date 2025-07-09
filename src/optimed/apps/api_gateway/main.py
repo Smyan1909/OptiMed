@@ -72,7 +72,14 @@ class PatientOut(BaseModel):
     sex: str
     care_unit: str
     vitals: Dict[str, str]
-    labs:   Dict[str, str]
+    labs: Dict[str, str]
+    imaging: Dict[str, str]
+    exam: Dict[str, str]
+    procedure: Dict[str, str]
+    social_history: Dict[str, str]
+    medications: Dict[str, str]
+    allergies: Dict[str, str]
+    diagnoses: Dict[str, str]
 
 class UserOut(BaseModel):
     user_id: str 
@@ -493,6 +500,13 @@ async def search_patients(
                 care_unit=p.care_unit,
                 vitals=p.vitals,
                 labs=p.labs,
+                imaging=p.imaging,
+                exam=p.exam,
+                procedure=p.procedure,
+                social_history=p.social_history,
+                medications=p.medications,
+                allergies=p.allergies,
+                diagnoses=p.diagnoses,
             )
             for p in domain_objs
         ]
@@ -809,13 +823,20 @@ async def get_patient(
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Patient not found: {e}")
     return PatientOut(
-        id=pctx.patient_id,
-        name=pctx.name,
-        age=pctx.age,
-        sex=pctx.sex,
-        care_unit=pctx.care_unit,
-        vitals=pctx.vitals,
-        labs=pctx.labs,
+                id=pctx.patient_id,
+                name=pctx.name,
+                age=pctx.age,
+                sex=pctx.sex,
+                care_unit=pctx.care_unit,
+                vitals=pctx.vitals,
+                labs=pctx.labs,
+                imaging=pctx.imaging,
+                exam=pctx.exam,
+                procedure=pctx.procedure,
+                social_history=pctx.social_history,
+                medications=pctx.medications,
+                allergies=pctx.allergies,
+                diagnoses=pctx.diagnoses,
     )
 
 @app.delete("/patients/{patient_id}/chat-history", summary="Delete patient by ID")

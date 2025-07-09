@@ -249,19 +249,58 @@ Focus on being accurate, detailed, and clinically relevant. If you cannot make d
         """Format patient context for analysis."""
         parts = []
         
-        if hasattr(context, 'demographics') and context.demographics:
-            if context.demographics.get('age'):
-                parts.append(f"Age: {context.demographics['age']}")
-            if context.demographics.get('gender'):
-                parts.append(f"Gender: {context.demographics['gender']}")
+        # Basic patient info
+        parts.append(f"Age: {context.age}")
+        parts.append(f"Sex: {context.sex}")
         
-        if hasattr(context, 'conditions') and context.conditions:
-            conditions = [str(cond.get('display', cond)) for cond in context.conditions[:5]]
-            parts.append(f"Medical Conditions: {', '.join(conditions)}")
+        # Vitals
+        if context.vitals:
+            vital_items = list(context.vitals.items())[:3]  # Show top 3
+            vital_strs = [f"{k}: {v}" for k, v in vital_items]
+            if vital_strs:
+                parts.append(f"Recent Vitals: {', '.join(vital_strs)}")
         
-        if hasattr(context, 'medications') and context.medications:
-            medications = [str(med.get('display', med)) for med in context.medications[:5]]
-            parts.append(f"Current Medications: {', '.join(medications)}")
+        # Lab results
+        if context.labs:
+            lab_items = list(context.labs.items())[:3]  # Show top 3
+            lab_strs = [f"{k}: {v}" for k, v in lab_items]
+            if lab_strs:
+                parts.append(f"Recent Labs: {', '.join(lab_strs)}")
+        
+        # Medications
+        if context.medications:
+            med_items = list(context.medications.items())[:5]  # Show top 5
+            med_strs = [f"{k}: {v}" for k, v in med_items]
+            if med_strs:
+                parts.append(f"Current Medications: {', '.join(med_strs)}")
+        
+        # Allergies
+        if context.allergies:
+            allergy_items = list(context.allergies.items())
+            allergy_strs = [f"{k}: {v}" for k, v in allergy_items]
+            if allergy_strs:
+                parts.append(f"Known Allergies: {', '.join(allergy_strs)}")
+        
+        # Diagnoses
+        if context.diagnoses:
+            diagnosis_items = list(context.diagnoses.items())[:5]  # Show top 5
+            diagnosis_strs = [f"{k}: {v}" for k, v in diagnosis_items]
+            if diagnosis_strs:
+                parts.append(f"Active Diagnoses: {', '.join(diagnosis_strs)}")
+        
+        # Imaging studies
+        if context.imaging:
+            imaging_items = list(context.imaging.items())[:3]  # Show top 3
+            imaging_strs = [f"{k}: {v}" for k, v in imaging_items]
+            if imaging_strs:
+                parts.append(f"Recent Imaging: {', '.join(imaging_strs)}")
+        
+        # Social history
+        if context.social_history:
+            social_items = list(context.social_history.items())[:3]  # Show top 3
+            social_strs = [f"{k}: {v}" for k, v in social_items]
+            if social_strs:
+                parts.append(f"Social History: {', '.join(social_strs)}")
         
         return "\n".join(parts) if parts else ""
     

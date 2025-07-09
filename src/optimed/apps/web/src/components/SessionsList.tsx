@@ -1,8 +1,7 @@
-'use client';
-
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
+import { listSessions, createSession, joinSession, SessionListRequest } from '@/lib/api';
+import { Session } from '@/lib/api';
 import { useUser } from '@/contexts/UserContext';
-import { listSessions, createSession, joinSession, Session, SessionListRequest } from '@/lib/api';
 import { formatDistanceToNow } from 'date-fns';
 
 interface SessionsListProps {
@@ -85,9 +84,10 @@ export default function SessionsList({
     if (!user?.user_id) return;
     
     try {
-      const sessionTitle = `${mode === 'chat' ? 'Chat' : 'Diagnosis'} Session - ${new Date().toLocaleDateString()}`;
+      // Generate a more descriptive session title
+      const sessionTitle = generateSessionTitle(mode, patientId);
       
-      console.log('Creating session with data:', { // Add debugging
+      console.log('Creating session with data:', {
         patient_id: patientId,
         mode: mode,
         session_title: sessionTitle
@@ -99,7 +99,7 @@ export default function SessionsList({
         session_title: sessionTitle
       });
       
-      console.log('Session created:', result); // Add debugging
+      console.log('Session created:', result);
       
       // Reload sessions and select the new one
       await loadSessions();
@@ -108,6 +108,29 @@ export default function SessionsList({
     } catch (err: any) {
       console.error('Failed to create session:', err);
       setError(err.message || 'Failed to create session');
+    }
+  };
+
+  const generateSessionTitle = (mode: 'chat' | 'diagnose', patientId?: string): string => {
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('en-US', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: true 
+    });
+    const dateStr = now.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric' 
+    });
+
+    if (mode === 'chat') {
+      if (patientId) {
+        return `Patient Chat - ${dateStr} ${timeStr}`;
+      } else {
+        return `General Chat - ${dateStr} ${timeStr}`;
+      }
+    } else {
+      return `Diagnosis Session - ${dateStr} ${timeStr}`;
     }
   };
 
@@ -163,6 +186,13 @@ export default function SessionsList({
               />
               Show all sessions
             </label>
+          </div>
+        )}
+        
+        {/* Add general chat indicator */}
+        {!patientId && (
+          <div className="text-xs text-gray-500 mt-2">
+            💬 General chat sessions (no patient context)
           </div>
         )}
       </div>
@@ -265,7 +295,10 @@ export default function SessionsList({
       {/* Footer */}
       <div className="p-3 border-t border-gray-200">
         <p className="text-xs text-gray-400">
-          {showAllSessions ? 'Showing all patient sessions' : 'Showing your sessions only'}
+          {patientId 
+            ? (showAllSessions ? 'Showing all patient sessions' : 'Showing your sessions only')
+            : 'General chat sessions'
+          }
         </p>
       </div>
     </div>

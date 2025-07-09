@@ -399,6 +399,37 @@ const GeneratedImageDisplay = ({ imageInfo }: { imageInfo: GeneratedImageInfo })
   );
 };
 
+const formatTimestamp = (timestamp: string | number): string => {
+  try {
+    let date: Date;
+    
+    if (typeof timestamp === 'string') {
+      // Check if it's a string of digits (milliseconds)
+      if (timestamp.match(/^\d+$/)) {
+        date = new Date(parseInt(timestamp));
+      } else {
+        // Try parsing as ISO string
+        date = new Date(timestamp);
+      }
+    } else {
+      // It's already a number
+      date = new Date(timestamp);
+    }
+    
+    // Check if the date is valid
+    if (isNaN(date.getTime())) {
+      console.warn('Invalid timestamp:', timestamp);
+      return new Date().toLocaleTimeString();
+    }
+    
+    return date.toLocaleTimeString();
+  } catch (error) {
+    console.error('Error formatting timestamp:', error, timestamp);
+    return new Date().toLocaleTimeString();
+  }
+};
+
+
 export default function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
   // ...existing code...
   const [messages, setMessages] = useState<Message[]>([]);
@@ -481,7 +512,8 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
               const formattedMessage: Message = {
                 sender: msg.role === 'user' ? 'user' : 'system',
                 text: msg.content,
-                timestamp: msg.timestamp ? new Date(parseInt(msg.timestamp)).toLocaleTimeString() : new Date().toLocaleTimeString()
+                // Fix timestamp parsing
+                timestamp: msg.timestamp ? formatTimestamp(msg.timestamp) : new Date().toLocaleTimeString()
               };
               
               // Add reasoning from multiple possible sources
