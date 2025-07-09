@@ -8,7 +8,7 @@ import ReactMarkdown from 'react-markdown';
 import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
 import { ReasoningViewer } from "./ReasoningViewer";
-import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCard";
+import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCards";
 
 export interface GeneratedImageInfo {
   image_generated: boolean;
@@ -494,69 +494,126 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
 
   // Load chat history on component mount or session change
   useEffect(() => {
-    const loadHistory = async () => {
-      try {
-        console.log(`Loading history for session: ${currentSessionId}, patient: ${patientId}`);
+  const loadHistory = async () => {
+    try {
+      console.log(`Loading history for session: ${currentSessionId}, patient: ${patientId}`);
+      
+      const response = await fetch('/api/chat-history', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ 
+          patient_id: patientId,
+          session_id: currentSessionId,
+          mode: mode
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('🔍 Raw chat history data received:', data);
         
-        const response = await fetch('/api/chat-history', {
-          method: 'POST',
-          headers: getAuthHeaders(),
-          body: JSON.stringify({ 
-            patient_id: patientId,
-            session_id: currentSessionId,
-            mode: mode
-          })
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          console.log('Loaded chat history:', data);
-          
-          if (data.messages && data.messages.length > 0) {
-            const formattedMessages = data.messages.map((msg: any) => {
-              const formattedMessage: Message = {
-                sender: msg.role === 'user' ? 'user' : 'system',
-                text: msg.content,
-                timestamp: msg.timestamp ? formatTimestamp(msg.timestamp) : new Date().toLocaleTimeString()
-              };
-              
-              // Add reasoning from multiple possible sources
-              if (msg.reasoning || msg.reasoning_steps) {
-                console.log('🧠 Found reasoning in chat history:', {
-                  reasoning: !!msg.reasoning,
-                  reasoningSteps: msg.reasoning_steps?.length || 0
-                });
-                
-                formattedMessage.reasoning = msg.reasoning || (msg.reasoning_steps ? msg.reasoning_steps.join('\n') : '');
-                formattedMessage.reasoningSteps = msg.reasoning_steps || [];
-              }
-              
-              // Add generated image info if present
-              if (msg.generated_image && msg.generated_image.image_generated) {
-                formattedMessage.generatedImage = msg.generated_image;
-                console.log('📸 Found image in chat history:', msg.generated_image.image_id);
-              }
-
-              // Add differential diagnoses if present
-              if (msg.differential_diagnoses && msg.differential_diagnoses.length > 0) {
-                formattedMessage.differentialDiagnoses = msg.differential_diagnoses;
-                console.log('🩺 Found differential diagnoses in chat history:', msg.differential_diagnoses);
-              }
-              
-              return formattedMessage;
+        if (data.messages && data.messages.length > 0) {
+          const formattedMessages = data.messages.map((msg: any, index: number) => {
+            console.log(`🔍 Processing message ${index}:`, {
+              role: msg.role,
+              hasDifferential: !!msg.differential_diagnoses,
+              differentialCount: msg.differential_diagnoses?.length || 0,
+              hasReasoning: !!(msg.reasoning || msg.reasoning_steps?.length),
+              reasoningStepsCount: msg.reasoning_steps?.length || 0
             });
-            setMessages(formattedMessages);
+
+            const formattedMessage: Message = {
+              sender: msg.role === 'user' ? 'user' : 'system',
+              text: msg.content,
+              timestamp: msg.timestamp ? formatTimestamp(msg.timestamp) : new Date().toLocaleTimeString()
+            };
             
-            // Log reasoning data for debugging
-            const messagesWithReasoning: Message[] = formattedMessages.filter((msg: Message) => msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0));
-            const messagesWithDifferentials: Message[] = formattedMessages.filter((msg: Message) => msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0);
-            console.log(`📊 Loaded ${formattedMessages.length} messages, ${messagesWithReasoning.length} with reasoning, ${messagesWithDifferentials.length} with differential diagnoses`);
-          }
+            // Add reasoning from multiple possible sources
+            if (msg.reasoning || (msg.reasoning_steps && msg.reasoning_steps.length > 0)) {
+              console.log('🧠 Found reasoning in chat history for message', index, ':', {
+                reasoning: !!msg.reasoning,
+                reasoningSteps: msg.reasoning_steps?.length || 0
+              });
+              
+              formattedMessage.reasoning = msg.reasoning || (msg.reasoning_steps ? msg.reasoning_steps.join('\n') : '');
+              formattedMessage.reasoningSteps = msg.reasoning_steps || [];
+            }
+            
+            // Add generated image info if present
+            if (msg.generated_image && msg.generated_image.image_generated) {
+              formattedMessage.generatedImage = msg.generated_image;
+              console.log('📸 Found image in chat history for message', index, ':', msg.generated_image.image_id);
+            }
+
+            // Enhanced differential diagnoses loading - more lenient validation
+            if (msg.differential_diagnoses && Array.isArray(msg.differential_diagnoses)) {
+              console.log(`🩺 Processing differential diagnoses for message ${index}:`, msg.differential_diagnoses);
+              
+              // More lenient validation - only require essential fields
+              const validDiagnoses = msg.differential_diagnoses.filter((diff: any) => {
+                const isValid = diff && 
+                  typeof diff === 'object' && 
+                  diff.diagnosis_name && 
+                  (diff.confidence !== undefined && diff.confidence !== null);
+                
+                if (!isValid) {
+                  console.warn(`🚫 Invalid diagnosis in message ${index}:`, diff);
+                }
+                return isValid;
+              });
+              
+              if (validDiagnoses.length > 0) {
+                // Ensure all required fields have defaults
+                formattedMessage.differentialDiagnoses = validDiagnoses.map((diff: any) => ({
+                  icd_code: diff.icd_code || '',
+                  diagnosis_name: diff.diagnosis_name || 'Unknown Diagnosis',
+                  confidence: typeof diff.confidence === 'number' ? diff.confidence : 0,
+                  reasoning: diff.reasoning || 'No reasoning provided',
+                  supporting_evidence: Array.isArray(diff.supporting_evidence) ? diff.supporting_evidence : []
+                }));
+                
+              } else {
+                console.warn('🚫 No valid differential diagnoses found for message', index, ':', msg.differential_diagnoses);
+              }
+            } else {
+              console.log(`📄 No differential diagnoses for message ${index}:`, {
+                hasDifferential: !!msg.differential_diagnoses,
+                isArray: Array.isArray(msg.differential_diagnoses),
+                type: typeof msg.differential_diagnoses
+              });
+            }
+            
+            return formattedMessage;
+          });
+          
+          setMessages(formattedMessages);
+          
+          // Enhanced logging
+          const messagesWithReasoning = formattedMessages.filter((msg: Message) => 
+            msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)
+          );
+          const messagesWithDifferentials = formattedMessages.filter((msg: Message) => 
+            msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0
+          );
+          const messagesWithBoth = formattedMessages.filter((msg: Message) => 
+            (msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)) && 
+            (msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0)
+          );
+          
+          console.log(`📊 Chat history loaded successfully:`, {
+            totalMessages: formattedMessages.length,
+            withReasoning: messagesWithReasoning.length,
+            withDifferentials: messagesWithDifferentials.length,
+            withBoth: messagesWithBoth.length
+          });
         }
-      } catch (error) {
-        console.error('Failed to load conversation history:', error);
+      } else {
+        console.error('Failed to load chat history:', response.status, response.statusText);
       }
-    };
+    } catch (error) {
+      console.error('Failed to load conversation history:', error);
+    }
+  };
 
     // Only load if we have a patient ID for diagnosis mode or if it's general chat
     if ((mode === 'diagnose' && patientId) || mode === 'chat') {
@@ -715,17 +772,21 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                   <GeneratedImageDisplay imageInfo={msg.generatedImage} />
                 )}
                 
-                {/* Display differential diagnoses if available */}
+                {/* Display differential diagnoses FIRST if available */}
                 {msg.sender === "system" && msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0 && (
-                  <DifferentialDiagnosisCards diagnoses={msg.differentialDiagnoses} />
+                  <div className="mt-3">
+                    <DifferentialDiagnosisCards diagnoses={msg.differentialDiagnoses} />
+                  </div>
                 )}
                 
-                {/* Display reasoning viewer for system messages */}
+                {/* Display reasoning viewer AFTER differential diagnoses */}
                 {msg.sender === "system" && (msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)) && (
-                  <ReasoningViewer 
-                    reasoning={msg.reasoning || ''} 
-                    reasoningSteps={msg.reasoningSteps} 
-                  />
+                  <div className="mt-3">
+                    <ReasoningViewer 
+                      reasoning={msg.reasoning || ''} 
+                      reasoningSteps={msg.reasoningSteps} 
+                    />
+                  </div>
                 )}
                 
                 {msg.timestamp && (
