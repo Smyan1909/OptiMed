@@ -8,6 +8,7 @@ import ReactMarkdown from 'react-markdown';
 import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
 import { ReasoningViewer } from "./ReasoningViewer";
+import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCard";
 
 export interface GeneratedImageInfo {
   image_generated: boolean;
@@ -33,6 +34,14 @@ export interface GeneratedImageResponse {
   model_info: Record<string, any>;
 }
 
+interface DifferentialDiagnosis {
+  icd_code: string;
+  diagnosis_name: string;
+  confidence: number;
+  reasoning: string;
+  supporting_evidence: string[];
+}
+
 interface Message {
   sender: "user" | "system";
   text: string;
@@ -41,6 +50,7 @@ interface Message {
   generatedImage?: GeneratedImageInfo;
   reasoningSteps?: string[];
   reasoning?: string;
+  differentialDiagnoses?: DifferentialDiagnosis[];  // Add this line
 }
 
 interface ChatBoxProps {
@@ -440,6 +450,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     currentReasoning,
     finalResponse,
     generatedImage, // Add this - it was missing!
+    streamDifferentialDiagnoses, // Add this for differential diagnoses
     error: streamError,
     progress,
     startStream,
@@ -521,6 +532,12 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                 formattedMessage.generatedImage = msg.generated_image;
                 console.log('📸 Found image in chat history:', msg.generated_image.image_id);
               }
+
+              // Add differential diagnoses if present
+              if (msg.differential_diagnoses && msg.differential_diagnoses.length > 0) {
+                formattedMessage.differentialDiagnoses = msg.differential_diagnoses;
+                console.log('🩺 Found differential diagnoses in chat history:', msg.differential_diagnoses);
+              }
               
               return formattedMessage;
             });
@@ -543,7 +560,14 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   }, [currentSessionId, patientId, mode]);
 
   useEffect(() => {
-    console.log('📧 Final response effect:', { finalResponse, isStreaming, reasoning, generatedImage });
+    console.log('📧 Final response effect:', { 
+      finalResponse, 
+      isStreaming, 
+      reasoning, 
+      generatedImage, 
+      streamDifferentialDiagnoses 
+    });
+    
     if (finalResponse && !isStreaming) {
       console.log('✅ Adding final response to messages:', finalResponse);
       setMessages((prev) => {
@@ -566,6 +590,11 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
           console.log('🖼️ Including generated image in message:', formattedGeneratedImage);
         }
         
+        // Log differential diagnoses being added
+        if (streamDifferentialDiagnoses && streamDifferentialDiagnoses.length > 0) {
+          console.log('🩺 Including differential diagnoses in message:', streamDifferentialDiagnoses);
+        }
+        
         return [
           ...prev,
           { 
@@ -574,12 +603,13 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
             timestamp: new Date().toLocaleTimeString(),
             reasoning: reasoning.join('\n'),
             reasoningSteps: reasoning,
-            generatedImage: formattedGeneratedImage
+            generatedImage: formattedGeneratedImage,
+            differentialDiagnoses: streamDifferentialDiagnoses
           }
         ];
       });
     }
-  }, [finalResponse, isStreaming, reasoning, generatedImage]);
+  }, [finalResponse, isStreaming, reasoning, generatedImage, streamDifferentialDiagnoses]);
 
 
   // Handle streaming errors
@@ -692,6 +722,11 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                 <GeneratedImageDisplay imageInfo={msg.generatedImage} />
               )}
               
+              {/* Display differential diagnoses if available */}
+              {msg.sender === "system" && msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0 && (
+                <DifferentialDiagnosisCards diagnoses={msg.differentialDiagnoses} />
+              )}
+              
               {/* Display reasoning viewer for system messages */}
               {msg.sender === "system" && (msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)) && (
                 <ReasoningViewer 
@@ -710,8 +745,8 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
             </div>
           </div>
         ))}
-
-        {/* Streaming Progress - simplified to show only steps */}
+        
+        {/* Streaming Progress */}
         <StreamingProgress
           isStreaming={isStreaming}
           currentStep={currentStep}

@@ -17,6 +17,7 @@ interface StreamingUpdate {
     created_at?: string;
     metadata?: any;
   };
+  differential_diagnoses?: DifferentialDiagnosis[]; // Add this line
 }
 
 interface StreamingState {
@@ -37,6 +38,14 @@ interface StreamingState {
   } | null;
 }
 
+interface DifferentialDiagnosis {
+  icd_code: string;
+  diagnosis_name: string;
+  confidence: number;
+  reasoning: string;
+  supporting_evidence: string[];
+}
+
 export const useStreamingChat = () => {
   const [state, setState] = useState<StreamingState>({
     isStreaming: false,
@@ -54,6 +63,7 @@ export const useStreamingChat = () => {
   const eventSourceRef = useRef<EventSource | null>(null);
   const stepCountRef = useRef(0);
   const reasoningTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [streamDifferentialDiagnoses, setStreamDifferentialDiagnoses] = useState<DifferentialDiagnosis[]>([]);
 
   const startStream = useCallback(async (
     endpoint: string,
@@ -81,6 +91,8 @@ export const useStreamingChat = () => {
       generatedImage: null
     });
 
+    // Reset differential diagnoses
+    setStreamDifferentialDiagnoses([]);
     stepCountRef.current = 0;
 
     try {
@@ -216,7 +228,14 @@ export const useStreamingChat = () => {
         case 'completion':
           console.log('✅ Completion received with content:', update.content);
           console.log('🖼️ Generated image:', update.generated_image);
+          console.log('🩺 Differential diagnoses:', update.differential_diagnoses);
           console.log('🧠 Reasoning steps:', prev.reasoning);
+          
+          // Handle differential diagnoses
+          if (update.differential_diagnoses && update.differential_diagnoses.length > 0) {
+            setStreamDifferentialDiagnoses(update.differential_diagnoses);
+            console.log('🩺 Updated differential diagnoses state:', update.differential_diagnoses);
+          }
           
           if (reasoningTimeoutRef.current) {
             clearTimeout(reasoningTimeoutRef.current);
@@ -283,6 +302,7 @@ export const useStreamingChat = () => {
 
   return {
     ...state,
+    streamDifferentialDiagnoses, // Add this line
     startStream,
     stopStream,
   };
