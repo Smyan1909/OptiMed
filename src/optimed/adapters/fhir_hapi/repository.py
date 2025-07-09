@@ -2,7 +2,7 @@ from __future__ import annotations
 import base64
 import os
 from datetime import datetime, timezone
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Any
 from pydantic import ValidationError
 
 import httpx
@@ -374,7 +374,7 @@ class HAPIFHIRRepository(FHIRRepository):
             social_history, medications, allergies, diagnoses
         )
     
-    async def search_patients(self, query: str) -> Sequence[PatientContext]:
+    async def search_patients(self, query: Any) -> Sequence[PatientContext]:
         """Search patients by MRN or name."""
         
         query = query.strip()
