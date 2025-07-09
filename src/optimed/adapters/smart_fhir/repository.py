@@ -470,9 +470,11 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
         """Search patients by name or identifier."""
         await self._ensure_token_valid()
         
+
         query = query.strip()
         
         query = query.split()
+
 
         r = await self._client.get("/Patient", params={"name": query, "_count": 25})
         r.raise_for_status()
