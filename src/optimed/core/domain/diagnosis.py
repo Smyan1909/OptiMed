@@ -32,10 +32,18 @@ class GeneratedImageInfo(FrozenModel):
     model_info: dict[str, Any] = Field(default_factory=dict)
 
 
+class DifferentialDiagnosis(FrozenModel):
+    """Individual differential diagnosis entry."""
+    icd_code: str
+    diagnosis_name: str
+    confidence: float = 0.0
+    reasoning: str
+    supporting_evidence: List[str] = Field(default_factory=list)
+
 class DiagnosisResult(FrozenModel):
     patient_id: str
     primary_icd: str
-    differential: List[str] = Field(default_factory=list)
+    differential: List[DifferentialDiagnosis] = Field(default_factory=list)
     confidence: float = 0.0
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     explanation: Optional[str] = None

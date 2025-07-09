@@ -880,73 +880,81 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
             user_id=user_id, 
             session_id=session_id
         ):
-
-
+            # Handle different update types
             if update.get("type") == "status":
                 status_data = {
                     "type": "status",
-                    "step": update.get("step", "Processing"),
+                    "step": update.get("step", ""),
                     "description": update.get("description", ""),
-                    "timestamp": datetime.now().isoformat(),
-                    "estimated_time": update.get("estimated_time"),
-                    "is_long_running": update.get("is_long_running", False)
+                    "status": update.get("status", ""),
+                    "progress": update.get("progress", 0.0),
+                    "timestamp": update.get("timestamp", datetime.now().isoformat())
                 }
                 yield f"data: {json.dumps(status_data)}\n\n"
                 
             elif update.get("type") == "reasoning":
-                # Fix: Extract reasoning content from the correct field
-                reasoning_content = update.get("content", "") or update.get("reasoning", "")
                 reasoning_data = {
                     "type": "reasoning",
-                    "reasoning": reasoning_content,
-                    "step": update.get("step", ""),
                     "step_number": update.get("step_number", 0),
                     "total_steps": update.get("total_steps", 0),
-                    "timestamp": datetime.now().isoformat()
+                    "content": update.get("content", ""),
+                    "timestamp": update.get("timestamp", datetime.now().isoformat())
                 }
-
                 yield f"data: {json.dumps(reasoning_data)}\n\n"
                 
             elif update.get("type") == "reasoning_complete":
-                complete_data = {
+                reasoning_complete_data = {
                     "type": "reasoning_complete",
-                    "timestamp": datetime.now().isoformat()
+                    "full_reasoning": update.get("full_reasoning", ""),
+                    "timestamp": update.get("timestamp", datetime.now().isoformat())
                 }
-                yield f"data: {json.dumps(complete_data)}\n\n"
+                yield f"data: {json.dumps(reasoning_complete_data)}\n\n"
                 
             elif update.get("type") == "completion":
-                # Fix: Extract final response from the correct field
+                # Extract final response and differential diagnosis data
                 final_content = (
                     update.get("final_response", "") or 
                     update.get("content", "") or 
                     ""
                 )
+                
+                # Extract differential diagnosis data if available
+                differential_diagnoses = None
+                if update.get("differential_diagnoses"):
+                    differential_diagnoses = update["differential_diagnoses"]
+                elif update.get("diagnosis_result") and hasattr(update["diagnosis_result"], 'differential'):
+                    # Extract from DiagnosisResult object
+                    diagnosis_result = update["diagnosis_result"]
+                    differential_diagnoses = [
+                        {
+                            "icd_code": diff.icd_code,
+                            "diagnosis_name": diff.diagnosis_name,
+                            "confidence": diff.confidence,
+                            "reasoning": diff.reasoning,
+                            "supporting_evidence": diff.supporting_evidence
+                        }
+                        for diff in diagnosis_result.differential
+                    ]
+                
                 completion_data = {
                     "type": "completion",
                     "content": final_content,
                     "session_id": session_id,
                     "timestamp": datetime.now().isoformat(),
                     "metadata": update.get("metadata", {}),
-                    # Add image information if available
-                    "generated_image": update.get("generated_image")
+                    "generated_image": update.get("generated_image"),
+                    "differential_diagnoses": differential_diagnoses
                 }
 
                 yield f"data: {json.dumps(completion_data)}\n\n"
                 
-            else:
-                # Handle any other update types
-                yield f"data: {json.dumps(update)}\n\n"
-            
-            await asyncio.sleep(0.05)  # Smaller delay for more responsive updates
-            
     except Exception as e:
-        print(f"[ERROR] Stream error: {e}")
-        error_update = {
+        error_data = {
             "type": "error",
-            "error": str(e),
+            "message": str(e),
             "timestamp": datetime.now().isoformat()
         }
-        yield f"data: {json.dumps(error_update)}\n\n"
+        yield f"data: {json.dumps(error_data)}\n\n"
 
 
 @app.post("/diagnose/stream")
