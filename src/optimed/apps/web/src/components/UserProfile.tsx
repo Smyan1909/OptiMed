@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useUser } from '@/contexts/UserContext';
 import { Button } from '@/components/ui/button';
 import {
@@ -50,8 +51,19 @@ const getRoleBadgeVariant = (role: string) => {
 };
 
 export function UserProfile() {
+  const router = useRouter();
   const { user, logout } = useUser();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const handleProfileClick = () => {
+    console.log('Profile clicked - navigating to /profile');
+    router.push('/profile');
+  };
+
+  const handleSettingsClick = () => {
+    console.log('Settings clicked - navigating to /settings');
+    router.push('/settings');
+  };
 
   if (!user) return null;
 
@@ -116,12 +128,18 @@ export function UserProfile() {
         
         <DropdownMenuSeparator />
         
-        <DropdownMenuItem className="cursor-pointer">
+        <DropdownMenuItem 
+          className="cursor-pointer"
+          onClick={handleProfileClick}
+        >
           <UserIcon className="mr-2 h-4 w-4" />
           <span>Profile</span>
         </DropdownMenuItem>
         
-        <DropdownMenuItem className="cursor-pointer">
+        <DropdownMenuItem 
+          className="cursor-pointer"
+          onClick={handleSettingsClick}
+        >
           <Settings className="mr-2 h-4 w-4" />
           <span>Settings</span>
         </DropdownMenuItem>

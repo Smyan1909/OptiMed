@@ -23,7 +23,7 @@ function PatientDetailContent() {
   const [chatKey, setChatKey] = useState(0); // Force ChatBox re-render
   const [sessionsKey, setSessionsKey] = useState(0); // Force SessionsList re-render
   const [showSessions, setShowSessions] = useState(true); // Toggle sessions visibility
-  
+
 
   const patientId = params?.id as string;
 
@@ -172,12 +172,6 @@ function PatientDetailContent() {
                   </Link>
                 </div>
                 <div className="flex flex-col items-end space-y-2">
-                  <Badge variant="default" className="px-3 py-1 text-sm">
-                    {user?.display_name}
-                  </Badge>
-                  <Badge variant="outline" className="px-3 py-1 text-sm">
-                    CLARA 
-                  </Badge>
                 </div>
               </div>
             </div>
