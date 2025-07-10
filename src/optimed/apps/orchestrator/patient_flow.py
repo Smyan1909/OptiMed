@@ -920,7 +920,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                         "generation_metadata": state.generated_image.metadata,
                         "model_info": state.generated_image.model_info
                     }
-                    message_content["generated_image"] = image_info
+                    message_content["generated_image"] = image_info # type: ignore
                 
                 # Add differential diagnoses if available
                 if state.parsed_response and state.parsed_response.differential:
@@ -934,8 +934,8 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                         }
                         for diff in state.parsed_response.differential
                     ]
-                    message_content["differential_diagnoses"] = differential_diagnoses
-                
+                    message_content["differential_diagnoses"] = differential_diagnoses # type: ignore
+
                 # Prepare metadata - ALL VALUES MUST BE STRINGS
                 metadata = {
                     "namespace": "chat_history",
