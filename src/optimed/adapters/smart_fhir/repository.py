@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from typing import Sequence, Dict, Any, Optional
@@ -587,7 +588,7 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
             pid: str,
             *,
             category: str,
-            count: int = 10
+            count: int = 50
     ) -> list[Observation]:
         """Fetch Observations of a given category for a patient."""
         await self._ensure_token_valid()

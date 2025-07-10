@@ -11,7 +11,7 @@ from datetime import datetime
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
-from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, ImageGenerationRequest, GeneratedImage, ImageGenerationContext, WebSearchInfo, CrossSessionHistoryInfo, GeneratedImageInfo, GeneratedImagePurpose
+from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, ImageGenerationRequest, GeneratedImage, ImageGenerationContext, WebSearchInfo, CrossSessionHistoryInfo, GeneratedImageInfo, GeneratedImagePurpose, DifferentialDiagnosis
 
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, ImageGenerationService, GeneratedImageRepository
 
@@ -64,6 +64,7 @@ class FlowState(BaseModel): # Potentially add
     primary_icd: str = ""
     differential: List[str] = Field(default_factory=list)
     confidence: float = 0.0
+    parsed_response: Optional[DiagnosisResult] = None
 
     patient_ctx: PatientContext | None = None
     retrieved_chunks: List[str] = Field(default_factory=list)
@@ -921,6 +922,20 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     }
                     message_content["generated_image"] = image_info # type: ignore
                 
+                # Add differential diagnoses if available
+                if state.parsed_response and state.parsed_response.differential:
+                    differential_diagnoses = [
+                        {
+                            "icd_code": diff.icd_code,
+                            "diagnosis_name": diff.diagnosis_name,
+                            "confidence": diff.confidence,
+                            "reasoning": diff.reasoning,
+                            "supporting_evidence": diff.supporting_evidence
+                        }
+                        for diff in state.parsed_response.differential
+                    ]
+                    message_content["differential_diagnoses"] = differential_diagnoses # type: ignore
+
                 # Prepare metadata - ALL VALUES MUST BE STRINGS
                 metadata = {
                     "namespace": "chat_history",
@@ -931,15 +946,19 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     "message_type": "assistant"
                 }
                 
-                # Add reasoning steps as JSON string if available - CONVERT LIST TO STRING
+                # Add reasoning steps as JSON string if available
                 if hasattr(state, 'reasoning_steps') and state.reasoning_steps:
                     metadata["reasoning_steps"] = json.dumps(state.reasoning_steps)
                 
-                # Add web search info if available - CONVERT TO STRINGS
+                # Add web search info if available
                 if state.web_search_response:
                     metadata["web_search_performed"] = "true"
                     metadata["source_count"] = str(len(state.web_search_response.results))
                 
+                # Add differential diagnosis count
+                if state.parsed_response and state.parsed_response.differential:
+                    metadata["differential_count"] = str(len(state.parsed_response.differential))
+                    print("[Differential Diagnoses] saved differential diagnoses count:", metadata["differential_count"])
                 # Store assistant message
                 await self._vec.upsert(
                     embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_assistant",
@@ -1123,82 +1142,157 @@ Please reference this generated image in your response when relevant and explain
 
         async def parse_icd(state: FlowState) -> FlowState:
             """
-            Currently uses claude to parse the ICD code from the response but can be replaced 
-            with a proper regex or a more sophisticated parsing method in the future.
+            Parse the ICD code and differential diagnoses from the response.
             """
-            if state.patient_ctx:
+            if state.patient_ctx and state.llm_response:
                 try:
-                    prompt = (
-                        "Return JSON with fields primary_icd, differential (list), "
-                        f"confidence (0-1) for the following medical diagnosis:\n\n{state.llm_response.content if state.llm_response else ''}\n\n"
-                        "Format the differential as a simple list of strings (ICD codes only), not objects with descriptions."
+                    # Use a shorter, more focused prompt to avoid context issues
+                    response_content = state.llm_response.content
+                    
+                    # Truncate response if too long to avoid API limits
+                    if len(response_content) > 2000:
+                        response_content = response_content[:2000] + "..."
+                    
+                    prompt = f"""Extract medical diagnoses from this response. Return only valid JSON:
+
+        Response to analyze:
+        {response_content}
+
+        Return JSON format:
+        {{
+        "primary_icd": "string (ICD-10 code or 'Unknown')",
+        "differential": [
+            {{
+            "icd_code": "string (ICD-10 code)", 
+            "diagnosis_name": "string",
+            "confidence": number (0-1),
+            "reasoning": "string (brief)",
+            "supporting_evidence": ["string1", "string2"]
+            }}
+        ],
+        "confidence": number (0-1)
+        }}
+
+        If no clear diagnoses found, return: {{"primary_icd": "Unknown", "differential": [], "confidence": 0.0}}"""
+
+                    # Use a simpler system message to reduce token usage
+                    simple_system_msg = ChatMessage(
+                        role=ChatRole.SYSTEM, 
+                        content="You extract medical diagnoses from clinical text and return valid JSON."
                     )
-                    parsed = await self._llm.chat([SYSTEM_MSG_DIAGNOSE, ChatMessage(role=ChatRole.USER, content=prompt)], json_mode=True)
-
+                    
+                    # Add retry logic with exponential backoff
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            parsed = await self._llm.chat([
+                                simple_system_msg, 
+                                ChatMessage(role=ChatRole.USER, content=prompt)
+                            ], json_mode=True)
+                            
+                            if parsed and parsed.content:
+                                break
+                                
+                        except Exception as retry_error:
+                            print(f"[parse_icd] Attempt {attempt + 1} failed: {retry_error}")
+                            if attempt == max_retries - 1:
+                                raise retry_error
+                            # Wait before retry (exponential backoff)
+                            import asyncio
+                            await asyncio.sleep(2 ** attempt)
+                    
                     if not parsed or not parsed.content:
-                        print("[parse_icd] Empty response from LLM, using fallback values")
-                        raise ValueError("Empty response from LLM")
+                        print("[parse_icd] No response from LLM after retries, using fallback")
+                        raise ValueError("No response from LLM after retries")
 
-                    # Strip whitespace and check if content is empty
+                    # Clean and parse response
                     response_content = parsed.content.strip()
-                    if not response_content:
-                        print("[parse_icd] Empty content in response, using fallback values")
-                        raise ValueError("Empty content in response")
+                    
+                    # Remove markdown code blocks
+                    if response_content.startswith("```"):
+                        lines = response_content.split('\n')
+                        # Remove first and last lines if they're markdown markers
+                        if lines[0].startswith("```"):
+                            lines = lines[1:]
+                        if lines and lines[-1].strip() == "```":
+                            lines = lines[:-1]
+                        response_content = '\n'.join(lines).strip()
 
-                    # Remove markdown code block markers if present
-                    if response_content.startswith("```json"):
-                        # Find the end of the opening marker
-                        start_idx = response_content.find('\n') + 1
-                        # Find the closing marker
-                        end_idx = response_content.rfind("```")
-                        if start_idx > 0 and end_idx > start_idx:
-                            response_content = response_content[start_idx:end_idx].strip()
-                    elif response_content.startswith("```"):
-                        # Handle generic code blocks
-                        start_idx = response_content.find('\n') + 1
-                        end_idx = response_content.rfind("```")
-                        if start_idx > 0 and end_idx > start_idx:
-                            response_content = response_content[start_idx:end_idx].strip()
-
-                    # Try to parse JSON
+                    # Parse JSON with better error handling
                     try:
-                        data = json.loads(response_content)
-                    except json.JSONDecodeError as json_err:
-                        print(f"[parse_icd] JSON parsing failed: {json_err}")
-                        print(f"[parse_icd] Raw response content: {response_content[:500]}...")
-                        raise json_err
+                        parsed_data = json.loads(response_content)
+                    except json.JSONDecodeError as json_error:
+                        print(f"[parse_icd] JSON decode error: {json_error}")
+                        print(f"[parse_icd] Response content: {response_content[:500]}...")
+                        # Try to extract basic info with regex as fallback
+                        import re
+                        icd_matches = re.findall(r'[A-Z]\d{2}(?:\.\d{1,2})?', response_content)
+                        primary_icd = icd_matches[0] if icd_matches else "Unknown"
+                        parsed_data = {
+                            "primary_icd": primary_icd,
+                            "differential": [],
+                            "confidence": 0.5 if icd_matches else 0.0
+                        }
+
+                    # Build differential list with validation
+                    differential_list = []
+                    if parsed_data.get("differential") and isinstance(parsed_data["differential"], list):
+                        for diff in parsed_data["differential"]:
+                            if isinstance(diff, dict):
+                                try:
+                                    differential_list.append(DifferentialDiagnosis(
+                                        icd_code=str(diff.get("icd_code", "")),
+                                        diagnosis_name=str(diff.get("diagnosis_name", "")),
+                                        confidence=float(diff.get("confidence", 0.0)),
+                                        reasoning=str(diff.get("reasoning", "")),
+                                        supporting_evidence=list(diff.get("supporting_evidence", []))
+                                    ))
+                                except Exception as diff_error:
+                                    print(f"[parse_icd] Error creating differential diagnosis: {diff_error}")
+                                    continue
                     
-                    # Handle primary ICD
-                    primary_icd = data.get("primary_icd", "Unknown")
-                    if isinstance(primary_icd, dict):
-                        state.primary_icd = primary_icd.get("icd", "Unknown")
-                    else:
-                        state.primary_icd = primary_icd or "Unknown"
+                    # Create structured DiagnosisResult
+                    state.parsed_response = DiagnosisResult(
+                        patient_id=state.patient_ctx.patient_id,
+                        primary_icd=str(parsed_data.get("primary_icd", "Unknown")),
+                        differential=differential_list,
+                        confidence=float(parsed_data.get("confidence", 0.0)),
+                        explanation=state.llm_response.content,
+                        session_id=state.session_id,
+                        created_by_user_id=state.user_id
+                    )
                     
-                    # Handle differential - ensure it's a list of strings
-                    differential = data.get("differential", [])
-                    if differential and isinstance(differential[0], dict):
-                        # Convert from dict format to string format
-                        state.differential = [
-                            item.get("icd", "Unknown") if isinstance(item, dict) else str(item)
-                            for item in differential
-                        ]
-                    else:
-                        state.differential = [str(item) for item in differential] if differential else []
+                    # Update legacy fields for compatibility
+                    state.primary_icd = str(parsed_data.get("primary_icd", "Unknown"))
+                    state.differential = [diff.icd_code for diff in differential_list]
+                    state.confidence = float(parsed_data.get("confidence", 0.0))
                     
-                    state.confidence = data.get("confidence", 0.0)
+                    print(f"[parse_icd] Successfully parsed: primary={state.primary_icd}, differential_count={len(differential_list)}")
                     
                 except Exception as e:
                     print(f"[parse_icd] Error parsing ICD: {e}")
-                    # Fallback values in case of error
+                    import traceback
+                    traceback.print_exc()
+                    
+                    # Robust fallback values
                     state.primary_icd = "Unknown"
                     state.differential = []
                     state.confidence = 0.0
+                    state.parsed_response = DiagnosisResult(
+                        patient_id=state.patient_ctx.patient_id,
+                        primary_icd="Unknown",
+                        differential=[],
+                        confidence=0.0,
+                        explanation=state.llm_response.content if state.llm_response else "",
+                        session_id=state.session_id,
+                        created_by_user_id=state.user_id
+                    )
             else:
                 # For general chat, set default values
                 state.primary_icd = "N/A - General Chat"
                 state.differential = []
                 state.confidence = 0.0
+                state.parsed_response = None
             
             return state
 
@@ -1289,9 +1383,9 @@ Please reference this generated image in your response when relevant and explain
         )
 
         _builder.add_edge("perform_web_search", "diagnose")
-        _builder.add_edge("diagnose", "store_assistant_response")
-        _builder.add_edge("store_assistant_response", "parse_icd")
-        _builder.add_edge("parse_icd", END)
+        _builder.add_edge("diagnose", "parse_icd")
+        _builder.add_edge("parse_icd", "store_assistant_response")
+        _builder.add_edge("store_assistant_response", END)
 
         return _builder.compile()
 
@@ -1505,6 +1599,20 @@ Please reference this generated image in your response when relevant and explain
                 completion_update["reasoning"] = previous_state["llm_reasoning"]
                 completion_update["reasoning_steps"] = previous_state.get("reasoning_steps", [])
             
+            # Include structure differential diagnoses in completion if they exist
+            if previous_state and previous_state.get("parsed_response") and hasattr(previous_state["parsed_response"], 'differential'):
+                completion_update["differential_diagnoses"] = [
+                    {
+                        "icd_code": diff.icd_code,
+                        "diagnosis_name": diff.diagnosis_name,
+                        "confidence": diff.confidence,
+                        "reasoning": diff.reasoning,
+                        "supporting_evidence": diff.supporting_evidence
+                    }
+                    for diff in previous_state["parsed_response"].differential
+                ]
+                completion_update["diagnosis_result"] = previous_state["parsed_response"]
+
             # Include image information in completion
             if previous_state and previous_state.get("generated_image"):
                 completion_update["generated_image"] = {

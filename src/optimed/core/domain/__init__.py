@@ -1,5 +1,5 @@
 from .clinical import PatientContext, BedState, Encounter, JournalEntry, JournalEntryCreate, JournalEntryUpdate
-from .diagnosis import DiagnosisResult, WebSearchInfo, CrossSessionHistoryInfo, GeneratedImageInfo
+from .diagnosis import DiagnosisResult, WebSearchInfo, CrossSessionHistoryInfo, GeneratedImageInfo, DifferentialDiagnosis
 from .info import InfoEvent, Notification, CommThread, ChatMessage, WebSearchQuery, WebSearchResult, WebSearchResponse, ChatSession, SessionParticipant
 from .kpi import KPIEvent, Alert
 from .users import User, UserAction, UserSession, UserEHRConnection
@@ -60,6 +60,7 @@ __all__ = [
     "WebSearchInfo",
     "CrossSessionHistoryInfo",
     "GeneratedImageInfo",
+    "DifferentialDiagnosis",
     # users
     "User",
     "UserAction",

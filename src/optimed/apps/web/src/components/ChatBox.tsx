@@ -8,6 +8,7 @@ import ReactMarkdown from 'react-markdown';
 import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
 import { ReasoningViewer } from "./ReasoningViewer";
+import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCards";
 
 export interface GeneratedImageInfo {
   image_generated: boolean;
@@ -33,7 +34,13 @@ export interface GeneratedImageResponse {
   model_info: Record<string, any>;
 }
 
-
+interface DifferentialDiagnosis {
+  icd_code: string;
+  diagnosis_name: string;
+  confidence: number;
+  reasoning: string;
+  supporting_evidence: string[];
+}
 
 interface Message {
   sender: "user" | "system";
@@ -43,12 +50,13 @@ interface Message {
   generatedImage?: GeneratedImageInfo;
   reasoningSteps?: string[];
   reasoning?: string;
+  differentialDiagnoses?: DifferentialDiagnosis[];
 }
 
 interface ChatBoxProps {
   mode: "chat" | "diagnose";
   patientId?: string;
-  sessionId?: string | null; // Optional session ID for diagnosis mode
+  sessionId?: string | null;
 }
 
 const parseLinksInText = (text: string, isUser: boolean = false) => {
@@ -227,7 +235,6 @@ const MessageContent = ({ text, isUser }: MessageContentProps) => {
   );
 };
 
-// ...existing code...
 const getAuthHeaders = () => {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -239,7 +246,6 @@ const getAuthHeaders = () => {
   }
   return headers;
 };
-
 
 const GeneratedImageDisplay = ({ imageInfo }: { imageInfo: GeneratedImageInfo }) => {
   const [imageError, setImageError] = useState(false);
@@ -429,9 +435,7 @@ const formatTimestamp = (timestamp: string | number): string => {
   }
 };
 
-
 export default function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
-  // ...existing code...
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -442,7 +446,8 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     reasoning,
     currentReasoning,
     finalResponse,
-    generatedImage, // Add this - it was missing!
+    generatedImage,
+    streamDifferentialDiagnoses, // Add this for differential diagnoses
     error: streamError,
     progress,
     startStream,
@@ -467,7 +472,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   
   const { user } = useUser();
 
-  // Auto-scroll to bottom när nya meddelanden kommer
+  // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -489,64 +494,126 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
 
   // Load chat history on component mount or session change
   useEffect(() => {
-    const loadHistory = async () => {
-      try {
-        console.log(`Loading history for session: ${currentSessionId}, patient: ${patientId}`);
+  const loadHistory = async () => {
+    try {
+      console.log(`Loading history for session: ${currentSessionId}, patient: ${patientId}`);
+      
+      const response = await fetch('/api/chat-history', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ 
+          patient_id: patientId,
+          session_id: currentSessionId,
+          mode: mode
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('🔍 Raw chat history data received:', data);
         
-        const response = await fetch('/api/chat-history', {
-          method: 'POST',
-          headers: getAuthHeaders(),
-          body: JSON.stringify({ 
-            patient_id: patientId,
-            session_id: currentSessionId,
-            mode: mode
-          })
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          console.log('Loaded chat history:', data);
-          
-          if (data.messages && data.messages.length > 0) {
-            const formattedMessages = data.messages.map((msg: any) => {
-              const formattedMessage: Message = {
-                sender: msg.role === 'user' ? 'user' : 'system',
-                text: msg.content,
-                // Fix timestamp parsing
-                timestamp: msg.timestamp ? formatTimestamp(msg.timestamp) : new Date().toLocaleTimeString()
-              };
-              
-              // Add reasoning from multiple possible sources
-              if (msg.reasoning || msg.reasoning_steps) {
-                console.log('🧠 Found reasoning in chat history:', {
-                  reasoning: !!msg.reasoning,
-                  reasoningSteps: msg.reasoning_steps?.length || 0
-                });
-                
-                // Use reasoning from content first, then from steps
-                formattedMessage.reasoning = msg.reasoning || (msg.reasoning_steps ? msg.reasoning_steps.join('\n') : '');
-                formattedMessage.reasoningSteps = msg.reasoning_steps || [];
-              }
-              
-              // Add generated image info if present
-              if (msg.generated_image && msg.generated_image.image_generated) {
-                formattedMessage.generatedImage = msg.generated_image;
-                console.log('📸 Found image in chat history:', msg.generated_image.image_id);
-              }
-              
-              return formattedMessage;
+        if (data.messages && data.messages.length > 0) {
+          const formattedMessages = data.messages.map((msg: any, index: number) => {
+            console.log(`🔍 Processing message ${index}:`, {
+              role: msg.role,
+              hasDifferential: !!msg.differential_diagnoses,
+              differentialCount: msg.differential_diagnoses?.length || 0,
+              hasReasoning: !!(msg.reasoning || msg.reasoning_steps?.length),
+              reasoningStepsCount: msg.reasoning_steps?.length || 0
             });
-            setMessages(formattedMessages);
+
+            const formattedMessage: Message = {
+              sender: msg.role === 'user' ? 'user' : 'system',
+              text: msg.content,
+              timestamp: msg.timestamp ? formatTimestamp(msg.timestamp) : new Date().toLocaleTimeString()
+            };
             
-            // Log reasoning data for debugging
-            const messagesWithReasoning: Message[] = formattedMessages.filter((msg: Message) => msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0));
-            console.log(`📊 Loaded ${formattedMessages.length} messages, ${messagesWithReasoning.length} with reasoning`);
-          }
+            // Add reasoning from multiple possible sources
+            if (msg.reasoning || (msg.reasoning_steps && msg.reasoning_steps.length > 0)) {
+              console.log('🧠 Found reasoning in chat history for message', index, ':', {
+                reasoning: !!msg.reasoning,
+                reasoningSteps: msg.reasoning_steps?.length || 0
+              });
+              
+              formattedMessage.reasoning = msg.reasoning || (msg.reasoning_steps ? msg.reasoning_steps.join('\n') : '');
+              formattedMessage.reasoningSteps = msg.reasoning_steps || [];
+            }
+            
+            // Add generated image info if present
+            if (msg.generated_image && msg.generated_image.image_generated) {
+              formattedMessage.generatedImage = msg.generated_image;
+              console.log('📸 Found image in chat history for message', index, ':', msg.generated_image.image_id);
+            }
+
+            // Enhanced differential diagnoses loading - more lenient validation
+            if (msg.differential_diagnoses && Array.isArray(msg.differential_diagnoses)) {
+              console.log(`🩺 Processing differential diagnoses for message ${index}:`, msg.differential_diagnoses);
+              
+              // More lenient validation - only require essential fields
+              const validDiagnoses = msg.differential_diagnoses.filter((diff: any) => {
+                const isValid = diff && 
+                  typeof diff === 'object' && 
+                  diff.diagnosis_name && 
+                  (diff.confidence !== undefined && diff.confidence !== null);
+                
+                if (!isValid) {
+                  console.warn(`🚫 Invalid diagnosis in message ${index}:`, diff);
+                }
+                return isValid;
+              });
+              
+              if (validDiagnoses.length > 0) {
+                // Ensure all required fields have defaults
+                formattedMessage.differentialDiagnoses = validDiagnoses.map((diff: any) => ({
+                  icd_code: diff.icd_code || '',
+                  diagnosis_name: diff.diagnosis_name || 'Unknown Diagnosis',
+                  confidence: typeof diff.confidence === 'number' ? diff.confidence : 0,
+                  reasoning: diff.reasoning || 'No reasoning provided',
+                  supporting_evidence: Array.isArray(diff.supporting_evidence) ? diff.supporting_evidence : []
+                }));
+                
+              } else {
+                console.warn('🚫 No valid differential diagnoses found for message', index, ':', msg.differential_diagnoses);
+              }
+            } else {
+              console.log(`📄 No differential diagnoses for message ${index}:`, {
+                hasDifferential: !!msg.differential_diagnoses,
+                isArray: Array.isArray(msg.differential_diagnoses),
+                type: typeof msg.differential_diagnoses
+              });
+            }
+            
+            return formattedMessage;
+          });
+          
+          setMessages(formattedMessages);
+          
+          // Enhanced logging
+          const messagesWithReasoning = formattedMessages.filter((msg: Message) => 
+            msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)
+          );
+          const messagesWithDifferentials = formattedMessages.filter((msg: Message) => 
+            msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0
+          );
+          const messagesWithBoth = formattedMessages.filter((msg: Message) => 
+            (msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)) && 
+            (msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0)
+          );
+          
+          console.log(`📊 Chat history loaded successfully:`, {
+            totalMessages: formattedMessages.length,
+            withReasoning: messagesWithReasoning.length,
+            withDifferentials: messagesWithDifferentials.length,
+            withBoth: messagesWithBoth.length
+          });
         }
-      } catch (error) {
-        console.error('Failed to load conversation history:', error);
+      } else {
+        console.error('Failed to load chat history:', response.status, response.statusText);
       }
-    };
+    } catch (error) {
+      console.error('Failed to load conversation history:', error);
+    }
+  };
 
     // Only load if we have a patient ID for diagnosis mode or if it's general chat
     if ((mode === 'diagnose' && patientId) || mode === 'chat') {
@@ -554,10 +621,18 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     }
   }, [currentSessionId, patientId, mode]);
 
-  useEffect(() => {
-    console.log('📧 Final response effect:', { finalResponse, isStreaming, reasoning, generatedImage });
+    // Update the final response effect to include differential diagnoses
+    useEffect(() => {
+    console.log('📧 Final response effect:', { 
+      finalResponse, 
+      isStreaming, 
+      reasoning, 
+      generatedImage, 
+      streamDifferentialDiagnoses 
+    });
+    
     if (finalResponse && !isStreaming) {
-      console.log('✅ Adding final response to messages:', finalResponse);
+      console.log('✅ Adding final response to messages with reasoning:', reasoning);
       setMessages((prev) => {
         const lastMessage = prev[prev.length - 1];
         if (lastMessage && lastMessage.sender === "system" && lastMessage.text === finalResponse) {
@@ -578,21 +653,42 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
           console.log('🖼️ Including generated image in message:', formattedGeneratedImage);
         }
         
+        // Log differential diagnoses being added
+        if (streamDifferentialDiagnoses && streamDifferentialDiagnoses.length > 0) {
+          console.log('🩺 Including differential diagnoses in message:', streamDifferentialDiagnoses);
+        }
+        
+        // CRITICAL FIX: Ensure reasoning is properly formatted
+        const reasoningText = reasoning && reasoning.length > 0 ? reasoning.join('\n') : '';
+        console.log('🧠 Final reasoning for message:', {
+          reasoningArray: reasoning,
+          reasoningText: reasoningText,
+          hasReasoning: !!reasoningText
+        });
+        
+        const newMessage = { 
+          sender: "system" as const, 
+          text: finalResponse,
+          timestamp: new Date().toLocaleTimeString(),
+          reasoning: reasoningText,
+          reasoningSteps: reasoning,
+          generatedImage: formattedGeneratedImage,
+          differentialDiagnoses: streamDifferentialDiagnoses
+        };
+        
+        console.log('🔥 Creating new message with data:', {
+          hasReasoning: !!(newMessage.reasoning || (newMessage.reasoningSteps && newMessage.reasoningSteps.length > 0)),
+          hasDifferential: !!(newMessage.differentialDiagnoses && newMessage.differentialDiagnoses.length > 0),
+          hasImage: !!newMessage.generatedImage
+        });
+        
         return [
           ...prev,
-          { 
-            sender: "system", 
-            text: finalResponse,
-            timestamp: new Date().toLocaleTimeString(),
-            reasoning: reasoning.join('\n'),
-            reasoningSteps: reasoning,
-            generatedImage: formattedGeneratedImage
-          }
+          newMessage
         ];
       });
     }
-  }, [finalResponse, isStreaming, reasoning, generatedImage]);
-
+  }, [finalResponse, isStreaming, reasoning, generatedImage, streamDifferentialDiagnoses]);
 
   // Handle streaming errors
   useEffect(() => {
@@ -608,7 +704,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
       ]);
     }
   }, [streamError]);
-  // ... rest of existing code, but use currentSessionId in sendMessage
+
   const sendMessage = async (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isStreaming) return;
@@ -663,22 +759,9 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     return "Enter patient details to begin diagnosis...";
   };
 
-  useEffect(() => {
-    if (streamError) {
-      setMessages((prev) => [
-        ...prev,
-        { 
-          sender: "system", 
-          text: `Error: ${streamError}`,
-          timestamp: new Date().toLocaleTimeString()
-        }
-      ]);
-    }
-  }, [streamError]);
-
   return (
     <div className="flex flex-col h-full bg-white max-h-full overflow-hidden">
-      {/* Chat Messages Area - bara denna del scrollar */}
+      {/* Chat Messages Area - only this part scrolls */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
         <div className="p-4 space-y-3">
           {messages.length === 0 && !isStreaming && (
@@ -705,12 +788,21 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                   <GeneratedImageDisplay imageInfo={msg.generatedImage} />
                 )}
                 
-                {/* Display reasoning viewer for system messages */}
+                {/* Display differential diagnoses FIRST if available */}
+                {msg.sender === "system" && msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0 && (
+                  <div className="mt-3">
+                    <DifferentialDiagnosisCards diagnoses={msg.differentialDiagnoses} />
+                  </div>
+                )}
+                
+                {/* Display reasoning viewer AFTER differential diagnoses */}
                 {msg.sender === "system" && (msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)) && (
-                  <ReasoningViewer 
-                    reasoning={msg.reasoning || ''} 
-                    reasoningSteps={msg.reasoningSteps} 
-                  />
+                  <div className="mt-3">
+                    <ReasoningViewer 
+                      reasoning={msg.reasoning || ''} 
+                      reasoningSteps={msg.reasoningSteps} 
+                    />
+                  </div>
                 )}
                 
                 {msg.timestamp && (
@@ -739,7 +831,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
         </div>
       </div>
 
-      {/* Input Form - fast längst ner, scrollar INTE */}
+      {/* Input Form - fixed at bottom, doesn't scroll */}
       <div className="border-t bg-gray-50 p-4 flex-shrink-0">
         <form onSubmit={sendMessage} className="flex gap-3">
           <input

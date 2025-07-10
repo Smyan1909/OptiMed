@@ -173,6 +173,8 @@ class PGVectorAdapter(VectorStore):
                 # Extract generated image information if present
                 generated_image = content_data.get("generated_image")
                 
+                differential_diagnoses = content_data.get("differential_diagnoses", [])
+
                 message_data = {
                     "content": message_content,
                     "role": message_role,
@@ -192,6 +194,14 @@ class PGVectorAdapter(VectorStore):
                         except json.JSONDecodeError as e:
                             print(f"[DEBUG] Failed to parse reasoning_steps from metadata: {e}")
                     
+                    if metadata.get("differential_count"):
+                        try:
+                            differential_data = json.loads(metadata["differential_count"])
+                            message_data["differential_count"] = differential_data
+                            print(f"[DEBUG] Extracted differential_count from metadata: {differential_data}")
+                        except json.JSONDecodeError as e:
+                            print(f"[DEBUG] Failed to parse differential_count from metadata: {e}")
+
                     # Also check if there's reasoning in the content itself (fallback)
                     if hasattr(content_data.get("generated_image"), "reasoning"):
                         message_data["reasoning"] = content_data["generated_image"]["reasoning"]
@@ -200,7 +210,9 @@ class PGVectorAdapter(VectorStore):
                 if generated_image:
                     message_data["generated_image"] = generated_image
                     
-                
+                if differential_diagnoses:
+                    message_data["differential_diagnoses"] = differential_diagnoses
+
                 result.append(message_data)
                 
             except Exception as e:

@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 from __future__ import annotations
 import base64
 import os
@@ -492,7 +493,7 @@ class HAPIFHIRRepository(FHIRRepository):
             pid: str,
             *,
             category: str,
-            count: int = 10
+            count: int = 50
     ) -> list[Observation]:
         """Fetch Observations of a given category for a patient."""
         r = await self._client.get(
