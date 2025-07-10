@@ -621,8 +621,8 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     }
   }, [currentSessionId, patientId, mode]);
 
-  // Update the final response effect to include differential diagnoses
-  useEffect(() => {
+    // Update the final response effect to include differential diagnoses
+    useEffect(() => {
     console.log('📧 Final response effect:', { 
       finalResponse, 
       isStreaming, 
@@ -632,7 +632,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     });
     
     if (finalResponse && !isStreaming) {
-      console.log('✅ Adding final response to messages:', finalResponse);
+      console.log('✅ Adding final response to messages with reasoning:', reasoning);
       setMessages((prev) => {
         const lastMessage = prev[prev.length - 1];
         if (lastMessage && lastMessage.sender === "system" && lastMessage.text === finalResponse) {
@@ -658,17 +658,33 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
           console.log('🩺 Including differential diagnoses in message:', streamDifferentialDiagnoses);
         }
         
+        // CRITICAL FIX: Ensure reasoning is properly formatted
+        const reasoningText = reasoning && reasoning.length > 0 ? reasoning.join('\n') : '';
+        console.log('🧠 Final reasoning for message:', {
+          reasoningArray: reasoning,
+          reasoningText: reasoningText,
+          hasReasoning: !!reasoningText
+        });
+        
+        const newMessage = { 
+          sender: "system" as const, 
+          text: finalResponse,
+          timestamp: new Date().toLocaleTimeString(),
+          reasoning: reasoningText,
+          reasoningSteps: reasoning,
+          generatedImage: formattedGeneratedImage,
+          differentialDiagnoses: streamDifferentialDiagnoses
+        };
+        
+        console.log('🔥 Creating new message with data:', {
+          hasReasoning: !!(newMessage.reasoning || (newMessage.reasoningSteps && newMessage.reasoningSteps.length > 0)),
+          hasDifferential: !!(newMessage.differentialDiagnoses && newMessage.differentialDiagnoses.length > 0),
+          hasImage: !!newMessage.generatedImage
+        });
+        
         return [
           ...prev,
-          { 
-            sender: "system", 
-            text: finalResponse,
-            timestamp: new Date().toLocaleTimeString(),
-            reasoning: reasoning.join('\n'),
-            reasoningSteps: reasoning,
-            generatedImage: formattedGeneratedImage,
-            differentialDiagnoses: streamDifferentialDiagnoses
-          }
+          newMessage
         ];
       });
     }

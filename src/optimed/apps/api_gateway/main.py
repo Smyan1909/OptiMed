@@ -945,7 +945,9 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
                     "timestamp": datetime.now().isoformat(),
                     "metadata": update.get("metadata", {}),
                     "generated_image": update.get("generated_image"),
-                    "differential_diagnoses": differential_diagnoses
+                    "differential_diagnoses": differential_diagnoses,
+                    "reasoning": update.get("reasoning", ""),
+                    "reasoning_steps": update.get("reasoning_steps", []),
                 }
 
                 yield f"data: {json.dumps(completion_data)}\n\n"

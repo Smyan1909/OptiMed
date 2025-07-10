@@ -1,5 +1,20 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 
+interface DifferentialDiagnosis {
+  icd_code: string;
+  diagnosis_name: string;
+  confidence: number;
+  reasoning: string;
+  supporting_evidence: string[];
+}
+
+interface GeneratedImage {
+  image_id: string;
+  prompt: string;
+  created_at?: string;
+  metadata?: any;
+}
+
 interface StreamingUpdate {
   type: 'status' | 'reasoning' | 'reasoning_complete' | 'completion' | 'error';
   step?: string;
@@ -11,13 +26,9 @@ interface StreamingUpdate {
   timestamp?: string;
   estimated_time?: string;
   is_long_running?: boolean;
-  generated_image?: {
-    image_id: string;
-    prompt: string;
-    created_at?: string;
-    metadata?: any;
-  };
-  differential_diagnoses?: DifferentialDiagnosis[]; // Add this line
+  generated_image?: GeneratedImage;
+  differential_diagnoses?: DifferentialDiagnosis[];
+  reasoning_steps?: string[];
 }
 
 interface StreamingState {
@@ -30,20 +41,7 @@ interface StreamingState {
   progress: number;
   updates: StreamingUpdate[];
   currentReasoning: string;
-  generatedImage: {
-    image_id: string;
-    prompt: string;
-    created_at?: string;
-    metadata?: any;
-  } | null;
-}
-
-interface DifferentialDiagnosis {
-  icd_code: string;
-  diagnosis_name: string;
-  confidence: number;
-  reasoning: string;
-  supporting_evidence: string[];
+  generatedImage: GeneratedImage | null;
 }
 
 export const useStreamingChat = () => {
@@ -78,6 +76,7 @@ export const useStreamingChat = () => {
       clearTimeout(reasoningTimeoutRef.current);
     }
 
+    // Reset all state
     setState({
       isStreaming: true,
       currentStep: 'Initializing...',
@@ -124,7 +123,10 @@ export const useStreamingChat = () => {
         try {
           while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+              console.log('📡 Stream ended');
+              break;
+            }
 
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
@@ -156,7 +158,7 @@ export const useStreamingChat = () => {
         }
       };
 
-      processStream();
+      await processStream();
 
     } catch (error) {
       console.error('Streaming error:', error);
@@ -168,7 +170,7 @@ export const useStreamingChat = () => {
     }
   }, []);
 
-  const handleStreamUpdate = (update: StreamingUpdate) => {
+  const handleStreamUpdate = useCallback((update: StreamingUpdate) => {
     console.log('🔄 Processing update:', update.type, update);
     
     setState(prev => {
@@ -188,6 +190,7 @@ export const useStreamingChat = () => {
 
         case 'reasoning':
           const newReasoning = [...prev.reasoning, update.reasoning || ''];
+          console.log('🧠 Adding reasoning step:', update.reasoning, 'Total steps:', newReasoning.length);
           
           if (reasoningTimeoutRef.current) {
             clearTimeout(reasoningTimeoutRef.current);
@@ -212,6 +215,7 @@ export const useStreamingChat = () => {
           return newState;
 
         case 'reasoning_complete':
+          console.log('🧠 Reasoning complete, total steps:', prev.reasoning.length);
           if (reasoningTimeoutRef.current) {
             clearTimeout(reasoningTimeoutRef.current);
           }
@@ -228,17 +232,33 @@ export const useStreamingChat = () => {
         case 'completion':
           console.log('✅ Completion received with content:', update.content);
           console.log('🖼️ Generated image:', update.generated_image);
-          console.log('🩺 Differential diagnoses:', update.differential_diagnoses);
-          console.log('🧠 Reasoning steps:', prev.reasoning);
+          console.log('🩺 Differential diagnoses received:', update.differential_diagnoses);
+          console.log('🧠 Reasoning steps received:', update.reasoning_steps);
           
-          // Handle differential diagnoses
-          if (update.differential_diagnoses && update.differential_diagnoses.length > 0) {
+          // Handle differential diagnoses - set them immediately
+          if (update.differential_diagnoses && Array.isArray(update.differential_diagnoses) && update.differential_diagnoses.length > 0) {
+            console.log('🩺 Setting differential diagnoses state:', update.differential_diagnoses);
             setStreamDifferentialDiagnoses(update.differential_diagnoses);
-            console.log('🩺 Updated differential diagnoses state:', update.differential_diagnoses);
+          } else {
+            console.log('🩺 No differential diagnoses in completion or empty array');
+            setStreamDifferentialDiagnoses([]);
           }
           
           if (reasoningTimeoutRef.current) {
             clearTimeout(reasoningTimeoutRef.current);
+          }
+
+          // CRITICAL FIX: Prioritize reasoning from completion, but preserve streaming reasoning if completion has none
+          let finalReasoning = prev.reasoning;
+          if (update.reasoning_steps && Array.isArray(update.reasoning_steps) && update.reasoning_steps.length > 0) {
+            console.log('🧠 Using reasoning from completion:', update.reasoning_steps);
+            finalReasoning = update.reasoning_steps;
+          } else if (prev.reasoning.length > 0) {
+            console.log('🧠 Using reasoning from streaming:', prev.reasoning);
+            finalReasoning = prev.reasoning;
+          } else {
+            console.log('🧠 No reasoning available from either source');
+            finalReasoning = prev.reasoning;
           }
           
           return {
@@ -246,6 +266,7 @@ export const useStreamingChat = () => {
             isStreaming: false,
             finalResponse: update.content || '',
             generatedImage: update.generated_image || null,
+            reasoning: finalReasoning,
             progress: 100,
             currentStep: 'Complete',
             currentDescription: 'Analysis finished',
@@ -268,10 +289,11 @@ export const useStreamingChat = () => {
           };
 
         default:
+          console.log('🔄 Unknown update type:', update.type);
           return { ...prev, updates: newUpdates };
       }
     });
-  };
+  }, []);
 
   const stopStream = useCallback(() => {
     if (eventSourceRef.current) {
@@ -289,6 +311,7 @@ export const useStreamingChat = () => {
     }));
   }, []);
 
+  // Cleanup effect
   useEffect(() => {
     return () => {
       if (eventSourceRef.current) {
@@ -300,9 +323,33 @@ export const useStreamingChat = () => {
     };
   }, []);
 
+  // Debug effect to monitor differential diagnoses changes
+  useEffect(() => {
+    console.log('🩺 streamDifferentialDiagnoses state changed:', streamDifferentialDiagnoses);
+  }, [streamDifferentialDiagnoses]);
+
+  // Debug effect to monitor reasoning changes
+  useEffect(() => {
+    console.log('🧠 reasoning state changed:', state.reasoning);
+  }, [state.reasoning]);
+
   return {
-    ...state,
-    streamDifferentialDiagnoses, // Add this line
+    // State properties
+    isStreaming: state.isStreaming,
+    currentStep: state.currentStep,
+    currentDescription: state.currentDescription,
+    reasoning: state.reasoning,
+    finalResponse: state.finalResponse,
+    error: state.error,
+    progress: state.progress,
+    updates: state.updates,
+    currentReasoning: state.currentReasoning,
+    generatedImage: state.generatedImage,
+    
+    // Additional state
+    streamDifferentialDiagnoses,
+    
+    // Functions
     startStream,
     stopStream,
   };
