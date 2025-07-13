@@ -178,6 +178,14 @@ function PatientDetailContent() {
                   </Link>
                 </div>
                 <div className="flex flex-col items-end space-y-2">
+                  <div className="text-right">
+                    <div className="text-sm text-gray-600">
+                      Consulting as <span className="font-semibold">{user?.display_name}</span>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {user?.role} • Multi-mode diagnostic assistance
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

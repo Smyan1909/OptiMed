@@ -5,6 +5,7 @@ from .streaming_llm import StreamingLLMWrapper
 import uuid 
 import json
 import time
+import asyncio
 from typing import List, Any, Union, AsyncGenerator, Optional
 from datetime import datetime
 
@@ -22,23 +23,116 @@ from optimed.embeddings.service import embed_and_store
 
 
 
-SYSTEM_MSG_DIAGNOSE = ChatMessage(role=ChatRole.SYSTEM, 
-                         content="""You are CLARA, a clinical reasoning assistant and medical chat companion.
+SYSTEM_MSG_PRE_MEET = ChatMessage(role=ChatRole.SYSTEM, 
+                         content="""You are CLARA, a clinical pre-consultation assistant helping doctors prepare for patient encounters.
+
+                                    MODE: PRE-MEET PREPARATION
                                     
                                     IMPORTANT INSTRUCTIONS:
-                                    1. If you see previous conversation history marked between === lines, YOU MUST acknowledge and reference it in your response.
-                                    2. If web search results are provided, YOU MUST cite the specific sources by including the titles and URLs in your response.
-                                    3. When citing web sources, use this format: "According to [Source Title](URL)" or "As reported in [Source Title](URL)"
-                                    4. Always include at least 2-3 source citations when web search results are available.
-                                    5. DO NOT add source citations when web search results are not used.
+                                    1. Analyze the patient's EHR data and previous conversations to provide a comprehensive preparation summary
+                                    2. Focus on information gathering and clinical preparation, NOT diagnosis
+                                    3. If web search results are provided, cite sources using format: "According to [Source Title](URL)"
+                                    4. Reference previous conversation history when available
+                                    
+                                    YOUR ROLE:
+                                    - Summarize key patient information from EHR and chat history
+                                    - Identify gaps in patient data that need clarification
+                                    - Suggest specific questions the doctor should ask during the encounter
+                                    - Recommend physical examinations or tests to perform
+                                    - Highlight concerning findings that require immediate attention
+                                    - Provide context from similar cases or medical literature when relevant
+                                    
+                                    RESPONSE FORMAT:
+                                    ## Patient Summary
+                                    [Brief overview of patient and key concerns]
+                                    
+                                    ## Key Information from Records
+                                    [Relevant EHR data and previous conversations]
+                                    
+                                    ## Questions to Ask Patient
+                                    [Specific questions to gather missing information]
+                                    
+                                    ## Recommended Examinations/Tests
+                                    [Physical exams and diagnostic tests to consider]
+                                    
+                                    ## Areas of Concern
+                                    [Items requiring immediate attention]""")
 
-                                    When patient context is provided:
-                                    - Use only the provided patient context to inform your responses
-                                    - Do not reference other patients' data
-                                    - Combine real‑time vitals, labs, evidence, and web sources to help physicians
-                                    - Provide clinical diagnoses with explanations and cite all sources
-                                    - Focus on medical accuracy and clinical reasoning
-                                    - Reference previous conversation history when available""")
+SYSTEM_MSG_POST_MEET = ChatMessage(role=ChatRole.SYSTEM, 
+                         content="""You are CLARA, a clinical diagnostic assistant helping with post-encounter analysis and care planning.
+
+                                    MODE: POST-MEET ANALYSIS
+                                    
+                                    IMPORTANT INSTRUCTIONS:
+                                    1. Use ALL available information (EHR, conversation history, examination findings) for comprehensive analysis
+                                    2. Generate differential diagnoses with evidence-based reasoning
+                                    3. Suggest treatment plans when diagnosis is established
+                                    4. If web search results are provided, cite sources using format: "According to [Source Title](URL)"
+                                    5. Reference previous conversation history and examination findings
+                                    
+                                    YOUR ROLE:
+                                    - Analyze all patient data to generate differential diagnoses
+                                    - Provide evidence-based reasoning for each diagnosis
+                                    - Suggest treatment plans for established diagnoses
+                                    - Recommend additional tests or specialist referrals
+                                    - Consider patient-specific factors (age, comorbidities, medications)
+                                    - Provide follow-up care recommendations
+                                    
+                                    RESPONSE FORMAT:
+                                    ## Clinical Assessment
+                                    [Summary of findings and clinical picture]
+                                    
+                                    ## Differential Diagnoses
+                                    [List of possible diagnoses with likelihood and evidence]
+                                    
+                                    ## Recommended Treatment Plan
+                                    [Specific treatments if diagnosis is established]
+                                    
+                                    ## Additional Testing
+                                    [Further tests or investigations needed]
+                                    
+                                    ## Follow-up Care
+                                    [Monitoring, referrals, and next steps]""")
+
+SYSTEM_MSG_RESEARCH = ChatMessage(role=ChatRole.SYSTEM, 
+                         content="""You are CLARA, a clinical research assistant for complex case analysis using all available medical resources.
+
+                                    MODE: RESEARCH & DEEP ANALYSIS
+                                    
+                                    IMPORTANT INSTRUCTIONS:
+                                    1. Conduct comprehensive analysis using ALL resources (EHR, literature, web search, previous cases)
+                                    2. Focus on complex, rare, or challenging cases requiring deep investigation
+                                    3. MUST cite all sources using format: "According to [Source Title](URL)" for web sources
+                                    4. Provide evidence-based analysis with current medical literature
+                                    5. Consider multiple perspectives and treatment approaches
+                                    
+                                    YOUR ROLE:
+                                    - Conduct deep research into complex medical cases
+                                    - Analyze rare conditions and atypical presentations
+                                    - Review current medical literature and guidelines
+                                    - Compare treatment approaches and outcomes
+                                    - Identify cutting-edge therapies or clinical trials
+                                    - Provide comprehensive differential analysis
+                                    - Suggest expert consultations when appropriate
+                                    
+                                    RESPONSE FORMAT:
+                                    ## Case Complexity Analysis
+                                    [Why this case requires research mode]
+                                    
+                                    ## Literature Review
+                                    [Current evidence and guidelines with citations]
+                                    
+                                    ## Comprehensive Differential
+                                    [All possible diagnoses including rare conditions]
+                                    
+                                    ## Treatment Options Analysis
+                                    [Comparison of available treatments with evidence]
+                                    
+                                    ## Expert Recommendations
+                                    [Specialist consultations and advanced testing]
+                                    
+                                    ## Clinical Pearls
+                                    [Key insights and learning points from research]""")
 
 SYSTEM_MSG_CHAT = ChatMessage(role=ChatRole.SYSTEM, 
                          content="""You are CLARA, a clinical reasoning assistant and medical chat companion.
@@ -55,10 +149,11 @@ SYSTEM_MSG_CHAT = ChatMessage(role=ChatRole.SYSTEM,
                                     - Focus on being helpful and informative
                                     - Reference previous conversation history to maintain context
                                     - Continue conversations naturally based on chat history
-                                    - Always cite your sources when providing medical information""")# Needs to be more specific and properly created to make the LLM function properly
+                                    - Always cite your sources when providing medical information""")
+                                    
 
-class FlowState(BaseModel): # Potentially add 
-    """Minimal LangGraph state.""" # Add field for user_id or session_id if needed later on as well
+class FlowState(BaseModel):
+    """Minimal LangGraph state."""
     patient_id: str | None = None
     user_prompt: str
     primary_icd: str = ""
@@ -73,21 +168,25 @@ class FlowState(BaseModel): # Potentially add
     filtered_chunks: List[dict[str, Any]] = Field(default_factory=list)
     retrieval_reasoning: str = ""
 
+    requires_full_processing: bool = True  # New field
+
     llm_response: ChatMessage | None = None
 
-    retrieved_web: List[str] = Field(default_factory=list) # This is for future use, if we want to retrieve web data To be implemented later
-    web_search_response: Optional[WebSearchResponse] = None  # Add this
-    web_search_performed: bool = False  # Add this
+    retrieved_web: List[str] = Field(default_factory=list)
+    web_search_response: Optional[WebSearchResponse] = None
+    web_search_performed: bool = False
 
-    chat_mode: bool = False # If True, we are in chat mode and not diagnosing a patient
+    # Add diagnostic mode
+    diagnostic_mode: str = "post_meet"  # "pre_meet", "post_meet", "research", "chat"
+    chat_mode: bool = False # Keep for backward compatibility
     chat_history: List[ChatMessage] = Field(default_factory=list)
 
     needs_cross_session_search: bool = False
     relevant_cross_session_history: List[dict] = Field(default_factory=list)
 
-    user_id: str | None = None  # Optional user ID for tracking who initiated the diagnosis
-    user_context: User | None = None  # Optional user context for additional information
-    session_id: str | None = None  # Optional session ID for tracking the conversation
+    user_id: str | None = None
+    user_context: User | None = None
+    session_id: str | None = None
 
     # Image generation fields
     image_generation_needed: bool = False
@@ -103,10 +202,10 @@ class FlowState(BaseModel): # Potentially add
 
     # Streaming status fields
     current_step: str = ""
-    step_status: str = ""  # "starting", "in_progress", "completed", "error"
+    step_status: str = ""
     step_details: str = ""
     progress_percentage: float = 0.0
-    total_steps: int = 12  # Approximate number of steps
+    total_steps: int = 12
     completed_steps: int = 0
     streaming_updates: List[dict] = Field(default_factory=list)
 
@@ -176,9 +275,15 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
 
         @streaming_step("evaluate_web_search_need")
         async def evaluate_web_search_need(state: FlowState) -> FlowState:
-            """Evaluate if web search is needed for this query."""
+            """Evaluate if web search is needed based on diagnostic mode."""
             try:
-                # Prepare context for evaluation
+                # Research mode always needs web search for comprehensive analysis
+                if state.diagnostic_mode == "research":
+                    state.web_search_performed = True
+                    print(f"[web_search] Research mode: Web search automatically enabled")
+                    return state
+                
+                # For other modes, evaluate based on query content
                 patient_context_str = None
                 if state.patient_ctx:
                     patient_context_str = f"Patient: {state.patient_ctx.name}, Age: {state.patient_ctx.age}"
@@ -187,7 +292,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 if state.chat_history:
                     chat_history_str = [msg.content for msg in state.chat_history[-3:]]
                 
-                # Use web search service to evaluate need
+                
                 needs_search = await self._web_search.evaluate_search_need(
                     user_query=state.user_prompt,
                     patient_context=patient_context_str,
@@ -195,11 +300,12 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 )
                 
                 state.web_search_performed = needs_search
-                print(f"[web_search] Web search needed: {needs_search}")
+                print(f"[web_search] Mode {state.diagnostic_mode}: Web search needed: {needs_search}")
                 
             except Exception as e:
                 print(f"[web_search] Error evaluating search need: {e}")
-                state.web_search_performed = False
+                # Default to web search for research mode even on error
+                state.web_search_performed = (state.diagnostic_mode == "research")
             
             return state
 
@@ -978,12 +1084,23 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
 
         @streaming_step("diagnose")
         async def diagnose(state: FlowState) -> FlowState:
+            # Select system message based on diagnostic mode
+            if state.diagnostic_mode == "pre_meet":
+                messages = [SYSTEM_MSG_PRE_MEET]
+            elif state.diagnostic_mode == "post_meet":
+                messages = [SYSTEM_MSG_POST_MEET]
+            elif state.diagnostic_mode == "research":
+                messages = [SYSTEM_MSG_RESEARCH]
+            else:  # chat mode or default
+                messages = [SYSTEM_MSG_CHAT]
 
-
-            if state.chat_mode:
-                messages = [SYSTEM_MSG_CHAT] 
-            else:
-                messages = [SYSTEM_MSG_DIAGNOSE] 
+            # For direct path (simple queries), use a simplified system message
+            if not getattr(state, 'requires_full_processing', True):
+                simple_system_msg = ChatMessage(
+                    role=ChatRole.SYSTEM, 
+                    content="""You are CLARA, a helpful medical AI assistant. Provide clear, accurate medical information and advice. For general medical questions, draw on your medical knowledge. Keep responses concise and helpful."""
+                )
+                messages = [simple_system_msg]
 
             if state.user_context:
                 user_info = ChatMessage(
@@ -992,95 +1109,102 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 )
                 messages.append(user_info)
 
-            current_history = state.chat_history[-15:]  # Recent current session history
-            if current_history:
-                history_header = ChatMessage(
+            # Only add complex context for full processing path
+            if getattr(state, 'requires_full_processing', True):
+                # Add mode-specific context
+                mode_context = ChatMessage(
                     role=ChatRole.USER,
-                    content="=== CURRENT SESSION HISTORY ==="
+                    content=f"DIAGNOSTIC MODE: {state.diagnostic_mode.upper().replace('_', '-')}"
                 )
-                messages.append(history_header)
-                
-                for msg in current_history:
-                    messages.append(msg)
-                
-                history_footer = ChatMessage(
-                    role=ChatRole.USER,
-                    content="=== END OF CURRENT SESSION HISTORY ==="
-                )
-                messages.append(history_footer)
+                messages.append(mode_context)
 
-            # Add cross-session relevant history if available
-            if state.relevant_cross_session_history:
-                cross_session_header = ChatMessage(
-                    role=ChatRole.USER,
-                    content="=== RELEVANT PREVIOUS CONVERSATIONS (FROM OTHER SESSIONS) ==="
-                )
-                messages.append(cross_session_header)
-                
-                for historical_item in state.relevant_cross_session_history:
-                    # Format the historical context nicely
-                    session_info = f"Session: {historical_item.get('session_id', 'unknown')}"
-                    timestamp_info = ""
-                    if historical_item.get('timestamp'):
-                        try:
-                            timestamp_ms = int(historical_item['timestamp'])
-                            timestamp_dt = datetime.fromtimestamp(timestamp_ms / 1000)
-                            timestamp_info = f" | Date: {timestamp_dt.strftime('%Y-%m-%d %H:%M')}"
-                        except Exception:
-                            pass
-                    
-                    role = historical_item.get('role', 'user').upper()
-                    content = historical_item.get('content', '')
-                    
-                    historical_msg = ChatMessage(
+                current_history = state.chat_history[-15:]  # Recent current session history
+                if current_history:
+                    history_header = ChatMessage(
                         role=ChatRole.USER,
-                        content=f"[{session_info}{timestamp_info}] {role}: {content}"
+                        content="=== CURRENT SESSION HISTORY ==="
                     )
-                    messages.append(historical_msg)
+                    messages.append(history_header)
+                    
+                    for msg in current_history:
+                        messages.append(msg)
+                    
+                    history_footer = ChatMessage(
+                        role=ChatRole.USER,
+                        content="=== END OF CURRENT SESSION HISTORY ==="
+                    )
+                    messages.append(history_footer)
+
+                # Add cross-session relevant history if available
+                if state.relevant_cross_session_history:
+                    cross_session_header = ChatMessage(
+                        role=ChatRole.USER,
+                        content="=== RELEVANT PREVIOUS CONVERSATIONS (FROM OTHER SESSIONS) ==="
+                    )
+                    messages.append(cross_session_header)
+                    
+                    for historical_item in state.relevant_cross_session_history:
+                        session_info = f"Session: {historical_item.get('session_id', 'unknown')}"
+                        timestamp_info = ""
+                        if historical_item.get('timestamp'):
+                            try:
+                                timestamp_ms = int(historical_item['timestamp'])
+                                timestamp_dt = datetime.fromtimestamp(timestamp_ms / 1000)
+                                timestamp_info = f" | Date: {timestamp_dt.strftime('%Y-%m-%d %H:%M')}"
+                            except Exception:
+                                pass
+                        
+                        role = historical_item.get('role', 'user').upper()
+                        content = historical_item.get('content', '')
+                        
+                        historical_msg = ChatMessage(
+                            role=ChatRole.USER,
+                            content=f"[{session_info}{timestamp_info}] {role}: {content}"
+                        )
+                        messages.append(historical_msg)
+                    
+                    cross_session_footer = ChatMessage(
+                        role=ChatRole.USER,
+                        content="=== END OF PREVIOUS CONVERSATIONS ==="
+                    )
+                    messages.append(cross_session_footer)
+
+                if state.patient_ctx:
+                    ctx = ChatMessage(
+                        role=ChatRole.USER,
+                        content="Patient context: \n" + state.patient_ctx.model_dump_json(indent=2),
+                    )
+                    messages.append(ctx)
                 
-                cross_session_footer = ChatMessage(
-                    role=ChatRole.USER,
-                    content="=== END OF PREVIOUS CONVERSATIONS ==="
-                )
-                messages.append(cross_session_footer)
 
+                if state.retrieved_chunks:
+                    chunk_context = "Relevant clinical notes"
+                    if state.retrieval_reasoning:
+                        chunk_context += f" (Selected because: {state.retrieval_reasoning})"
+                    
+                    docs = ChatMessage(
+                        role=ChatRole.USER,
+                        content=f"{chunk_context}:\n" + "\n---\n".join(state.retrieved_chunks),
+                    )
+                    messages.append(docs)
 
-            if state.patient_ctx:
-                ctx = ChatMessage(
-                    role=ChatRole.USER,
-                    content="Patient context: \n" + state.patient_ctx.model_dump_json(indent=2),
-                )
-                messages.append(ctx)
-            
+                # Include chunk analysis metadata for transparency
+                if state.chunk_analysis and state.chunk_analysis.get("query_type"):
+                    analysis_info = ChatMessage(
+                        role=ChatRole.USER,
+                        content=f"Query type identified: {state.chunk_analysis['query_type']}"
+                    )
+                    messages.append(analysis_info)
 
-            if state.retrieved_chunks:
-                chunk_context = "Relevant clinical notes"
-                if state.retrieval_reasoning:
-                    chunk_context += f" (Selected because: {state.retrieval_reasoning})"
-                
-                docs = ChatMessage(
-                    role=ChatRole.USER,
-                    content=f"{chunk_context}:\n" + "\n---\n".join(state.retrieved_chunks),
-                )
-                messages.append(docs)
-
-            # Include chunk analysis metadata for transparency
-            if state.chunk_analysis and state.chunk_analysis.get("query_type"):
-                analysis_info = ChatMessage(
-                    role=ChatRole.USER,
-                    content=f"Query type identified: {state.chunk_analysis['query_type']}"
-                )
-                messages.append(analysis_info)
-
-            if state.web_search_response and state.web_search_response.results:
-                # Create a more detailed and instructional web search message
-                sources_list = []
-                for i, result in enumerate(state.web_search_response.results[:5], 1):
-                    sources_list.append(f"{i}. [{result.title}]({result.url})\n   - {result.snippet[:200]}...")
-                
-                web_info = ChatMessage(
-                    role=ChatRole.USER,
-                    content=f"""=== WEB SEARCH RESULTS FOR: '{state.user_prompt}' ===
+                if state.web_search_response and state.web_search_response.results:
+                    # Create a more detailed and instructional web search message
+                    sources_list = []
+                    for i, result in enumerate(state.web_search_response.results[:5], 1):
+                        sources_list.append(f"{i}. [{result.title}]({result.url})\n   - {result.snippet[:200]}...")
+                    
+                    web_info = ChatMessage(
+                        role=ChatRole.USER,
+                        content=f"""=== WEB SEARCH RESULTS FOR: '{state.user_prompt}' ===
 
 SEARCH SUMMARY: {state.web_search_response.summary}
 
@@ -1090,37 +1214,44 @@ SOURCES TO CITE IN YOUR RESPONSE:
 INSTRUCTION: You MUST cite these sources in your response using the format [Source Title](URL). Include at least 2-3 citations in your answer.
 
 === END OF WEB SEARCH RESULTS ===""")
-                messages.append(web_info)
-            
+                    messages.append(web_info)
+                
 
-            if state.generated_image:
-                image_context = ChatMessage(
-                    role=ChatRole.USER,
-                    content=f"""Generated Educational Image Available:
-                    
+                if state.generated_image:
+                    image_context = ChatMessage(
+                        role=ChatRole.USER,
+                        content=f"""Generated Educational Image Available:
+                        
 An educational medical illustration has been generated to help visualize the concepts discussed:
 - Image ID: {state.generated_image.generation_id}
 - Generated from prompt: {state.generated_image.prompt}
 - Purpose: Educational visualization to aid understanding
 
 Please reference this generated image in your response when relevant and explain how it relates to the medical concepts being discussed. Let the user know they can view the image through the interface."""
-                )
-                messages.append(image_context)
+                    )
+                    messages.append(image_context)
 
             user = ChatMessage(
                 role=ChatRole.USER,
                 content=state.user_prompt,
-                user_id=state.user_id,  # Include user ID if available
-                user_role=state.user_context.role if state.user_context else None,  # Use user role from context
+                user_id=state.user_id,
+                user_role=state.user_context.role if state.user_context else None,
             )
 
             messages.append(user)
 
-            reasoning_prompt = self._create_reasoning_prompt(state)
+            # Use simpler reasoning for direct path
+            if getattr(state, 'requires_full_processing', True):
+                reasoning_prompt = self._create_reasoning_prompt(state)
+            else:
+                reasoning_prompt = """Think through this query step by step:
+1. What is the user asking about?
+2. What medical knowledge can I provide to help?
+3. How can I give a clear, helpful response?"""
 
             state.llm_response = await self._streaming_llm.chat_with_reasoning(messages=messages, state=state, reasoning_prompt=reasoning_prompt)
 
-
+            # Log user action (same as before)
             if state.user_id and state.user_context:
                 action = UserAction(
                     action_id=str(uuid.uuid4()),
@@ -1132,7 +1263,8 @@ Please reference this generated image in your response when relevant and explain
                     metadata={
                         "prompt": state.user_prompt,
                         "chat_mode": state.chat_mode,
-                        "session_id": state.session_id
+                        "session_id": state.session_id,
+                        "direct_path": not getattr(state, 'requires_full_processing', True)
                     }
                 )
                 await self._user_repo.log_action(action)
@@ -1143,7 +1275,28 @@ Please reference this generated image in your response when relevant and explain
         async def parse_icd(state: FlowState) -> FlowState:
             """
             Parse the ICD code and differential diagnoses from the response.
+            Only runs if differential diagnoses are present or if not in pre_meet mode.
             """
+            # Skip ICD parsing for pre_meet mode unless differential diagnoses are explicitly mentioned
+            if state.diagnostic_mode == "pre_meet":
+                if not state.llm_response or not state.llm_response.content:
+                    return state
+                
+                # Check if the response contains differential diagnosis language
+                response_lower = state.llm_response.content.lower()
+                differential_keywords = [
+                    "differential", "diagnosis", "diagnoses", "icd", "condition", 
+                    "disease", "disorder", "syndrome", "pathology"
+                ]
+                
+                contains_diagnostic_content = any(keyword in response_lower for keyword in differential_keywords)
+                
+                if not contains_diagnostic_content:
+                    print("[parse_icd] Pre-meet mode: No diagnostic content detected, skipping ICD parsing")
+                    return state
+                else:
+                    print("[parse_icd] Pre-meet mode: Diagnostic content detected, proceeding with ICD parsing")
+
             if state.patient_ctx and state.llm_response:
                 try:
                     # Use a shorter, more focused prompt to avoid context issues
@@ -1153,32 +1306,73 @@ Please reference this generated image in your response when relevant and explain
                     if len(response_content) > 2000:
                         response_content = response_content[:2000] + "..."
                     
-                    prompt = f"""Extract medical diagnoses from this response. Return only valid JSON:
+                    prompt = f"""MEDICAL DIAGNOSIS EXTRACTION TASK
 
-        Response to analyze:
-        {response_content}
+SOURCE TEXT TO ANALYZE:
+{response_content}
 
-        Return JSON format:
-        {{
-        "primary_icd": "string (ICD-10 code or 'Unknown')",
-        "differential": [
-            {{
-            "icd_code": "string (ICD-10 code)", 
-            "diagnosis_name": "string",
-            "confidence": number (0-1),
-            "reasoning": "string (brief)",
-            "supporting_evidence": ["string1", "string2"]
-            }}
-        ],
-        "confidence": number (0-1)
-        }}
+INSTRUCTIONS:
+1. Extract ONLY diagnoses that are explicitly stated or clearly diagnosed in the text
+2. Do NOT create diagnoses from symptoms alone unless explicitly diagnosed
+3. Use specific ICD-10 codes if mentioned, otherwise use appropriate standard codes
+4. Assign confidence based on how definitively the diagnosis is stated
+5. Include supporting evidence as direct quotes from the source text
 
-        If no clear diagnoses found, return: {{"primary_icd": "Unknown", "differential": [], "confidence": 0.0}}"""
+REQUIRED JSON OUTPUT FORMAT:
+{{
+  "primary_icd": "ICD-10 code or 'Unknown' if no clear primary diagnosis",
+  "differential": [
+    {{
+      "icd_code": "specific ICD-10 code",
+      "diagnosis_name": "exact medical diagnosis name",
+      "confidence": 0.0-1.0,
+      "reasoning": "brief explanation of why this diagnosis was extracted",
+      "supporting_evidence": ["direct quote 1", "direct quote 2"]
+    }}
+  ],
+  "confidence": 0.0-1.0
+}}
+
+CONSISTENCY CHECK:
+- Review your extraction to ensure it would be identical if run again with the same text
+- Verify all confidence scores align with the stated certainty in the source
+- Confirm all diagnoses are actually present in the source text
+
+If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "differential": [], "confidence": 0.0}}"""
 
                     # Use a simpler system message to reduce token usage
                     simple_system_msg = ChatMessage(
                         role=ChatRole.SYSTEM, 
-                        content="You extract medical diagnoses from clinical text and return valid JSON."
+                        content="""You are a medical diagnosis extraction specialist. Your task is to consistently and accurately extract medical diagnoses from clinical text.
+
+CORE PRINCIPLES:
+1. Be CONSERVATIVE - only extract diagnoses that are clearly stated or strongly implied
+2. Be CONSISTENT - the same clinical information should always yield the same diagnoses
+3. Maintain CLINICAL ACCURACY - use proper ICD-10 codes and medical terminology
+4. Preserve UNCERTAINTY - reflect the confidence level expressed in the source text
+
+EXTRACTION RULES:
+- Only extract diagnoses that are explicitly mentioned or clearly diagnosed
+- Do NOT infer diagnoses from symptoms alone unless explicitly stated
+- Use specific ICD-10 codes when mentioned; otherwise use broader category codes
+- If no ICD code is mentioned, use the most appropriate standard ICD-10 code
+- Maintain the confidence level expressed in the original text
+- Supporting evidence should be direct quotes or paraphrases from the source
+
+CONFIDENCE SCORING (be consistent):
+- 0.9-1.0: Definitive diagnosis explicitly stated ("diagnosed with", "confirmed")
+- 0.7-0.8: Highly likely diagnosis ("most likely", "probable diagnosis")
+- 0.5-0.6: Possible diagnosis ("possible", "consider", "rule out")
+- 0.3-0.4: Mentioned as differential ("differential includes")
+- 0.1-0.2: Suggested or screening ("screen for", "monitor for")
+
+CONSISTENCY REQUIREMENTS:
+- Same clinical text = same diagnoses with same confidence scores
+- Only change output if new clinical information is provided
+- Use standardized medical terminology
+- Apply uniform reasoning across similar cases
+
+Return ONLY valid JSON without markdown formatting."""
                     )
                     
                     # Add retry logic with exponential backoff
@@ -1197,41 +1391,43 @@ Please reference this generated image in your response when relevant and explain
                             print(f"[parse_icd] Attempt {attempt + 1} failed: {retry_error}")
                             if attempt == max_retries - 1:
                                 raise retry_error
-                            # Wait before retry (exponential backoff)
-                            import asyncio
-                            await asyncio.sleep(2 ** attempt)
+                            await asyncio.sleep(2 ** attempt)  # Exponential backoff
                     
                     if not parsed or not parsed.content:
-                        print("[parse_icd] No response from LLM after retries, using fallback")
-                        raise ValueError("No response from LLM after retries")
+                        print("[parse_icd] Failed to get valid response from LLM")
+                        # Return minimal response rather than failing
+                        state.parsed_response = DiagnosisResult(
+                            primary_icd="Unknown",
+                            differential=[],
+                            confidence=0.0
+                        )
+                        return state
 
-                    # Clean and parse response
+                    # Clean up the response content
                     response_content = parsed.content.strip()
                     
-                    # Remove markdown code blocks
-                    if response_content.startswith("```"):
-                        lines = response_content.split('\n')
-                        # Remove first and last lines if they're markdown markers
-                        if lines[0].startswith("```"):
-                            lines = lines[1:]
-                        if lines and lines[-1].strip() == "```":
-                            lines = lines[:-1]
-                        response_content = '\n'.join(lines).strip()
+                    # Remove markdown code block markers if present
+                    if response_content.startswith("```json"):
+                        start_idx = response_content.find('\n') + 1
+                        end_idx = response_content.rfind("```")
+                        if start_idx > 0 and end_idx > start_idx:
+                            response_content = response_content[start_idx:end_idx].strip()
+                    elif response_content.startswith("```"):
+                        start_idx = response_content.find('\n') + 1
+                        end_idx = response_content.rfind("```")
+                        if start_idx > 0 and end_idx > start_idx:
+                            response_content = response_content[start_idx:end_idx].strip()
 
-                    # Parse JSON with better error handling
                     try:
                         parsed_data = json.loads(response_content)
-                    except json.JSONDecodeError as json_error:
-                        print(f"[parse_icd] JSON decode error: {json_error}")
-                        print(f"[parse_icd] Response content: {response_content[:500]}...")
-                        # Try to extract basic info with regex as fallback
-                        import re
-                        icd_matches = re.findall(r'[A-Z]\d{2}(?:\.\d{1,2})?', response_content)
-                        primary_icd = icd_matches[0] if icd_matches else "Unknown"
+                    except json.JSONDecodeError as e:
+                        print(f"[parse_icd] JSON decode error: {e}, content: {response_content[:200]}...")
+                        # Try to extract ICD codes using regex as fallback
+                        primary_icd = "Unknown"
                         parsed_data = {
                             "primary_icd": primary_icd,
                             "differential": [],
-                            "confidence": 0.5 if icd_matches else 0.0
+                            "confidence": 0.0
                         }
 
                     # Build differential list with validation
@@ -1239,63 +1435,141 @@ Please reference this generated image in your response when relevant and explain
                     if parsed_data.get("differential") and isinstance(parsed_data["differential"], list):
                         for diff in parsed_data["differential"]:
                             if isinstance(diff, dict):
-                                try:
-                                    differential_list.append(DifferentialDiagnosis(
-                                        icd_code=str(diff.get("icd_code", "")),
-                                        diagnosis_name=str(diff.get("diagnosis_name", "")),
-                                        confidence=float(diff.get("confidence", 0.0)),
-                                        reasoning=str(diff.get("reasoning", "")),
-                                        supporting_evidence=list(diff.get("supporting_evidence", []))
-                                    ))
-                                except Exception as diff_error:
-                                    print(f"[parse_icd] Error creating differential diagnosis: {diff_error}")
-                                    continue
-                    
-                    # Create structured DiagnosisResult
+                                # Ensure all required fields are present with defaults
+                                differential_list.append(DifferentialDiagnosis(
+                                    icd_code=diff.get("icd_code", "Unknown"),
+                                    diagnosis_name=diff.get("diagnosis_name", "Unknown Diagnosis"),
+                                    confidence=float(diff.get("confidence", 0.0)),
+                                    reasoning=diff.get("reasoning", "No reasoning provided"),
+                                    supporting_evidence=diff.get("supporting_evidence", [])
+                                ))
+
+                    # Create the DiagnosisResult
                     state.parsed_response = DiagnosisResult(
                         patient_id=state.patient_ctx.patient_id,
-                        primary_icd=str(parsed_data.get("primary_icd", "Unknown")),
+                        primary_icd=parsed_data.get("primary_icd", "Unknown"),
                         differential=differential_list,
                         confidence=float(parsed_data.get("confidence", 0.0)),
                         explanation=state.llm_response.content,
                         session_id=state.session_id,
                         created_by_user_id=state.user_id
                     )
-                    
-                    # Update legacy fields for compatibility
-                    state.primary_icd = str(parsed_data.get("primary_icd", "Unknown"))
-                    state.differential = [diff.icd_code for diff in differential_list]
-                    state.confidence = float(parsed_data.get("confidence", 0.0))
-                    
-                    print(f"[parse_icd] Successfully parsed: primary={state.primary_icd}, differential_count={len(differential_list)}")
-                    
+
+                    print(f"[parse_icd] Successfully parsed - Primary: {state.parsed_response.primary_icd}, Differential count: {len(state.parsed_response.differential)}")
+
                 except Exception as e:
                     print(f"[parse_icd] Error parsing ICD: {e}")
                     import traceback
                     traceback.print_exc()
                     
-                    # Robust fallback values
-                    state.primary_icd = "Unknown"
-                    state.differential = []
-                    state.confidence = 0.0
+                    # Set minimal response on error
                     state.parsed_response = DiagnosisResult(
-                        patient_id=state.patient_ctx.patient_id,
                         primary_icd="Unknown",
                         differential=[],
-                        confidence=0.0,
-                        explanation=state.llm_response.content if state.llm_response else "",
-                        session_id=state.session_id,
-                        created_by_user_id=state.user_id
+                        confidence=0.0
                     )
-            else:
-                # For general chat, set default values
-                state.primary_icd = "N/A - General Chat"
-                state.differential = []
-                state.confidence = 0.0
-                state.parsed_response = None
-            
+
             return state
 
+
+        @streaming_step("evaluate_query_complexity")
+        async def evaluate_query_complexity(state: FlowState) -> FlowState:
+            """Evaluate if the query needs patient data, web search, or can be answered directly."""
+            try:
+                # For research mode, always do full processing
+                if state.diagnostic_mode == "research":
+                    state.requires_full_processing = True
+                    print("[query_complexity] Research mode: Full processing required")
+                    return state
+
+                # Create evaluation prompt based on diagnostic mode
+                mode_context = {
+                    "pre_meet": "preparing for a patient encounter",
+                    "post_meet": "analyzing patient data for diagnosis", 
+                    "chat": "general medical conversation"
+                }.get(state.diagnostic_mode, "medical analysis")
+
+                evaluation_prompt = f"""
+                Analyze this query to determine if it requires patient data, web search, or can be answered directly:
+
+                QUERY: "{state.user_prompt}"
+                CONTEXT: User is in {state.diagnostic_mode} mode for {mode_context}
+                PATIENT_ID_PROVIDED: {state.patient_id is not None}
+
+                Classify the query type:
+
+                REQUIRES_FULL_PROCESSING (needs patient data/web search):
+                - Asks about specific patient symptoms, conditions, or medical history
+                - Requests differential diagnoses or treatment plans
+                - Asks about specific medications, lab results, or test interpretation
+                - References "this patient", "my patient", patient-specific data
+                - Asks for pre-visit preparation for a specific patient
+                - Requests analysis of provided medical data
+                - Complex medical questions requiring current research
+
+                CAN_ANSWER_DIRECTLY (general medical knowledge):
+                - General medical education questions ("What is diabetes?")
+                - Basic medical facts or definitions
+                - General health advice not patient-specific
+                - Questions about medical procedures in general
+                - Medical terminology explanations
+                - General treatment approaches (not patient-specific)
+                - Simple greetings, thanks, or conversational messages
+                - General "how to" medical questions
+
+                EXAMPLES:
+                - "What are the symptoms of pneumonia?" → DIRECT
+                - "What should I ask this patient about their chest pain?" → FULL_PROCESSING
+                - "Hello, how are you?" → DIRECT
+                - "Can you analyze this patient's lab results?" → FULL_PROCESSING
+                - "What is the difference between Type 1 and Type 2 diabetes?" → DIRECT
+                - "What questions should I ask during the pre-visit for patient ID 123?" → FULL_PROCESSING
+
+                Respond with only: "FULL_PROCESSING" or "DIRECT"
+                """
+
+                evaluation_msg = ChatMessage(role=ChatRole.USER, content=evaluation_prompt)
+                response = await self._llm.chat([
+                    ChatMessage(role=ChatRole.SYSTEM, content="You classify medical queries to optimize processing. Be conservative - when in doubt, choose FULL_PROCESSING."),
+                    evaluation_msg
+                ])
+
+                # Parse response
+                response_text = response.content.strip().upper()
+                requires_full_processing = "FULL_PROCESSING" in response_text
+
+                state.requires_full_processing = requires_full_processing
+                
+                print(f"[query_complexity] Query: '{state.user_prompt[:50]}...' -> {'FULL_PROCESSING' if requires_full_processing else 'DIRECT'}")
+                
+            except Exception as e:
+                print(f"[query_complexity] Error evaluating query complexity: {e}")
+                # Default to full processing on error to be safe
+                state.requires_full_processing = True
+                
+            return state
+
+        def requires_full_processing(state: FlowState) -> bool:
+            """Conditional function to determine if full processing is needed."""
+            return getattr(state, 'requires_full_processing', True)
+
+        def should_parse_icd(state: FlowState) -> bool:
+            """Conditional function to determine if ICD parsing should be performed."""
+            # For pre_meet mode, only parse if differential diagnoses content is detected
+            if state.diagnostic_mode == "pre_meet":
+                if not state.llm_response or not state.llm_response.content:
+                    return False
+                
+                response_lower = state.llm_response.content.lower()
+                differential_keywords = [
+                    "differential", "diagnosis", "diagnoses", "icd", "condition", 
+                    "disease", "disorder", "syndrome", "pathology"
+                ]
+                
+                return any(keyword in response_lower for keyword in differential_keywords)
+            
+            # For other modes, always parse ICD
+            return True
 
         def check_patient_exists(state: FlowState) -> FlowState:
             """Check if patient_id is provided in the state."""
@@ -1312,6 +1586,7 @@ Please reference this generated image in your response when relevant and explain
         _builder = StateGraph(FlowState)
         _builder.add_node("check_patient", check_patient_exists)  # New decision node
         _builder.add_node("load_user_context", load_user_context)  # Load user context if available
+        _builder.add_node("evaluate_query_complexity", evaluate_query_complexity)
         _builder.add_node("store_user_message", store_user_message)
         _builder.add_node("load_current_session_history", load_current_session_history)
         _builder.add_node("evaluate_cross_session_history_need", evaluate_cross_session_history_need)  
@@ -1330,9 +1605,17 @@ Please reference this generated image in your response when relevant and explain
         _builder.set_entry_point("load_user_context")  # Start with loading user context
 
         # Add edges for user context loading
-        _builder.add_edge("load_user_context", "store_user_message")
-        _builder.add_edge("store_user_message", "check_patient")
-
+        _builder.add_edge("load_user_context", "evaluate_query_complexity")
+        _builder.add_edge("evaluate_query_complexity", "store_user_message")
+        # Branch based on query complexity
+        _builder.add_conditional_edges(
+            "store_user_message",
+            requires_full_processing,
+            {
+                True: "check_patient",     # Full processing path
+                False: "diagnose"               # Direct to diagnosis for simple queries
+            }
+        )
 
         # Conditional logic right at the start
         _builder.add_conditional_edges(
@@ -1383,7 +1666,15 @@ Please reference this generated image in your response when relevant and explain
         )
 
         _builder.add_edge("perform_web_search", "diagnose")
-        _builder.add_edge("diagnose", "parse_icd")
+        _builder.add_conditional_edges(
+            "diagnose",
+            should_parse_icd,
+            {
+                True: "parse_icd",
+                False: "store_assistant_response"
+            }
+        )
+        
         _builder.add_edge("parse_icd", "store_assistant_response")
         _builder.add_edge("store_assistant_response", END)
 
@@ -1392,22 +1683,43 @@ Please reference this generated image in your response when relevant and explain
 
     def _create_reasoning_prompt(self, state: FlowState) -> str:
         """Create a reasoning prompt based on the current context."""
-        if state.chat_mode:
+        if state.diagnostic_mode == "pre_meet":
+            return """Think through this pre-consultation preparation step by step:
+1. What key information do I have about this patient from their EHR and previous conversations?
+2. What are the main concerns or conditions I need to focus on?
+3. What critical information is missing that I need to gather during the encounter?
+4. What specific questions should I ask the patient to fill knowledge gaps?
+5. What physical examinations or tests should I plan to perform?
+6. Are there any red flags or urgent concerns I need to address immediately?
+7. What preparation will help me provide the best care for this patient?"""
+            
+        elif state.diagnostic_mode == "post_meet":
+            return """Think through this post-encounter diagnostic analysis step by step:
+1. What are the key symptoms, findings, and patient history from all sources?
+2. What are the most likely diagnostic possibilities based on the clinical picture?
+3. What evidence supports or refutes each potential diagnosis?
+4. What is my primary diagnosis and differential diagnoses with confidence levels?
+5. What treatment plan is most appropriate if diagnosis is established?
+6. What additional testing or specialist referrals are needed?
+7. What follow-up care and monitoring should be implemented?"""
+            
+        elif state.diagnostic_mode == "research":
+            return """Think through this complex case research analysis step by step:
+1. Why does this case require deep research and what makes it complex?
+2. What does current medical literature say about similar cases?
+3. What are all possible diagnoses including rare and atypical presentations?
+4. What are the various treatment approaches described in recent studies?
+5. Are there any cutting-edge therapies or clinical trials relevant to this case?
+6. What expert consultations or specialized testing should be considered?
+7. What are the key learning points and clinical pearls from this research?"""
+            
+        else:  # chat mode
             return """Think through this medical conversation step by step:
 1. What is the user asking about?
 2. What relevant medical information do I have available?
 3. What key points should I address in my response?
 4. How can I provide helpful, accurate medical guidance?
 5. Are there any important warnings or considerations to mention?"""
-        else:
-            return """Think through this diagnostic case step by step:
-1. What are the key symptoms and findings presented?
-2. What patient history and context is relevant?
-3. What are the most likely diagnostic possibilities?
-4. What evidence supports or refutes each possibility?
-5. What is my primary diagnosis and why?
-6. What differential diagnoses should be considered?
-7. What additional testing or follow-up might be needed?"""
 
     async def get_or_create_session(
         self, 
@@ -1483,7 +1795,7 @@ Please reference this generated image in your response when relevant and explain
         else:
             return self.chat_output(data)
 
-    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
+    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Return an async generator that yields chunks as they stream from the graph."""
 
         async def _stream_generator():
@@ -1491,7 +1803,7 @@ Please reference this generated image in your response when relevant and explain
                 session_id_final = await self.get_or_create_session(
                     user_id=user_id,
                     patient_id=patient.patient_id if patient else None,
-                    mode="chat" if chat_mode else "diagnose",
+                    mode=diagnostic_mode if not chat_mode else "chat",
                     session_id=session_id,
                     allow_join_existing=True
                 )
@@ -1506,6 +1818,7 @@ Please reference this generated image in your response when relevant and explain
                     "patient_id": patient.patient_id,
                     "user_prompt": prompt,
                     "chat_mode": chat_mode,
+                    "diagnostic_mode": diagnostic_mode if not chat_mode else "chat",
                     "user_id": user_id,
                     "session_id": session_id_final
                 }
@@ -1513,6 +1826,7 @@ Please reference this generated image in your response when relevant and explain
                 initial_input = {
                     "user_prompt": prompt,
                     "chat_mode": chat_mode,
+                    "diagnostic_mode": diagnostic_mode if not chat_mode else "chat",
                     "user_id": user_id,
                     "session_id": session_id_final
                 }
