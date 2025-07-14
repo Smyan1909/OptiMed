@@ -29,3 +29,6 @@ dependencies:
       - types-aiofiles 
       - torch
       - transformers
+      - accelerate
+      - bitsandbytes
+      - vllm

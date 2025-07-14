@@ -17,6 +17,7 @@ src/optimed/adapters/fhir_hapi/__init__.py
 src/optimed/adapters/fhir_hapi/repository.py
 src/optimed/adapters/image_generation/repository.py
 src/optimed/adapters/image_generation/stabilityai_client.py
+src/optimed/adapters/quen3_sft/client.py
 src/optimed/adapters/smart_fhir/auth_provider.py
 src/optimed/adapters/smart_fhir/repository.py
 src/optimed/adapters/user_repository/pg_ehr_connection_repository.py
@@ -33,6 +34,7 @@ src/optimed/apps/orchestrator/image_flow.py
 src/optimed/apps/orchestrator/patient_flow.py
 src/optimed/apps/orchestrator/streaming_decorators.py
 src/optimed/apps/orchestrator/streaming_llm.py
+src/optimed/apps/web/node_modules/flatted/python/flatted.py
 src/optimed/core/__init__.py
 src/optimed/core/ports.py
 src/optimed/core/domain/__init__.py
