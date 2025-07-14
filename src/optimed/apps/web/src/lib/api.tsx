@@ -35,6 +35,7 @@ export type ChatRequest = {
   patient_id?: string;
   user_prompt?: string;
   chat_mode?: boolean;
+  diagnostic_mode?: string;
   user_id?: string;
   session_id?: string;
 };

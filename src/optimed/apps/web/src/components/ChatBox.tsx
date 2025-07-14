@@ -34,6 +34,13 @@ export interface GeneratedImageResponse {
   model_info: Record<string, any>;
 }
 
+interface DiagnosticMode {
+  id: string;
+  name: string;
+  description: string;
+  default_prompt: string;
+}
+
 interface DifferentialDiagnosis {
   icd_code: string;
   diagnosis_name: string;
@@ -438,6 +445,9 @@ const formatTimestamp = (timestamp: string | number): string => {
 export default function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  const [diagnosticMode, setDiagnosticMode] = useState("post_meet");
+  const [diagnosticModes, setDiagnosticModes] = useState<DiagnosticMode[]>([]);
+  const [defaultPrompts, setDefaultPrompts] = useState<Record<string, string>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const {
     isStreaming,
@@ -471,6 +481,58 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   });
   
   const { user } = useUser();
+
+  // Initialize diagnostic modes on component mount
+  useEffect(() => {
+    if (mode === "diagnose") {
+      const hardcodedModes: DiagnosticMode[] = [
+        {
+          id: "pre_meet",
+          name: "Pre-Meet",
+          description: "Prepare for patient encounter",
+          default_prompt: "Please provide a comprehensive pre-consultation summary for this patient, including key information from their records, questions I should ask, and examinations I should perform."
+        },
+        {
+          id: "post_meet",
+          name: "Post-Meet", 
+          description: "Diagnostic analysis with treatment plans",
+          default_prompt: "Based on all available information including the patient encounter, please provide a comprehensive diagnostic analysis with differential diagnoses and treatment recommendations."
+        },
+        {
+          id: "research",
+          name: "Research",
+          description: "Deep analysis using all resources",
+          default_prompt: "This is a complex case requiring deep research. Please conduct a comprehensive analysis using all available medical literature and resources to understand this patient's condition and provide evidence-based treatment options."
+        }
+      ];
+      
+      setDiagnosticModes(hardcodedModes);
+      
+      const prompts: Record<string, string> = {};
+      hardcodedModes.forEach((mode) => {
+        prompts[mode.id] = mode.default_prompt;
+      });
+      setDefaultPrompts(prompts);
+      
+      // Set the default prompt for the current mode if input is empty
+      if (!input.trim() && prompts[diagnosticMode]) {
+        setInput(prompts[diagnosticMode]);
+      }
+    }
+  }, [mode]);
+
+  // Update input when diagnostic mode changes (only if input is empty or contains a default prompt)
+  useEffect(() => {
+    if (mode === "diagnose" && defaultPrompts[diagnosticMode]) {
+      // Check if current input is empty or is a default prompt from another mode
+      const isDefaultPrompt = Object.values(defaultPrompts).includes(input.trim());
+      const isEmpty = !input.trim();
+      
+      if (isEmpty || isDefaultPrompt) {
+        setInput(defaultPrompts[diagnosticMode]);
+      }
+    }
+  }, [diagnosticMode, defaultPrompts, mode]);
 
   // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = () => {
@@ -728,10 +790,12 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
         patient_id: patientId ?? null,
         user_prompt: userText,
         chat_mode: mode === "chat",
+        diagnostic_mode: mode === "diagnose" ? diagnosticMode : "chat",
         user_id: user?.user_id,
         session_id: currentSessionId
       };
 
+      console.log('Sending message with diagnostic mode:', payload.diagnostic_mode);
       await startStream(endpoint, payload, sessionId || undefined);
 
     } catch (error) {
@@ -749,18 +813,65 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
 
   const getPlaceholderText = () => {
     if (mode === "chat") return "Type your message...";
-    if (mode === "diagnose" && patientId) return "Ask about diagnosis, symptoms, treatments...";
+    if (mode === "diagnose" && patientId) {
+      const currentMode = diagnosticModes.find(m => m.id === diagnosticMode);
+      return currentMode ? `${currentMode.name} - ${currentMode.description}` : "Ask about diagnosis, symptoms, treatments...";
+    }
     return "How can I help with the diagnosis?";
   };
 
   const getEmptyStateText = () => {
     if (mode === "chat") return "Start chatting with CLARA...";
-    if (mode === "diagnose" && patientId) return "CLARA FÄRDIGA GÅ";
+    if (mode === "diagnose" && patientId) {
+      const currentMode = diagnosticModes.find(m => m.id === diagnosticMode);
+      return currentMode ? `Ready for ${currentMode.name.toLowerCase()}` : "Ready to assist with diagnosis";
+    }
     return "Enter patient details to begin diagnosis...";
+  };
+
+  const handleModeChange = (newMode: string) => {
+    setDiagnosticMode(newMode);
+    
+    // Set the default prompt for the new mode
+    if (defaultPrompts[newMode]) {
+      setInput(defaultPrompts[newMode]);
+    }
   };
 
   return (
     <div className="flex flex-col h-full bg-white max-h-full overflow-hidden">
+      {/* Mode Selection for Diagnose Mode */}
+      {mode === "diagnose" && (
+        <div className="border-b bg-gray-50 px-4 py-2 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-gray-600">Mode:</label>
+            
+            {diagnosticModes.length === 0 ? (
+              <div className="text-xs text-gray-500 italic">Loading...</div>
+            ) : (
+              <div className="flex gap-1">
+                {diagnosticModes.map((modeOption) => (
+                  <button
+                    key={modeOption.id}
+                    type="button"
+                    onClick={() => handleModeChange(modeOption.id)}
+                    disabled={isStreaming}
+                    className={`px-2 py-1 rounded text-xs font-medium transition-all duration-200 ${
+                      diagnosticMode === modeOption.id
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'bg-white text-gray-700 border border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    title={modeOption.description}
+                  >
+                    {modeOption.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Chat Messages Area - only this part scrolls */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
         <div className="p-4 space-y-3">
@@ -769,6 +880,11 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
               <p className="text-gray-600 font-medium italic">
                 {getEmptyStateText()}
               </p>
+              {mode === "diagnose" && diagnosticModes.length > 0 && (
+                <div className="text-sm text-gray-400 mt-2">
+                  Current mode: {diagnosticModes.find(m => m.id === diagnosticMode)?.name}
+                </div>
+              )}
             </div>
           )}
           
@@ -834,35 +950,44 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
       {/* Input Form - fixed at bottom, doesn't scroll */}
       <div className="border-t bg-gray-50 p-4 flex-shrink-0">
         <form onSubmit={sendMessage} className="flex gap-3">
-          <input
-            type="text"
+          <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={getPlaceholderText()}
-            className="flex-1 border border-gray-300 bg-white placeholder-gray-500 text-gray-900 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium"
+            className="flex-1 border border-gray-300 bg-white placeholder-gray-500 text-gray-900 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium resize-none"
             disabled={isStreaming}
+            rows={3}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage(e as any);
+              }
+            }}
           />
-          <button
-            type="submit"
-            disabled={!input.trim() || isStreaming}
-            className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isStreaming ? 'Analyzing...' : 'Send'}
-          </button>
-          {isStreaming && (
+          <div className="flex flex-col gap-2">
             <button
-              type="button"
-              onClick={stopStream}
-              className="px-4 py-2 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors"
+              type="submit"
+              disabled={!input.trim() || isStreaming}
+              className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Stop
+              {isStreaming ? 'Analyzing...' : 'Send'}
             </button>
-          )}
+            {isStreaming && (
+              <button
+                type="button"
+                onClick={stopStream}
+                className="px-4 py-2 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Stop
+              </button>
+            )}
+          </div>
         </form>
         
         {mode === "diagnose" && user && (
           <div className="mt-2 text-xs text-gray-600 text-center">
-            Consulting as <span className="font-semibold">{user.display_name}</span> ({user.role})
+            Consulting as <span className="font-semibold">{user.display_name}</span> ({user.role}) in{" "}
+            <span className="font-semibold">{diagnosticModes.find(m => m.id === diagnosticMode)?.name || diagnosticMode}</span> mode
           </div>
         )}
       </div>

@@ -53,6 +53,14 @@ function ChatPageContent() {
                 </p>
               </div>
               <div className="flex items-center space-x-3">
+                <div className="text-right mr-4">
+                  <div className="text-sm text-gray-600">
+                    Chatting as <span className="font-semibold">{user?.display_name}</span>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {user?.role} • General consultation mode
+                  </div>
+                </div>
                 <Link href="/patients">
                   <button className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors">
                     ← Back to Patients

@@ -60,7 +60,8 @@ class StreamingStatus:
             "search_cross_session_history": "Searching previous conversations across all sessions for relevant context",
             "diagnose": "AI model analyzing all available information to provide comprehensive response...",
             "store_user_message": f"Storing user message in chat history for session {getattr(self.state, 'session_id', 'unknown')}",
-            "store_assistant_response": "Saving AI response and reasoning to chat history"
+            "store_assistant_response": "Saving AI response and reasoning to chat history",
+            "evaluate_query_complexity": "Determining if the user query requires full processing or can be answered directly",
         }
         
         return descriptions.get(step_lower, f"Starting {self.step_name}...")
@@ -74,6 +75,10 @@ class StreamingStatus:
             else:
                 return "No user context found - continuing as anonymous user"
         
+        elif step_lower == "evaluate_query_complexity":
+            requires_full_processing = getattr(self.state, 'requires_full_processing', False)
+            return f"Query complexity evaluated - {'requires full processing' if requires_full_processing else 'can be answered directly'}"
+
         elif step_lower == "fetch_patient":
             patient_ctx = getattr(self.state, 'patient_ctx', None)
             if patient_ctx:

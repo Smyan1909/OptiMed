@@ -60,7 +60,7 @@ class ChatRequest(BaseModel):
     patient_id: str | None = None
     user_prompt: str | None = None
     chat_mode: bool = False
-
+    diagnostic_mode: str = "post_meet"
     user_id: str | None = None  # Optional user ID for tracking
     session_id: str | None = None  # Optional session ID for tracking
 
@@ -871,13 +871,14 @@ async def clear_patient_chat_history(patient_id: str = Path(..., description="Th
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not clear chat history: {e}")
 
-async def _event_stream(patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[str, None]:
+async def _event_stream(patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[str, None]:
     """Stream events from the diagnostic engine."""
     try:
         async for update in _engine.run_stream(
             patient=patient, 
             user_prompt=user_prompt, 
-            chat_mode=chat_mode, 
+            chat_mode=chat_mode,
+            diagnostic_mode=diagnostic_mode,  # Add this parameter
             user_id=user_id, 
             session_id=session_id
         ):
@@ -971,17 +972,15 @@ async def diagnose_stream(
     current_user = user_ctx.get("user")
 
     if current_user:
-        print(f"[API] Streaming diagnosis request from {current_user.display_name} ({current_user.role.value})")
+        print(f"[API] Streaming diagnosis request from {current_user.display_name} ({current_user.role.value}) in {req.diagnostic_mode} mode")
 
     patient_ctx = None
     if req.patient_id:
         try:
             patient_ctx = await fhir_repo.get_patient(str(req.patient_id))
         except Exception as e:
-            # Capture the error message in the outer scope
             error_message = str(e)
             
-            # Return error as SSE
             async def error_stream():
                 error_data = {
                     "type": "error",
@@ -997,7 +996,8 @@ async def diagnose_stream(
         _event_stream(
             patient=patient_ctx,
             user_prompt=req.user_prompt, 
-            chat_mode=req.chat_mode, 
+            chat_mode=req.chat_mode,
+            diagnostic_mode=req.diagnostic_mode,  # Add this parameter
             user_id=user_id, 
             session_id=req.session_id
         ), 
@@ -1011,6 +1011,7 @@ async def diagnose_stream(
             "Access-Control-Expose-Headers": "*"
         }
     )
+
 
 @app.post("/chat/stream")
 async def chat_stream(

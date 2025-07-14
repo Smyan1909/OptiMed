@@ -265,7 +265,7 @@ class DiagnosticEngine(Protocol):
         """Return the top diagnosis (v0) or ranked list (v1)."""
         ...
 
-    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
+    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Run the diagnostic engine with streaming support."""
         ...
 
