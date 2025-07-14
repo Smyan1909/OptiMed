@@ -1397,6 +1397,7 @@ Return ONLY valid JSON without markdown formatting."""
                         print("[parse_icd] Failed to get valid response from LLM")
                         # Return minimal response rather than failing
                         state.parsed_response = DiagnosisResult(
+                            patient_id=state.patient_ctx.patient_id,
                             primary_icd="Unknown",
                             differential=[],
                             confidence=0.0
@@ -1464,6 +1465,7 @@ Return ONLY valid JSON without markdown formatting."""
                     
                     # Set minimal response on error
                     state.parsed_response = DiagnosisResult(
+                        patient_id=state.patient_ctx.patient_id,
                         primary_icd="Unknown",
                         differential=[],
                         confidence=0.0
