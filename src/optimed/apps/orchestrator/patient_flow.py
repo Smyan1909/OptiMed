@@ -280,7 +280,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 # Research mode always needs web search for comprehensive analysis
                 if state.diagnostic_mode == "research":
                     state.web_search_performed = True
-                    print(f"[web_search] Research mode: Web search automatically enabled")
+                    print("[web_search] Research mode: Web search automatically enabled")
                     return state
                 
                 # For other modes, evaluate based on query content
