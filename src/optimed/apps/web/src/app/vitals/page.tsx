@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import { fetchPatient, PatientDetail } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { getDisplayName, formatLabValue, formatVitalValue, formatNumericalValue } from '@/lib/codeMapping';
-import { Heart, Beaker, Camera, Stethoscope, Scissors, UserCheck, Pill, AlertTriangle, FileText } from 'lucide-react';
+import { Heart, Beaker, Camera, Stethoscope, Scissors, UserCheck, Pill, AlertTriangle, FileText, ClipboardList } from 'lucide-react';
 
 function VitalsPageContent() {
   const params = useSearchParams();
@@ -303,6 +303,26 @@ function VitalsPageContent() {
               'from-gray-50',
               'to-slate-50',
               'No diagnoses recorded for this patient'
+            )}
+
+            {/* NEW: Medication Statements */}
+            {renderObservationSection(
+              'Medication Usage',
+              patient?.medication_statement || {},
+              <Pill className="h-5 w-5 mr-2 text-emerald-500" />,
+              'from-emerald-50',
+              'to-green-50',
+              'No medication usages recorded for this patient'
+            )}
+
+            {/* NEW: Questionnaire Responses */}
+            {renderObservationSection(
+              'Questionnaire Responses',
+              patient?.questionnaire_response || {},
+              <ClipboardList className="h-5 w-5 mr-2 text-violet-500" />,
+              'from-violet-50',
+              'to-purple-50',
+              'No questionnaire responses recorded for this patient'
             )}
 
           </div>

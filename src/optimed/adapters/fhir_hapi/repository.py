@@ -127,6 +127,27 @@ DIAGNOSIS_CODES = {
     "8716-3": "Problem list",
 }
 
+MEDICATION_STATEMENT_CODES = {
+    "182840001": "Drug treatment",
+    "182836005": "Review of medication",
+    "432102000": "Administration of substance",
+    "182849000": "Drug therapy discontinued",
+    "182840001": "Medication statement",
+    "182842009": "Drug treatment started",
+    "182843004": "Drug treatment stopped",
+}
+
+QUESTIONNAIRE_CODES = {
+    "273879006": "Patient questionnaire",
+    "162673000": "General examination of patient",
+    "225336008": "Suicide risk assessment",
+    "273724008": "Quality of life assessment",
+    "225358003": "Pain assessment",
+    "386053000": "Evaluation procedure",
+    "710830005": "Assessment of anxiety",
+    "225336008": "Patient reported outcome",
+}
+
 # --------------------------------------------------------------------------- #
 # Helper functions
 # --------------------------------------------------------------------------- #
@@ -204,6 +225,10 @@ def _obs_bundle_to_dict(entries: list[Observation]) -> dict[str, str]:
                         display_name = ALLERGY_CODES[loinc_code]
                     elif loinc_code in DIAGNOSIS_CODES:
                         display_name = DIAGNOSIS_CODES[loinc_code]
+                    elif loinc_code in QUESTIONNAIRE_CODES:
+                        display_name = QUESTIONNAIRE_CODES[loinc_code]
+                    elif loinc_code in MEDICATION_STATEMENT_CODES:
+                        display_name = MEDICATION_STATEMENT_CODES[loinc_code]
                     else:
                         # Fallback to the display name from FHIR or the code itself
                         display_name = obs.code.coding[0].display or loinc_code
@@ -234,6 +259,8 @@ def _to_patient_ctx(
         medications: list[Observation] | None = None,
         allergies: list[Observation] | None = None,
         diagnoses: list[Observation] | None = None,
+        medication_statement: list[Observation] | None = None,
+        questionnaire_response: list[Observation] | None = None,
 ) -> PatientContext:
     """Convert FHIR Patient + observations to PatientContext domain model."""
     if not patient.id:
@@ -254,6 +281,8 @@ def _to_patient_ctx(
         medications=_obs_bundle_to_dict(medications or []),
         allergies=_obs_bundle_to_dict(allergies or []),
         diagnoses=_obs_bundle_to_dict(diagnoses or []),
+        medication_statement=_obs_bundle_to_dict(medication_statement or []),
+        questionnaire_response=_obs_bundle_to_dict(questionnaire_response or []),
     )
 
 def _map_entry_type_to_fhir_type(entry_type: JournalEntryType) -> str:
@@ -369,10 +398,14 @@ class HAPIFHIRRepository(FHIRRepository):
         medications = await self._get_medications(patient_id)
         allergies = await self._get_allergies(patient_id)
         diagnoses = await self._get_conditions(patient_id)
+
+        medication_statement = await self._get_medication_statements(patient_id)
+        questionnaire_response = await self._get_questionnaire_responses(patient_id)
         
         return _to_patient_ctx(
-            patient, vitals, labs, imaging, exam, procedure, 
-            social_history, medications, allergies, diagnoses
+            patient, vitals, labs, imaging, exam, procedure,
+            social_history, medications, allergies, diagnoses,
+            medication_statement, questionnaire_response
         )
     
     async def search_patients(self, query: Any) -> Sequence[PatientContext]:
@@ -412,6 +445,102 @@ class HAPIFHIRRepository(FHIRRepository):
         r.raise_for_status()
         return Patient.model_validate(r.json())
     
+
+    async def _get_medication_statements(self, patient_id: str) -> list[Observation]:
+        """Fetch medication statement information for a patient."""
+        try:
+            r = await self._client.get("/MedicationStatement", params={
+                "subject": patient_id,
+                "_count": 20
+            })
+            r.raise_for_status()
+            bundle = r.json()
+            
+            # Convert MedicationStatement to Observation-like structure
+            statements = []
+            for entry in bundle.get("entry", []):
+                resource = entry["resource"]
+                medication_name = "Unknown medication"
+                
+                # Extract medication name
+                if resource.get("medicationCodeableConcept"):
+                    medication_name = resource["medicationCodeableConcept"].get("text", medication_name)
+                elif resource.get("medicationReference"):
+                    medication_name = resource["medicationReference"].get("display", medication_name)
+                
+                # Extract status and dosage info
+                status = resource.get("status", "unknown")
+                effective_period = resource.get("effectivePeriod", {})
+                dosage = ""
+                if resource.get("dosage") and len(resource["dosage"]) > 0:
+                    dosage_info = resource["dosage"][0]
+                    dosage = dosage_info.get("text", "")
+                
+                value_str = f"{status.title()}"
+                if dosage:
+                    value_str += f" - {dosage}"
+                if effective_period.get("start"):
+                    value_str += f" (Since: {effective_period['start'][:10]})"
+                
+                statement_obs = {
+                    "code": {"coding": [{"code": "182840001", "display": "Medication Statement"}]},
+                    "valueString": value_str
+                }
+                statements.append(statement_obs)
+            
+            return statements
+        except Exception as e:
+            print(f"Failed to fetch medication statements: {e}")
+            return []
+
+    async def _get_questionnaire_responses(self, patient_id: str) -> list[Observation]:
+        """Fetch questionnaire response information for a patient."""
+        try:
+            r = await self._client.get("/QuestionnaireResponse", params={
+                "subject": patient_id,
+                "_count": 20
+            })
+            r.raise_for_status()
+            bundle = r.json()
+            
+            # Convert QuestionnaireResponse to Observation-like structure
+            responses = []
+            for entry in bundle.get("entry", []):
+                resource = entry["resource"]
+                
+                questionnaire_ref = resource.get("questionnaire", "")
+                questionnaire_name = questionnaire_ref.split("/")[-1] if questionnaire_ref else "Unknown Questionnaire"
+                
+                # Extract responses
+                response_text = []
+                if resource.get("item"):
+                    for item in resource["item"]:
+                        question = item.get("text", "Question")
+                        if item.get("answer"):
+                            for answer in item["answer"]:
+                                if answer.get("valueString"):
+                                    response_text.append(f"{question}: {answer['valueString']}")
+                                elif answer.get("valueInteger"):
+                                    response_text.append(f"{question}: {answer['valueInteger']}")
+                                elif answer.get("valueDecimal"):
+                                    response_text.append(f"{question}: {answer['valueDecimal']}")
+                                elif answer.get("valueBoolean"):
+                                    response_text.append(f"{question}: {'Yes' if answer['valueBoolean'] else 'No'}")
+                
+                value_str = "; ".join(response_text) if response_text else "No responses recorded"
+                
+                response_obs = {
+                    "code": {"coding": [{"code": "273879006", "display": questionnaire_name}]},
+                    "valueString": value_str
+                }
+                responses.append(response_obs)
+            
+            return responses
+        except Exception as e:
+            print(f"Failed to fetch questionnaire responses: {e}")
+            return []
+
+
     async def _get_medications(self, patient_id: str) -> list[Observation]:
         """Fetch medication information for a patient."""
         try:

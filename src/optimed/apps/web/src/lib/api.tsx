@@ -14,6 +14,8 @@ export type PatientDetail = {
   medications: Record<string,string>;
   allergies: Record<string,string>;
   diagnoses: Record<string,string>;
+  medication_statement: Record<string,string>;
+  questionnaire_response: Record<string,string>;
 }
 
 export type User = {

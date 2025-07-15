@@ -79,6 +79,8 @@ class PatientOut(BaseModel):
     medications: Dict[str, str]
     allergies: Dict[str, str]
     diagnoses: Dict[str, str]
+    medication_statement: Dict[str, str]
+    questionnaire_response: Dict[str, str]
 
 class UserOut(BaseModel):
     user_id: str 
@@ -530,6 +532,8 @@ async def search_patients(
                 medications=p.medications,
                 allergies=p.allergies,
                 diagnoses=p.diagnoses,
+                medication_statement=p.medication_statement,
+                questionnaire_response=p.questionnaire_response
             )
             for p in domain_objs
         ]
@@ -860,6 +864,8 @@ async def get_patient(
                 medications=pctx.medications,
                 allergies=pctx.allergies,
                 diagnoses=pctx.diagnoses,
+                medication_statement=pctx.medication_statement,
+                questionnaire_response=pctx.questionnaire_response
     )
 
 @app.delete("/patients/{patient_id}/chat-history", summary="Delete patient by ID")

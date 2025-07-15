@@ -28,6 +28,9 @@ class PatientContext(FrozenModel):
     allergies: Dict[str, str] = {}  # e.g. {"Penicillin": "Rash"}
     diagnoses: Dict[str, str] = {}  # e.g. {"Hypertension": "Controlled"}
 
+    medication_statement: Dict[str, str] = {}
+    questionnaire_response: Dict[str, str] = {}
+
     
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
