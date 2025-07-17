@@ -132,7 +132,6 @@ MEDICATION_STATEMENT_CODES = {
     "182836005": "Review of medication",
     "432102000": "Administration of substance",
     "182849000": "Drug therapy discontinued",
-    "182840001": "Medication statement",
     "182842009": "Drug treatment started",
     "182843004": "Drug treatment stopped",
 }
@@ -145,19 +144,16 @@ QUESTIONNAIRE_CODES = {
     "225358003": "Pain assessment",
     "386053000": "Evaluation procedure",
     "710830005": "Assessment of anxiety",
-    "225336008": "Patient reported outcome",
 }
 
 IMMUNIZATION_CODES = {
     "33879002": "Immunization procedure",
-    "408864009": "Vaccination procedure",
     "127786006": "Injection of vaccine product",
     "170433008": "Administration of vaccine",
     "396429000": "Vaccination for COVID-19",
     "72093006": "Influenza vaccination",
     "16290008": "Hepatitis B vaccination",
     "408864009": "Pneumococcal vaccination",
-    "396429000": "COVID-19 vaccination",
     "396430005": "Tetanus vaccination",
     "16584000": "Pertussis vaccination",
     "396431009": "Diphtheria vaccination",
