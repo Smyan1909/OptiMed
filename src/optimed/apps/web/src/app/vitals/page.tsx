@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import { fetchPatient, PatientDetail } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { getDisplayName, formatLabValue, formatVitalValue, formatNumericalValue } from '@/lib/codeMapping';
-import { Heart, Beaker, Camera, Stethoscope, Scissors, UserCheck, Pill, AlertTriangle, FileText, ClipboardList } from 'lucide-react';
+import { Heart, Beaker, Camera, Stethoscope, Scissors, UserCheck, Pill, AlertTriangle, FileText, ClipboardList, ChevronDown, ChevronRight } from 'lucide-react';
 
 function VitalsPageContent() {
   const params = useSearchParams();
@@ -16,6 +16,7 @@ function VitalsPageContent() {
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const loadPatient = async () => {
@@ -36,6 +37,16 @@ function VitalsPageContent() {
 
     loadPatient();
   }, [patientId]);
+
+  const toggleSection = (sectionId: string) => {
+    const newExpanded = new Set(expandedSections);
+    if (newExpanded.has(sectionId)) {
+      newExpanded.delete(sectionId);
+    } else {
+      newExpanded.add(sectionId);
+    }
+    setExpandedSections(newExpanded);
+  };
 
   if (loading) {
     return (
@@ -83,7 +94,7 @@ function VitalsPageContent() {
     );
   }
 
-  // Helper function to render observation sections
+  // Helper function to render observation sections with expand/collapse
   const renderObservationSection = (
     title: string,
     data: Record<string, string>,
@@ -92,50 +103,74 @@ function VitalsPageContent() {
     gradientTo: string,
     emptyMessage: string,
     badgeVariant: "default" | "secondary" | "destructive" | "outline" = "outline"
-  ) => (
-    <div className="bg-white shadow-sm rounded-lg border border-gray-200">
-      <div className={`px-6 py-4 border-b border-gray-200 bg-gradient-to-r ${gradientFrom} ${gradientTo}`}>
-        <h2 className="text-lg font-bold text-gray-900 flex items-center">
-          {icon}
-          {title}
-          {data && Object.keys(data).length > 0 && (
-            <Badge variant="secondary" className="ml-2 text-xs">
-              {Object.keys(data).length} {Object.keys(data).length === 1 ? 'entry' : 'entries'}
-            </Badge>
-          )}
-        </h2>
-      </div>
-      <div className="p-6">
-        {data && Object.keys(data).length > 0 ? (
-          <div className="space-y-3">
-            {Object.entries(data).map(([key, value]) => {
-              const displayName = key.includes('-') ? getDisplayName(key, 'vital') : key;
-              const formattedValue = title === 'Vital Signs' ? formatVitalValue(key, value) : 
-                                   title === 'Lab Results' ? formatLabValue(key, value) : 
-                                   formatNumericalValue(value); // Use the new formatter for all other fields
+  ) => {
+    const sectionId = title.toLowerCase().replace(/\s+/g, '_');
+    const isExpanded = expandedSections.has(sectionId);
+    const hasData = data && Object.keys(data).length > 0;
+
+    return (
+      <div className="bg-white shadow-sm rounded-lg border border-gray-200">
+        <div className={`px-6 py-4 border-b border-gray-200 bg-gradient-to-r ${gradientFrom} ${gradientTo}`}>
+          <h2 className="text-lg font-bold text-gray-900 flex items-center">
+            {icon}
+            {title}
+            {hasData && (
+              <Badge variant="secondary" className="ml-2 text-xs">
+                {Object.keys(data).length} {Object.keys(data).length === 1 ? 'entry' : 'entries'}
+              </Badge>
+            )}
+          </h2>
+        </div>
+        <div className="p-6">
+          {hasData ? (
+            <div>
+              <button
+                onClick={() => toggleSection(sectionId)}
+                className="flex items-center justify-between w-full px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors mb-4"
+              >
+                <span className="text-sm font-medium text-gray-700">
+                  View {title} ({Object.keys(data).length} {Object.keys(data).length === 1 ? 'item' : 'items'})
+                </span>
+                {isExpanded ? (
+                  <ChevronDown className="h-4 w-4 text-gray-500" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-gray-500" />
+                )}
+              </button>
               
-              return (
-                <div key={key} className="flex items-center justify-between py-3 px-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors min-h-[50px]">
-                  <div className="flex items-center flex-1">
-                    <span className="text-sm font-medium text-gray-700 flex-1">{displayName}</span>
-                  </div>
-                  <Badge variant={badgeVariant} className="text-sm font-semibold ml-4">{formattedValue}</Badge>
+              {isExpanded && (
+                <div className="space-y-3">
+                  {Object.entries(data).map(([key, value]) => {
+                    const displayName = key.includes('-') ? getDisplayName(key, 'vital') : key;
+                    const formattedValue = title === 'Vital Signs' ? formatVitalValue(key, value) : 
+                                         title === 'Lab Results' ? formatLabValue(key, value) : 
+                                         formatNumericalValue(value);
+                    
+                    return (
+                      <div key={key} className="flex items-center justify-between py-3 px-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors min-h-[50px]">
+                        <div className="flex items-center flex-1">
+                          <span className="text-sm font-medium text-gray-700 flex-1">{displayName}</span>
+                        </div>
+                        <Badge variant={badgeVariant} className="text-sm font-semibold ml-4">{formattedValue}</Badge>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="text-center py-12">
-            <div className="h-16 w-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              {icon}
+              )}
             </div>
-            <h3 className="text-sm font-medium text-gray-900 mb-1">No {title}</h3>
-            <p className="text-sm text-gray-500">{emptyMessage}</p>
-          </div>
-        )}
+          ) : (
+            <div className="text-center py-12">
+              <div className="h-16 w-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                {icon}
+              </div>
+              <h3 className="text-sm font-medium text-gray-900 mb-1">No {title}</h3>
+              <p className="text-sm text-gray-500">{emptyMessage}</p>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -305,7 +340,7 @@ function VitalsPageContent() {
               'No diagnoses recorded for this patient'
             )}
 
-            {/* NEW: Medication Statements */}
+            {/* Medication Statements */}
             {renderObservationSection(
               'Medication Usage',
               patient?.medication_statement || {},
@@ -315,7 +350,7 @@ function VitalsPageContent() {
               'No medication usages recorded for this patient'
             )}
 
-            {/* NEW: Questionnaire Responses */}
+            {/* Questionnaire Responses */}
             {renderObservationSection(
               'Questionnaire Responses',
               patient?.questionnaire_response || {},

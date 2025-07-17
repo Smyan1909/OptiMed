@@ -451,7 +451,7 @@ class HAPIFHIRRepository(FHIRRepository):
         try:
             r = await self._client.get("/MedicationStatement", params={
                 "subject": patient_id,
-                "_count": 20
+                "_count": 100
             })
             r.raise_for_status()
             bundle = r.json()
@@ -498,7 +498,7 @@ class HAPIFHIRRepository(FHIRRepository):
         try:
             r = await self._client.get("/QuestionnaireResponse", params={
                 "subject": patient_id,
-                "_count": 20
+                "_count": 100
             })
             r.raise_for_status()
             bundle = r.json()
@@ -547,7 +547,7 @@ class HAPIFHIRRepository(FHIRRepository):
             r = await self._client.get("/MedicationRequest", params={
                 "patient": patient_id,
                 "status": "active",
-                "_count": 20
+                "_count": 100
             })
             r.raise_for_status()
             bundle = r.json()
@@ -573,7 +573,7 @@ class HAPIFHIRRepository(FHIRRepository):
         try:
             r = await self._client.get("/AllergyIntolerance", params={
                 "patient": patient_id,
-                "_count": 20
+                "_count": 100
             })
             r.raise_for_status()
             bundle = r.json()
@@ -598,7 +598,7 @@ class HAPIFHIRRepository(FHIRRepository):
         try:
             r = await self._client.get("/Condition", params={
                 "patient": patient_id,
-                "_count": 20
+                "_count": 100
             })
             r.raise_for_status()
             bundle = r.json()
@@ -622,7 +622,7 @@ class HAPIFHIRRepository(FHIRRepository):
             pid: str,
             *,
             category: str,
-            count: int = 50
+            count: int = 100
     ) -> list[Observation]:
         """Fetch Observations of a given category for a patient."""
         r = await self._client.get(
@@ -660,7 +660,7 @@ class HAPIFHIRRepository(FHIRRepository):
             r = await self._client.get("/DocumentReference", params={
                 "subject": f"Patient/{patient_id}",
                 "_sort": "-date",
-                "_count": "50"
+                "_count": "100"
             })
             r.raise_for_status()
             bundle = r.json()
