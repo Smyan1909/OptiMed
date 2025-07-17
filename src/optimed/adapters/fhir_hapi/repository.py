@@ -148,6 +148,15 @@ QUESTIONNAIRE_CODES = {
     "225336008": "Patient reported outcome",
 }
 
+ENCOUNTER_CODES = {
+    "308335008": "Patient encounter procedure",
+    "185349003": "Encounter for check up",
+    "270427003": "Patient-initiated encounter",
+    "50849002": "Emergency room visit",
+    "183807002": "Inpatient stay",
+    "185345009": "Outpatient visit",
+}
+
 # --------------------------------------------------------------------------- #
 # Helper functions
 # --------------------------------------------------------------------------- #
@@ -248,6 +257,76 @@ def _obs_bundle_to_dict(entries: list[Observation]) -> dict[str, str]:
     
     return result
 
+def _obs_bundle_to_dict_with_timestamps(entries: list[Observation]) -> tuple[dict[str, str], dict[str, str]]:
+    """Convert observation bundle to dict with human-readable names and timestamps."""
+    result = {}
+    timestamps = {}
+    
+    for obs in entries:
+        # Handle both Observation objects and dict representations
+        if isinstance(obs, dict):
+            # Handle dict-based observations (from medications, allergies, diagnoses)
+            if obs.get("code") and obs["code"].get("coding"):
+                coding = obs["code"]["coding"][0]
+                display_name = coding.get("display", "Unknown")
+                value_str = obs.get("valueString", "N/A")
+                result[display_name] = value_str
+                
+                # Extract timestamp
+                timestamp = obs.get("effectiveDateTime") or obs.get("issued") or "Unknown"
+                if isinstance(timestamp, str):
+                    try:
+                        # Parse and format timestamp
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        timestamps[display_name] = dt.strftime("%Y-%m-%d %H:%M")
+                    except Exception:
+                        timestamps[display_name] = timestamp[:16] if len(timestamp) > 16 else timestamp
+                else:
+                    timestamps[display_name] = "Unknown"
+        else:
+            # Handle actual Observation objects
+            if obs.code and obs.code.coding:
+                # Get the LOINC code
+                loinc_code = None
+                for coding in obs.code.coding:
+                    if coding.system == "http://loinc.org":
+                        loinc_code = coding.code
+                        break
+                
+                if loinc_code:
+                    # Determine category based on our mappings
+                    display_name = get_display_name(loinc_code, "vital")
+                    
+                    # Get the value
+                    value_str = "N/A"
+                    if obs.valueQuantity:
+                        unit = obs.valueQuantity.unit or ""
+                        value_str = f"{obs.valueQuantity.value} {unit}".strip()
+                    elif obs.valueString:
+                        value_str = obs.valueString
+                    elif obs.valueCodeableConcept:
+                        if obs.valueCodeableConcept.text:
+                            value_str = obs.valueCodeableConcept.text
+                    
+                    result[display_name] = value_str
+                    
+                    # Extract timestamp from observation
+                    timestamp = obs.effectiveDateTime or obs.issued
+                    if timestamp:
+                        if hasattr(timestamp, 'strftime'):
+                            timestamps[display_name] = timestamp.strftime("%Y-%m-%d %H:%M")
+                        else:
+                            # Handle string timestamps
+                            try:
+                                dt = datetime.fromisoformat(str(timestamp).replace('Z', '+00:00'))
+                                timestamps[display_name] = dt.strftime("%Y-%m-%d %H:%M")
+                            except Exception:
+                                timestamps[display_name] = str(timestamp)[:16] if len(str(timestamp)) > 16 else str(timestamp)
+                    else:
+                        timestamps[display_name] = "Unknown"
+    
+    return result, timestamps
+
 def _to_patient_ctx(
         patient: Patient,
         vitals: list[Observation] | None = None,
@@ -261,28 +340,78 @@ def _to_patient_ctx(
         diagnoses: list[Observation] | None = None,
         medication_statement: list[Observation] | None = None,
         questionnaire_response: list[Observation] | None = None,
+        encounters: list[Any] | None = None,
 ) -> PatientContext:
     """Convert FHIR Patient + observations to PatientContext domain model."""
     if not patient.id:
         raise ValueError("Patient must have an ID")
+
+    # Process observations with timestamps
+    vitals_data, vitals_timestamps = _obs_bundle_to_dict_with_timestamps(vitals or [])
+    labs_data, labs_timestamps = _obs_bundle_to_dict_with_timestamps(labs or [])
+    imaging_data, imaging_timestamps = _obs_bundle_to_dict_with_timestamps(imaging or [])
+    exam_data, exam_timestamps = _obs_bundle_to_dict_with_timestamps(exam or [])
+    procedure_data, procedure_timestamps = _obs_bundle_to_dict_with_timestamps(procedure or [])
+    social_history_data, social_history_timestamps = _obs_bundle_to_dict_with_timestamps(social_history or [])
+    medications_data, medications_timestamps = _obs_bundle_to_dict_with_timestamps(medications or [])
+    allergies_data, allergies_timestamps = _obs_bundle_to_dict_with_timestamps(allergies or [])
+    diagnoses_data, diagnoses_timestamps = _obs_bundle_to_dict_with_timestamps(diagnoses or [])
+    medication_statement_data, medication_statement_timestamps = _obs_bundle_to_dict_with_timestamps(medication_statement or [])
+    questionnaire_response_data, questionnaire_response_timestamps = _obs_bundle_to_dict_with_timestamps(questionnaire_response or [])
+    
+    # Process encounters
+    encounters_data = {}
+    encounters_timestamps = {}
+    if encounters:
+        for encounter in encounters:
+            if isinstance(encounter, dict):
+                encounter_type = encounter.get("type", [{}])[0].get("text", "Unknown Encounter")
+                encounter_id = encounter.get("id", "unknown")
+                encounters_data[encounter_id] = encounter_type
+                
+                # Extract encounter timestamp
+                period = encounter.get("period", {})
+                start_time = period.get("start")
+                if start_time:
+                    try:
+                        dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                        encounters_timestamps[encounter_id] = dt.strftime("%Y-%m-%d %H:%M")
+                    except Exception:
+                        encounters_timestamps[encounter_id] = start_time[:16] if len(start_time) > 16 else start_time
+                else:
+                    encounters_timestamps[encounter_id] = "Unknown"
 
     return PatientContext(
         patient_id=patient.id,
         name=_fhir_name_to_str(patient),
         age=_age_from_birthdate(patient.birthDate),
         sex=patient.gender or "unknown",
-        care_unit="UNKNOWN",  # May need enhancement with SMART on FHIR data
-        vitals=_obs_bundle_to_dict(vitals or []),
-        labs=_obs_bundle_to_dict(labs or []),
-        imaging=_obs_bundle_to_dict(imaging or []),
-        exam=_obs_bundle_to_dict(exam or []),
-        procedure=_obs_bundle_to_dict(procedure or []),
-        social_history=_obs_bundle_to_dict(social_history or []),
-        medications=_obs_bundle_to_dict(medications or []),
-        allergies=_obs_bundle_to_dict(allergies or []),
-        diagnoses=_obs_bundle_to_dict(diagnoses or []),
-        medication_statement=_obs_bundle_to_dict(medication_statement or []),
-        questionnaire_response=_obs_bundle_to_dict(questionnaire_response or []),
+        care_unit="UNKNOWN",
+        vitals=vitals_data,
+        labs=labs_data,
+        imaging=imaging_data,
+        exam=exam_data,
+        procedure=procedure_data,
+        social_history=social_history_data,
+        medications=medications_data,
+        allergies=allergies_data,
+        diagnoses=diagnoses_data,
+        medication_statement=medication_statement_data,
+        questionnaire_response=questionnaire_response_data,
+        # Add timestamp fields
+        vitals_timestamps=vitals_timestamps,
+        labs_timestamps=labs_timestamps,
+        imaging_timestamps=imaging_timestamps,
+        exam_timestamps=exam_timestamps,
+        procedure_timestamps=procedure_timestamps,
+        social_history_timestamps=social_history_timestamps,
+        medications_timestamps=medications_timestamps,
+        allergies_timestamps=allergies_timestamps,
+        diagnoses_timestamps=diagnoses_timestamps,
+        medication_statement_timestamps=medication_statement_timestamps,
+        questionnaire_response_timestamps=questionnaire_response_timestamps,
+        encounters=encounters_data,
+        encounters_timestamps=encounters_timestamps,
     )
 
 def _map_entry_type_to_fhir_type(entry_type: JournalEntryType) -> str:
@@ -401,11 +530,12 @@ class HAPIFHIRRepository(FHIRRepository):
 
         medication_statement = await self._get_medication_statements(patient_id)
         questionnaire_response = await self._get_questionnaire_responses(patient_id)
+        encounters = await self._get_encounters(patient_id)
         
         return _to_patient_ctx(
             patient, vitals, labs, imaging, exam, procedure,
             social_history, medications, allergies, diagnoses,
-            medication_statement, questionnaire_response
+            medication_statement, questionnaire_response, encounters
         )
     
     async def search_patients(self, query: Any) -> Sequence[PatientContext]:
@@ -644,6 +774,27 @@ class HAPIFHIRRepository(FHIRRepository):
                 # HAPI demo sometimes omits timezone in effectiveDateTime → skip
                 continue
         return good
+
+
+    async def _get_encounters(self, patient_id: str) -> list[Any]:
+        """Fetch encounter information for a patient."""
+        try:
+            r = await self._client.get("/Encounter", params={
+                "patient": patient_id,
+                "_count": 100,
+                "_sort": "-date"
+            })
+            r.raise_for_status()
+            bundle = r.json()
+            
+            encounters = []
+            for entry in bundle.get("entry", []):
+                encounters.append(entry["resource"])
+            
+            return encounters
+        except Exception as e:
+            print(f"Failed to fetch encounters: {e}")
+            return []
 
     async def __aenter__(self):
         return self

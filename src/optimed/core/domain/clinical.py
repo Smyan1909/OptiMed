@@ -31,6 +31,20 @@ class PatientContext(FrozenModel):
     medication_statement: Dict[str, str] = {}
     questionnaire_response: Dict[str, str] = {}
 
+    vitals_timestamps: Dict[str, str] = {}
+    labs_timestamps: Dict[str, str] = {}
+    imaging_timestamps: Dict[str, str] = {}
+    exam_timestamps: Dict[str, str] = {}
+    procedure_timestamps: Dict[str, str] = {}
+    social_history_timestamps: Dict[str, str] = {}
+    medications_timestamps: Dict[str, str] = {}
+    allergies_timestamps: Dict[str, str] = {}
+    diagnoses_timestamps: Dict[str, str] = {}
+    medication_statement_timestamps: Dict[str, str] = {}
+    questionnaire_response_timestamps: Dict[str, str] = {}
+    encounters: Dict[str, str] = {}
+    encounters_timestamps: Dict[str, str] = {}
+
     
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
