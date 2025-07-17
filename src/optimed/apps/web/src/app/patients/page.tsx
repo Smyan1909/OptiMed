@@ -171,7 +171,7 @@ function PatientsPageContent() {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-2xl font-bold text-gray-900">
-                    {loading ? 'Searching...' : `${patients.length} Patient${patients.length !== 1 ? 's' : ''} Found`}
+                    {loading ? 'Searching...' : `${patients.length} Patients`}
                   </h2>
                   <p className="text-gray-600 mt-1">Click on any patient to view details</p>
                 </div>

@@ -8,7 +8,32 @@ import { useEffect, useState } from 'react';
 import { fetchPatient, PatientDetail } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { getDisplayName, formatLabValue, formatVitalValue, formatNumericalValue } from '@/lib/codeMapping';
-import { Heart, Beaker, Camera, Stethoscope, Scissors, UserCheck, Pill, AlertTriangle, FileText } from 'lucide-react';
+import { Heart, Beaker, Camera, Stethoscope, Scissors, UserCheck, Pill, AlertTriangle, FileText, ClipboardList, ChevronDown, ChevronRight, Calendar, Clock, Shield } from 'lucide-react';
+
+// Helper function to format timestamps
+const formatTimestamp = (timestamp: string | undefined): string => {
+  if (!timestamp || timestamp === 'Unknown') return 'Unknown';
+  
+  try {
+    // Try to parse the timestamp and format it nicely
+    const date = new Date(timestamp);
+    if (isNaN(date.getTime())) {
+      // If it's not a valid date, return as-is (might already be formatted)
+      return timestamp;
+    }
+    
+    // Format as a more readable date and time
+    return date.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch {
+    return timestamp;
+  }
+};
 
 function VitalsPageContent() {
   const params = useSearchParams();
@@ -16,6 +41,7 @@ function VitalsPageContent() {
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const loadPatient = async () => {
@@ -36,6 +62,16 @@ function VitalsPageContent() {
 
     loadPatient();
   }, [patientId]);
+
+  const toggleSection = (sectionId: string) => {
+    const newExpanded = new Set(expandedSections);
+    if (newExpanded.has(sectionId)) {
+      newExpanded.delete(sectionId);
+    } else {
+      newExpanded.add(sectionId);
+    }
+    setExpandedSections(newExpanded);
+  };
 
   if (loading) {
     return (
@@ -83,59 +119,91 @@ function VitalsPageContent() {
     );
   }
 
-  // Helper function to render observation sections
+  // Helper function to render observation sections with expand/collapse
   const renderObservationSection = (
     title: string,
     data: Record<string, string>,
+    timestampsData: Record<string, string> | undefined,
     icon: React.ReactNode,
     gradientFrom: string,
     gradientTo: string,
     emptyMessage: string,
     badgeVariant: "default" | "secondary" | "destructive" | "outline" = "outline"
-  ) => (
-    <div className="bg-white shadow-sm rounded-lg border border-gray-200">
-      <div className={`px-6 py-4 border-b border-gray-200 bg-gradient-to-r ${gradientFrom} ${gradientTo}`}>
-        <h2 className="text-lg font-bold text-gray-900 flex items-center">
-          {icon}
-          {title}
-          {data && Object.keys(data).length > 0 && (
-            <Badge variant="secondary" className="ml-2 text-xs">
-              {Object.keys(data).length} {Object.keys(data).length === 1 ? 'entry' : 'entries'}
-            </Badge>
-          )}
-        </h2>
-      </div>
-      <div className="p-6">
-        {data && Object.keys(data).length > 0 ? (
-          <div className="space-y-3">
-            {Object.entries(data).map(([key, value]) => {
-              const displayName = key.includes('-') ? getDisplayName(key, 'vital') : key;
-              const formattedValue = title === 'Vital Signs' ? formatVitalValue(key, value) : 
-                                   title === 'Lab Results' ? formatLabValue(key, value) : 
-                                   formatNumericalValue(value); // Use the new formatter for all other fields
+  ) => {
+    const sectionId = title.toLowerCase().replace(/\s+/g, '_');
+    const isExpanded = expandedSections.has(sectionId);
+    const hasData = data && Object.keys(data).length > 0;
+
+    return (
+      <div className="bg-white shadow-sm rounded-lg border border-gray-200">
+        <div className={`px-6 py-4 border-b border-gray-200 bg-gradient-to-r ${gradientFrom} ${gradientTo}`}>
+          <h2 className="text-lg font-bold text-gray-900 flex items-center">
+            {icon}
+            {title}
+            {hasData && (
+              <Badge variant="secondary" className="ml-2 text-xs">
+                {Object.keys(data).length} {Object.keys(data).length === 1 ? 'entry' : 'entries'}
+              </Badge>
+            )}
+          </h2>
+        </div>
+        <div className="p-6">
+          {hasData ? (
+            <div>
+              <button
+                onClick={() => toggleSection(sectionId)}
+                className="flex items-center justify-between w-full px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors mb-4"
+              >
+                <span className="text-sm font-medium text-gray-700">
+                  View {title} ({Object.keys(data).length} {Object.keys(data).length === 1 ? 'item' : 'items'})
+                </span>
+                {isExpanded ? (
+                  <ChevronDown className="h-4 w-4 text-gray-500" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-gray-500" />
+                )}
+              </button>
               
-              return (
-                <div key={key} className="flex items-center justify-between py-3 px-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors min-h-[50px]">
-                  <div className="flex items-center flex-1">
-                    <span className="text-sm font-medium text-gray-700 flex-1">{displayName}</span>
-                  </div>
-                  <Badge variant={badgeVariant} className="text-sm font-semibold ml-4">{formattedValue}</Badge>
+              {isExpanded && (
+                <div className="space-y-3">
+                  {Object.entries(data).map(([key, value]) => {
+                    const displayName = key.includes('-') ? getDisplayName(key, 'vital') : key;
+                    const formattedValue = title === 'Vital Signs' ? formatVitalValue(key, value) : 
+                                         title === 'Lab Results' ? formatLabValue(key, value) : 
+                                         formatNumericalValue(value);
+                    const timestamp = formatTimestamp(timestampsData?.[key]);
+                    
+                    return (
+                      <div key={key} className="flex items-center justify-between py-3 px-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors min-h-[50px]">
+                        <div className="flex flex-col flex-1">
+                          <span className="text-sm font-medium text-gray-700">{displayName}</span>
+                          {timestamp !== 'Unknown' && timestampsData && (
+                            <div className="flex items-center text-xs text-gray-500 mt-1">
+                              <Clock className="h-3 w-3 mr-1" />
+                              <span>Recorded: {timestamp}</span>
+                            </div>
+                          )}
+                        </div>
+                        <Badge variant={badgeVariant} className="text-sm font-semibold ml-4">{formattedValue}</Badge>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="text-center py-12">
-            <div className="h-16 w-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              {icon}
+              )}
             </div>
-            <h3 className="text-sm font-medium text-gray-900 mb-1">No {title}</h3>
-            <p className="text-sm text-gray-500">{emptyMessage}</p>
-          </div>
-        )}
+          ) : (
+            <div className="text-center py-12">
+              <div className="h-16 w-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                {icon}
+              </div>
+              <h3 className="text-sm font-medium text-gray-900 mb-1">No {title}</h3>
+              <p className="text-sm text-gray-500">{emptyMessage}</p>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -211,6 +279,51 @@ function VitalsPageContent() {
             </div>
           </div>
 
+          {/* Recent Encounters Overview */}
+          {patient?.encounters && Object.keys(patient.encounters).length > 0 && (
+            <div className="bg-white shadow rounded-lg mb-6">
+              <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-sky-50">
+                <h2 className="text-lg font-bold text-gray-900 flex items-center">
+                  <Calendar className="h-5 w-5 mr-2 text-blue-500" />
+                  Recent Encounters
+                  <Badge variant="secondary" className="ml-2 text-xs">
+                    {Object.keys(patient.encounters).length} {Object.keys(patient.encounters).length === 1 ? 'encounter' : 'encounters'}
+                  </Badge>
+                </h2>
+              </div>
+              <div className="p-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {Object.entries(patient.encounters).slice(0, 6).map(([encounterId, encounterType]) => {
+                    const timestamp = formatTimestamp(patient.encounters_timestamps?.[encounterId]);
+                    return (
+                      <div key={encounterId} className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <h3 className="font-medium text-gray-900 text-sm">{encounterType}</h3>
+                            <p className="text-xs text-gray-600 mt-1">ID: {encounterId}</p>
+                            {timestamp !== 'Unknown' && patient.encounters_timestamps && (
+                              <div className="flex items-center text-xs text-gray-500 mt-2">
+                                <Clock className="h-3 w-3 mr-1" />
+                                <span>{timestamp}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {Object.keys(patient.encounters).length > 6 && (
+                  <div className="mt-4 text-center">
+                    <p className="text-sm text-gray-500">
+                      And {Object.keys(patient.encounters).length - 6} more encounters...
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Comprehensive Clinical Data Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-6">
             
@@ -218,6 +331,7 @@ function VitalsPageContent() {
             {renderObservationSection(
               'Vital Signs',
               patient?.vitals || {},
+              patient?.vitals_timestamps,
               <Heart className="h-5 w-5 mr-2 text-red-500" />,
               'from-red-50',
               'to-pink-50',
@@ -228,6 +342,7 @@ function VitalsPageContent() {
             {renderObservationSection(
               'Lab Results',
               patient?.labs || {},
+              patient?.labs_timestamps,
               <Beaker className="h-5 w-5 mr-2 text-blue-500" />,
               'from-blue-50',
               'to-indigo-50',
@@ -238,6 +353,7 @@ function VitalsPageContent() {
             {renderObservationSection(
               'Imaging Studies',
               patient?.imaging || {},
+              patient?.imaging_timestamps,
               <Camera className="h-5 w-5 mr-2 text-purple-500" />,
               'from-purple-50',
               'to-violet-50',
@@ -248,6 +364,7 @@ function VitalsPageContent() {
             {renderObservationSection(
               'Physical Exam',
               patient?.exam || {},
+              patient?.exam_timestamps,
               <Stethoscope className="h-5 w-5 mr-2 text-green-500" />,
               'from-green-50',
               'to-emerald-50',
@@ -258,6 +375,7 @@ function VitalsPageContent() {
             {renderObservationSection(
               'Procedures',
               patient?.procedure || {},
+              patient?.procedure_timestamps,
               <Scissors className="h-5 w-5 mr-2 text-orange-500" />,
               'from-orange-50',
               'to-amber-50',
@@ -268,6 +386,7 @@ function VitalsPageContent() {
             {renderObservationSection(
               'Social History',
               patient?.social_history || {},
+              patient?.social_history_timestamps,
               <UserCheck className="h-5 w-5 mr-2 text-cyan-500" />,
               'from-cyan-50',
               'to-teal-50',
@@ -278,16 +397,29 @@ function VitalsPageContent() {
             {renderObservationSection(
               'Medications',
               patient?.medications || {},
+              patient?.medications_timestamps,
               <Pill className="h-5 w-5 mr-2 text-indigo-500" />,
               'from-indigo-50',
               'to-blue-50',
               'No medications recorded for this patient'
             )}
 
+            {/* Immunizations */}
+            {renderObservationSection(
+              'Immunizations',
+              patient?.immunizations || {},
+              patient?.immunizations_timestamps,
+              <Shield className="h-5 w-5 mr-2 text-green-500" />,
+              'from-green-50',
+              'to-emerald-50',
+              'No immunizations recorded for this patient'
+            )}
+
             {/* Allergies */}
             {renderObservationSection(
               'Allergies',
               patient?.allergies || {},
+              patient?.allergies_timestamps,
               <AlertTriangle className="h-5 w-5 mr-2 text-red-500" />,
               'from-red-50',
               'to-rose-50',
@@ -299,10 +431,44 @@ function VitalsPageContent() {
             {renderObservationSection(
               'Diagnoses',
               patient?.diagnoses || {},
+              patient?.diagnoses_timestamps,
               <FileText className="h-5 w-5 mr-2 text-gray-500" />,
               'from-gray-50',
               'to-slate-50',
               'No diagnoses recorded for this patient'
+            )}
+
+            {/* Medication Statements */}
+            {renderObservationSection(
+              'Medication Usage',
+              patient?.medication_statement || {},
+              patient?.medication_statement_timestamps,
+              <Pill className="h-5 w-5 mr-2 text-emerald-500" />,
+              'from-emerald-50',
+              'to-green-50',
+              'No medication usages recorded for this patient'
+            )}
+
+            {/* Questionnaire Responses */}
+            {renderObservationSection(
+              'Questionnaire Responses',
+              patient?.questionnaire_response || {},
+              patient?.questionnaire_response_timestamps,
+              <ClipboardList className="h-5 w-5 mr-2 text-violet-500" />,
+              'from-violet-50',
+              'to-purple-50',
+              'No questionnaire responses recorded for this patient'
+            )}
+
+            {/* Encounters */}
+            {renderObservationSection(
+              'Encounters',
+              patient?.encounters || {},
+              patient?.encounters_timestamps,
+              <Calendar className="h-5 w-5 mr-2 text-blue-500" />,
+              'from-blue-50',
+              'to-sky-50',
+              'No encounters recorded for this patient'
             )}
 
           </div>
@@ -313,7 +479,7 @@ function VitalsPageContent() {
               <h2 className="text-lg font-bold text-gray-900">Clinical Data Summary</h2>
             </div>
             <div className="p-6">
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 text-center">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 text-center">
                 <div className="bg-red-50 p-4 rounded-lg">
                   <div className="text-2xl font-bold text-red-600">
                     {patient?.vitals ? Object.keys(patient.vitals).length : 0}
@@ -343,6 +509,18 @@ function VitalsPageContent() {
                     {patient?.procedure ? Object.keys(patient.procedure).length : 0}
                   </div>
                   <div className="text-sm text-orange-700">Procedures</div>
+                </div>
+                <div className="bg-emerald-50 p-4 rounded-lg">
+                  <div className="text-2xl font-bold text-emerald-600">
+                    {patient?.immunizations ? Object.keys(patient.immunizations).length : 0}
+                  </div>
+                  <div className="text-sm text-emerald-700">Immunizations</div>
+                </div>
+                <div className="bg-sky-50 p-4 rounded-lg">
+                  <div className="text-2xl font-bold text-sky-600">
+                    {patient?.encounters ? Object.keys(patient.encounters).length : 0}
+                  </div>
+                  <div className="text-sm text-sky-700">Encounters</div>
                 </div>
               </div>
             </div>

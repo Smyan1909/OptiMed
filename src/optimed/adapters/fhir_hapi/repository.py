@@ -127,6 +127,49 @@ DIAGNOSIS_CODES = {
     "8716-3": "Problem list",
 }
 
+MEDICATION_STATEMENT_CODES = {
+    "182840001": "Drug treatment",
+    "182836005": "Review of medication",
+    "432102000": "Administration of substance",
+    "182849000": "Drug therapy discontinued",
+    "182842009": "Drug treatment started",
+    "182843004": "Drug treatment stopped",
+}
+
+QUESTIONNAIRE_CODES = {
+    "273879006": "Patient questionnaire",
+    "162673000": "General examination of patient",
+    "225336008": "Suicide risk assessment",
+    "273724008": "Quality of life assessment",
+    "225358003": "Pain assessment",
+    "386053000": "Evaluation procedure",
+    "710830005": "Assessment of anxiety",
+}
+
+IMMUNIZATION_CODES = {
+    "33879002": "Immunization procedure",
+    "127786006": "Injection of vaccine product",
+    "170433008": "Administration of vaccine",
+    "396429000": "Vaccination for COVID-19",
+    "72093006": "Influenza vaccination",
+    "16290008": "Hepatitis B vaccination",
+    "408864009": "Pneumococcal vaccination",
+    "396430005": "Tetanus vaccination",
+    "16584000": "Pertussis vaccination",
+    "396431009": "Diphtheria vaccination",
+    "396432002": "Polio vaccination",
+    "396433007": "MMR vaccination",
+}
+
+ENCOUNTER_CODES = {
+    "308335008": "Patient encounter procedure",
+    "185349003": "Encounter for check up",
+    "270427003": "Patient-initiated encounter",
+    "50849002": "Emergency room visit",
+    "183807002": "Inpatient stay",
+    "185345009": "Outpatient visit",
+}
+
 # --------------------------------------------------------------------------- #
 # Helper functions
 # --------------------------------------------------------------------------- #
@@ -137,6 +180,26 @@ def get_display_name(code: str, code_type: str = "vital") -> str:
         return VITAL_CODES.get(code, code)
     elif code_type == "lab":
         return CRITICAL_LAB_CODES.get(code, code)
+    elif code_type == "imaging":
+        return IMAGING_CODES.get(code, code)
+    elif code_type == "exam":
+        return EXAM_CODES.get(code, code)
+    elif code_type == "procedure":
+        return PROCEDURE_CODES.get(code, code)
+    elif code_type == "social_history":
+        return SOCIAL_HISTORY_CODES.get(code, code)
+    elif code_type == "medication":
+        return MEDICATION_CODES.get(code, code)
+    elif code_type == "allergy":
+        return ALLERGY_CODES.get(code, code)
+    elif code_type == "diagnosis":
+        return DIAGNOSIS_CODES.get(code, code)
+    elif code_type == "immunization":
+        return IMMUNIZATION_CODES.get(code, code)
+    elif code_type == "medication_statement":
+        return MEDICATION_STATEMENT_CODES.get(code, code)
+    elif code_type == "questionnaire":
+        return QUESTIONNAIRE_CODES.get(code, code)
     return code
 
 def _age_from_birthdate(date) -> int:
@@ -204,6 +267,10 @@ def _obs_bundle_to_dict(entries: list[Observation]) -> dict[str, str]:
                         display_name = ALLERGY_CODES[loinc_code]
                     elif loinc_code in DIAGNOSIS_CODES:
                         display_name = DIAGNOSIS_CODES[loinc_code]
+                    elif loinc_code in QUESTIONNAIRE_CODES:
+                        display_name = QUESTIONNAIRE_CODES[loinc_code]
+                    elif loinc_code in MEDICATION_STATEMENT_CODES:
+                        display_name = MEDICATION_STATEMENT_CODES[loinc_code]
                     else:
                         # Fallback to the display name from FHIR or the code itself
                         display_name = obs.code.coding[0].display or loinc_code
@@ -223,6 +290,76 @@ def _obs_bundle_to_dict(entries: list[Observation]) -> dict[str, str]:
     
     return result
 
+def _obs_bundle_to_dict_with_timestamps(entries: list[Observation]) -> tuple[dict[str, str], dict[str, str]]:
+    """Convert observation bundle to dict with human-readable names and timestamps."""
+    result = {}
+    timestamps = {}
+    
+    for obs in entries:
+        # Handle both Observation objects and dict representations
+        if isinstance(obs, dict):
+            # Handle dict-based observations (from medications, allergies, diagnoses)
+            if obs.get("code") and obs["code"].get("coding"):
+                coding = obs["code"]["coding"][0]
+                display_name = coding.get("display", "Unknown")
+                value_str = obs.get("valueString", "N/A")
+                result[display_name] = value_str
+                
+                # Extract timestamp
+                timestamp = obs.get("effectiveDateTime") or obs.get("issued") or "Unknown"
+                if isinstance(timestamp, str):
+                    try:
+                        # Parse and format timestamp
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        timestamps[display_name] = dt.strftime("%Y-%m-%d %H:%M")
+                    except Exception:
+                        timestamps[display_name] = timestamp[:16] if len(timestamp) > 16 else timestamp
+                else:
+                    timestamps[display_name] = "Unknown"
+        else:
+            # Handle actual Observation objects
+            if obs.code and obs.code.coding:
+                # Get the LOINC code
+                loinc_code = None
+                for coding in obs.code.coding:
+                    if coding.system == "http://loinc.org":
+                        loinc_code = coding.code
+                        break
+                
+                if loinc_code:
+                    # Determine category based on our mappings
+                    display_name = get_display_name(loinc_code, "vital")
+                    
+                    # Get the value
+                    value_str = "N/A"
+                    if obs.valueQuantity:
+                        unit = obs.valueQuantity.unit or ""
+                        value_str = f"{obs.valueQuantity.value} {unit}".strip()
+                    elif obs.valueString:
+                        value_str = obs.valueString
+                    elif obs.valueCodeableConcept:
+                        if obs.valueCodeableConcept.text:
+                            value_str = obs.valueCodeableConcept.text
+                    
+                    result[display_name] = value_str
+                    
+                    # Extract timestamp from observation
+                    timestamp = obs.effectiveDateTime or obs.issued
+                    if timestamp:
+                        if hasattr(timestamp, 'strftime'):
+                            timestamps[display_name] = timestamp.strftime("%Y-%m-%d %H:%M")
+                        else:
+                            # Handle string timestamps
+                            try:
+                                dt = datetime.fromisoformat(str(timestamp).replace('Z', '+00:00'))
+                                timestamps[display_name] = dt.strftime("%Y-%m-%d %H:%M")
+                            except Exception:
+                                timestamps[display_name] = str(timestamp)[:16] if len(str(timestamp)) > 16 else str(timestamp)
+                    else:
+                        timestamps[display_name] = "Unknown"
+    
+    return result, timestamps
+
 def _to_patient_ctx(
         patient: Patient,
         vitals: list[Observation] | None = None,
@@ -234,26 +371,84 @@ def _to_patient_ctx(
         medications: list[Observation] | None = None,
         allergies: list[Observation] | None = None,
         diagnoses: list[Observation] | None = None,
+        immunizations: list[Observation] | None = None,
+        medication_statement: list[Observation] | None = None,
+        questionnaire_response: list[Observation] | None = None,
+        encounters: list[Any] | None = None,
 ) -> PatientContext:
     """Convert FHIR Patient + observations to PatientContext domain model."""
     if not patient.id:
         raise ValueError("Patient must have an ID")
+
+    # Process observations with timestamps
+    vitals_data, vitals_timestamps = _obs_bundle_to_dict_with_timestamps(vitals or [])
+    labs_data, labs_timestamps = _obs_bundle_to_dict_with_timestamps(labs or [])
+    imaging_data, imaging_timestamps = _obs_bundle_to_dict_with_timestamps(imaging or [])
+    exam_data, exam_timestamps = _obs_bundle_to_dict_with_timestamps(exam or [])
+    procedure_data, procedure_timestamps = _obs_bundle_to_dict_with_timestamps(procedure or [])
+    social_history_data, social_history_timestamps = _obs_bundle_to_dict_with_timestamps(social_history or [])
+    medications_data, medications_timestamps = _obs_bundle_to_dict_with_timestamps(medications or [])
+    allergies_data, allergies_timestamps = _obs_bundle_to_dict_with_timestamps(allergies or [])
+    diagnoses_data, diagnoses_timestamps = _obs_bundle_to_dict_with_timestamps(diagnoses or [])
+    immunizations_data, immunizations_timestamps = _obs_bundle_to_dict_with_timestamps(immunizations or [])
+    medication_statement_data, medication_statement_timestamps = _obs_bundle_to_dict_with_timestamps(medication_statement or [])
+    questionnaire_response_data, questionnaire_response_timestamps = _obs_bundle_to_dict_with_timestamps(questionnaire_response or [])
+    
+    # Process encounters
+    encounters_data = {}
+    encounters_timestamps = {}
+    if encounters:
+        for encounter in encounters:
+            if isinstance(encounter, dict):
+                encounter_type = encounter.get("type", [{}])[0].get("text", "Unknown Encounter")
+                encounter_id = encounter.get("id", "unknown")
+                encounters_data[encounter_id] = encounter_type
+                
+                # Extract encounter timestamp
+                period = encounter.get("period", {})
+                start_time = period.get("start")
+                if start_time:
+                    try:
+                        dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                        encounters_timestamps[encounter_id] = dt.strftime("%Y-%m-%d %H:%M")
+                    except Exception:
+                        encounters_timestamps[encounter_id] = start_time[:16] if len(start_time) > 16 else start_time
+                else:
+                    encounters_timestamps[encounter_id] = "Unknown"
 
     return PatientContext(
         patient_id=patient.id,
         name=_fhir_name_to_str(patient),
         age=_age_from_birthdate(patient.birthDate),
         sex=patient.gender or "unknown",
-        care_unit="UNKNOWN",  # May need enhancement with SMART on FHIR data
-        vitals=_obs_bundle_to_dict(vitals or []),
-        labs=_obs_bundle_to_dict(labs or []),
-        imaging=_obs_bundle_to_dict(imaging or []),
-        exam=_obs_bundle_to_dict(exam or []),
-        procedure=_obs_bundle_to_dict(procedure or []),
-        social_history=_obs_bundle_to_dict(social_history or []),
-        medications=_obs_bundle_to_dict(medications or []),
-        allergies=_obs_bundle_to_dict(allergies or []),
-        diagnoses=_obs_bundle_to_dict(diagnoses or []),
+        care_unit="UNKNOWN",
+        vitals=vitals_data,
+        labs=labs_data,
+        imaging=imaging_data,
+        exam=exam_data,
+        procedure=procedure_data,
+        social_history=social_history_data,
+        medications=medications_data,
+        allergies=allergies_data,
+        diagnoses=diagnoses_data,
+        immunizations=immunizations_data,
+        medication_statement=medication_statement_data,
+        questionnaire_response=questionnaire_response_data,
+        # Add timestamp fields
+        vitals_timestamps=vitals_timestamps,
+        labs_timestamps=labs_timestamps,
+        imaging_timestamps=imaging_timestamps,
+        exam_timestamps=exam_timestamps,
+        procedure_timestamps=procedure_timestamps,
+        social_history_timestamps=social_history_timestamps,
+        medications_timestamps=medications_timestamps,
+        allergies_timestamps=allergies_timestamps,
+        diagnoses_timestamps=diagnoses_timestamps,
+        immunizations_timestamps=immunizations_timestamps,
+        medication_statement_timestamps=medication_statement_timestamps,
+        questionnaire_response_timestamps=questionnaire_response_timestamps,
+        encounters=encounters_data,
+        encounters_timestamps=encounters_timestamps,
     )
 
 def _map_entry_type_to_fhir_type(entry_type: JournalEntryType) -> str:
@@ -369,10 +564,16 @@ class HAPIFHIRRepository(FHIRRepository):
         medications = await self._get_medications(patient_id)
         allergies = await self._get_allergies(patient_id)
         diagnoses = await self._get_conditions(patient_id)
+        immunizations = await self._get_immunizations(patient_id)
+
+        medication_statement = await self._get_medication_statements(patient_id)
+        questionnaire_response = await self._get_questionnaire_responses(patient_id)
+        encounters = await self._get_encounters(patient_id)
         
         return _to_patient_ctx(
-            patient, vitals, labs, imaging, exam, procedure, 
-            social_history, medications, allergies, diagnoses
+            patient, vitals, labs, imaging, exam, procedure,
+            social_history, medications, allergies, diagnoses, immunizations,
+            medication_statement, questionnaire_response, encounters
         )
     
     async def search_patients(self, query: Any) -> Sequence[PatientContext]:
@@ -412,13 +613,109 @@ class HAPIFHIRRepository(FHIRRepository):
         r.raise_for_status()
         return Patient.model_validate(r.json())
     
+
+    async def _get_medication_statements(self, patient_id: str) -> list[Observation]:
+        """Fetch medication statement information for a patient."""
+        try:
+            r = await self._client.get("/MedicationStatement", params={
+                "subject": patient_id,
+                "_count": 100
+            })
+            r.raise_for_status()
+            bundle = r.json()
+            
+            # Convert MedicationStatement to Observation-like structure
+            statements = []
+            for entry in bundle.get("entry", []):
+                resource = entry["resource"]
+                medication_name = "Unknown medication"
+                
+                # Extract medication name
+                if resource.get("medicationCodeableConcept"):
+                    medication_name = resource["medicationCodeableConcept"].get("text", medication_name)
+                elif resource.get("medicationReference"):
+                    medication_name = resource["medicationReference"].get("display", medication_name)
+                
+                # Extract status and dosage info
+                status = resource.get("status", "unknown")
+                effective_period = resource.get("effectivePeriod", {})
+                dosage = ""
+                if resource.get("dosage") and len(resource["dosage"]) > 0:
+                    dosage_info = resource["dosage"][0]
+                    dosage = dosage_info.get("text", "")
+                
+                value_str = f"{status.title()}"
+                if dosage:
+                    value_str += f" - {dosage}"
+                if effective_period.get("start"):
+                    value_str += f" (Since: {effective_period['start'][:10]})"
+                
+                statement_obs = {
+                    "code": {"coding": [{"code": "182840001", "display": "Medication Statement"}]},
+                    "valueString": value_str
+                }
+                statements.append(statement_obs)
+            
+            return statements
+        except Exception as e:
+            print(f"Failed to fetch medication statements: {e}")
+            return []
+
+    async def _get_questionnaire_responses(self, patient_id: str) -> list[Observation]:
+        """Fetch questionnaire response information for a patient."""
+        try:
+            r = await self._client.get("/QuestionnaireResponse", params={
+                "subject": patient_id,
+                "_count": 100
+            })
+            r.raise_for_status()
+            bundle = r.json()
+            
+            # Convert QuestionnaireResponse to Observation-like structure
+            responses = []
+            for entry in bundle.get("entry", []):
+                resource = entry["resource"]
+                
+                questionnaire_ref = resource.get("questionnaire", "")
+                questionnaire_name = questionnaire_ref.split("/")[-1] if questionnaire_ref else "Unknown Questionnaire"
+                
+                # Extract responses
+                response_text = []
+                if resource.get("item"):
+                    for item in resource["item"]:
+                        question = item.get("text", "Question")
+                        if item.get("answer"):
+                            for answer in item["answer"]:
+                                if answer.get("valueString"):
+                                    response_text.append(f"{question}: {answer['valueString']}")
+                                elif answer.get("valueInteger"):
+                                    response_text.append(f"{question}: {answer['valueInteger']}")
+                                elif answer.get("valueDecimal"):
+                                    response_text.append(f"{question}: {answer['valueDecimal']}")
+                                elif answer.get("valueBoolean"):
+                                    response_text.append(f"{question}: {'Yes' if answer['valueBoolean'] else 'No'}")
+                
+                value_str = "; ".join(response_text) if response_text else "No responses recorded"
+                
+                response_obs = {
+                    "code": {"coding": [{"code": "273879006", "display": questionnaire_name}]},
+                    "valueString": value_str
+                }
+                responses.append(response_obs)
+            
+            return responses
+        except Exception as e:
+            print(f"Failed to fetch questionnaire responses: {e}")
+            return []
+
+
     async def _get_medications(self, patient_id: str) -> list[Observation]:
         """Fetch medication information for a patient."""
         try:
             r = await self._client.get("/MedicationRequest", params={
                 "patient": patient_id,
                 "status": "active",
-                "_count": 20
+                "_count": 100
             })
             r.raise_for_status()
             bundle = r.json()
@@ -444,7 +741,7 @@ class HAPIFHIRRepository(FHIRRepository):
         try:
             r = await self._client.get("/AllergyIntolerance", params={
                 "patient": patient_id,
-                "_count": 20
+                "_count": 100
             })
             r.raise_for_status()
             bundle = r.json()
@@ -463,13 +760,62 @@ class HAPIFHIRRepository(FHIRRepository):
         except Exception:
             return []
 
+    async def _get_immunizations(self, patient_id: str) -> list[Observation]:
+        """Fetch immunization information for a patient."""
+        try:
+            r = await self._client.get("/Immunization", params={
+                "patient": patient_id,
+                "_count": 100
+            })
+            r.raise_for_status()
+            bundle = r.json()
+            
+            # Convert Immunization to Observation-like structure
+            immunizations = []
+            for entry in bundle.get("entry", []):
+                resource = entry["resource"]
+                
+                # Extract vaccine name
+                vaccine_name = "Unknown vaccine"
+                if resource.get("vaccineCode") and resource["vaccineCode"].get("text"):
+                    vaccine_name = resource["vaccineCode"]["text"]
+                elif resource.get("vaccineCode") and resource["vaccineCode"].get("coding"):
+                    vaccine_name = resource["vaccineCode"]["coding"][0].get("display", "Unknown vaccine")
+                
+                # Extract administration date
+                occurrence_date = resource.get("occurrenceDateTime", "")
+                if occurrence_date:
+                    occurrence_date = occurrence_date[:10]  # Just the date part
+                
+                # Extract status and lot number
+                status = resource.get("status", "unknown")
+                lot_number = resource.get("lotNumber", "")
+                
+                value_str = f"{status.title()}"
+                if occurrence_date:
+                    value_str += f" on {occurrence_date}"
+                if lot_number:
+                    value_str += f" (Lot: {lot_number})"
+                
+                immunization_obs = {
+                    "code": {"coding": [{"code": "33879002", "display": vaccine_name}]},
+                    "valueString": value_str,
+                    "effectiveDateTime": resource.get("occurrenceDateTime")
+                }
+                immunizations.append(immunization_obs)
+            
+            return immunizations
+        except Exception as e:
+            print(f"Failed to fetch immunizations: {e}")
+            return []
+
     async def _get_conditions(self, patient_id: str) -> list[Observation]:
         """Fetch condition/diagnosis information for a patient."""
 
         try:
             r = await self._client.get("/Condition", params={
                 "patient": patient_id,
-                "_count": 20
+                "_count": 100
             })
             r.raise_for_status()
             bundle = r.json()
@@ -493,7 +839,7 @@ class HAPIFHIRRepository(FHIRRepository):
             pid: str,
             *,
             category: str,
-            count: int = 50
+            count: int = 100
     ) -> list[Observation]:
         """Fetch Observations of a given category for a patient."""
         r = await self._client.get(
@@ -516,6 +862,27 @@ class HAPIFHIRRepository(FHIRRepository):
                 continue
         return good
 
+
+    async def _get_encounters(self, patient_id: str) -> list[Any]:
+        """Fetch encounter information for a patient."""
+        try:
+            r = await self._client.get("/Encounter", params={
+                "patient": patient_id,
+                "_count": 100,
+                "_sort": "-date"
+            })
+            r.raise_for_status()
+            bundle = r.json()
+            
+            encounters = []
+            for entry in bundle.get("entry", []):
+                encounters.append(entry["resource"])
+            
+            return encounters
+        except Exception as e:
+            print(f"Failed to fetch encounters: {e}")
+            return []
+
     async def __aenter__(self):
         return self
     
@@ -531,7 +898,7 @@ class HAPIFHIRRepository(FHIRRepository):
             r = await self._client.get("/DocumentReference", params={
                 "subject": f"Patient/{patient_id}",
                 "_sort": "-date",
-                "_count": "50"
+                "_count": "100"
             })
             r.raise_for_status()
             bundle = r.json()

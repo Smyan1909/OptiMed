@@ -79,6 +79,25 @@ class PatientOut(BaseModel):
     medications: Dict[str, str]
     allergies: Dict[str, str]
     diagnoses: Dict[str, str]
+    immunizations: Dict[str, str]
+    medication_statement: Dict[str, str]
+    questionnaire_response: Dict[str, str]
+    # Timestamp fields
+    vitals_timestamps: Dict[str, str]
+    labs_timestamps: Dict[str, str]
+    imaging_timestamps: Dict[str, str]
+    exam_timestamps: Dict[str, str]
+    procedure_timestamps: Dict[str, str]
+    social_history_timestamps: Dict[str, str]
+    medications_timestamps: Dict[str, str]
+    allergies_timestamps: Dict[str, str]
+    diagnoses_timestamps: Dict[str, str]
+    immunizations_timestamps: Dict[str, str]
+    medication_statement_timestamps: Dict[str, str]
+    questionnaire_response_timestamps: Dict[str, str]
+    # Encounters
+    encounters: Dict[str, str]
+    encounters_timestamps: Dict[str, str]
 
 class UserOut(BaseModel):
     user_id: str 
@@ -530,6 +549,25 @@ async def search_patients(
                 medications=p.medications,
                 allergies=p.allergies,
                 diagnoses=p.diagnoses,
+                immunizations=p.immunizations,
+                medication_statement=p.medication_statement,
+                questionnaire_response=p.questionnaire_response,
+                # Timestamp fields
+                vitals_timestamps=p.vitals_timestamps,
+                labs_timestamps=p.labs_timestamps,
+                imaging_timestamps=p.imaging_timestamps,
+                exam_timestamps=p.exam_timestamps,
+                procedure_timestamps=p.procedure_timestamps,
+                social_history_timestamps=p.social_history_timestamps,
+                medications_timestamps=p.medications_timestamps,
+                allergies_timestamps=p.allergies_timestamps,
+                diagnoses_timestamps=p.diagnoses_timestamps,
+                immunizations_timestamps=p.immunizations_timestamps,
+                medication_statement_timestamps=p.medication_statement_timestamps,
+                questionnaire_response_timestamps=p.questionnaire_response_timestamps,
+                # Encounters
+                encounters=p.encounters,
+                encounters_timestamps=p.encounters_timestamps,
             )
             for p in domain_objs
         ]
@@ -860,6 +898,25 @@ async def get_patient(
                 medications=pctx.medications,
                 allergies=pctx.allergies,
                 diagnoses=pctx.diagnoses,
+                immunizations=pctx.immunizations,
+                medication_statement=pctx.medication_statement,
+                questionnaire_response=pctx.questionnaire_response,
+                # Timestamp fields
+                vitals_timestamps=pctx.vitals_timestamps,
+                labs_timestamps=pctx.labs_timestamps,
+                imaging_timestamps=pctx.imaging_timestamps,
+                exam_timestamps=pctx.exam_timestamps,
+                procedure_timestamps=pctx.procedure_timestamps,
+                social_history_timestamps=pctx.social_history_timestamps,
+                medications_timestamps=pctx.medications_timestamps,
+                allergies_timestamps=pctx.allergies_timestamps,
+                diagnoses_timestamps=pctx.diagnoses_timestamps,
+                immunizations_timestamps=pctx.immunizations_timestamps,
+                medication_statement_timestamps=pctx.medication_statement_timestamps,
+                questionnaire_response_timestamps=pctx.questionnaire_response_timestamps,
+                # Encounters
+                encounters=pctx.encounters,
+                encounters_timestamps=pctx.encounters_timestamps,
     )
 
 @app.delete("/patients/{patient_id}/chat-history", summary="Delete patient by ID")
