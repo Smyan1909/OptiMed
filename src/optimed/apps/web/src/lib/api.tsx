@@ -14,6 +14,7 @@ export type PatientDetail = {
   medications: Record<string,string>;
   allergies: Record<string,string>;
   diagnoses: Record<string,string>;
+  immunizations: Record<string,string>;
   medication_statement: Record<string,string>;
   questionnaire_response: Record<string,string>;
   // Timestamp fields
@@ -26,6 +27,7 @@ export type PatientDetail = {
   medications_timestamps: Record<string,string>;
   allergies_timestamps: Record<string,string>;
   diagnoses_timestamps: Record<string,string>;
+  immunizations_timestamps: Record<string,string>;
   medication_statement_timestamps: Record<string,string>;
   questionnaire_response_timestamps: Record<string,string>;
   // Encounters

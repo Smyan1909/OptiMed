@@ -27,6 +27,7 @@ class PatientContext(FrozenModel):
     medications: Dict[str, str] = {}  # e.g. {"Aspirin": "81 mg daily"}
     allergies: Dict[str, str] = {}  # e.g. {"Penicillin": "Rash"}
     diagnoses: Dict[str, str] = {}  # e.g. {"Hypertension": "Controlled"}
+    immunizations: Dict[str, str] = {}  # e.g. {"COVID-19 Vaccine": "2023-10-15"}
 
     medication_statement: Dict[str, str] = {}
     questionnaire_response: Dict[str, str] = {}
@@ -40,6 +41,7 @@ class PatientContext(FrozenModel):
     medications_timestamps: Dict[str, str] = {}
     allergies_timestamps: Dict[str, str] = {}
     diagnoses_timestamps: Dict[str, str] = {}
+    immunizations_timestamps: Dict[str, str] = {}
     medication_statement_timestamps: Dict[str, str] = {}
     questionnaire_response_timestamps: Dict[str, str] = {}
     encounters: Dict[str, str] = {}

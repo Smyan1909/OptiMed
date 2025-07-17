@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import { fetchPatient, PatientDetail } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { getDisplayName, formatLabValue, formatVitalValue, formatNumericalValue } from '@/lib/codeMapping';
-import { Heart, Beaker, Camera, Stethoscope, Scissors, UserCheck, Pill, AlertTriangle, FileText, ClipboardList, ChevronDown, ChevronRight, Calendar, Clock } from 'lucide-react';
+import { Heart, Beaker, Camera, Stethoscope, Scissors, UserCheck, Pill, AlertTriangle, FileText, ClipboardList, ChevronDown, ChevronRight, Calendar, Clock, Shield } from 'lucide-react';
 
 // Helper function to format timestamps
 const formatTimestamp = (timestamp: string | undefined): string => {
@@ -404,6 +404,17 @@ function VitalsPageContent() {
               'No medications recorded for this patient'
             )}
 
+            {/* Immunizations */}
+            {renderObservationSection(
+              'Immunizations',
+              patient?.immunizations || {},
+              patient?.immunizations_timestamps,
+              <Shield className="h-5 w-5 mr-2 text-green-500" />,
+              'from-green-50',
+              'to-emerald-50',
+              'No immunizations recorded for this patient'
+            )}
+
             {/* Allergies */}
             {renderObservationSection(
               'Allergies',
@@ -468,7 +479,7 @@ function VitalsPageContent() {
               <h2 className="text-lg font-bold text-gray-900">Clinical Data Summary</h2>
             </div>
             <div className="p-6">
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-center">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 text-center">
                 <div className="bg-red-50 p-4 rounded-lg">
                   <div className="text-2xl font-bold text-red-600">
                     {patient?.vitals ? Object.keys(patient.vitals).length : 0}
@@ -498,6 +509,12 @@ function VitalsPageContent() {
                     {patient?.procedure ? Object.keys(patient.procedure).length : 0}
                   </div>
                   <div className="text-sm text-orange-700">Procedures</div>
+                </div>
+                <div className="bg-emerald-50 p-4 rounded-lg">
+                  <div className="text-2xl font-bold text-emerald-600">
+                    {patient?.immunizations ? Object.keys(patient.immunizations).length : 0}
+                  </div>
+                  <div className="text-sm text-emerald-700">Immunizations</div>
                 </div>
                 <div className="bg-sky-50 p-4 rounded-lg">
                   <div className="text-2xl font-bold text-sky-600">

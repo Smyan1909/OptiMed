@@ -79,6 +79,7 @@ class PatientOut(BaseModel):
     medications: Dict[str, str]
     allergies: Dict[str, str]
     diagnoses: Dict[str, str]
+    immunizations: Dict[str, str]
     medication_statement: Dict[str, str]
     questionnaire_response: Dict[str, str]
     # Timestamp fields
@@ -91,6 +92,7 @@ class PatientOut(BaseModel):
     medications_timestamps: Dict[str, str]
     allergies_timestamps: Dict[str, str]
     diagnoses_timestamps: Dict[str, str]
+    immunizations_timestamps: Dict[str, str]
     medication_statement_timestamps: Dict[str, str]
     questionnaire_response_timestamps: Dict[str, str]
     # Encounters
@@ -547,6 +549,7 @@ async def search_patients(
                 medications=p.medications,
                 allergies=p.allergies,
                 diagnoses=p.diagnoses,
+                immunizations=p.immunizations,
                 medication_statement=p.medication_statement,
                 questionnaire_response=p.questionnaire_response,
                 # Timestamp fields
@@ -559,6 +562,7 @@ async def search_patients(
                 medications_timestamps=p.medications_timestamps,
                 allergies_timestamps=p.allergies_timestamps,
                 diagnoses_timestamps=p.diagnoses_timestamps,
+                immunizations_timestamps=p.immunizations_timestamps,
                 medication_statement_timestamps=p.medication_statement_timestamps,
                 questionnaire_response_timestamps=p.questionnaire_response_timestamps,
                 # Encounters
@@ -894,6 +898,7 @@ async def get_patient(
                 medications=pctx.medications,
                 allergies=pctx.allergies,
                 diagnoses=pctx.diagnoses,
+                immunizations=pctx.immunizations,
                 medication_statement=pctx.medication_statement,
                 questionnaire_response=pctx.questionnaire_response,
                 # Timestamp fields
@@ -906,6 +911,7 @@ async def get_patient(
                 medications_timestamps=pctx.medications_timestamps,
                 allergies_timestamps=pctx.allergies_timestamps,
                 diagnoses_timestamps=pctx.diagnoses_timestamps,
+                immunizations_timestamps=pctx.immunizations_timestamps,
                 medication_statement_timestamps=pctx.medication_statement_timestamps,
                 questionnaire_response_timestamps=pctx.questionnaire_response_timestamps,
                 # Encounters

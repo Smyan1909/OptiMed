@@ -148,6 +148,23 @@ QUESTIONNAIRE_CODES = {
     "225336008": "Patient reported outcome",
 }
 
+IMMUNIZATION_CODES = {
+    "33879002": "Immunization procedure",
+    "408864009": "Vaccination procedure",
+    "127786006": "Injection of vaccine product",
+    "170433008": "Administration of vaccine",
+    "396429000": "Vaccination for COVID-19",
+    "72093006": "Influenza vaccination",
+    "16290008": "Hepatitis B vaccination",
+    "408864009": "Pneumococcal vaccination",
+    "396429000": "COVID-19 vaccination",
+    "396430005": "Tetanus vaccination",
+    "16584000": "Pertussis vaccination",
+    "396431009": "Diphtheria vaccination",
+    "396432002": "Polio vaccination",
+    "396433007": "MMR vaccination",
+}
+
 ENCOUNTER_CODES = {
     "308335008": "Patient encounter procedure",
     "185349003": "Encounter for check up",
@@ -167,6 +184,26 @@ def get_display_name(code: str, code_type: str = "vital") -> str:
         return VITAL_CODES.get(code, code)
     elif code_type == "lab":
         return CRITICAL_LAB_CODES.get(code, code)
+    elif code_type == "imaging":
+        return IMAGING_CODES.get(code, code)
+    elif code_type == "exam":
+        return EXAM_CODES.get(code, code)
+    elif code_type == "procedure":
+        return PROCEDURE_CODES.get(code, code)
+    elif code_type == "social_history":
+        return SOCIAL_HISTORY_CODES.get(code, code)
+    elif code_type == "medication":
+        return MEDICATION_CODES.get(code, code)
+    elif code_type == "allergy":
+        return ALLERGY_CODES.get(code, code)
+    elif code_type == "diagnosis":
+        return DIAGNOSIS_CODES.get(code, code)
+    elif code_type == "immunization":
+        return IMMUNIZATION_CODES.get(code, code)
+    elif code_type == "medication_statement":
+        return MEDICATION_STATEMENT_CODES.get(code, code)
+    elif code_type == "questionnaire":
+        return QUESTIONNAIRE_CODES.get(code, code)
     return code
 
 def _age_from_birthdate(date) -> int:
@@ -338,6 +375,7 @@ def _to_patient_ctx(
         medications: list[Observation] | None = None,
         allergies: list[Observation] | None = None,
         diagnoses: list[Observation] | None = None,
+        immunizations: list[Observation] | None = None,
         medication_statement: list[Observation] | None = None,
         questionnaire_response: list[Observation] | None = None,
         encounters: list[Any] | None = None,
@@ -356,6 +394,7 @@ def _to_patient_ctx(
     medications_data, medications_timestamps = _obs_bundle_to_dict_with_timestamps(medications or [])
     allergies_data, allergies_timestamps = _obs_bundle_to_dict_with_timestamps(allergies or [])
     diagnoses_data, diagnoses_timestamps = _obs_bundle_to_dict_with_timestamps(diagnoses or [])
+    immunizations_data, immunizations_timestamps = _obs_bundle_to_dict_with_timestamps(immunizations or [])
     medication_statement_data, medication_statement_timestamps = _obs_bundle_to_dict_with_timestamps(medication_statement or [])
     questionnaire_response_data, questionnaire_response_timestamps = _obs_bundle_to_dict_with_timestamps(questionnaire_response or [])
     
@@ -396,6 +435,7 @@ def _to_patient_ctx(
         medications=medications_data,
         allergies=allergies_data,
         diagnoses=diagnoses_data,
+        immunizations=immunizations_data,
         medication_statement=medication_statement_data,
         questionnaire_response=questionnaire_response_data,
         # Add timestamp fields
@@ -408,6 +448,7 @@ def _to_patient_ctx(
         medications_timestamps=medications_timestamps,
         allergies_timestamps=allergies_timestamps,
         diagnoses_timestamps=diagnoses_timestamps,
+        immunizations_timestamps=immunizations_timestamps,
         medication_statement_timestamps=medication_statement_timestamps,
         questionnaire_response_timestamps=questionnaire_response_timestamps,
         encounters=encounters_data,
@@ -527,6 +568,7 @@ class HAPIFHIRRepository(FHIRRepository):
         medications = await self._get_medications(patient_id)
         allergies = await self._get_allergies(patient_id)
         diagnoses = await self._get_conditions(patient_id)
+        immunizations = await self._get_immunizations(patient_id)
 
         medication_statement = await self._get_medication_statements(patient_id)
         questionnaire_response = await self._get_questionnaire_responses(patient_id)
@@ -534,7 +576,7 @@ class HAPIFHIRRepository(FHIRRepository):
         
         return _to_patient_ctx(
             patient, vitals, labs, imaging, exam, procedure,
-            social_history, medications, allergies, diagnoses,
+            social_history, medications, allergies, diagnoses, immunizations,
             medication_statement, questionnaire_response, encounters
         )
     
@@ -720,6 +762,55 @@ class HAPIFHIRRepository(FHIRRepository):
             
             return allergies
         except Exception:
+            return []
+
+    async def _get_immunizations(self, patient_id: str) -> list[Observation]:
+        """Fetch immunization information for a patient."""
+        try:
+            r = await self._client.get("/Immunization", params={
+                "patient": patient_id,
+                "_count": 100
+            })
+            r.raise_for_status()
+            bundle = r.json()
+            
+            # Convert Immunization to Observation-like structure
+            immunizations = []
+            for entry in bundle.get("entry", []):
+                resource = entry["resource"]
+                
+                # Extract vaccine name
+                vaccine_name = "Unknown vaccine"
+                if resource.get("vaccineCode") and resource["vaccineCode"].get("text"):
+                    vaccine_name = resource["vaccineCode"]["text"]
+                elif resource.get("vaccineCode") and resource["vaccineCode"].get("coding"):
+                    vaccine_name = resource["vaccineCode"]["coding"][0].get("display", "Unknown vaccine")
+                
+                # Extract administration date
+                occurrence_date = resource.get("occurrenceDateTime", "")
+                if occurrence_date:
+                    occurrence_date = occurrence_date[:10]  # Just the date part
+                
+                # Extract status and lot number
+                status = resource.get("status", "unknown")
+                lot_number = resource.get("lotNumber", "")
+                
+                value_str = f"{status.title()}"
+                if occurrence_date:
+                    value_str += f" on {occurrence_date}"
+                if lot_number:
+                    value_str += f" (Lot: {lot_number})"
+                
+                immunization_obs = {
+                    "code": {"coding": [{"code": "33879002", "display": vaccine_name}]},
+                    "valueString": value_str,
+                    "effectiveDateTime": resource.get("occurrenceDateTime")
+                }
+                immunizations.append(immunization_obs)
+            
+            return immunizations
+        except Exception as e:
+            print(f"Failed to fetch immunizations: {e}")
             return []
 
     async def _get_conditions(self, patient_id: str) -> list[Observation]:
