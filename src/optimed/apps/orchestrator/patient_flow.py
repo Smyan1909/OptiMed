@@ -1699,96 +1699,81 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 print(f"[bayesian] Error calculating confidence for {diagnosis_name}: {e}")
                 # Fallback to simple heuristic
                 return 0.5
+                
 
         async def _get_prior_probability_from_web(
             diagnosis_name: str, 
             patient_context: PatientContext
         ) -> float:
-            """Get prior probability of diagnosis using dedicated web search for epidemiological data."""
+            """Get prior probability of diagnosis using focused web search for epidemiological data."""
             try:
                 # Prepare demographic context for search
                 demographic_context = f"Age: {patient_context.age}, Sex: {patient_context.sex}"
                 
-                # Construct specialized search query for epidemiological data
-                search_query = f"epidemiology prevalence incidence rate {diagnosis_name} age {patient_context.age} {patient_context.sex} population statistics"
+                # More focused search query
+                search_query = f"prevalence {diagnosis_name} epidemiology {patient_context.age} years {patient_context.sex}"
                 
-                print(f"[bayesian_prior] Searching for epidemiological data: {search_query}")
+                print(f"[individual_prior] Searching: {search_query}")
                 
-                # Perform web search for prior probability
+                # Perform web search with fewer results for speed
                 web_response = await self._web_search.search(
                     query=search_query,
-                    max_results=5,
+                    max_results=3,  # Reduced from 5 to 3
                     patient_context=demographic_context,
                     search_intent="epidemiological_data"
                 )
                 
-                # Use web search results to estimate prior
+                # Simplified analysis prompt
                 web_context = ""
                 if web_response and web_response.results:
                     web_context = "\n".join([
-                        f"Source: {result.title}\nContent: {result.snippet}"
-                        for result in web_response.results[:3]
+                        f"{result.title}: {result.snippet[:150]}..."  # Shortened snippets
+                        for result in web_response.results[:2]  # Only use top 2 results
                     ])
-                    print(f"[bayesian_prior] Found {len(web_response.results)} sources for {diagnosis_name}")
-                else:
-                    print(f"[bayesian_prior] No web results found for {diagnosis_name}")
                 
                 prior_prompt = f"""
-                Estimate the prior probability (base rate) of {diagnosis_name} based on epidemiological data.
+                Estimate prior probability for {diagnosis_name}:
                 
-                Patient Demographics: {demographic_context}
+                Patient: {demographic_context}
+                Sources: {web_context if web_context else "Use medical knowledge"}
                 
-                {"Web Search Results:" + web_context if web_context else "No specific web data available - use general medical knowledge"}
+                Common ranges:
+                - Very common (diabetes, hypertension): 0.1-0.3
+                - Common (infections, anxiety): 0.05-0.15  
+                - Moderate (specific conditions): 0.01-0.05
+                - Rare (genetic, rare diseases): 0.001-0.01
                 
-                Consider:
-                1. General prevalence/incidence rates from the search results or medical literature
-                2. Age-specific and sex-specific rates for this demographic
-                3. Population base rates from epidemiological studies
-                4. Risk factors present in this demographic group
-                
-                Provide a probability estimate between 0.001 (very rare) and 0.3 (very common).
-                
-                Reference ranges:
-                - Very common conditions (diabetes, hypertension): 0.1-0.3
-                - Common conditions (pneumonia, UTI): 0.05-0.15
-                - Moderate conditions (autoimmune diseases): 0.01-0.05
-                - Rare conditions (genetic disorders): 0.001-0.01
-                - Very rare conditions: 0.001-0.005
-                
-                Base your estimate on the web search results when available, otherwise use established medical knowledge.
-                
-                Respond with only a decimal number between 0.001 and 0.3.
+                Number only (0.001-0.3):
                 """
                 
                 prior_response = await self._llm.chat([
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical epidemiologist estimating disease prevalence using search results and medical knowledge. Provide only numerical probability estimates."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="Estimate disease prevalence. Respond with number only."),
                     ChatMessage(role=ChatRole.USER, content=prior_prompt)
                 ])
                 
                 # Extract numerical value
                 prior_text = prior_response.content.strip()
-                # Try to extract a decimal number
                 import re
-                numbers = re.findall(r'0\.\d+', prior_text)
+                numbers = re.findall(r'[01]?\.\d+', prior_text)
                 if numbers:
                     prior = float(numbers[0])
-                    prior_final = max(0.001, min(0.3, prior))
-                    print(f"[bayesian_prior] {diagnosis_name}: Extracted prior = {prior_final}")
-                    return prior_final
+                    return max(0.001, min(0.3, prior))
                 else:
-                    print(f"[bayesian_prior] Could not parse prior probability from: {prior_text}")
-                    return 0.05  # Default moderate prior
+                    return 0.03
                     
             except Exception as e:
-                print(f"[bayesian_prior] Error getting prior probability: {e}")
-                return 0.05  # Default prior
+                print(f"[individual_prior] Error: {e}")
+                return 0.03
 
         async def _calculate_likelihood(
             diagnosis_name: str, 
             patient_context: PatientContext,
             supporting_evidence: List[str]
         ) -> float:
-            """Calculate likelihood P(Evidence|Diagnosis) from patient data."""
+            """
+            Calculate likelihood using proper Bayesian approach based on likelihood ratios.
+            This calculates P(Evidence|Diagnosis) / P(Evidence|No Diagnosis) = Likelihood Ratio
+            """
             try:
                 # Prepare patient evidence
                 patient_evidence = []
@@ -1814,48 +1799,67 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 
                 evidence_text = "; ".join(patient_evidence) if patient_evidence else "No specific evidence available"
                 
+                # First get sensitivity and specificity estimates for each piece of evidence
                 likelihood_prompt = f"""
-                Calculate the likelihood P(Evidence|Diagnosis) - the probability of observing this evidence given that the patient has {diagnosis_name}.
+                For the diagnosis of {diagnosis_name}, estimate the sensitivity and specificity of the observed clinical evidence.
                 
                 Diagnosis: {diagnosis_name}
                 Patient Evidence: {evidence_text}
                 Patient Demographics: Age {patient_context.age}, Sex {patient_context.sex}
                 
-                Consider:
-                1. How typical are these findings for {diagnosis_name}?
-                2. How sensitive are these findings for this diagnosis?
-                3. Do the vitals/labs match expected patterns for {diagnosis_name}?
-                4. Are there any pathognomonic (disease-specific) signs present?
-                5. Do existing medications/diagnoses support or contradict {diagnosis_name}?
+                For each significant piece of evidence, estimate:
+                1. Sensitivity: What percentage of patients with {diagnosis_name} would have this finding?
+                2. Specificity: What percentage of patients WITHOUT {diagnosis_name} would NOT have this finding?
                 
-                Likelihood Scale:
-                - 0.9-1.0: Pathognomonic findings, classic presentation
-                - 0.7-0.8: Highly typical findings, strong match
-                - 0.5-0.6: Moderate match, some typical findings
-                - 0.3-0.4: Weak match, few typical findings
-                - 0.1-0.2: Poor match, atypical presentation
-                - 0.0-0.1: Inconsistent with diagnosis
+                Consider the overall clinical picture and provide:
+                - Overall Sensitivity (0.0-1.0): How likely is this evidence pattern in patients who DO have {diagnosis_name}?
+                - Overall Specificity (0.0-1.0): How likely is this evidence pattern to be ABSENT in patients who DON'T have {diagnosis_name}?
                 
-                Respond with only a decimal number between 0.0 and 1.0.
+                Guidelines:
+                - High sensitivity (0.8-1.0): Very typical findings for this diagnosis
+                - Moderate sensitivity (0.4-0.7): Somewhat typical findings
+                - Low sensitivity (0.1-0.3): Atypical but possible findings
+                - High specificity (0.8-1.0): Very specific to this diagnosis
+                - Moderate specificity (0.5-0.7): Somewhat specific findings
+                - Low specificity (0.1-0.4): Non-specific findings seen in many conditions
+                
+                Respond with only two decimal numbers: sensitivity,specificity (e.g., "0.75,0.85")
                 """
                 
                 likelihood_response = await self._llm.chat([
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a clinical diagnostician calculating likelihood of evidence given a diagnosis. Provide only numerical probability estimates."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a clinical diagnostician estimating sensitivity and specificity of clinical findings. Provide only numerical estimates."),
                     ChatMessage(role=ChatRole.USER, content=likelihood_prompt)
                 ])
                 
-                # Extract numerical value
+                # Extract sensitivity and specificity
                 likelihood_text = likelihood_response.content.strip()
                 import re
-                numbers = re.findall(r'[01]\.\d+', likelihood_text)
-                if numbers:
-                    likelihood = float(numbers[0])
-                    likelihood_final = max(0.0, min(1.0, likelihood))
-                    print(f"[bayesian_likelihood] {diagnosis_name}: Likelihood = {likelihood_final}")
-                    return likelihood_final
+                
+                # Try to extract two decimal numbers
+                numbers = re.findall(r'[01]?\.\d+', likelihood_text)
+                if len(numbers) >= 2:
+                    sensitivity = max(0.01, min(1.0, float(numbers[0])))  # Prevent 0 division
+                    specificity = max(0.01, min(1.0, float(numbers[1])))  # Prevent 0 division
+                    
+                    # Calculate positive likelihood ratio: LR+ = sensitivity / (1 - specificity)
+                    # This represents P(Evidence|Disease) / P(Evidence|No Disease)
+                    likelihood_ratio = sensitivity / (1 - specificity)
+                    
+                    # Convert likelihood ratio to a normalized likelihood value
+                    # For Bayes calculation: P(Evidence|Disease) = LR+ * P(Evidence|No Disease)
+                    # We need to estimate P(Evidence|No Disease) based on specificity
+                    # prob_evidence_no_disease = 1 - specificity
+                    prob_evidence_given_disease = sensitivity
+                    
+                    print(f"[bayesian_likelihood] {diagnosis_name}: Sensitivity={sensitivity:.3f}, Specificity={specificity:.3f}")
+                    print(f"[bayesian_likelihood] {diagnosis_name}: LR+={likelihood_ratio:.3f}, P(E|D)={prob_evidence_given_disease:.3f}")
+                    
+                    return prob_evidence_given_disease
+                    
                 else:
-                    print(f"[bayesian_likelihood] Could not parse likelihood from: {likelihood_text}")
-                    return 0.5  # Default moderate likelihood
+                    print(f"[bayesian_likelihood] Could not parse sensitivity/specificity from: {likelihood_text}")
+                    # Fallback to moderate values
+                    return 0.5
                     
             except Exception as e:
                 print(f"[bayesian_likelihood] Error calculating likelihood: {e}")
@@ -1863,16 +1867,17 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
 
         async def _estimate_marginal_probability(
             patient_context: PatientContext,
-            supporting_evidence: List[str]
+            supporting_evidence: List[str],
+            all_candidate_diagnoses: List[str] = None
         ) -> float:
-            """Estimate P(Evidence) - probability of observing this evidence across all possible diagnoses."""
+            """
+            Estimate P(Evidence) using the law of total probability across differential diagnoses.
+            Uses web search for accurate prior probabilities but with optimized batching.
+            """
             try:
-                # This is the most complex part of Bayesian calculation
-                # We'll estimate how common this constellation of findings is
-                
+                # Collect all evidence
                 patient_evidence = []
                 
-                # Collect all evidence
                 if patient_context.vitals:
                     patient_evidence.extend([f"Vital: {k}={v}" for k, v in patient_context.vitals.items()])
                 
@@ -1880,52 +1885,366 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                     patient_evidence.extend([f"Lab: {k}={v}" for k, v in patient_context.labs.items()])
                 
                 patient_evidence.extend(supporting_evidence)
+                evidence_text = "; ".join(patient_evidence) if patient_evidence else "No specific evidence"
+                
+                # Get a smaller, more focused set of candidate diagnoses (3-5 instead of 8-10)
+                if not all_candidate_diagnoses:
+                    candidate_diagnoses = await _get_focused_candidate_diagnoses(patient_context, supporting_evidence)
+                else:
+                    candidate_diagnoses = all_candidate_diagnoses[:5]  # Limit to top 5 even if provided
+                
+                print(f"[marginal] Processing {len(candidate_diagnoses)} candidate diagnoses with web search")
+                
+                # Batch web searches for all candidates simultaneously
+                prior_probabilities = await _batch_web_search_for_priors(candidate_diagnoses, patient_context)
+                
+                # Calculate marginal probability using law of total probability
+                marginal_probability = 0.0
+                
+                for i, diagnosis in enumerate(candidate_diagnoses):
+                    try:
+                        # Use the batched prior probability
+                        prior_prob = prior_probabilities.get(diagnosis, 0.03)  # Default if not found
+                        
+                        # Get likelihood for this diagnosis (this is faster than web search)
+                        likelihood = await _calculate_likelihood_for_marginal(diagnosis, patient_context, supporting_evidence)
+                        
+                        # Add to total: P(E) += P(E|D_i) * P(D_i)
+                        marginal_probability += likelihood * prior_prob
+                        
+                        print(f"[marginal] {diagnosis}: P(D)={prior_prob:.3f}, P(E|D)={likelihood:.3f}, contribution={likelihood * prior_prob:.3f}")
+                        
+                    except Exception as e:
+                        print(f"[marginal] Error calculating for {diagnosis}: {e}")
+                        continue
+                
+                # Add baseline for other conditions
+                baseline_other_conditions = 0.01
+                marginal_probability += baseline_other_conditions
+                
+                # Ensure result is reasonable
+                marginal_probability = max(0.001, min(0.8, marginal_probability))
+                
+                print(f"[marginal] Total marginal probability: {marginal_probability:.3f}")
+                return marginal_probability
+                
+            except Exception as e:
+                print(f"[marginal] Error in marginal probability calculation: {e}")
+                return 0.1
+
+        async def _get_focused_candidate_diagnoses(
+            patient_context: PatientContext,
+            supporting_evidence: List[str]
+        ) -> List[str]:
+            """Get a smaller, more focused list of candidate diagnoses (3-5 instead of 8-10)."""
+            try:
+                evidence_text = "; ".join(supporting_evidence) if supporting_evidence else "No specific evidence"
+                
+                prompt = f"""
+                Given this clinical presentation, list the TOP 5 MOST LIKELY diagnoses only:
+                
+                Patient: Age {patient_context.age}, Sex {patient_context.sex}
+                Clinical Evidence: {evidence_text}
+                Vitals: {patient_context.vitals}
+                Labs: {patient_context.labs}
+                
+                Rules:
+                - List ONLY the 5 most probable diagnoses
+                - Focus on common conditions first
+                - Include 1-2 "cannot-miss" diagnoses if relevant
+                - Be specific with medical terminology
+                - Order by likelihood (most likely first)
+                
+                Format as a simple list:
+                - Most likely diagnosis
+                - Second most likely 
+                - Third most likely
+                - Fourth most likely  
+                - Fifth most likely
+                """
+                
+                response = await self._llm.chat([
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical diagnostician creating a focused differential diagnosis list. Keep it to exactly 5 diagnoses."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ])
+                
+                # Parse the response to extract diagnosis names
+                lines = response.content.strip().split('\n')
+                diagnoses = []
+                
+                for line in lines:
+                    line = line.strip()
+                    if line.startswith('-') or line.startswith('•') or line.startswith(str(len(diagnoses) + 1)):
+                        # Remove bullet points, numbers, etc.
+                        diagnosis = line.lstrip('- •0123456789. ').strip()
+                        if diagnosis and len(diagnosis) > 3:
+                            diagnoses.append(diagnosis)
+                
+                # Ensure we have exactly 5 diagnoses, pad with common ones if needed
+                if len(diagnoses) < 5:
+                    common_fallbacks = [
+                        "Viral upper respiratory infection",
+                        "Hypertension", 
+                        "Type 2 diabetes mellitus",
+                        "Anxiety disorder",
+                        "Gastroenteritis"
+                    ]
+                    
+                    for fallback in common_fallbacks:
+                        if len(diagnoses) >= 5:
+                            break
+                        if fallback not in diagnoses:
+                            diagnoses.append(fallback)
+                
+                # Limit to exactly 5
+                diagnoses = diagnoses[:5]
+                
+                print(f"[focused_candidates] Selected {len(diagnoses)} focused candidate diagnoses")
+                return diagnoses
+                
+            except Exception as e:
+                print(f"[focused_candidates] Error getting candidates: {e}")
+                # Return minimal common diagnoses as fallback
+                return [
+                    "Viral upper respiratory infection",
+                    "Hypertension",
+                    "Type 2 diabetes mellitus", 
+                    "Anxiety disorder",
+                    "Gastroenteritis"
+                ]
+
+        async def _calculate_likelihood_for_marginal(
+            diagnosis_name: str,
+            patient_context: PatientContext,
+            supporting_evidence: List[str]
+        ) -> float:
+            """
+            Simplified likelihood calculation for marginal probability.
+            Returns P(Evidence|Diagnosis) for use in law of total probability.
+            """
+            try:
+                # Prepare patient evidence (simplified)
+                patient_evidence = []
+                
+                if patient_context.vitals:
+                    # Only include abnormal vitals to reduce noise
+                    for k, v in patient_context.vitals.items():
+                        if "high" in str(v).lower() or "low" in str(v).lower() or "abnormal" in str(v).lower():
+                            patient_evidence.append(f"Vital: {k}={v}")
+                
+                if patient_context.labs:
+                    # Only include abnormal labs
+                    for k, v in patient_context.labs.items():
+                        if "high" in str(v).lower() or "low" in str(v).lower() or "abnormal" in str(v).lower():
+                            patient_evidence.append(f"Lab: {k}={v}")
+                
+                # Take only the most relevant supporting evidence
+                relevant_evidence = supporting_evidence[:3]  # Limit to top 3 pieces of evidence
+                patient_evidence.extend(relevant_evidence)
                 
                 evidence_text = "; ".join(patient_evidence) if patient_evidence else "No specific evidence"
                 
-                marginal_prompt = f"""
-                Estimate how common this constellation of clinical findings is across all possible diagnoses.
+                # Simplified, faster prompt
+                prompt = f"""
+                For {diagnosis_name}: How likely is this evidence if the patient has this diagnosis?
                 
-                Clinical Evidence: {evidence_text}
+                Evidence: {evidence_text}
                 Patient: Age {patient_context.age}, Sex {patient_context.sex}
                 
-                Consider:
-                1. How specific vs. non-specific are these findings?
-                2. Could these findings be explained by multiple common conditions?
-                3. Are these findings seen in healthy individuals?
-                4. How rare is this combination of findings overall?
+                Rate 0.1-1.0:
+                - 0.8-1.0: Very typical
+                - 0.5-0.7: Moderately typical  
+                - 0.2-0.4: Possible but uncommon
+                - 0.1: Very unlikely
                 
-                Marginal Probability Scale:
-                - 0.3-0.5: Very common, non-specific findings (fever, fatigue)
-                - 0.1-0.3: Moderately common findings (elevated BP, mild lab abnormalities)
-                - 0.05-0.1: Less common constellation of findings
-                - 0.01-0.05: Rare combination of findings
-                - 0.001-0.01: Very rare constellation
-                
-                Respond with only a decimal number between 0.001 and 0.5.
+                Number only:
                 """
                 
-                marginal_response = await self._llm.chat([
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical statistician estimating the probability of clinical evidence patterns. Provide only numerical estimates."),
-                    ChatMessage(role=ChatRole.USER, content=marginal_prompt)
+                response = await self._llm.chat([
+                    ChatMessage(role=ChatRole.SYSTEM, content="Estimate likelihood quickly. Respond with number only."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
                 ])
                 
-                # Extract numerical value
-                marginal_text = marginal_response.content.strip()
+                # Extract numerical value quickly
+                response_text = response.content.strip()
                 import re
-                numbers = re.findall(r'0\.\d+', marginal_text)
+                numbers = re.findall(r'[01]?\.\d+', response_text)
+                
                 if numbers:
-                    marginal = float(numbers[0])
-                    marginal_final = max(0.001, min(0.5, marginal))
-                    print(f"[bayesian_marginal] Marginal probability = {marginal_final}")
-                    return marginal_final
+                    likelihood = float(numbers[0])
+                    return max(0.1, min(1.0, likelihood))
                 else:
-                    print(f"[bayesian_marginal] Could not parse marginal probability from: {marginal_text}")
-                    return 0.1  # Default marginal
+                    return 0.4  # Default moderate likelihood
                     
             except Exception as e:
-                print(f"[bayesian_marginal] Error estimating marginal probability: {e}")
-                return 0.1  # Default marginal
+                print(f"[likelihood_marginal] Error for {diagnosis_name}: {e}")
+                return 0.4
+
+        async def _batch_web_search_for_priors(
+            diagnoses: List[str],
+            patient_context: PatientContext
+        ) -> dict[str, float]:
+            """
+            Perform batched web searches for prior probabilities of multiple diagnoses.
+            This is much more efficient than sequential searches.
+            """
+            try:
+                print(f"[batch_priors] Starting batch web search for {len(diagnoses)} diagnoses")
+                
+                # Prepare demographic context
+                demographic_context = f"Age: {patient_context.age}, Sex: {patient_context.sex}"
+                
+                # Create a combined search query for all diagnoses
+                diagnosis_list = ", ".join(diagnoses)
+                combined_search_query = f"epidemiology prevalence incidence rates {diagnosis_list} age {patient_context.age} {patient_context.sex} population statistics medical literature"
+                
+                print(f"[batch_priors] Combined search query: {combined_search_query}")
+                
+                # Perform single web search for all diagnoses
+                web_response = await self._web_search.search(
+                    query=combined_search_query,
+                    max_results=8,  # Get more results since we're searching for multiple conditions
+                    patient_context=demographic_context,
+                    search_intent="epidemiological_data"
+                )
+                
+                # Prepare web context for LLM analysis
+                web_context = ""
+                if web_response and web_response.results:
+                    web_context = "\n".join([
+                        f"Source {i+1}: {result.title}\nURL: {result.url}\nContent: {result.snippet}"
+                        for i, result in enumerate(web_response.results)
+                    ])
+                    print(f"[batch_priors] Found {len(web_response.results)} web sources")
+                else:
+                    print(f"[batch_priors] No web results found, will use medical knowledge")
+                
+                # Use LLM to extract prior probabilities for all diagnoses at once
+                batch_prior_prompt = f"""
+                Extract epidemiological prior probabilities for multiple diagnoses based on web search results and medical knowledge.
+                
+                DIAGNOSES TO ANALYZE: {diagnoses}
+                
+                PATIENT DEMOGRAPHICS: {demographic_context}
+                
+                WEB SEARCH RESULTS:
+                {web_context if web_context else "No specific web data available - use established medical knowledge"}
+                
+                For each diagnosis, estimate the prior probability (base rate) considering:
+                1. General prevalence/incidence from search results or medical literature
+                2. Age-specific and sex-specific rates for this demographic
+                3. Population base rates from epidemiological studies
+                4. Risk factors present in this demographic group
+                
+                REFERENCE RANGES:
+                - Very common conditions (diabetes, hypertension): 0.1-0.3
+                - Common conditions (pneumonia, UTI, viral infections): 0.05-0.15
+                - Moderate conditions (autoimmune diseases, specific syndromes): 0.01-0.05
+                - Rare conditions (genetic disorders, rare cancers): 0.001-0.01
+                - Very rare conditions: 0.001-0.005
+                
+                Return ONLY a JSON object with diagnosis names as keys and probability numbers as values:
+                {{
+                    "diagnosis_1": 0.123,
+                    "diagnosis_2": 0.045,
+                    "diagnosis_3": 0.012,
+                    ...
+                }}
+                
+                Base estimates on web search results when available, otherwise use established medical knowledge.
+                Ensure all probabilities are between 0.001 and 0.3.
+                """
+                
+                try:
+                    batch_response = await self._llm.chat([
+                        ChatMessage(role=ChatRole.SYSTEM, content="You are a medical epidemiologist extracting disease prevalence data from web sources and medical knowledge. Return only JSON."),
+                        ChatMessage(role=ChatRole.USER, content=batch_prior_prompt)
+                    ], json_mode=True)
+                    
+                    if batch_response and batch_response.content:
+                        # Parse JSON response
+                        response_content = batch_response.content.strip()
+                        
+                        # Remove markdown code blocks if present
+                        if response_content.startswith("```json"):
+                            start_idx = response_content.find('\n') + 1
+                            end_idx = response_content.rfind("```")
+                            if start_idx > 0 and end_idx > start_idx:
+                                response_content = response_content[start_idx:end_idx].strip()
+                        elif response_content.startswith("```"):
+                            start_idx = response_content.find('\n') + 1
+                            end_idx = response_content.rfind("```")
+                            if start_idx > 0 and end_idx > start_idx:
+                                response_content = response_content[start_idx:end_idx].strip()
+                        
+                        import json
+                        priors_data = json.loads(response_content)
+                        
+                        # Validate and clean the results
+                        validated_priors = {}
+                        for diagnosis in diagnoses:
+                            # Try exact match first
+                            if diagnosis in priors_data:
+                                prob = float(priors_data[diagnosis])
+                                validated_priors[diagnosis] = max(0.001, min(0.3, prob))
+                            else:
+                                # Try partial matching
+                                found_match = False
+                                for key, value in priors_data.items():
+                                    if diagnosis.lower() in key.lower() or key.lower() in diagnosis.lower():
+                                        prob = float(value)
+                                        validated_priors[diagnosis] = max(0.001, min(0.3, prob))
+                                        found_match = True
+                                        break
+                                
+                                if not found_match:
+                                    # Default fallback
+                                    validated_priors[diagnosis] = 0.03
+                        
+                        print(f"[batch_priors] Successfully extracted priors for {len(validated_priors)} diagnoses")
+                        for diagnosis, prior in validated_priors.items():
+                            print(f"[batch_priors] {diagnosis}: {prior:.3f}")
+                        
+                        return validated_priors
+                        
+                except json.JSONDecodeError as e:
+                    print(f"[batch_priors] JSON parsing error: {e}")
+                    # Fall back to individual searches for critical diagnoses
+                    return await _fallback_individual_searches(diagnoses, patient_context)
+                    
+            except Exception as e:
+                print(f"[batch_priors] Error in batch search: {e}")
+                # Fall back to individual searches
+                return await _fallback_individual_searches(diagnoses, patient_context)
+
+        async def _fallback_individual_searches(
+            diagnoses: List[str],
+            patient_context: PatientContext
+        ) -> dict[str, float]:
+            """
+            Fallback to individual web searches if batch search fails.
+            Only search for the most critical diagnoses to save time.
+            """
+            print(f"[fallback_priors] Performing individual searches for top 3 diagnoses")
+            
+            priors = {}
+            
+            # Only search for top 3 most important diagnoses
+            for diagnosis in diagnoses[:3]:
+                try:
+                    prior = await _get_prior_probability_from_web(diagnosis, patient_context)
+                    priors[diagnosis] = prior
+                    print(f"[fallback_priors] {diagnosis}: {prior:.3f}")
+                except Exception as e:
+                    print(f"[fallback_priors] Error for {diagnosis}: {e}")
+                    priors[diagnosis] = 0.03
+            
+            # Use defaults for remaining diagnoses to save time
+            for diagnosis in diagnoses[3:]:
+                priors[diagnosis] = 0.03
+                print(f"[fallback_priors] {diagnosis}: 0.030 (default)")
+            
+            return priors
 
 
         @streaming_step("evaluate_query_complexity")

@@ -81,7 +81,7 @@ class StreamingStatus:
             requires_full_processing = getattr(self.state, 'requires_full_processing', False)
             return f"Query complexity evaluated - {'requires full processing' if requires_full_processing else 'can be answered directly'}"
         elif step_lower == "evaluate_icd_parsing_need":
-            icd_parsing_needed = getattr(self.state, 'icd_parsing_needed', False)
+            icd_parsing_needed = getattr(self.state, 'should_parse_icd_codes', False)
             return f"ICD parsing {'required' if icd_parsing_needed else 'not needed'} for this patient"
         elif step_lower == "parse_icd":
             icd_code = getattr(self.state, 'icd_code', None)
