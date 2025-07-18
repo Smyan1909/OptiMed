@@ -887,7 +887,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                                     if threshold != float('inf') and time_diff < threshold:
                                         # Apply recency boost: more recent = higher boost
                                         recency_factor = 1.0 + (0.3 * (1.0 - time_diff / threshold))
-                                        adjusted_score = float(similarity_score) * recency_factor 
+                                        adjusted_score = similarity_score * recency_factor # type: ignore
                                         print(f"[recency] Applied recency boost to {data_type}: {similarity_score:.3f} -> {adjusted_score:.3f}")
                                 
                                 candidate_chunks.append({
