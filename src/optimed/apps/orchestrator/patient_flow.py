@@ -790,174 +790,249 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
 
         @streaming_step("intelligent_retrieve_chunks")
         async def intelligent_retrieve_chunks(state: FlowState) -> FlowState:
-            """Intelligently retrieve and filter chunks based on LLM analysis."""
+            """Intelligently retrieve and filter chunks based on LLM analysis with recency-aware filtering."""
             
-            # Step 1: Initial similarity search (broader search)
-            if state.patient_id:
-                q_vec = await embed(state.user_prompt)
-                rows = await self._vec.similarity_search(
-                    q_vec,
-                    top_k=15,  # Increased to accommodate journal entries
-                    filter_={
-                        "namespace": "clinical", 
-                        "patient_id": str(state.patient_id)
-                    },
-                )
-            else:
-                rows = []
-
-            if not rows and state.patient_ctx:
-                # Fallback to patient context
-                print("[intelligent_retrieve_chunks] fallback to patient context as no chunks found")
-                state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
-                state.chunk_analysis = {"method": "fallback", "reason": "No chunks found, using patient context"}
-                return state
-
-            # Step 2: Prepare chunks for LLM analysis
-            candidate_chunks = []
-            for i, row in enumerate(rows):
-                chunk_text = row[2] if len(row) > 2 else row[1]
-                similarity_score = row[0] if len(row) > 0 else 0.0
-                
-                # Extract metadata if available (for data type identification)
-                metadata: dict[str, Any] = row[3] if len(row) > 3 else {}
-                data_type = metadata.get("data_type", "unknown") if isinstance(metadata, dict) else "unknown"
-                
-                # Verify patient relevance
-                if state.patient_ctx:
-                    patient_name = state.patient_ctx.name
-                    if str(state.patient_id) in chunk_text or patient_name in chunk_text:
-                        candidate_chunks.append({
-                            "id": f"chunk_{i}",
-                            "content": chunk_text[:600],  # Increased limit for journal entries
-                            "similarity_score": similarity_score,
-                            "full_content": chunk_text,
-                            "data_type": data_type,
-                            "metadata": metadata
-                        })
-
-            if not candidate_chunks:
-                state.retrieved_chunks = []
-                state.chunk_analysis = {"method": "none", "reason": "No relevant chunks found"}
-                return state
-
-            # Step 3: LLM-based chunk analysis and selection
-            chunk_analysis_prompt = f"""
-            You are analyzing medical data chunks to determine which ones are relevant for answering this query:
-
-            QUERY: "{state.user_prompt}"
-            
-            PATIENT CONTEXT: {state.patient_ctx.name if state.patient_ctx else "Unknown"} (ID: {state.patient_id})
-            
-            AVAILABLE CHUNKS (including demographics, vitals, labs, and journal entries):
-            {chr(10).join([f"CHUNK {chunk['id']} ({chunk.get('data_type', 'unknown')}): {chunk['content'][:400]}..." for chunk in candidate_chunks])}
-
-            For each chunk, analyze:
-            1. Relevance to the specific query (0-10 scale)
-            2. Clinical importance for this case (0-10 scale)  
-            3. Whether it contains information that directly helps answer the query
-            4. Whether it provides necessary context or background
-            5. Data freshness and clinical timeline relevance
-
-            CHUNK TYPES AVAILABLE:
-            - demographics: Basic patient information
-            - vitals: Current vital signs and measurements
-            - labs: Laboratory test results
-            - journal_entry: Clinical notes, observations, treatments, diagnoses, assessments, and care plans
-            - complete_context: Full patient overview
-
-            Return a JSON response with:
-            {{
-                "selected_chunks": ["chunk_1", "chunk_3", ...],
-                "reasoning": "Brief explanation of why these chunks were selected",
-                "relevance_analysis": {{
-                    "chunk_1": {{"relevance": 8, "importance": 7, "reason": "Contains recent clinical assessment"}},
-                    "chunk_2": {{"relevance": 3, "importance": 4, "reason": "General background, not specific to query"}},
-                    ...
-                }},
-                "query_type": "diagnostic|follow_up|general_inquiry|medication|test_results|care_planning|clinical_notes"
-            }}
-
-            RULES:
-            - Select 3-6 most relevant chunks maximum
-            - Prioritize recent journal entries for current clinical status
-            - For diagnostic queries, include recent journal entries, symptoms, vitals, and test results
-            - For medication queries, focus on current medications, allergies, and relevant journal notes
-            - For follow-up queries, include previous treatments/outcomes from journal entries
-            - For care planning, prioritize recent assessments and treatment notes
-            - Always include patient demographics for context
-            - Journal entries often contain the most current and detailed clinical information
-            """
-
             try:
-                analysis_response = await self._llm.chat([
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information analyst. Analyze and select the most relevant data chunks for clinical queries, paying special attention to journal entries which contain detailed clinical information."),
-                    ChatMessage(role=ChatRole.USER, content=chunk_analysis_prompt)
-                ], json_mode=True)
+                # Step 1: Initial similarity search (broader search)
+                if state.patient_id:
+                    q_vec = await embed(state.user_prompt)
+                    rows = await self._vec.similarity_search(
+                        q_vec,
+                        top_k=20,  # Increased to accommodate recency filtering
+                        filter_={
+                            "namespace": "clinical", 
+                            "patient_id": str(state.patient_id)
+                        },
+                    )
+                else:
+                    rows = []
 
-                if not analysis_response or not analysis_response.content:
-                    print("[intelligent_retrieve] Empty response from LLM, using fallback")
-                    raise ValueError("Empty response from LLM")
+                if not rows and state.patient_ctx:
+                    # Fallback to patient context
+                    print("[intelligent_retrieve_chunks] fallback to patient context as no chunks found")
+                    state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
+                    state.chunk_analysis = {"method": "fallback", "reason": "No chunks found, using patient context"}
+                    return state
 
-                # Strip whitespace and check if content is empty
-                response_content = analysis_response.content.strip()
-                if not response_content:
-                    print("[intelligent_retrieve] Empty content in response, using fallback")
-                    raise ValueError("Empty content in response")
-
-                # Remove markdown code block markers if present
-                if response_content.startswith("```json"):
-                    # Find the end of the opening marker
-                    start_idx = response_content.find('\n') + 1
-                    # Find the closing marker
-                    end_idx = response_content.rfind("```")
-                    if start_idx > 0 and end_idx > start_idx:
-                        response_content = response_content[start_idx:end_idx].strip()
-                elif response_content.startswith("```"):
-                    # Handle generic code blocks
-                    start_idx = response_content.find('\n') + 1
-                    end_idx = response_content.rfind("```")
-                    if start_idx > 0 and end_idx > start_idx:
-                        response_content = response_content[start_idx:end_idx].strip()
-
-
-                analysis_data = json.loads(response_content)
+                # Step 2: Apply recency-based filtering and prepare chunks
+                current_time = time.time() * 1000  # Current time in milliseconds
+                candidate_chunks = []
                 
-                # Extract selected chunks
-                selected_chunk_ids = analysis_data.get("selected_chunks", [])
-                selected_chunks = []
+                # Define recency thresholds for different data types (in milliseconds)
+                # Only vitals, labs, and medications have time-based filtering
+                recency_thresholds = {
+                    "vitals": 7 * 24 * 60 * 60 * 1000,        # 7 days - vitals change frequently
+                    "labs": 14 * 24 * 60 * 60 * 1000,         # 14 days - lab values change regularly
+                    "medications": 90 * 24 * 60 * 60 * 1000,   # 90 days - medication changes less frequent
+                    "journal_entry": float('inf'),              # Always relevant - clinical notes don't expire
+                    "demographics": float('inf'),               # Always relevant
+                    "allergies": float('inf'),                  # Always relevant
+                    "family_history": float('inf'),             # Always relevant
+                    "immunizations": float('inf'),              # Always relevant
+                    "complete_context": float('inf'),           # Always relevant as fallback
+                    "unknown": float('inf')                     # Default to always relevant for unknown types
+                }
                 
-                for chunk in candidate_chunks:
-                    if chunk["id"] in selected_chunk_ids:
-                        selected_chunks.append(chunk["full_content"])
+                for i, row in enumerate(rows):
+                    try:
+                        chunk_text = row[2] if len(row) > 2 else row[1]
+                        similarity_score = row[0] if len(row) > 0 else 0.0
+                        
+                        # Extract metadata if available (for data type identification)
+                        metadata: dict[str, Any] = row[3] if len(row) > 3 else {}
+                        data_type = metadata.get("data_type", "unknown") if isinstance(metadata, dict) else "unknown"
+                        
+                        # Get timestamp for recency evaluation
+                        timestamp_str = metadata.get("timestamp") if isinstance(metadata, dict) else None
+                        chunk_timestamp = None
+                        is_recent = True  # Default to True for chunks without timestamps
+                        days_old = None
+                        
+                        if timestamp_str:
+                            try:
+                                chunk_timestamp = int(timestamp_str)
+                                time_diff = current_time - chunk_timestamp
+                                threshold = recency_thresholds.get(data_type, recency_thresholds["unknown"])
+                                is_recent = time_diff <= threshold
+                                days_old = time_diff / (24 * 60 * 60 * 1000)
+                                
+                                # Log recency analysis for debugging
+                                threshold_days = threshold / (24 * 60 * 60 * 1000) if threshold != float('inf') else "∞"
+                                print(f"[recency] {data_type} chunk is {days_old:.1f} days old, threshold: {threshold_days} days, recent: {is_recent}")
+                                
+                            except (ValueError, TypeError) as e:
+                                print(f"[recency] Could not parse timestamp '{timestamp_str}' for {data_type} chunk: {e}")
+                                is_recent = True  # Default to including if timestamp parsing fails
+                        
+                        # Apply recency filter - skip old time-sensitive data
+                        if not is_recent:
+                            print(f"[recency] Skipping {data_type} chunk due to age ({chunk_timestamp})")
+                            continue
+                        
+                        # Verify patient relevance
+                        if state.patient_ctx:
+                            patient_name = state.patient_ctx.name
+                            if str(state.patient_id) in chunk_text or patient_name in chunk_text:
+                                
+                                # Calculate recency-adjusted similarity score
+                                adjusted_score = similarity_score
+                                if chunk_timestamp and data_type in ["vitals", "labs", "medications"]:
+                                    # Boost score for more recent time-sensitive data (only for vitals, labs, medications)
+                                    time_diff = current_time - chunk_timestamp
+                                    threshold = recency_thresholds.get(data_type, recency_thresholds["unknown"])
+                                    if threshold != float('inf') and time_diff < threshold:
+                                        # Apply recency boost: more recent = higher boost
+                                        recency_factor = 1.0 + (0.3 * (1.0 - time_diff / threshold))
+                                        adjusted_score = similarity_score * recency_factor
+                                        print(f"[recency] Applied recency boost to {data_type}: {similarity_score:.3f} -> {adjusted_score:.3f}")
+                                
+                                candidate_chunks.append({
+                                    "id": f"chunk_{i}",
+                                    "content": chunk_text[:600],  # Increased limit for journal entries
+                                    "similarity_score": similarity_score,
+                                    "adjusted_score": adjusted_score,
+                                    "full_content": chunk_text,
+                                    "data_type": data_type,
+                                    "metadata": metadata,
+                                    "timestamp": chunk_timestamp,
+                                    "is_recent": is_recent,
+                                    "days_old": days_old
+                                })
+                        
+                    except Exception as e:
+                        print(f"[intelligent_retrieve] Error processing chunk {i}: {e}")
+                        continue
 
-                state.retrieved_chunks = selected_chunks
-                state.chunk_analysis = analysis_data
-                state.retrieval_reasoning = analysis_data.get("reasoning", "")
+                if not candidate_chunks:
+                    state.retrieved_chunks = []
+                    state.chunk_analysis = {"method": "none", "reason": "No relevant or recent chunks found"}
+                    return state
+
+                # Step 3: Simplified LLM-based chunk analysis
+                chunk_analysis_prompt = f"""
+                You are analyzing medical data chunks to determine which ones are relevant for answering this query:
+
+                QUERY: "{state.user_prompt}"
                 
-                print(f"[intelligent_retrieve] Selected {len(selected_chunks)} chunks out of {len(candidate_chunks)} candidates")
-                print(f"[intelligent_retrieve] Reasoning: {state.retrieval_reasoning}")
+                PATIENT CONTEXT: {state.patient_ctx.name if state.patient_ctx else "Unknown"} (ID: {state.patient_id})
+                
+                AVAILABLE CHUNKS (including demographics, vitals, labs, and journal entries):
+                {chr(10).join([f"CHUNK {chunk['id']} ({chunk.get('data_type', 'unknown')}): {chunk['content'][:400]}..." for chunk in candidate_chunks])}
 
-                # Log which data types were selected for debugging
-                selected_data_types = []
-                for chunk in candidate_chunks:
-                    if chunk["id"] in selected_chunk_ids:
-                        selected_data_types.append(chunk.get("data_type", "unknown"))
-                print(f"[intelligent_retrieve] Selected data types: {selected_data_types}")
+                For each chunk, analyze:
+                1. Relevance to the specific query (0-10 scale)
+                2. Clinical importance for this case (0-10 scale)  
+                3. Whether it contains information that directly helps answer the query
+                4. Whether it provides necessary context or background
+
+                CHUNK TYPES AVAILABLE:
+                - demographics: Basic patient information
+                - vitals: Current vital signs and measurements (recent values prioritized)
+                - labs: Laboratory test results (recent values prioritized)
+                - medications: Current medication regimen (recent changes prioritized)
+                - journal_entry: Clinical notes, observations, treatments, diagnoses, assessments, and care plans
+                - complete_context: Full patient overview
+
+                Return a JSON response with:
+                {{
+                    "selected_chunks": ["chunk_1", "chunk_3", ...],
+                    "reasoning": "Brief explanation of why these chunks were selected",
+                    "relevance_analysis": {{
+                        "chunk_1": {{"relevance": 8, "importance": 7, "reason": "Contains recent clinical assessment"}},
+                        "chunk_2": {{"relevance": 3, "importance": 4, "reason": "General background, not specific to query"}},
+                        ...
+                    }},
+                    "query_type": "diagnostic|follow_up|general_inquiry|medication|test_results|care_planning|clinical_notes"
+                }}
+
+                RULES:
+                - Select 3-6 most relevant chunks maximum
+                - For vitals, labs, medications: Recent values are automatically prioritized
+                - Journal entries are always relevant regardless of age
+                - Always include patient demographics for context
+                - For diagnostic queries, include recent journal entries, symptoms, vitals, and test results
+                - For medication queries, focus on current medications, allergies, and relevant journal notes
+                - For follow-up queries, include previous treatments/outcomes from journal entries
+                - For care planning, prioritize recent assessments and treatment notes
+                """
+
+                try:
+                    analysis_response = await self._llm.chat([
+                        ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information analyst. Analyze and select the most relevant data chunks for clinical queries."),
+                        ChatMessage(role=ChatRole.USER, content=chunk_analysis_prompt)
+                    ], json_mode=True)
+
+                    if not analysis_response or not analysis_response.content:
+                        print("[intelligent_retrieve] Empty response from LLM, using fallback")
+                        raise ValueError("Empty response from LLM")
+
+                    # Strip whitespace and check if content is empty
+                    response_content = analysis_response.content.strip()
+                    if not response_content:
+                        print("[intelligent_retrieve] Empty content in response, using fallback")
+                        raise ValueError("Empty content in response")
+
+                    # Remove markdown code block markers if present
+                    if response_content.startswith("```json"):
+                        start_idx = response_content.find('\n') + 1
+                        end_idx = response_content.rfind("```")
+                        if start_idx > 0 and end_idx > start_idx:
+                            response_content = response_content[start_idx:end_idx].strip()
+                    elif response_content.startswith("```"):
+                        start_idx = response_content.find('\n') + 1
+                        end_idx = response_content.rfind("```")
+                        if start_idx > 0 and end_idx > start_idx:
+                            response_content = response_content[start_idx:end_idx].strip()
+
+                    analysis_data = json.loads(response_content)
+                    
+                    # Extract selected chunks
+                    selected_chunk_ids = analysis_data.get("selected_chunks", [])
+                    selected_chunks = []
+                    
+                    for chunk in candidate_chunks:
+                        if chunk["id"] in selected_chunk_ids:
+                            selected_chunks.append(chunk["full_content"])
+
+                    state.retrieved_chunks = selected_chunks
+                    state.chunk_analysis = analysis_data
+                    state.retrieval_reasoning = analysis_data.get("reasoning", "")
+                    
+                    print(f"[intelligent_retrieve] Selected {len(selected_chunks)} chunks out of {len(candidate_chunks)} candidates")
+                    print(f"[intelligent_retrieve] Reasoning: {state.retrieval_reasoning}")
+
+                    # Log which data types were selected for debugging
+                    selected_data_types = []
+                    for chunk in candidate_chunks:
+                        if chunk["id"] in selected_chunk_ids:
+                            selected_data_types.append(chunk.get("data_type", "unknown"))
+                    print(f"[intelligent_retrieve] Selected data types: {selected_data_types}")
+
+                except Exception as e:
+                    print(f"[intelligent_retrieve] Error in LLM analysis: {e}, falling back to similarity-based selection")
+                    # Fallback to top similarity scores, but prioritize journal entries and recent data
+                    journal_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") == "journal_entry"]
+                    recent_time_sensitive = [chunk for chunk in candidate_chunks if chunk.get("data_type") in ["vitals", "labs", "medications"] and chunk.get("is_recent", True)]
+                    other_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") not in ["journal_entry", "vitals", "labs", "medications"]]
+                    
+                    # Take top chunks from each category
+                    top_journal = sorted(journal_chunks, key=lambda x: x["similarity_score"], reverse=True)[:2]
+                    top_recent = sorted(recent_time_sensitive, key=lambda x: x.get("adjusted_score", x["similarity_score"]), reverse=True)[:2]
+                    top_other = sorted(other_chunks, key=lambda x: x["similarity_score"], reverse=True)[:2]
+                    
+                    fallback_chunks = top_journal + top_recent + top_other
+                    state.retrieved_chunks = [chunk["full_content"] for chunk in fallback_chunks]
+                    state.chunk_analysis = {"method": "fallback_similarity", "error": str(e)}
 
             except Exception as e:
-                print(f"[intelligent_retrieve] Error in LLM analysis: {e}, falling back to similarity-based selection")
-                # Fallback to top similarity scores, but prioritize journal entries
-                journal_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") == "journal_entry"]
-                other_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") != "journal_entry"]
-                
-                # Take top journal entries and top other chunks
-                top_journal = sorted(journal_chunks, key=lambda x: x["similarity_score"], reverse=True)[:2]
-                top_other = sorted(other_chunks, key=lambda x: x["similarity_score"], reverse=True)[:3]
-                
-                fallback_chunks = top_journal + top_other
-                state.retrieved_chunks = [chunk["full_content"] for chunk in fallback_chunks]
-                state.chunk_analysis = {"method": "fallback_similarity", "error": str(e)}
+                print(f"[intelligent_retrieve] Critical error in chunk retrieval: {e}")
+                # Ultimate fallback to patient context if everything fails
+                if state.patient_ctx:
+                    state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
+                    state.chunk_analysis = {"method": "critical_fallback", "error": str(e)}
+                else:
+                    state.retrieved_chunks = []
+                    state.chunk_analysis = {"method": "failure", "error": str(e)}
 
             return state
         
@@ -1184,9 +1259,22 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     if state.retrieval_reasoning:
                         chunk_context += f" (Selected because: {state.retrieval_reasoning})"
                     
+                    # Add recency context if available
+                    temporal_context = ""
+                    if state.chunk_analysis:
+                        temporal_strategy = state.chunk_analysis.get("temporal_strategy")
+                        if temporal_strategy:
+                            temporal_context = f"\n\nTEMPORAL STRATEGY: {temporal_strategy}"
+                            if temporal_strategy == "recent_priority":
+                                temporal_context += " - Prioritizing most recent clinical data"
+                            elif temporal_strategy == "trend_analysis": 
+                                temporal_context += " - Including data to show trends over time"
+                            elif temporal_strategy == "historical_context":
+                                temporal_context += " - Including historical context for comparison"
+                    
                     docs = ChatMessage(
                         role=ChatRole.USER,
-                        content=f"{chunk_context}:\n" + "\n---\n".join(state.retrieved_chunks),
+                        content=f"{chunk_context}:{temporal_context}\n" + "\n---\n".join(state.retrieved_chunks),
                     )
                     messages.append(docs)
 
