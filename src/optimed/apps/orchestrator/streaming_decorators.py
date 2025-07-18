@@ -62,6 +62,8 @@ class StreamingStatus:
             "store_user_message": f"Storing user message in chat history for session {getattr(self.state, 'session_id', 'unknown')}",
             "store_assistant_response": "Saving AI response and reasoning to chat history",
             "evaluate_query_complexity": "Determining if the user query requires full processing or can be answered directly",
+            "evaluate_icd_parsing_need": "Checking if Diagnosis should be delivered for this patient",
+            "parse_icd": "Parsing ICD codes from the patient data",
         }
         
         return descriptions.get(step_lower, f"Starting {self.step_name}...")
@@ -78,7 +80,15 @@ class StreamingStatus:
         elif step_lower == "evaluate_query_complexity":
             requires_full_processing = getattr(self.state, 'requires_full_processing', False)
             return f"Query complexity evaluated - {'requires full processing' if requires_full_processing else 'can be answered directly'}"
-
+        elif step_lower == "evaluate_icd_parsing_need":
+            icd_parsing_needed = getattr(self.state, 'icd_parsing_needed', False)
+            return f"ICD parsing {'required' if icd_parsing_needed else 'not needed'} for this patient"
+        elif step_lower == "parse_icd":
+            icd_code = getattr(self.state, 'icd_code', None)
+            if icd_code:
+                return f"ICD code parsed: {icd_code}"
+            else:
+                return "No ICD code found - continuing without diagnosis"
         elif step_lower == "fetch_patient":
             patient_ctx = getattr(self.state, 'patient_ctx', None)
             if patient_ctx:

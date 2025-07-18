@@ -6,6 +6,7 @@ import uuid
 import json
 import time
 import asyncio
+import re
 from typing import List, Any, Union, AsyncGenerator, Optional
 from datetime import datetime
 
@@ -179,6 +180,7 @@ class FlowState(BaseModel):
     # Add diagnostic mode
     diagnostic_mode: str = "post_meet"  # "pre_meet", "post_meet", "research", "chat"
     chat_mode: bool = False # Keep for backward compatibility
+    should_parse_icd_codes: bool = False
     chat_history: List[ChatMessage] = Field(default_factory=list)
 
     needs_cross_session_search: bool = False
@@ -1272,10 +1274,123 @@ Please reference this generated image in your response when relevant and explain
             return state
 
 
+        @streaming_step("evaluate_icd_parsing_need")
+        async def evaluate_icd_parsing_need(state: FlowState) -> FlowState:
+            """Evaluate if ICD parsing should be performed based on diagnostic confidence."""
+            if not state.llm_response or not state.llm_response.content:
+                state.should_parse_icd_codes = False
+                return state
+            
+            try:
+                # For pre_meet mode, be extra strict about diagnostic content
+                if state.diagnostic_mode == "pre_meet":
+                    evaluation_prompt = f"""
+                    Analyze this pre-consultation response to determine if it contains CONFIDENT differential diagnoses or established diagnoses:
+
+                    RESPONSE TO ANALYZE:
+                    "{state.llm_response.content}"
+
+                    STRICT CRITERIA FOR ICD PARSING:
+                    
+                    PARSE ICD CODES (respond "YES") ONLY if the response contains:
+                    - Explicitly stated diagnoses with high confidence
+                    - Clear differential diagnoses with specific medical conditions named
+                    - Definitive statements like "likely diagnosis is", "most probable condition", "confirmed diagnosis"
+                    - Specific medical conditions with confidence indicators (probable, likely, definitive)
+                    - ICD codes are explicitly mentioned
+                    
+                    DO NOT PARSE (respond "NO") if the response contains:
+                    - General preparation advice without specific diagnoses
+                    - Symptom descriptions without diagnostic conclusions
+                    - Vague references to "possible conditions" without specifics
+                    - General questions to ask the patient
+                    - Examination recommendations without diagnostic certainty
+                    - Educational content about conditions without diagnosing this patient
+                    - Statements like "consider", "rule out", "screen for" without strong diagnostic confidence
+                    
+                    EXAMPLES:
+                    - "The patient likely has pneumonia based on symptoms" → YES
+                    - "Consider pneumonia in the differential" → NO (not confident enough)
+                    - "Rule out pneumonia" → NO (not a diagnosis)
+                    - "Ask patient about chest pain symptoms" → NO (preparation advice)
+                    - "The most probable diagnosis is Type 2 diabetes" → YES
+                    - "Screen for diabetes during the visit" → NO (screening, not diagnosis)
+                    
+                    Respond with only "YES" or "NO".
+                    """
+                else:
+                    # For post_meet, research, and chat modes, be strict about diagnostic confidence
+                    evaluation_prompt = f"""
+                    Analyze this medical response to determine if it contains HIGH-CONFIDENCE diagnoses worthy of ICD code extraction:
+
+                    RESPONSE TO ANALYZE:
+                    "{state.llm_response.content}"
+
+                    DIAGNOSTIC MODE: {state.diagnostic_mode}
+
+                    STRICT CRITERIA FOR ICD PARSING:
+                    
+                    PARSE ICD CODES (respond "YES") ONLY if the response contains:
+                    - Definitive or highly probable diagnoses (confidence >70%)
+                    - Clear differential diagnoses with specific conditions and reasoning
+                    - Statements indicating diagnostic certainty: "diagnosed with", "most likely", "primary diagnosis"
+                    - Specific medical conditions with strong supporting evidence
+                    - Treatment recommendations for established diagnoses
+                    - Explicit ICD codes mentioned
+                    
+                    DO NOT PARSE (respond "NO") if the response contains:
+                    - General medical education without patient-specific diagnosis
+                    - Vague symptoms without diagnostic conclusions
+                    - General health advice or wellness information
+                    - Uncertain language: "might be", "could consider", "possibly"
+                    - Screening recommendations without diagnosis
+                    - General information about medical conditions
+                    - Preparation or procedural advice
+                    - Low-confidence speculation (confidence <70%)
+                    
+                    CONFIDENCE THRESHOLD: Only parse if the response demonstrates >70% confidence in at least one specific diagnosis.
+                    
+                    EXAMPLES:
+                    - "Based on symptoms and labs, patient has Type 2 diabetes" → YES
+                    - "What is diabetes?" → NO (educational, not diagnostic)
+                    - "Consider screening for diabetes" → NO (screening, not diagnosis)
+                    - "Differential includes pneumonia (high likelihood) and bronchitis" → YES
+                    - "Patient might have a respiratory condition" → NO (too vague)
+                    - "Hello, how can I help?" → NO (conversational)
+                    
+                    Respond with only "YES" or "NO".
+                    """
+
+                evaluation_msg = ChatMessage(role=ChatRole.USER, content=evaluation_prompt)
+                response = await self._llm.chat([
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a clinical decision support system that determines when ICD code extraction is appropriate. Be STRICT - only approve ICD parsing when there are confident, specific diagnoses present. Err on the side of caution."),
+                    evaluation_msg
+                ])
+
+                # Parse response
+                response_text = response.content.strip().upper()
+                should_parse = "YES" in response_text
+
+                state.should_parse_icd_codes = should_parse
+                
+                print(f"[icd_evaluation] Mode: {state.diagnostic_mode}, Should parse ICD: {should_parse}")
+                if should_parse:
+                    print(f"[icd_evaluation] High-confidence diagnosis detected in response")
+                else:
+                    print(f"[icd_evaluation] No confident diagnosis found, skipping ICD parsing")
+                
+            except Exception as e:
+                print(f"[icd_evaluation] Error evaluating ICD parsing need: {e}")
+                # Default to False to be safe - don't parse unless we're certain
+                state.should_parse_icd_codes = False
+            
+            return state
+
+        @streaming_step("parse_icd")
         async def parse_icd(state: FlowState) -> FlowState:
             """
             Parse the ICD code and differential diagnoses from the response.
-            Only runs if differential diagnoses are present or if not in pre_meet mode.
+            Uses Bayesian logic to calculate robust confidence levels.
             """
             # Skip ICD parsing for pre_meet mode unless differential diagnoses are explicitly mentioned
             if state.diagnostic_mode == "pre_meet":
@@ -1311,12 +1426,16 @@ Please reference this generated image in your response when relevant and explain
 SOURCE TEXT TO ANALYZE:
 {response_content}
 
+PATIENT CONTEXT:
+Age: {state.patient_ctx.age}, Sex: {state.patient_ctx.sex}
+Vitals: {state.patient_ctx.vitals}
+Labs: {state.patient_ctx.labs}
+Medications: {state.patient_ctx.medications}
+Allergies: {state.patient_ctx.allergies}
+Diagnoses: {state.patient_ctx.diagnoses}
+
 INSTRUCTIONS:
-1. Extract ONLY diagnoses that are explicitly stated or clearly diagnosed in the text
-2. Do NOT create diagnoses from symptoms alone unless explicitly diagnosed
-3. Use specific ICD-10 codes if mentioned, otherwise use appropriate standard codes
-4. Assign confidence based on how definitively the diagnosis is stated
-5. Include supporting evidence as direct quotes from the source text
+Extract diagnoses mentioned in the source text. For each diagnosis, we will calculate Bayesian confidence separately.
 
 REQUIRED JSON OUTPUT FORMAT:
 {{
@@ -1325,62 +1444,32 @@ REQUIRED JSON OUTPUT FORMAT:
     {{
       "icd_code": "specific ICD-10 code",
       "diagnosis_name": "exact medical diagnosis name",
-      "confidence": 0.0-1.0,
-      "reasoning": "brief explanation of why this diagnosis was extracted",
-      "supporting_evidence": ["direct quote 1", "direct quote 2"]
+      "supporting_evidence": ["direct quote 1", "direct quote 2"],
+      "reasoning": "brief explanation of why this diagnosis was extracted"
     }}
-  ],
-  "confidence": 0.0-1.0
+  ]
 }}
 
-CONSISTENCY CHECK:
-- Review your extraction to ensure it would be identical if run again with the same text
-- Verify all confidence scores align with the stated certainty in the source
-- Confirm all diagnoses are actually present in the source text
+RULES:
+- Extract ONLY diagnoses explicitly mentioned or clearly diagnosed
+- Do NOT assign confidence scores (we will calculate these using Bayesian methods)
+- Use specific ICD-10 codes if mentioned, otherwise use appropriate standard codes
+- Include all supporting evidence as direct quotes from source text
 
-If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "differential": [], "confidence": 0.0}}"""
+If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "differential": []}}"""
 
-                    # Use a simpler system message to reduce token usage
-                    simple_system_msg = ChatMessage(
+                    # Use system message for diagnosis extraction only
+                    extraction_system_msg = ChatMessage(
                         role=ChatRole.SYSTEM, 
-                        content="""You are a medical diagnosis extraction specialist. Your task is to consistently and accurately extract medical diagnoses from clinical text.
-
-CORE PRINCIPLES:
-1. Be CONSERVATIVE - only extract diagnoses that are clearly stated or strongly implied
-2. Be CONSISTENT - the same clinical information should always yield the same diagnoses
-3. Maintain CLINICAL ACCURACY - use proper ICD-10 codes and medical terminology
-4. Preserve UNCERTAINTY - reflect the confidence level expressed in the source text
-
-EXTRACTION RULES:
-- Only extract diagnoses that are explicitly mentioned or clearly diagnosed
-- Do NOT infer diagnoses from symptoms alone unless explicitly stated
-- Use specific ICD-10 codes when mentioned; otherwise use broader category codes
-- If no ICD code is mentioned, use the most appropriate standard ICD-10 code
-- Maintain the confidence level expressed in the original text
-- Supporting evidence should be direct quotes or paraphrases from the source
-
-CONFIDENCE SCORING (be consistent):
-- 0.9-1.0: Definitive diagnosis explicitly stated ("diagnosed with", "confirmed")
-- 0.7-0.8: Highly likely diagnosis ("most likely", "probable diagnosis")
-- 0.5-0.6: Possible diagnosis ("possible", "consider", "rule out")
-- 0.3-0.4: Mentioned as differential ("differential includes")
-- 0.1-0.2: Suggested or screening ("screen for", "monitor for")
-
-CONSISTENCY REQUIREMENTS:
-- Same clinical text = same diagnoses with same confidence scores
-- Only change output if new clinical information is provided
-- Use standardized medical terminology
-- Apply uniform reasoning across similar cases
-
-Return ONLY valid JSON without markdown formatting."""
+                        content="""You are a medical diagnosis extraction specialist. Extract diagnoses from clinical text without assigning confidence scores. We will calculate confidence using Bayesian methods separately."""
                     )
                     
-                    # Add retry logic with exponential backoff
+                    # Extract diagnoses first
                     max_retries = 3
                     for attempt in range(max_retries):
                         try:
                             parsed = await self._llm.chat([
-                                simple_system_msg, 
+                                extraction_system_msg, 
                                 ChatMessage(role=ChatRole.USER, content=prompt)
                             ], json_mode=True)
                             
@@ -1391,11 +1480,10 @@ Return ONLY valid JSON without markdown formatting."""
                             print(f"[parse_icd] Attempt {attempt + 1} failed: {retry_error}")
                             if attempt == max_retries - 1:
                                 raise retry_error
-                            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                            await asyncio.sleep(2 ** attempt)
                     
                     if not parsed or not parsed.content:
                         print("[parse_icd] Failed to get valid response from LLM")
-                        # Return minimal response rather than failing
                         state.parsed_response = DiagnosisResult(
                             patient_id=state.patient_ctx.patient_id,
                             primary_icd="Unknown",
@@ -1423,40 +1511,52 @@ Return ONLY valid JSON without markdown formatting."""
                         parsed_data = json.loads(response_content)
                     except json.JSONDecodeError as e:
                         print(f"[parse_icd] JSON decode error: {e}, content: {response_content[:200]}...")
-                        # Try to extract ICD codes using regex as fallback
-                        primary_icd = "Unknown"
                         parsed_data = {
-                            "primary_icd": primary_icd,
-                            "differential": [],
-                            "confidence": 0.0
+                            "primary_icd": "Unknown",
+                            "differential": []
                         }
 
-                    # Build differential list with validation
+                    # Now calculate Bayesian confidence for each diagnosis
                     differential_list = []
                     if parsed_data.get("differential") and isinstance(parsed_data["differential"], list):
                         for diff in parsed_data["differential"]:
                             if isinstance(diff, dict):
-                                # Ensure all required fields are present with defaults
+                                diagnosis_name = diff.get("diagnosis_name", "Unknown Diagnosis")
+                                
+                                print(f"[parse_icd] Calculating Bayesian confidence for: {diagnosis_name}")
+                                
+                                # Calculate Bayesian confidence
+                                bayesian_confidence = await _calculate_bayesian_confidence(
+                                    diagnosis_name=diagnosis_name,
+                                    patient_context=state.patient_ctx,
+                                    supporting_evidence=diff.get("supporting_evidence", [])
+                                )
+                                
                                 differential_list.append(DifferentialDiagnosis(
                                     icd_code=diff.get("icd_code", "Unknown"),
-                                    diagnosis_name=diff.get("diagnosis_name", "Unknown Diagnosis"),
-                                    confidence=float(diff.get("confidence", 0.0)),
+                                    diagnosis_name=diagnosis_name,
+                                    confidence=bayesian_confidence,
                                     reasoning=diff.get("reasoning", "No reasoning provided"),
                                     supporting_evidence=diff.get("supporting_evidence", [])
                                 ))
+
+                    # Calculate overall confidence as the maximum individual confidence
+                    overall_confidence = max([diff.confidence for diff in differential_list]) if differential_list else 0.0
 
                     # Create the DiagnosisResult
                     state.parsed_response = DiagnosisResult(
                         patient_id=state.patient_ctx.patient_id,
                         primary_icd=parsed_data.get("primary_icd", "Unknown"),
                         differential=differential_list,
-                        confidence=float(parsed_data.get("confidence", 0.0)),
+                        confidence=overall_confidence,
                         explanation=state.llm_response.content,
                         session_id=state.session_id,
                         created_by_user_id=state.user_id
                     )
 
-                    print(f"[parse_icd] Successfully parsed - Primary: {state.parsed_response.primary_icd}, Differential count: {len(state.parsed_response.differential)}")
+                    print(f"[parse_icd] Successfully parsed with Bayesian confidence - Primary: {state.parsed_response.primary_icd}, Differential count: {len(state.parsed_response.differential)}")
+                    for diff in differential_list:
+                        print(f"[parse_icd] {diff.diagnosis_name}: Bayesian confidence = {diff.confidence:.3f}")
 
                 except Exception as e:
                     print(f"[parse_icd] Error parsing ICD: {e}")
@@ -1472,6 +1572,272 @@ Return ONLY valid JSON without markdown formatting."""
                     )
 
             return state
+
+        async def _calculate_bayesian_confidence(
+            diagnosis_name: str, 
+            patient_context: PatientContext,
+            supporting_evidence: List[str]
+        ) -> float:
+            """
+            Calculate Bayesian posterior probability for a diagnosis.
+            P(Diagnosis|Evidence) = P(Evidence|Diagnosis) * P(Diagnosis) / P(Evidence)
+            """
+            try:
+                # Step 1: Get prior probability from web search
+                prior_probability = await _get_prior_probability_from_web(diagnosis_name, patient_context)
+                
+                # Step 2: Get likelihood from patient evidence
+                likelihood = await _calculate_likelihood(diagnosis_name, patient_context, supporting_evidence)
+                
+                # Step 3: Estimate marginal probability (evidence probability)
+                marginal_probability = await _estimate_marginal_probability(patient_context, supporting_evidence)
+                
+                # Step 4: Calculate posterior using Bayes' theorem
+                # P(D|E) = P(E|D) * P(D) / P(E)
+                if marginal_probability > 0:
+                    posterior = (likelihood * prior_probability) / marginal_probability
+                else:
+                    # Fallback to prior * likelihood if marginal is zero
+                    posterior = prior_probability * likelihood
+                
+                # Ensure result is between 0 and 1
+                posterior = max(0.0, min(1.0, posterior))
+                
+                print(f"[bayesian] {diagnosis_name}: Prior={prior_probability:.3f}, Likelihood={likelihood:.3f}, Marginal={marginal_probability:.3f}, Posterior={posterior:.3f}")
+                
+                return posterior
+                
+            except Exception as e:
+                print(f"[bayesian] Error calculating confidence for {diagnosis_name}: {e}")
+                # Fallback to simple heuristic
+                return 0.5
+
+        async def _get_prior_probability_from_web(
+            diagnosis_name: str, 
+            patient_context: PatientContext
+        ) -> float:
+            """Get prior probability of diagnosis using dedicated web search for epidemiological data."""
+            try:
+                # Prepare demographic context for search
+                demographic_context = f"Age: {patient_context.age}, Sex: {patient_context.sex}"
+                
+                # Construct specialized search query for epidemiological data
+                search_query = f"epidemiology prevalence incidence rate {diagnosis_name} age {patient_context.age} {patient_context.sex} population statistics"
+                
+                print(f"[bayesian_prior] Searching for epidemiological data: {search_query}")
+                
+                # Perform web search for prior probability
+                web_response = await self._web_search.search(
+                    query=search_query,
+                    max_results=5,
+                    patient_context=demographic_context,
+                    search_intent="epidemiological_data"
+                )
+                
+                # Use web search results to estimate prior
+                web_context = ""
+                if web_response and web_response.results:
+                    web_context = "\n".join([
+                        f"Source: {result.title}\nContent: {result.snippet}"
+                        for result in web_response.results[:3]
+                    ])
+                    print(f"[bayesian_prior] Found {len(web_response.results)} sources for {diagnosis_name}")
+                else:
+                    print(f"[bayesian_prior] No web results found for {diagnosis_name}")
+                
+                prior_prompt = f"""
+                Estimate the prior probability (base rate) of {diagnosis_name} based on epidemiological data.
+                
+                Patient Demographics: {demographic_context}
+                
+                {"Web Search Results:" + web_context if web_context else "No specific web data available - use general medical knowledge"}
+                
+                Consider:
+                1. General prevalence/incidence rates from the search results or medical literature
+                2. Age-specific and sex-specific rates for this demographic
+                3. Population base rates from epidemiological studies
+                4. Risk factors present in this demographic group
+                
+                Provide a probability estimate between 0.001 (very rare) and 0.3 (very common).
+                
+                Reference ranges:
+                - Very common conditions (diabetes, hypertension): 0.1-0.3
+                - Common conditions (pneumonia, UTI): 0.05-0.15
+                - Moderate conditions (autoimmune diseases): 0.01-0.05
+                - Rare conditions (genetic disorders): 0.001-0.01
+                - Very rare conditions: 0.001-0.005
+                
+                Base your estimate on the web search results when available, otherwise use established medical knowledge.
+                
+                Respond with only a decimal number between 0.001 and 0.3.
+                """
+                
+                prior_response = await self._llm.chat([
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical epidemiologist estimating disease prevalence using search results and medical knowledge. Provide only numerical probability estimates."),
+                    ChatMessage(role=ChatRole.USER, content=prior_prompt)
+                ])
+                
+                # Extract numerical value
+                prior_text = prior_response.content.strip()
+                # Try to extract a decimal number
+                import re
+                numbers = re.findall(r'0\.\d+', prior_text)
+                if numbers:
+                    prior = float(numbers[0])
+                    prior_final = max(0.001, min(0.3, prior))
+                    print(f"[bayesian_prior] {diagnosis_name}: Extracted prior = {prior_final}")
+                    return prior_final
+                else:
+                    print(f"[bayesian_prior] Could not parse prior probability from: {prior_text}")
+                    return 0.05  # Default moderate prior
+                    
+            except Exception as e:
+                print(f"[bayesian_prior] Error getting prior probability: {e}")
+                return 0.05  # Default prior
+
+        async def _calculate_likelihood(
+            diagnosis_name: str, 
+            patient_context: PatientContext,
+            supporting_evidence: List[str]
+        ) -> float:
+            """Calculate likelihood P(Evidence|Diagnosis) from patient data."""
+            try:
+                # Prepare patient evidence
+                patient_evidence = []
+                
+                # Add relevant vitals
+                if patient_context.vitals:
+                    patient_evidence.extend([f"Vital: {k}={v}" for k, v in patient_context.vitals.items()])
+                
+                # Add relevant labs
+                if patient_context.labs:
+                    patient_evidence.extend([f"Lab: {k}={v}" for k, v in patient_context.labs.items()])
+                
+                # Add medications (can indicate existing conditions)
+                if patient_context.medications:
+                    patient_evidence.extend([f"Medication: {k}={v}" for k, v in patient_context.medications.items()])
+                
+                # Add existing diagnoses
+                if patient_context.diagnoses:
+                    patient_evidence.extend([f"Existing diagnosis: {k}={v}" for k, v in patient_context.diagnoses.items()])
+                
+                # Add supporting evidence from clinical notes
+                patient_evidence.extend(supporting_evidence)
+                
+                evidence_text = "; ".join(patient_evidence) if patient_evidence else "No specific evidence available"
+                
+                likelihood_prompt = f"""
+                Calculate the likelihood P(Evidence|Diagnosis) - the probability of observing this evidence given that the patient has {diagnosis_name}.
+                
+                Diagnosis: {diagnosis_name}
+                Patient Evidence: {evidence_text}
+                Patient Demographics: Age {patient_context.age}, Sex {patient_context.sex}
+                
+                Consider:
+                1. How typical are these findings for {diagnosis_name}?
+                2. How sensitive are these findings for this diagnosis?
+                3. Do the vitals/labs match expected patterns for {diagnosis_name}?
+                4. Are there any pathognomonic (disease-specific) signs present?
+                5. Do existing medications/diagnoses support or contradict {diagnosis_name}?
+                
+                Likelihood Scale:
+                - 0.9-1.0: Pathognomonic findings, classic presentation
+                - 0.7-0.8: Highly typical findings, strong match
+                - 0.5-0.6: Moderate match, some typical findings
+                - 0.3-0.4: Weak match, few typical findings
+                - 0.1-0.2: Poor match, atypical presentation
+                - 0.0-0.1: Inconsistent with diagnosis
+                
+                Respond with only a decimal number between 0.0 and 1.0.
+                """
+                
+                likelihood_response = await self._llm.chat([
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a clinical diagnostician calculating likelihood of evidence given a diagnosis. Provide only numerical probability estimates."),
+                    ChatMessage(role=ChatRole.USER, content=likelihood_prompt)
+                ])
+                
+                # Extract numerical value
+                likelihood_text = likelihood_response.content.strip()
+                import re
+                numbers = re.findall(r'[01]\.\d+', likelihood_text)
+                if numbers:
+                    likelihood = float(numbers[0])
+                    likelihood_final = max(0.0, min(1.0, likelihood))
+                    print(f"[bayesian_likelihood] {diagnosis_name}: Likelihood = {likelihood_final}")
+                    return likelihood_final
+                else:
+                    print(f"[bayesian_likelihood] Could not parse likelihood from: {likelihood_text}")
+                    return 0.5  # Default moderate likelihood
+                    
+            except Exception as e:
+                print(f"[bayesian_likelihood] Error calculating likelihood: {e}")
+                return 0.5  # Default likelihood
+
+        async def _estimate_marginal_probability(
+            patient_context: PatientContext,
+            supporting_evidence: List[str]
+        ) -> float:
+            """Estimate P(Evidence) - probability of observing this evidence across all possible diagnoses."""
+            try:
+                # This is the most complex part of Bayesian calculation
+                # We'll estimate how common this constellation of findings is
+                
+                patient_evidence = []
+                
+                # Collect all evidence
+                if patient_context.vitals:
+                    patient_evidence.extend([f"Vital: {k}={v}" for k, v in patient_context.vitals.items()])
+                
+                if patient_context.labs:
+                    patient_evidence.extend([f"Lab: {k}={v}" for k, v in patient_context.labs.items()])
+                
+                patient_evidence.extend(supporting_evidence)
+                
+                evidence_text = "; ".join(patient_evidence) if patient_evidence else "No specific evidence"
+                
+                marginal_prompt = f"""
+                Estimate how common this constellation of clinical findings is across all possible diagnoses.
+                
+                Clinical Evidence: {evidence_text}
+                Patient: Age {patient_context.age}, Sex {patient_context.sex}
+                
+                Consider:
+                1. How specific vs. non-specific are these findings?
+                2. Could these findings be explained by multiple common conditions?
+                3. Are these findings seen in healthy individuals?
+                4. How rare is this combination of findings overall?
+                
+                Marginal Probability Scale:
+                - 0.3-0.5: Very common, non-specific findings (fever, fatigue)
+                - 0.1-0.3: Moderately common findings (elevated BP, mild lab abnormalities)
+                - 0.05-0.1: Less common constellation of findings
+                - 0.01-0.05: Rare combination of findings
+                - 0.001-0.01: Very rare constellation
+                
+                Respond with only a decimal number between 0.001 and 0.5.
+                """
+                
+                marginal_response = await self._llm.chat([
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical statistician estimating the probability of clinical evidence patterns. Provide only numerical estimates."),
+                    ChatMessage(role=ChatRole.USER, content=marginal_prompt)
+                ])
+                
+                # Extract numerical value
+                marginal_text = marginal_response.content.strip()
+                import re
+                numbers = re.findall(r'0\.\d+', marginal_text)
+                if numbers:
+                    marginal = float(numbers[0])
+                    marginal_final = max(0.001, min(0.5, marginal))
+                    print(f"[bayesian_marginal] Marginal probability = {marginal_final}")
+                    return marginal_final
+                else:
+                    print(f"[bayesian_marginal] Could not parse marginal probability from: {marginal_text}")
+                    return 0.1  # Default marginal
+                    
+            except Exception as e:
+                print(f"[bayesian_marginal] Error estimating marginal probability: {e}")
+                return 0.1  # Default marginal
 
 
         @streaming_step("evaluate_query_complexity")
@@ -1558,20 +1924,7 @@ Return ONLY valid JSON without markdown formatting."""
         def should_parse_icd(state: FlowState) -> bool:
             """Conditional function to determine if ICD parsing should be performed."""
             # For pre_meet mode, only parse if differential diagnoses content is detected
-            if state.diagnostic_mode == "pre_meet":
-                if not state.llm_response or not state.llm_response.content:
-                    return False
-                
-                response_lower = state.llm_response.content.lower()
-                differential_keywords = [
-                    "differential", "diagnosis", "diagnoses", "icd", "condition", 
-                    "disease", "disorder", "syndrome", "pathology"
-                ]
-                
-                return any(keyword in response_lower for keyword in differential_keywords)
-            
-            # For other modes, always parse ICD
-            return True
+            return getattr(state, 'should_parse_icd_codes', False)
 
         def check_patient_exists(state: FlowState) -> FlowState:
             """Check if patient_id is provided in the state."""
@@ -1602,6 +1955,7 @@ Return ONLY valid JSON without markdown formatting."""
         _builder.add_node("generate_image", generate_image)
         _builder.add_node("diagnose", diagnose)
         _builder.add_node("store_assistant_response", store_assistant_response)
+        _builder.add_node("evaluate_icd_parsing_need", evaluate_icd_parsing_need)
         _builder.add_node("parse_icd", parse_icd)
 
         _builder.set_entry_point("load_user_context")  # Start with loading user context
@@ -1668,8 +2022,9 @@ Return ONLY valid JSON without markdown formatting."""
         )
 
         _builder.add_edge("perform_web_search", "diagnose")
+        _builder.add_edge("diagnose", "evaluate_icd_parsing_need")
         _builder.add_conditional_edges(
-            "diagnose",
+            "evaluate_icd_parsing_need",
             should_parse_icd,
             {
                 True: "parse_icd",
