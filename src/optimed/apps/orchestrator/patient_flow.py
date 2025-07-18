@@ -1467,10 +1467,10 @@ Please reference this generated image in your response when relevant and explain
                 
                 print(f"[icd_evaluation] Mode: {state.diagnostic_mode}, Should parse ICD: {should_parse}")
                 if should_parse:
-                    print(f"[icd_evaluation] High-confidence diagnosis detected in response")
+                    print("[icd_evaluation] High-confidence diagnosis detected in response")
                 else:
-                    print(f"[icd_evaluation] No confident diagnosis found, skipping ICD parsing")
-                
+                    print("[icd_evaluation] No confident diagnosis found, skipping ICD parsing")
+
             except Exception as e:
                 print(f"[icd_evaluation] Error evaluating ICD parsing need: {e}")
                 # Default to False to be safe - don't parse unless we're certain
@@ -2089,7 +2089,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                     ])
                     print(f"[batch_priors] Found {len(web_response.results)} web sources")
                 else:
-                    print(f"[batch_priors] No web results found, will use medical knowledge")
+                    print("[batch_priors] No web results found, will use medical knowledge")
                 
                 # Use LLM to extract prior probabilities for all diagnoses at once
                 batch_prior_prompt = f"""
@@ -2197,7 +2197,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
             Fallback to individual web searches if batch search fails.
             Only search for the most critical diagnoses to save time.
             """
-            print(f"[fallback_priors] Performing individual searches for top 3 diagnoses")
+            print("[fallback_priors] Performing individual searches for top 3 diagnoses")
             
             priors = {}
             
