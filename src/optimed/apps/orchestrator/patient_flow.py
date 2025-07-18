@@ -211,6 +211,10 @@ class FlowState(BaseModel):
     completed_steps: int = 0
     streaming_updates: List[dict] = Field(default_factory=list)
 
+    # Streaming diagnosis updates
+    prelim_diagnosis_name: str = ""
+    diff_diag_compute_step: str = ""
+
 
 class LangGraphDiagnosticEngine(DiagnosticEngine):
     """Concrete engine that streams or returns full result."""
@@ -1607,26 +1611,72 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                     # Now calculate Bayesian confidence for each diagnosis
                     differential_list = []
                     if parsed_data.get("differential") and isinstance(parsed_data["differential"], list):
+                        
+                        # Extract all diagnosis names first for batch prior retrieval
+                        diagnosis_names = []
+                        diagnosis_data = []
                         for diff in parsed_data["differential"]:
                             if isinstance(diff, dict):
                                 diagnosis_name = diff.get("diagnosis_name", "Unknown Diagnosis")
-                                
-                                print(f"[parse_icd] Calculating Bayesian confidence for: {diagnosis_name}")
-                                
-                                # Calculate Bayesian confidence
-                                bayesian_confidence = await _calculate_bayesian_confidence(
-                                    diagnosis_name=diagnosis_name,
-                                    patient_context=state.patient_ctx,
-                                    supporting_evidence=diff.get("supporting_evidence", [])
-                                )
-                                
-                                differential_list.append(DifferentialDiagnosis(
-                                    icd_code=diff.get("icd_code", "Unknown"),
-                                    diagnosis_name=diagnosis_name,
-                                    confidence=bayesian_confidence,
-                                    reasoning=diff.get("reasoning", "No reasoning provided"),
-                                    supporting_evidence=diff.get("supporting_evidence", [])
-                                ))
+                                diagnosis_names.append(diagnosis_name)
+                                diagnosis_data.append(diff)
+                        
+                        # Batch retrieve priors for ALL diagnoses once (for consistency)
+                        batch_priors = {}
+                        if diagnosis_names:
+                            print(f"[parse_icd] Batch retrieving priors for {len(diagnosis_names)} diagnoses")
+                            batch_priors = await _batch_web_search_for_priors(diagnosis_names, state.patient_ctx)
+                        
+                        # Create concurrent tasks for all differential diagnoses
+                        confidence_tasks = []
+                        for diagnosis_name, diff in zip(diagnosis_names, diagnosis_data):
+                            state.prelim_diagnosis_name = diagnosis_name  # Store for streaming updates
+                            print(f"[parse_icd] Preparing Bayesian confidence calculation for: {diagnosis_name}")
+                            
+                            # Create async task for Bayesian confidence calculation
+                            # Pass the batch_priors dict so it can use pre-computed values
+                            task = _calculate_bayesian_confidence_with_batch_priors(
+                                state=state,
+                                diagnosis_name=diagnosis_name,
+                                patient_context=state.patient_ctx,
+                                supporting_evidence=diff.get("supporting_evidence", []),
+                                batch_priors=batch_priors  # Pass all priors for consistency
+                            )
+                            confidence_tasks.append((task, diff))
+                        
+                        # Execute all confidence calculations concurrently
+                        if confidence_tasks:
+                            print(f"[parse_icd] Computing Bayesian confidence for {len(confidence_tasks)} diagnoses in parallel")
+                            
+                            # Run all tasks concurrently
+                            task_results = await asyncio.gather(
+                                *[task for task, _ in confidence_tasks],
+                                return_exceptions=True
+                            )
+                            
+                            # Process results and create DifferentialDiagnosis objects
+                            for i, (confidence_result, diff) in enumerate(zip(task_results, [diff for _, diff in confidence_tasks])):
+                                try:
+                                    if isinstance(confidence_result, Exception):
+                                        print(f"[parse_icd] Error calculating confidence for {diff.get('diagnosis_name', 'Unknown')}: {confidence_result}")
+                                        bayesian_confidence = 0.5  # Fallback confidence
+                                    else:
+                                        bayesian_confidence = confidence_result
+                                    
+                                    diagnosis_name = diff.get("diagnosis_name", "Unknown Diagnosis")
+                                    differential_list.append(DifferentialDiagnosis(
+                                        icd_code=diff.get("icd_code", "Unknown"),
+                                        diagnosis_name=diagnosis_name,
+                                        confidence=bayesian_confidence,
+                                        reasoning=diff.get("reasoning", "No reasoning provided"),
+                                        supporting_evidence=diff.get("supporting_evidence", [])
+                                    ))
+                                    
+                                    print(f"[parse_icd] {diagnosis_name}: Bayesian confidence = {bayesian_confidence:.3f}")
+                                    
+                                except Exception as e:
+                                    print(f"[parse_icd] Error processing result for differential {i}: {e}")
+                                    continue
 
                     # Calculate overall confidence as the maximum individual confidence
                     overall_confidence = max([diff.confidence for diff in differential_list]) if differential_list else 0.0
@@ -1661,31 +1711,38 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
 
             return state
 
-        async def _calculate_bayesian_confidence(
+        async def _calculate_bayesian_confidence_with_batch_priors(
+            state: FlowState,
             diagnosis_name: str, 
             patient_context: PatientContext,
-            supporting_evidence: List[str]
+            supporting_evidence: List[str],
+            batch_priors: dict[str, float]
         ) -> float:
             """
-            Calculate Bayesian posterior probability for a diagnosis.
+            Calculate Bayesian posterior probability using pre-computed batch priors for consistency.
             P(Diagnosis|Evidence) = P(Evidence|Diagnosis) * P(Diagnosis) / P(Evidence)
             """
             try:
-                # Step 1: Get prior probability from web search
-                prior_probability = await _get_prior_probability_from_web(diagnosis_name, patient_context)
-                
+                # Step 1: Use the batch-computed prior (ensures consistency)
+                prior_probability = batch_priors.get(diagnosis_name, 0.03)
+                state.diff_diag_compute_step = f"Prior probability for {diagnosis_name}: {prior_probability:.3f}"
+
                 # Step 2: Get likelihood from patient evidence
                 likelihood = await _calculate_likelihood(diagnosis_name, patient_context, supporting_evidence)
-                
-                # Step 3: Estimate marginal probability (evidence probability)
-                marginal_probability = await _estimate_marginal_probability(patient_context, supporting_evidence)
+                state.diff_diag_compute_step = f"Likelihood for {diagnosis_name}: {likelihood:.3f}"
+
+                # Step 3: Estimate marginal probability using the SAME batch priors for consistency
+                marginal_probability = await _estimate_marginal_probability_with_batch_priors(
+                    patient_context, 
+                    supporting_evidence, 
+                    batch_priors
+                )
+                state.diff_diag_compute_step = f"Marginal probability for {diagnosis_name}: {marginal_probability:.3f}"
                 
                 # Step 4: Calculate posterior using Bayes' theorem
-                # P(D|E) = P(E|D) * P(D) / P(E)
                 if marginal_probability > 0:
                     posterior = (likelihood * prior_probability) / marginal_probability
                 else:
-                    # Fallback to prior * likelihood if marginal is zero
                     posterior = prior_probability * likelihood
                 
                 # Ensure result is between 0 and 1
@@ -1697,73 +1754,56 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 
             except Exception as e:
                 print(f"[bayesian] Error calculating confidence for {diagnosis_name}: {e}")
-                # Fallback to simple heuristic
                 return 0.5
-                
 
-        async def _get_prior_probability_from_web(
-            diagnosis_name: str, 
-            patient_context: PatientContext
+        async def _estimate_marginal_probability_with_batch_priors(
+            patient_context: PatientContext,
+            supporting_evidence: List[str],
+            batch_priors: dict[str, float]
         ) -> float:
-            """Get prior probability of diagnosis using focused web search for epidemiological data."""
+            """
+            Estimate P(Evidence) using pre-computed batch priors for consistency.
+            Uses the SAME prior values that were used for individual diagnoses.
+            """
             try:
-                # Prepare demographic context for search
-                demographic_context = f"Age: {patient_context.age}, Sex: {patient_context.sex}"
+                # Use the diagnoses from batch_priors as candidate diagnoses
+                candidate_diagnoses = list(batch_priors.keys())
+                print(f"[marginal_batch] Processing {len(candidate_diagnoses)} candidate diagnoses with consistent priors")
                 
-                # More focused search query
-                search_query = f"prevalence {diagnosis_name} epidemiology {patient_context.age} years {patient_context.sex}"
+                # Calculate marginal probability using law of total probability
+                marginal_probability = 0.0
                 
-                print(f"[individual_prior] Searching: {search_query}")
+                for diagnosis in candidate_diagnoses:
+                    try:
+                        # Use the SAME prior probability from batch
+                        prior_prob = batch_priors[diagnosis]
+                        
+                        # Get likelihood for this diagnosis
+                        likelihood = await _calculate_likelihood_for_marginal(diagnosis, patient_context, supporting_evidence)
+                        
+                        # Add to total: P(E) += P(E|D_i) * P(D_i)
+                        marginal_probability += likelihood * prior_prob
+                        
+                        print(f"[marginal_batch] {diagnosis}: P(D)={prior_prob:.3f}, P(E|D)={likelihood:.3f}, contribution={likelihood * prior_prob:.3f}")
+                        
+                    except Exception as e:
+                        print(f"[marginal_batch] Error calculating for {diagnosis}: {e}")
+                        continue
                 
-                # Perform web search with fewer results for speed
-                web_response = await self._web_search.search(
-                    query=search_query,
-                    max_results=3,  # Reduced from 5 to 3
-                    patient_context=demographic_context,
-                    search_intent="epidemiological_data"
-                )
+                # Add baseline for other conditions
+                baseline_other_conditions = 0.01
+                marginal_probability += baseline_other_conditions
                 
-                # Simplified analysis prompt
-                web_context = ""
-                if web_response and web_response.results:
-                    web_context = "\n".join([
-                        f"{result.title}: {result.snippet[:150]}..."  # Shortened snippets
-                        for result in web_response.results[:2]  # Only use top 2 results
-                    ])
+                # Ensure result is reasonable
+                marginal_probability = max(0.001, min(0.8, marginal_probability))
                 
-                prior_prompt = f"""
-                Estimate prior probability for {diagnosis_name}:
+                print(f"[marginal_batch] Total marginal probability: {marginal_probability:.3f}")
+                return marginal_probability
                 
-                Patient: {demographic_context}
-                Sources: {web_context if web_context else "Use medical knowledge"}
-                
-                Common ranges:
-                - Very common (diabetes, hypertension): 0.1-0.3
-                - Common (infections, anxiety): 0.05-0.15  
-                - Moderate (specific conditions): 0.01-0.05
-                - Rare (genetic, rare diseases): 0.001-0.01
-                
-                Number only (0.001-0.3):
-                """
-                
-                prior_response = await self._llm.chat([
-                    ChatMessage(role=ChatRole.SYSTEM, content="Estimate disease prevalence. Respond with number only."),
-                    ChatMessage(role=ChatRole.USER, content=prior_prompt)
-                ])
-                
-                # Extract numerical value
-                prior_text = prior_response.content.strip()
-                import re
-                numbers = re.findall(r'[01]?\.\d+', prior_text)
-                if numbers:
-                    prior = float(numbers[0])
-                    return max(0.001, min(0.3, prior))
-                else:
-                    return 0.03
-                    
             except Exception as e:
-                print(f"[individual_prior] Error: {e}")
-                return 0.03
+                print(f"[marginal_batch] Error in marginal probability calculation: {e}")
+                return 0.1
+                
 
         async def _calculate_likelihood(
             diagnosis_name: str, 
@@ -1833,7 +1873,6 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 
                 # Extract sensitivity and specificity
                 likelihood_text = likelihood_response.content.strip()
-                import re
                 
                 # Try to extract two decimal numbers
                 numbers = re.findall(r'[01]?\.\d+', likelihood_text)
@@ -1865,73 +1904,6 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 print(f"[bayesian_likelihood] Error calculating likelihood: {e}")
                 return 0.5  # Default likelihood
 
-        async def _estimate_marginal_probability(
-            patient_context: PatientContext,
-            supporting_evidence: List[str],
-            all_candidate_diagnoses: List[str] = None
-        ) -> float:
-            """
-            Estimate P(Evidence) using the law of total probability across differential diagnoses.
-            Uses web search for accurate prior probabilities but with optimized batching.
-            """
-            try:
-                # Collect all evidence
-                patient_evidence = []
-                
-                if patient_context.vitals:
-                    patient_evidence.extend([f"Vital: {k}={v}" for k, v in patient_context.vitals.items()])
-                
-                if patient_context.labs:
-                    patient_evidence.extend([f"Lab: {k}={v}" for k, v in patient_context.labs.items()])
-                
-                patient_evidence.extend(supporting_evidence)
-                evidence_text = "; ".join(patient_evidence) if patient_evidence else "No specific evidence"
-                
-                # Get a smaller, more focused set of candidate diagnoses (3-5 instead of 8-10)
-                if not all_candidate_diagnoses:
-                    candidate_diagnoses = await _get_focused_candidate_diagnoses(patient_context, supporting_evidence)
-                else:
-                    candidate_diagnoses = all_candidate_diagnoses[:5]  # Limit to top 5 even if provided
-                
-                print(f"[marginal] Processing {len(candidate_diagnoses)} candidate diagnoses with web search")
-                
-                # Batch web searches for all candidates simultaneously
-                prior_probabilities = await _batch_web_search_for_priors(candidate_diagnoses, patient_context)
-                
-                # Calculate marginal probability using law of total probability
-                marginal_probability = 0.0
-                
-                for i, diagnosis in enumerate(candidate_diagnoses):
-                    try:
-                        # Use the batched prior probability
-                        prior_prob = prior_probabilities.get(diagnosis, 0.03)  # Default if not found
-                        
-                        # Get likelihood for this diagnosis (this is faster than web search)
-                        likelihood = await _calculate_likelihood_for_marginal(diagnosis, patient_context, supporting_evidence)
-                        
-                        # Add to total: P(E) += P(E|D_i) * P(D_i)
-                        marginal_probability += likelihood * prior_prob
-                        
-                        print(f"[marginal] {diagnosis}: P(D)={prior_prob:.3f}, P(E|D)={likelihood:.3f}, contribution={likelihood * prior_prob:.3f}")
-                        
-                    except Exception as e:
-                        print(f"[marginal] Error calculating for {diagnosis}: {e}")
-                        continue
-                
-                # Add baseline for other conditions
-                baseline_other_conditions = 0.01
-                marginal_probability += baseline_other_conditions
-                
-                # Ensure result is reasonable
-                marginal_probability = max(0.001, min(0.8, marginal_probability))
-                
-                print(f"[marginal] Total marginal probability: {marginal_probability:.3f}")
-                return marginal_probability
-                
-            except Exception as e:
-                print(f"[marginal] Error in marginal probability calculation: {e}")
-                return 0.1
-
         async def _get_focused_candidate_diagnoses(
             patient_context: PatientContext,
             supporting_evidence: List[str]
@@ -1941,7 +1913,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 evidence_text = "; ".join(supporting_evidence) if supporting_evidence else "No specific evidence"
                 
                 prompt = f"""
-                Given this clinical presentation, list the TOP 5 MOST LIKELY diagnoses only:
+                Given this clinical presentation, list the TOP 5-7 MOST LIKELY diagnoses only:
                 
                 Patient: Age {patient_context.age}, Sex {patient_context.sex}
                 Clinical Evidence: {evidence_text}
@@ -1949,7 +1921,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 Labs: {patient_context.labs}
                 
                 Rules:
-                - List ONLY the 5 most probable diagnoses
+                - List ONLY the 5-7 most probable diagnoses
                 - Focus on common conditions first
                 - Include 1-2 "cannot-miss" diagnoses if relevant
                 - Be specific with medical terminology
@@ -2067,7 +2039,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 
                 # Extract numerical value quickly
                 response_text = response.content.strip()
-                import re
+
                 numbers = re.findall(r'[01]?\.\d+', response_text)
                 
                 if numbers:
@@ -2232,7 +2204,8 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
             # Only search for top 3 most important diagnoses
             for diagnosis in diagnoses[:3]:
                 try:
-                    prior = await _get_prior_probability_from_web(diagnosis, patient_context)
+                    # Use default prior since individual web searches are removed
+                    prior = 0.03
                     priors[diagnosis] = prior
                     print(f"[fallback_priors] {diagnosis}: {prior:.3f}")
                 except Exception as e:
