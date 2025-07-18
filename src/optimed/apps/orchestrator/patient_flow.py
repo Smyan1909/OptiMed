@@ -6,6 +6,7 @@ import uuid
 import json
 import time
 import asyncio
+import re
 from typing import List, Any, Union, AsyncGenerator, Optional
 from datetime import datetime
 
@@ -179,6 +180,7 @@ class FlowState(BaseModel):
     # Add diagnostic mode
     diagnostic_mode: str = "post_meet"  # "pre_meet", "post_meet", "research", "chat"
     chat_mode: bool = False # Keep for backward compatibility
+    should_parse_icd_codes: bool = False
     chat_history: List[ChatMessage] = Field(default_factory=list)
 
     needs_cross_session_search: bool = False
@@ -208,6 +210,10 @@ class FlowState(BaseModel):
     total_steps: int = 12
     completed_steps: int = 0
     streaming_updates: List[dict] = Field(default_factory=list)
+
+    # Streaming diagnosis updates
+    prelim_diagnosis_name: str = ""
+    diff_diag_compute_step: str = ""
 
 
 class LangGraphDiagnosticEngine(DiagnosticEngine):
@@ -788,174 +794,249 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
 
         @streaming_step("intelligent_retrieve_chunks")
         async def intelligent_retrieve_chunks(state: FlowState) -> FlowState:
-            """Intelligently retrieve and filter chunks based on LLM analysis."""
+            """Intelligently retrieve and filter chunks based on LLM analysis with recency-aware filtering."""
             
-            # Step 1: Initial similarity search (broader search)
-            if state.patient_id:
-                q_vec = await embed(state.user_prompt)
-                rows = await self._vec.similarity_search(
-                    q_vec,
-                    top_k=15,  # Increased to accommodate journal entries
-                    filter_={
-                        "namespace": "clinical", 
-                        "patient_id": str(state.patient_id)
-                    },
-                )
-            else:
-                rows = []
-
-            if not rows and state.patient_ctx:
-                # Fallback to patient context
-                print("[intelligent_retrieve_chunks] fallback to patient context as no chunks found")
-                state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
-                state.chunk_analysis = {"method": "fallback", "reason": "No chunks found, using patient context"}
-                return state
-
-            # Step 2: Prepare chunks for LLM analysis
-            candidate_chunks = []
-            for i, row in enumerate(rows):
-                chunk_text = row[2] if len(row) > 2 else row[1]
-                similarity_score = row[0] if len(row) > 0 else 0.0
-                
-                # Extract metadata if available (for data type identification)
-                metadata: dict[str, Any] = row[3] if len(row) > 3 else {}
-                data_type = metadata.get("data_type", "unknown") if isinstance(metadata, dict) else "unknown"
-                
-                # Verify patient relevance
-                if state.patient_ctx:
-                    patient_name = state.patient_ctx.name
-                    if str(state.patient_id) in chunk_text or patient_name in chunk_text:
-                        candidate_chunks.append({
-                            "id": f"chunk_{i}",
-                            "content": chunk_text[:600],  # Increased limit for journal entries
-                            "similarity_score": similarity_score,
-                            "full_content": chunk_text,
-                            "data_type": data_type,
-                            "metadata": metadata
-                        })
-
-            if not candidate_chunks:
-                state.retrieved_chunks = []
-                state.chunk_analysis = {"method": "none", "reason": "No relevant chunks found"}
-                return state
-
-            # Step 3: LLM-based chunk analysis and selection
-            chunk_analysis_prompt = f"""
-            You are analyzing medical data chunks to determine which ones are relevant for answering this query:
-
-            QUERY: "{state.user_prompt}"
-            
-            PATIENT CONTEXT: {state.patient_ctx.name if state.patient_ctx else "Unknown"} (ID: {state.patient_id})
-            
-            AVAILABLE CHUNKS (including demographics, vitals, labs, and journal entries):
-            {chr(10).join([f"CHUNK {chunk['id']} ({chunk.get('data_type', 'unknown')}): {chunk['content'][:400]}..." for chunk in candidate_chunks])}
-
-            For each chunk, analyze:
-            1. Relevance to the specific query (0-10 scale)
-            2. Clinical importance for this case (0-10 scale)  
-            3. Whether it contains information that directly helps answer the query
-            4. Whether it provides necessary context or background
-            5. Data freshness and clinical timeline relevance
-
-            CHUNK TYPES AVAILABLE:
-            - demographics: Basic patient information
-            - vitals: Current vital signs and measurements
-            - labs: Laboratory test results
-            - journal_entry: Clinical notes, observations, treatments, diagnoses, assessments, and care plans
-            - complete_context: Full patient overview
-
-            Return a JSON response with:
-            {{
-                "selected_chunks": ["chunk_1", "chunk_3", ...],
-                "reasoning": "Brief explanation of why these chunks were selected",
-                "relevance_analysis": {{
-                    "chunk_1": {{"relevance": 8, "importance": 7, "reason": "Contains recent clinical assessment"}},
-                    "chunk_2": {{"relevance": 3, "importance": 4, "reason": "General background, not specific to query"}},
-                    ...
-                }},
-                "query_type": "diagnostic|follow_up|general_inquiry|medication|test_results|care_planning|clinical_notes"
-            }}
-
-            RULES:
-            - Select 3-6 most relevant chunks maximum
-            - Prioritize recent journal entries for current clinical status
-            - For diagnostic queries, include recent journal entries, symptoms, vitals, and test results
-            - For medication queries, focus on current medications, allergies, and relevant journal notes
-            - For follow-up queries, include previous treatments/outcomes from journal entries
-            - For care planning, prioritize recent assessments and treatment notes
-            - Always include patient demographics for context
-            - Journal entries often contain the most current and detailed clinical information
-            """
-
             try:
-                analysis_response = await self._llm.chat([
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information analyst. Analyze and select the most relevant data chunks for clinical queries, paying special attention to journal entries which contain detailed clinical information."),
-                    ChatMessage(role=ChatRole.USER, content=chunk_analysis_prompt)
-                ], json_mode=True)
+                # Step 1: Initial similarity search (broader search)
+                if state.patient_id:
+                    q_vec = await embed(state.user_prompt)
+                    rows = await self._vec.similarity_search(
+                        q_vec,
+                        top_k=20,  # Increased to accommodate recency filtering
+                        filter_={
+                            "namespace": "clinical", 
+                            "patient_id": str(state.patient_id)
+                        },
+                    )
+                else:
+                    rows = []
 
-                if not analysis_response or not analysis_response.content:
-                    print("[intelligent_retrieve] Empty response from LLM, using fallback")
-                    raise ValueError("Empty response from LLM")
+                if not rows and state.patient_ctx:
+                    # Fallback to patient context
+                    print("[intelligent_retrieve_chunks] fallback to patient context as no chunks found")
+                    state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
+                    state.chunk_analysis = {"method": "fallback", "reason": "No chunks found, using patient context"}
+                    return state
 
-                # Strip whitespace and check if content is empty
-                response_content = analysis_response.content.strip()
-                if not response_content:
-                    print("[intelligent_retrieve] Empty content in response, using fallback")
-                    raise ValueError("Empty content in response")
-
-                # Remove markdown code block markers if present
-                if response_content.startswith("```json"):
-                    # Find the end of the opening marker
-                    start_idx = response_content.find('\n') + 1
-                    # Find the closing marker
-                    end_idx = response_content.rfind("```")
-                    if start_idx > 0 and end_idx > start_idx:
-                        response_content = response_content[start_idx:end_idx].strip()
-                elif response_content.startswith("```"):
-                    # Handle generic code blocks
-                    start_idx = response_content.find('\n') + 1
-                    end_idx = response_content.rfind("```")
-                    if start_idx > 0 and end_idx > start_idx:
-                        response_content = response_content[start_idx:end_idx].strip()
-
-
-                analysis_data = json.loads(response_content)
+                # Step 2: Apply recency-based filtering and prepare chunks
+                current_time = time.time() * 1000  # Current time in milliseconds
+                candidate_chunks = []
                 
-                # Extract selected chunks
-                selected_chunk_ids = analysis_data.get("selected_chunks", [])
-                selected_chunks = []
+                # Define recency thresholds for different data types (in milliseconds)
+                # Only vitals, labs, and medications have time-based filtering
+                recency_thresholds = {
+                    "vitals": 7 * 24 * 60 * 60 * 1000,        # 7 days - vitals change frequently
+                    "labs": 14 * 24 * 60 * 60 * 1000,         # 14 days - lab values change regularly
+                    "medications": 90 * 24 * 60 * 60 * 1000,   # 90 days - medication changes less frequent
+                    "journal_entry": float('inf'),              # Always relevant - clinical notes don't expire
+                    "demographics": float('inf'),               # Always relevant
+                    "allergies": float('inf'),                  # Always relevant
+                    "family_history": float('inf'),             # Always relevant
+                    "immunizations": float('inf'),              # Always relevant
+                    "complete_context": float('inf'),           # Always relevant as fallback
+                    "unknown": float('inf')                     # Default to always relevant for unknown types
+                }
                 
-                for chunk in candidate_chunks:
-                    if chunk["id"] in selected_chunk_ids:
-                        selected_chunks.append(chunk["full_content"])
+                for i, row in enumerate(rows):
+                    try:
+                        chunk_text = row[2] if len(row) > 2 else row[1]
+                        similarity_score = row[0] if len(row) > 0 else 0.0
+                        
+                        # Extract metadata if available (for data type identification)
+                        metadata: dict[str, Any] = row[3] if len(row) > 3 else {}
+                        data_type = metadata.get("data_type", "unknown") if isinstance(metadata, dict) else "unknown"
+                        
+                        # Get timestamp for recency evaluation
+                        timestamp_str = metadata.get("timestamp") if isinstance(metadata, dict) else None
+                        chunk_timestamp = None
+                        is_recent = True  # Default to True for chunks without timestamps
+                        days_old = None
+                        
+                        if timestamp_str:
+                            try:
+                                chunk_timestamp = int(timestamp_str)
+                                time_diff = current_time - chunk_timestamp
+                                threshold = recency_thresholds.get(data_type, recency_thresholds["unknown"])
+                                is_recent = time_diff <= threshold
+                                days_old = time_diff / (24 * 60 * 60 * 1000)
+                                
+                                # Log recency analysis for debugging
+                                threshold_days = threshold / (24 * 60 * 60 * 1000) if threshold != float('inf') else "∞"
+                                print(f"[recency] {data_type} chunk is {days_old:.1f} days old, threshold: {threshold_days} days, recent: {is_recent}")
+                                
+                            except (ValueError, TypeError) as e:
+                                print(f"[recency] Could not parse timestamp '{timestamp_str}' for {data_type} chunk: {e}")
+                                is_recent = True  # Default to including if timestamp parsing fails
+                        
+                        # Apply recency filter - skip old time-sensitive data
+                        if not is_recent:
+                            print(f"[recency] Skipping {data_type} chunk due to age ({chunk_timestamp})")
+                            continue
+                        
+                        # Verify patient relevance
+                        if state.patient_ctx:
+                            patient_name = state.patient_ctx.name
+                            if str(state.patient_id) in chunk_text or patient_name in chunk_text:
+                                
+                                # Calculate recency-adjusted similarity score
+                                adjusted_score = similarity_score
+                                if chunk_timestamp and data_type in ["vitals", "labs", "medications"]:
+                                    # Boost score for more recent time-sensitive data (only for vitals, labs, medications)
+                                    time_diff = current_time - chunk_timestamp
+                                    threshold = recency_thresholds.get(data_type, recency_thresholds["unknown"])
+                                    if threshold != float('inf') and time_diff < threshold:
+                                        # Apply recency boost: more recent = higher boost
+                                        recency_factor = 1.0 + (0.3 * (1.0 - time_diff / threshold))
+                                        adjusted_score = similarity_score * recency_factor # type: ignore
+                                        print(f"[recency] Applied recency boost to {data_type}: {similarity_score:.3f} -> {adjusted_score:.3f}")
+                                
+                                candidate_chunks.append({
+                                    "id": f"chunk_{i}",
+                                    "content": chunk_text[:600],  # Increased limit for journal entries
+                                    "similarity_score": similarity_score,
+                                    "adjusted_score": adjusted_score,
+                                    "full_content": chunk_text,
+                                    "data_type": data_type,
+                                    "metadata": metadata,
+                                    "timestamp": chunk_timestamp,
+                                    "is_recent": is_recent,
+                                    "days_old": days_old
+                                })
+                        
+                    except Exception as e:
+                        print(f"[intelligent_retrieve] Error processing chunk {i}: {e}")
+                        continue
 
-                state.retrieved_chunks = selected_chunks
-                state.chunk_analysis = analysis_data
-                state.retrieval_reasoning = analysis_data.get("reasoning", "")
+                if not candidate_chunks:
+                    state.retrieved_chunks = []
+                    state.chunk_analysis = {"method": "none", "reason": "No relevant or recent chunks found"}
+                    return state
+
+                # Step 3: Simplified LLM-based chunk analysis
+                chunk_analysis_prompt = f"""
+                You are analyzing medical data chunks to determine which ones are relevant for answering this query:
+
+                QUERY: "{state.user_prompt}"
                 
-                print(f"[intelligent_retrieve] Selected {len(selected_chunks)} chunks out of {len(candidate_chunks)} candidates")
-                print(f"[intelligent_retrieve] Reasoning: {state.retrieval_reasoning}")
+                PATIENT CONTEXT: {state.patient_ctx.name if state.patient_ctx else "Unknown"} (ID: {state.patient_id})
+                
+                AVAILABLE CHUNKS (including demographics, vitals, labs, and journal entries):
+                {chr(10).join([f"CHUNK {chunk['id']} ({chunk.get('data_type', 'unknown')}): {chunk['content'][:400]}..." for chunk in candidate_chunks])}
 
-                # Log which data types were selected for debugging
-                selected_data_types = []
-                for chunk in candidate_chunks:
-                    if chunk["id"] in selected_chunk_ids:
-                        selected_data_types.append(chunk.get("data_type", "unknown"))
-                print(f"[intelligent_retrieve] Selected data types: {selected_data_types}")
+                For each chunk, analyze:
+                1. Relevance to the specific query (0-10 scale)
+                2. Clinical importance for this case (0-10 scale)  
+                3. Whether it contains information that directly helps answer the query
+                4. Whether it provides necessary context or background
+
+                CHUNK TYPES AVAILABLE:
+                - demographics: Basic patient information
+                - vitals: Current vital signs and measurements (recent values prioritized)
+                - labs: Laboratory test results (recent values prioritized)
+                - medications: Current medication regimen (recent changes prioritized)
+                - journal_entry: Clinical notes, observations, treatments, diagnoses, assessments, and care plans
+                - complete_context: Full patient overview
+
+                Return a JSON response with:
+                {{
+                    "selected_chunks": ["chunk_1", "chunk_3", ...],
+                    "reasoning": "Brief explanation of why these chunks were selected",
+                    "relevance_analysis": {{
+                        "chunk_1": {{"relevance": 8, "importance": 7, "reason": "Contains recent clinical assessment"}},
+                        "chunk_2": {{"relevance": 3, "importance": 4, "reason": "General background, not specific to query"}},
+                        ...
+                    }},
+                    "query_type": "diagnostic|follow_up|general_inquiry|medication|test_results|care_planning|clinical_notes"
+                }}
+
+                RULES:
+                - Select 3-6 most relevant chunks maximum
+                - For vitals, labs, medications: Recent values are automatically prioritized
+                - Journal entries are always relevant regardless of age
+                - Always include patient demographics for context
+                - For diagnostic queries, include recent journal entries, symptoms, vitals, and test results
+                - For medication queries, focus on current medications, allergies, and relevant journal notes
+                - For follow-up queries, include previous treatments/outcomes from journal entries
+                - For care planning, prioritize recent assessments and treatment notes
+                """
+
+                try:
+                    analysis_response = await self._llm.chat([
+                        ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information analyst. Analyze and select the most relevant data chunks for clinical queries."),
+                        ChatMessage(role=ChatRole.USER, content=chunk_analysis_prompt)
+                    ], json_mode=True)
+
+                    if not analysis_response or not analysis_response.content:
+                        print("[intelligent_retrieve] Empty response from LLM, using fallback")
+                        raise ValueError("Empty response from LLM")
+
+                    # Strip whitespace and check if content is empty
+                    response_content = analysis_response.content.strip()
+                    if not response_content:
+                        print("[intelligent_retrieve] Empty content in response, using fallback")
+                        raise ValueError("Empty content in response")
+
+                    # Remove markdown code block markers if present
+                    if response_content.startswith("```json"):
+                        start_idx = response_content.find('\n') + 1
+                        end_idx = response_content.rfind("```")
+                        if start_idx > 0 and end_idx > start_idx:
+                            response_content = response_content[start_idx:end_idx].strip()
+                    elif response_content.startswith("```"):
+                        start_idx = response_content.find('\n') + 1
+                        end_idx = response_content.rfind("```")
+                        if start_idx > 0 and end_idx > start_idx:
+                            response_content = response_content[start_idx:end_idx].strip()
+
+                    analysis_data = json.loads(response_content)
+                    
+                    # Extract selected chunks
+                    selected_chunk_ids = analysis_data.get("selected_chunks", [])
+                    selected_chunks = []
+                    
+                    for chunk in candidate_chunks:
+                        if chunk["id"] in selected_chunk_ids:
+                            selected_chunks.append(chunk["full_content"])
+
+                    state.retrieved_chunks = selected_chunks
+                    state.chunk_analysis = analysis_data
+                    state.retrieval_reasoning = analysis_data.get("reasoning", "")
+                    
+                    print(f"[intelligent_retrieve] Selected {len(selected_chunks)} chunks out of {len(candidate_chunks)} candidates")
+                    print(f"[intelligent_retrieve] Reasoning: {state.retrieval_reasoning}")
+
+                    # Log which data types were selected for debugging
+                    selected_data_types = []
+                    for chunk in candidate_chunks:
+                        if chunk["id"] in selected_chunk_ids:
+                            selected_data_types.append(chunk.get("data_type", "unknown"))
+                    print(f"[intelligent_retrieve] Selected data types: {selected_data_types}")
+
+                except Exception as e:
+                    print(f"[intelligent_retrieve] Error in LLM analysis: {e}, falling back to similarity-based selection")
+                    # Fallback to top similarity scores, but prioritize journal entries and recent data
+                    journal_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") == "journal_entry"]
+                    recent_time_sensitive = [chunk for chunk in candidate_chunks if chunk.get("data_type") in ["vitals", "labs", "medications"] and chunk.get("is_recent", True)]
+                    other_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") not in ["journal_entry", "vitals", "labs", "medications"]]
+                    
+                    # Take top chunks from each category
+                    top_journal = sorted(journal_chunks, key=lambda x: x["similarity_score"], reverse=True)[:2]
+                    top_recent = sorted(recent_time_sensitive, key=lambda x: x.get("adjusted_score", x["similarity_score"]), reverse=True)[:2]
+                    top_other = sorted(other_chunks, key=lambda x: x["similarity_score"], reverse=True)[:2]
+                    
+                    fallback_chunks = top_journal + top_recent + top_other
+                    state.retrieved_chunks = [chunk["full_content"] for chunk in fallback_chunks]
+                    state.chunk_analysis = {"method": "fallback_similarity", "error": str(e)}
 
             except Exception as e:
-                print(f"[intelligent_retrieve] Error in LLM analysis: {e}, falling back to similarity-based selection")
-                # Fallback to top similarity scores, but prioritize journal entries
-                journal_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") == "journal_entry"]
-                other_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") != "journal_entry"]
-                
-                # Take top journal entries and top other chunks
-                top_journal = sorted(journal_chunks, key=lambda x: x["similarity_score"], reverse=True)[:2]
-                top_other = sorted(other_chunks, key=lambda x: x["similarity_score"], reverse=True)[:3]
-                
-                fallback_chunks = top_journal + top_other
-                state.retrieved_chunks = [chunk["full_content"] for chunk in fallback_chunks]
-                state.chunk_analysis = {"method": "fallback_similarity", "error": str(e)}
+                print(f"[intelligent_retrieve] Critical error in chunk retrieval: {e}")
+                # Ultimate fallback to patient context if everything fails
+                if state.patient_ctx:
+                    state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
+                    state.chunk_analysis = {"method": "critical_fallback", "error": str(e)}
+                else:
+                    state.retrieved_chunks = []
+                    state.chunk_analysis = {"method": "failure", "error": str(e)}
 
             return state
         
@@ -1182,9 +1263,22 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     if state.retrieval_reasoning:
                         chunk_context += f" (Selected because: {state.retrieval_reasoning})"
                     
+                    # Add recency context if available
+                    temporal_context = ""
+                    if state.chunk_analysis:
+                        temporal_strategy = state.chunk_analysis.get("temporal_strategy")
+                        if temporal_strategy:
+                            temporal_context = f"\n\nTEMPORAL STRATEGY: {temporal_strategy}"
+                            if temporal_strategy == "recent_priority":
+                                temporal_context += " - Prioritizing most recent clinical data"
+                            elif temporal_strategy == "trend_analysis": 
+                                temporal_context += " - Including data to show trends over time"
+                            elif temporal_strategy == "historical_context":
+                                temporal_context += " - Including historical context for comparison"
+                    
                     docs = ChatMessage(
                         role=ChatRole.USER,
-                        content=f"{chunk_context}:\n" + "\n---\n".join(state.retrieved_chunks),
+                        content=f"{chunk_context}:{temporal_context}\n" + "\n---\n".join(state.retrieved_chunks),
                     )
                     messages.append(docs)
 
@@ -1272,10 +1366,123 @@ Please reference this generated image in your response when relevant and explain
             return state
 
 
+        @streaming_step("evaluate_icd_parsing_need")
+        async def evaluate_icd_parsing_need(state: FlowState) -> FlowState:
+            """Evaluate if ICD parsing should be performed based on diagnostic confidence."""
+            if not state.llm_response or not state.llm_response.content:
+                state.should_parse_icd_codes = False
+                return state
+            
+            try:
+                # For pre_meet mode, be extra strict about diagnostic content
+                if state.diagnostic_mode == "pre_meet":
+                    evaluation_prompt = f"""
+                    Analyze this pre-consultation response to determine if it contains CONFIDENT differential diagnoses or established diagnoses:
+
+                    RESPONSE TO ANALYZE:
+                    "{state.llm_response.content}"
+
+                    STRICT CRITERIA FOR ICD PARSING:
+                    
+                    PARSE ICD CODES (respond "YES") ONLY if the response contains:
+                    - Explicitly stated diagnoses with high confidence
+                    - Clear differential diagnoses with specific medical conditions named
+                    - Definitive statements like "likely diagnosis is", "most probable condition", "confirmed diagnosis"
+                    - Specific medical conditions with confidence indicators (probable, likely, definitive)
+                    - ICD codes are explicitly mentioned
+                    
+                    DO NOT PARSE (respond "NO") if the response contains:
+                    - General preparation advice without specific diagnoses
+                    - Symptom descriptions without diagnostic conclusions
+                    - Vague references to "possible conditions" without specifics
+                    - General questions to ask the patient
+                    - Examination recommendations without diagnostic certainty
+                    - Educational content about conditions without diagnosing this patient
+                    - Statements like "consider", "rule out", "screen for" without strong diagnostic confidence
+                    
+                    EXAMPLES:
+                    - "The patient likely has pneumonia based on symptoms" → YES
+                    - "Consider pneumonia in the differential" → NO (not confident enough)
+                    - "Rule out pneumonia" → NO (not a diagnosis)
+                    - "Ask patient about chest pain symptoms" → NO (preparation advice)
+                    - "The most probable diagnosis is Type 2 diabetes" → YES
+                    - "Screen for diabetes during the visit" → NO (screening, not diagnosis)
+                    
+                    Respond with only "YES" or "NO".
+                    """
+                else:
+                    # For post_meet, research, and chat modes, be strict about diagnostic confidence
+                    evaluation_prompt = f"""
+                    Analyze this medical response to determine if it contains HIGH-CONFIDENCE diagnoses worthy of ICD code extraction:
+
+                    RESPONSE TO ANALYZE:
+                    "{state.llm_response.content}"
+
+                    DIAGNOSTIC MODE: {state.diagnostic_mode}
+
+                    STRICT CRITERIA FOR ICD PARSING:
+                    
+                    PARSE ICD CODES (respond "YES") ONLY if the response contains:
+                    - Definitive or highly probable diagnoses (confidence >70%)
+                    - Clear differential diagnoses with specific conditions and reasoning
+                    - Statements indicating diagnostic certainty: "diagnosed with", "most likely", "primary diagnosis"
+                    - Specific medical conditions with strong supporting evidence
+                    - Treatment recommendations for established diagnoses
+                    - Explicit ICD codes mentioned
+                    
+                    DO NOT PARSE (respond "NO") if the response contains:
+                    - General medical education without patient-specific diagnosis
+                    - Vague symptoms without diagnostic conclusions
+                    - General health advice or wellness information
+                    - Uncertain language: "might be", "could consider", "possibly"
+                    - Screening recommendations without diagnosis
+                    - General information about medical conditions
+                    - Preparation or procedural advice
+                    - Low-confidence speculation (confidence <70%)
+                    
+                    CONFIDENCE THRESHOLD: Only parse if the response demonstrates >70% confidence in at least one specific diagnosis.
+                    
+                    EXAMPLES:
+                    - "Based on symptoms and labs, patient has Type 2 diabetes" → YES
+                    - "What is diabetes?" → NO (educational, not diagnostic)
+                    - "Consider screening for diabetes" → NO (screening, not diagnosis)
+                    - "Differential includes pneumonia (high likelihood) and bronchitis" → YES
+                    - "Patient might have a respiratory condition" → NO (too vague)
+                    - "Hello, how can I help?" → NO (conversational)
+                    
+                    Respond with only "YES" or "NO".
+                    """
+
+                evaluation_msg = ChatMessage(role=ChatRole.USER, content=evaluation_prompt)
+                response = await self._llm.chat([
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a clinical decision support system that determines when ICD code extraction is appropriate. Be STRICT - only approve ICD parsing when there are confident, specific diagnoses present. Err on the side of caution."),
+                    evaluation_msg
+                ])
+
+                # Parse response
+                response_text = response.content.strip().upper()
+                should_parse = "YES" in response_text
+
+                state.should_parse_icd_codes = should_parse
+                
+                print(f"[icd_evaluation] Mode: {state.diagnostic_mode}, Should parse ICD: {should_parse}")
+                if should_parse:
+                    print("[icd_evaluation] High-confidence diagnosis detected in response")
+                else:
+                    print("[icd_evaluation] No confident diagnosis found, skipping ICD parsing")
+
+            except Exception as e:
+                print(f"[icd_evaluation] Error evaluating ICD parsing need: {e}")
+                # Default to False to be safe - don't parse unless we're certain
+                state.should_parse_icd_codes = False
+            
+            return state
+
+        @streaming_step("parse_icd")
         async def parse_icd(state: FlowState) -> FlowState:
             """
             Parse the ICD code and differential diagnoses from the response.
-            Only runs if differential diagnoses are present or if not in pre_meet mode.
+            Uses Bayesian logic to calculate robust confidence levels.
             """
             # Skip ICD parsing for pre_meet mode unless differential diagnoses are explicitly mentioned
             if state.diagnostic_mode == "pre_meet":
@@ -1311,12 +1518,16 @@ Please reference this generated image in your response when relevant and explain
 SOURCE TEXT TO ANALYZE:
 {response_content}
 
+PATIENT CONTEXT:
+Age: {state.patient_ctx.age}, Sex: {state.patient_ctx.sex}
+Vitals: {state.patient_ctx.vitals}
+Labs: {state.patient_ctx.labs}
+Medications: {state.patient_ctx.medications}
+Allergies: {state.patient_ctx.allergies}
+Diagnoses: {state.patient_ctx.diagnoses}
+
 INSTRUCTIONS:
-1. Extract ONLY diagnoses that are explicitly stated or clearly diagnosed in the text
-2. Do NOT create diagnoses from symptoms alone unless explicitly diagnosed
-3. Use specific ICD-10 codes if mentioned, otherwise use appropriate standard codes
-4. Assign confidence based on how definitively the diagnosis is stated
-5. Include supporting evidence as direct quotes from the source text
+Extract diagnoses mentioned in the source text. For each diagnosis, we will calculate Bayesian confidence separately.
 
 REQUIRED JSON OUTPUT FORMAT:
 {{
@@ -1325,62 +1536,32 @@ REQUIRED JSON OUTPUT FORMAT:
     {{
       "icd_code": "specific ICD-10 code",
       "diagnosis_name": "exact medical diagnosis name",
-      "confidence": 0.0-1.0,
-      "reasoning": "brief explanation of why this diagnosis was extracted",
-      "supporting_evidence": ["direct quote 1", "direct quote 2"]
+      "supporting_evidence": ["direct quote 1", "direct quote 2"],
+      "reasoning": "brief explanation of why this diagnosis was extracted"
     }}
-  ],
-  "confidence": 0.0-1.0
+  ]
 }}
 
-CONSISTENCY CHECK:
-- Review your extraction to ensure it would be identical if run again with the same text
-- Verify all confidence scores align with the stated certainty in the source
-- Confirm all diagnoses are actually present in the source text
+RULES:
+- Extract ONLY diagnoses explicitly mentioned or clearly diagnosed
+- Do NOT assign confidence scores (we will calculate these using Bayesian methods)
+- Use specific ICD-10 codes if mentioned, otherwise use appropriate standard codes
+- Include all supporting evidence as direct quotes from source text
 
-If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "differential": [], "confidence": 0.0}}"""
+If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "differential": []}}"""
 
-                    # Use a simpler system message to reduce token usage
-                    simple_system_msg = ChatMessage(
+                    # Use system message for diagnosis extraction only
+                    extraction_system_msg = ChatMessage(
                         role=ChatRole.SYSTEM, 
-                        content="""You are a medical diagnosis extraction specialist. Your task is to consistently and accurately extract medical diagnoses from clinical text.
-
-CORE PRINCIPLES:
-1. Be CONSERVATIVE - only extract diagnoses that are clearly stated or strongly implied
-2. Be CONSISTENT - the same clinical information should always yield the same diagnoses
-3. Maintain CLINICAL ACCURACY - use proper ICD-10 codes and medical terminology
-4. Preserve UNCERTAINTY - reflect the confidence level expressed in the source text
-
-EXTRACTION RULES:
-- Only extract diagnoses that are explicitly mentioned or clearly diagnosed
-- Do NOT infer diagnoses from symptoms alone unless explicitly stated
-- Use specific ICD-10 codes when mentioned; otherwise use broader category codes
-- If no ICD code is mentioned, use the most appropriate standard ICD-10 code
-- Maintain the confidence level expressed in the original text
-- Supporting evidence should be direct quotes or paraphrases from the source
-
-CONFIDENCE SCORING (be consistent):
-- 0.9-1.0: Definitive diagnosis explicitly stated ("diagnosed with", "confirmed")
-- 0.7-0.8: Highly likely diagnosis ("most likely", "probable diagnosis")
-- 0.5-0.6: Possible diagnosis ("possible", "consider", "rule out")
-- 0.3-0.4: Mentioned as differential ("differential includes")
-- 0.1-0.2: Suggested or screening ("screen for", "monitor for")
-
-CONSISTENCY REQUIREMENTS:
-- Same clinical text = same diagnoses with same confidence scores
-- Only change output if new clinical information is provided
-- Use standardized medical terminology
-- Apply uniform reasoning across similar cases
-
-Return ONLY valid JSON without markdown formatting."""
+                        content="""You are a medical diagnosis extraction specialist. Extract diagnoses from clinical text without assigning confidence scores. We will calculate confidence using Bayesian methods separately."""
                     )
                     
-                    # Add retry logic with exponential backoff
+                    # Extract diagnoses first
                     max_retries = 3
                     for attempt in range(max_retries):
                         try:
                             parsed = await self._llm.chat([
-                                simple_system_msg, 
+                                extraction_system_msg, 
                                 ChatMessage(role=ChatRole.USER, content=prompt)
                             ], json_mode=True)
                             
@@ -1391,11 +1572,10 @@ Return ONLY valid JSON without markdown formatting."""
                             print(f"[parse_icd] Attempt {attempt + 1} failed: {retry_error}")
                             if attempt == max_retries - 1:
                                 raise retry_error
-                            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                            await asyncio.sleep(2 ** attempt)
                     
                     if not parsed or not parsed.content:
                         print("[parse_icd] Failed to get valid response from LLM")
-                        # Return minimal response rather than failing
                         state.parsed_response = DiagnosisResult(
                             patient_id=state.patient_ctx.patient_id,
                             primary_icd="Unknown",
@@ -1423,40 +1603,98 @@ Return ONLY valid JSON without markdown formatting."""
                         parsed_data = json.loads(response_content)
                     except json.JSONDecodeError as e:
                         print(f"[parse_icd] JSON decode error: {e}, content: {response_content[:200]}...")
-                        # Try to extract ICD codes using regex as fallback
-                        primary_icd = "Unknown"
                         parsed_data = {
-                            "primary_icd": primary_icd,
-                            "differential": [],
-                            "confidence": 0.0
+                            "primary_icd": "Unknown",
+                            "differential": []
                         }
 
-                    # Build differential list with validation
+                    # Now calculate Bayesian confidence for each diagnosis
                     differential_list = []
                     if parsed_data.get("differential") and isinstance(parsed_data["differential"], list):
+                        
+                        # Extract all diagnosis names first for batch prior retrieval
+                        diagnosis_names = []
+                        diagnosis_data = []
                         for diff in parsed_data["differential"]:
                             if isinstance(diff, dict):
-                                # Ensure all required fields are present with defaults
-                                differential_list.append(DifferentialDiagnosis(
-                                    icd_code=diff.get("icd_code", "Unknown"),
-                                    diagnosis_name=diff.get("diagnosis_name", "Unknown Diagnosis"),
-                                    confidence=float(diff.get("confidence", 0.0)),
-                                    reasoning=diff.get("reasoning", "No reasoning provided"),
-                                    supporting_evidence=diff.get("supporting_evidence", [])
-                                ))
+                                diagnosis_name = diff.get("diagnosis_name", "Unknown Diagnosis")
+                                diagnosis_names.append(diagnosis_name)
+                                diagnosis_data.append(diff)
+                        
+                        # Batch retrieve priors for ALL diagnoses once (for consistency)
+                        batch_priors = {}
+                        if diagnosis_names:
+                            print(f"[parse_icd] Batch retrieving priors for {len(diagnosis_names)} diagnoses")
+                            batch_priors = await _batch_web_search_for_priors(diagnosis_names, state.patient_ctx)
+                        
+                        # Create concurrent tasks for all differential diagnoses
+                        confidence_tasks = []
+                        for diagnosis_name, diff in zip(diagnosis_names, diagnosis_data):
+                            state.prelim_diagnosis_name = diagnosis_name  # Store for streaming updates
+                            print(f"[parse_icd] Preparing Bayesian confidence calculation for: {diagnosis_name}")
+                            
+                            # Create async task for Bayesian confidence calculation
+                            # Pass the batch_priors dict so it can use pre-computed values
+                            task = _calculate_bayesian_confidence_with_batch_priors(
+                                state=state,
+                                diagnosis_name=diagnosis_name,
+                                patient_context=state.patient_ctx,
+                                supporting_evidence=diff.get("supporting_evidence", []),
+                                batch_priors=batch_priors  # Pass all priors for consistency
+                            )
+                            confidence_tasks.append((task, diff))
+                        
+                        # Execute all confidence calculations concurrently
+                        if confidence_tasks:
+                            print(f"[parse_icd] Computing Bayesian confidence for {len(confidence_tasks)} diagnoses in parallel")
+                            
+                            # Run all tasks concurrently
+                            task_results = await asyncio.gather(
+                                *[task for task, _ in confidence_tasks],
+                                return_exceptions=True
+                            )
+                            
+                            # Process results and create DifferentialDiagnosis objects
+                            for i, (confidence_result, diff) in enumerate(zip(task_results, [diff for _, diff in confidence_tasks])):
+                                try:
+                                    if isinstance(confidence_result, Exception):
+                                        print(f"[parse_icd] Error calculating confidence for {diff.get('diagnosis_name', 'Unknown')}: {confidence_result}")
+                                        bayesian_confidence = 0.5  # Fallback confidence
+                                    else:
+                                        bayesian_confidence = confidence_result # type: ignore
+                                    
+                                    diagnosis_name = diff.get("diagnosis_name", "Unknown Diagnosis")
+                                    differential_list.append(DifferentialDiagnosis(
+                                        icd_code=diff.get("icd_code", "Unknown"),
+                                        diagnosis_name=diagnosis_name,
+                                        confidence=bayesian_confidence,
+                                        reasoning=diff.get("reasoning", "No reasoning provided"),
+                                        supporting_evidence=diff.get("supporting_evidence", [])
+                                    ))
+                                    
+                                    print(f"[parse_icd] {diagnosis_name}: Bayesian confidence = {bayesian_confidence:.3f}")
+                                    
+                                except Exception as e:
+                                    print(f"[parse_icd] Error processing result for differential {i}: {e}")
+                                    continue
+
+                    # Calculate overall confidence as the maximum individual confidence
+                    overall_confidence = max([diff.confidence for diff in differential_list]) if differential_list else 0.0
 
                     # Create the DiagnosisResult
                     state.parsed_response = DiagnosisResult(
                         patient_id=state.patient_ctx.patient_id,
                         primary_icd=parsed_data.get("primary_icd", "Unknown"),
                         differential=differential_list,
-                        confidence=float(parsed_data.get("confidence", 0.0)),
+                        confidence=overall_confidence,
                         explanation=state.llm_response.content,
                         session_id=state.session_id,
                         created_by_user_id=state.user_id
                     )
 
-                    print(f"[parse_icd] Successfully parsed - Primary: {state.parsed_response.primary_icd}, Differential count: {len(state.parsed_response.differential)}")
+                    print(f"[parse_icd] Successfully parsed with Bayesian confidence - Primary: {state.parsed_response.primary_icd}, Differential count: {len(state.parsed_response.differential)}")
+                    for diff in differential_list:
+                        print(f"[parse_icd] {diff.diagnosis_name}: Bayesian confidence = {diff.confidence:.3f}")
 
                 except Exception as e:
                     print(f"[parse_icd] Error parsing ICD: {e}")
@@ -1472,6 +1710,513 @@ Return ONLY valid JSON without markdown formatting."""
                     )
 
             return state
+
+        async def _calculate_bayesian_confidence_with_batch_priors(
+            state: FlowState,
+            diagnosis_name: str, 
+            patient_context: PatientContext,
+            supporting_evidence: List[str],
+            batch_priors: dict[str, float]
+        ) -> float:
+            """
+            Calculate Bayesian posterior probability using pre-computed batch priors for consistency.
+            P(Diagnosis|Evidence) = P(Evidence|Diagnosis) * P(Diagnosis) / P(Evidence)
+            """
+            try:
+                # Step 1: Use the batch-computed prior (ensures consistency)
+                prior_probability = batch_priors.get(diagnosis_name, 0.03)
+                state.diff_diag_compute_step = f"Prior probability for {diagnosis_name}: {prior_probability:.3f}"
+
+                # Step 2: Get likelihood from patient evidence
+                likelihood = await _calculate_likelihood(diagnosis_name, patient_context, supporting_evidence)
+                state.diff_diag_compute_step = f"Likelihood for {diagnosis_name}: {likelihood:.3f}"
+
+                # Step 3: Estimate marginal probability using the SAME batch priors for consistency
+                marginal_probability = await _estimate_marginal_probability_with_batch_priors(
+                    patient_context, 
+                    supporting_evidence, 
+                    batch_priors
+                )
+                state.diff_diag_compute_step = f"Marginal probability for {diagnosis_name}: {marginal_probability:.3f}"
+                
+                # Step 4: Calculate posterior using Bayes' theorem
+                if marginal_probability > 0:
+                    posterior = (likelihood * prior_probability) / marginal_probability
+                else:
+                    posterior = prior_probability * likelihood
+                
+                # Ensure result is between 0 and 1
+                posterior = max(0.0, min(1.0, posterior))
+                
+                print(f"[bayesian] {diagnosis_name}: Prior={prior_probability:.3f}, Likelihood={likelihood:.3f}, Marginal={marginal_probability:.3f}, Posterior={posterior:.3f}")
+                
+                return posterior
+                
+            except Exception as e:
+                print(f"[bayesian] Error calculating confidence for {diagnosis_name}: {e}")
+                return 0.5
+
+        async def _estimate_marginal_probability_with_batch_priors(
+            patient_context: PatientContext,
+            supporting_evidence: List[str],
+            batch_priors: dict[str, float]
+        ) -> float:
+            """
+            Estimate P(Evidence) using pre-computed batch priors for consistency.
+            Uses the SAME prior values that were used for individual diagnoses.
+            """
+            try:
+                # Use the diagnoses from batch_priors as candidate diagnoses
+                candidate_diagnoses = list(batch_priors.keys())
+                print(f"[marginal_batch] Processing {len(candidate_diagnoses)} candidate diagnoses with consistent priors")
+                
+                # Calculate marginal probability using law of total probability
+                marginal_probability = 0.0
+                
+                for diagnosis in candidate_diagnoses:
+                    try:
+                        # Use the SAME prior probability from batch
+                        prior_prob = batch_priors[diagnosis]
+                        
+                        # Get likelihood for this diagnosis
+                        likelihood = await _calculate_likelihood_for_marginal(diagnosis, patient_context, supporting_evidence)
+                        
+                        # Add to total: P(E) += P(E|D_i) * P(D_i)
+                        marginal_probability += likelihood * prior_prob
+                        
+                        print(f"[marginal_batch] {diagnosis}: P(D)={prior_prob:.3f}, P(E|D)={likelihood:.3f}, contribution={likelihood * prior_prob:.3f}")
+                        
+                    except Exception as e:
+                        print(f"[marginal_batch] Error calculating for {diagnosis}: {e}")
+                        continue
+                
+                # Add baseline for other conditions
+                baseline_other_conditions = 0.01
+                marginal_probability += baseline_other_conditions
+                
+                # Ensure result is reasonable
+                marginal_probability = max(0.001, min(0.8, marginal_probability))
+                
+                print(f"[marginal_batch] Total marginal probability: {marginal_probability:.3f}")
+                return marginal_probability
+                
+            except Exception as e:
+                print(f"[marginal_batch] Error in marginal probability calculation: {e}")
+                return 0.1
+                
+
+        async def _calculate_likelihood(
+            diagnosis_name: str, 
+            patient_context: PatientContext,
+            supporting_evidence: List[str]
+        ) -> float:
+            """
+            Calculate likelihood using proper Bayesian approach based on likelihood ratios.
+            This calculates P(Evidence|Diagnosis) / P(Evidence|No Diagnosis) = Likelihood Ratio
+            """
+            try:
+                # Prepare patient evidence
+                patient_evidence = []
+                
+                # Add relevant vitals
+                if patient_context.vitals:
+                    patient_evidence.extend([f"Vital: {k}={v}" for k, v in patient_context.vitals.items()])
+                
+                # Add relevant labs
+                if patient_context.labs:
+                    patient_evidence.extend([f"Lab: {k}={v}" for k, v in patient_context.labs.items()])
+                
+                # Add medications (can indicate existing conditions)
+                if patient_context.medications:
+                    patient_evidence.extend([f"Medication: {k}={v}" for k, v in patient_context.medications.items()])
+                
+                # Add existing diagnoses
+                if patient_context.diagnoses:
+                    patient_evidence.extend([f"Existing diagnosis: {k}={v}" for k, v in patient_context.diagnoses.items()])
+                
+                # Add supporting evidence from clinical notes
+                patient_evidence.extend(supporting_evidence)
+                
+                evidence_text = "; ".join(patient_evidence) if patient_evidence else "No specific evidence available"
+                
+                # First get sensitivity and specificity estimates for each piece of evidence
+                likelihood_prompt = f"""
+                For the diagnosis of {diagnosis_name}, estimate the sensitivity and specificity of the observed clinical evidence.
+                
+                Diagnosis: {diagnosis_name}
+                Patient Evidence: {evidence_text}
+                Patient Demographics: Age {patient_context.age}, Sex {patient_context.sex}
+                
+                For each significant piece of evidence, estimate:
+                1. Sensitivity: What percentage of patients with {diagnosis_name} would have this finding?
+                2. Specificity: What percentage of patients WITHOUT {diagnosis_name} would NOT have this finding?
+                
+                Consider the overall clinical picture and provide:
+                - Overall Sensitivity (0.0-1.0): How likely is this evidence pattern in patients who DO have {diagnosis_name}?
+                - Overall Specificity (0.0-1.0): How likely is this evidence pattern to be ABSENT in patients who DON'T have {diagnosis_name}?
+                
+                Guidelines:
+                - High sensitivity (0.8-1.0): Very typical findings for this diagnosis
+                - Moderate sensitivity (0.4-0.7): Somewhat typical findings
+                - Low sensitivity (0.1-0.3): Atypical but possible findings
+                - High specificity (0.8-1.0): Very specific to this diagnosis
+                - Moderate specificity (0.5-0.7): Somewhat specific findings
+                - Low specificity (0.1-0.4): Non-specific findings seen in many conditions
+                
+                Respond with only two decimal numbers: sensitivity,specificity (e.g., "0.75,0.85")
+                """
+                
+                likelihood_response = await self._llm.chat([
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a clinical diagnostician estimating sensitivity and specificity of clinical findings. Provide only numerical estimates."),
+                    ChatMessage(role=ChatRole.USER, content=likelihood_prompt)
+                ])
+                
+                # Extract sensitivity and specificity
+                likelihood_text = likelihood_response.content.strip()
+                
+                # Try to extract two decimal numbers
+                numbers = re.findall(r'[01]?\.\d+', likelihood_text)
+                if len(numbers) >= 2:
+                    sensitivity = max(0.01, min(1.0, float(numbers[0])))  # Prevent 0 division
+                    specificity = max(0.01, min(1.0, float(numbers[1])))  # Prevent 0 division
+                    
+                    # Calculate positive likelihood ratio: LR+ = sensitivity / (1 - specificity)
+                    # This represents P(Evidence|Disease) / P(Evidence|No Disease)
+                    likelihood_ratio = sensitivity / (1 - specificity)
+                    
+                    # Convert likelihood ratio to a normalized likelihood value
+                    # For Bayes calculation: P(Evidence|Disease) = LR+ * P(Evidence|No Disease)
+                    # We need to estimate P(Evidence|No Disease) based on specificity
+                    # prob_evidence_no_disease = 1 - specificity
+                    prob_evidence_given_disease = sensitivity
+                    
+                    print(f"[bayesian_likelihood] {diagnosis_name}: Sensitivity={sensitivity:.3f}, Specificity={specificity:.3f}")
+                    print(f"[bayesian_likelihood] {diagnosis_name}: LR+={likelihood_ratio:.3f}, P(E|D)={prob_evidence_given_disease:.3f}")
+                    
+                    return prob_evidence_given_disease
+                    
+                else:
+                    print(f"[bayesian_likelihood] Could not parse sensitivity/specificity from: {likelihood_text}")
+                    # Fallback to moderate values
+                    return 0.5
+                    
+            except Exception as e:
+                print(f"[bayesian_likelihood] Error calculating likelihood: {e}")
+                return 0.5  # Default likelihood
+
+        async def _get_focused_candidate_diagnoses(
+            patient_context: PatientContext,
+            supporting_evidence: List[str]
+        ) -> List[str]:
+            """Get a smaller, more focused list of candidate diagnoses (3-5 instead of 8-10)."""
+            try:
+                evidence_text = "; ".join(supporting_evidence) if supporting_evidence else "No specific evidence"
+                
+                prompt = f"""
+                Given this clinical presentation, list the TOP 5-7 MOST LIKELY diagnoses only:
+                
+                Patient: Age {patient_context.age}, Sex {patient_context.sex}
+                Clinical Evidence: {evidence_text}
+                Vitals: {patient_context.vitals}
+                Labs: {patient_context.labs}
+                
+                Rules:
+                - List ONLY the 5-7 most probable diagnoses
+                - Focus on common conditions first
+                - Include 1-2 "cannot-miss" diagnoses if relevant
+                - Be specific with medical terminology
+                - Order by likelihood (most likely first)
+                
+                Format as a simple list:
+                - Most likely diagnosis
+                - Second most likely 
+                - Third most likely
+                - Fourth most likely  
+                - Fifth most likely
+                """
+                
+                response = await self._llm.chat([
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical diagnostician creating a focused differential diagnosis list. Keep it to exactly 5 diagnoses."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ])
+                
+                # Parse the response to extract diagnosis names
+                lines = response.content.strip().split('\n')
+                diagnoses: list[Any] = []
+                
+                for line in lines:
+                    line = line.strip()
+                    if line.startswith('-') or line.startswith('•') or line.startswith(str(len(diagnoses) + 1)):
+                        # Remove bullet points, numbers, etc.
+                        diagnosis = line.lstrip('- •0123456789. ').strip()
+                        if diagnosis and len(diagnosis) > 3:
+                            diagnoses.append(diagnosis)
+                
+                # Ensure we have exactly 5 diagnoses, pad with common ones if needed
+                if len(diagnoses) < 5:
+                    common_fallbacks = [
+                        "Viral upper respiratory infection",
+                        "Hypertension", 
+                        "Type 2 diabetes mellitus",
+                        "Anxiety disorder",
+                        "Gastroenteritis"
+                    ]
+                    
+                    for fallback in common_fallbacks:
+                        if len(diagnoses) >= 5:
+                            break
+                        if fallback not in diagnoses:
+                            diagnoses.append(fallback)
+                
+                # Limit to exactly 5
+                diagnoses = diagnoses[:5]
+                
+                print(f"[focused_candidates] Selected {len(diagnoses)} focused candidate diagnoses")
+                return diagnoses
+                
+            except Exception as e:
+                print(f"[focused_candidates] Error getting candidates: {e}")
+                # Return minimal common diagnoses as fallback
+                return [
+                    "Viral upper respiratory infection",
+                    "Hypertension",
+                    "Type 2 diabetes mellitus", 
+                    "Anxiety disorder",
+                    "Gastroenteritis"
+                ]
+
+        async def _calculate_likelihood_for_marginal(
+            diagnosis_name: str,
+            patient_context: PatientContext,
+            supporting_evidence: List[str]
+        ) -> float:
+            """
+            Simplified likelihood calculation for marginal probability.
+            Returns P(Evidence|Diagnosis) for use in law of total probability.
+            """
+            try:
+                # Prepare patient evidence (simplified)
+                patient_evidence = []
+                
+                if patient_context.vitals:
+                    # Only include abnormal vitals to reduce noise
+                    for k, v in patient_context.vitals.items():
+                        if "high" in str(v).lower() or "low" in str(v).lower() or "abnormal" in str(v).lower():
+                            patient_evidence.append(f"Vital: {k}={v}")
+                
+                if patient_context.labs:
+                    # Only include abnormal labs
+                    for k, v in patient_context.labs.items():
+                        if "high" in str(v).lower() or "low" in str(v).lower() or "abnormal" in str(v).lower():
+                            patient_evidence.append(f"Lab: {k}={v}")
+                
+                # Take only the most relevant supporting evidence
+                relevant_evidence = supporting_evidence[:3]  # Limit to top 3 pieces of evidence
+                patient_evidence.extend(relevant_evidence)
+                
+                evidence_text = "; ".join(patient_evidence) if patient_evidence else "No specific evidence"
+                
+                # Simplified, faster prompt
+                prompt = f"""
+                For {diagnosis_name}: How likely is this evidence if the patient has this diagnosis?
+                
+                Evidence: {evidence_text}
+                Patient: Age {patient_context.age}, Sex {patient_context.sex}
+                
+                Rate 0.1-1.0:
+                - 0.8-1.0: Very typical
+                - 0.5-0.7: Moderately typical  
+                - 0.2-0.4: Possible but uncommon
+                - 0.1: Very unlikely
+                
+                Number only:
+                """
+                
+                response = await self._llm.chat([
+                    ChatMessage(role=ChatRole.SYSTEM, content="Estimate likelihood quickly. Respond with number only."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ])
+                
+                # Extract numerical value quickly
+                response_text = response.content.strip()
+
+                numbers = re.findall(r'[01]?\.\d+', response_text)
+                
+                if numbers:
+                    likelihood = float(numbers[0])
+                    return max(0.1, min(1.0, likelihood))
+                else:
+                    return 0.4  # Default moderate likelihood
+                    
+            except Exception as e:
+                print(f"[likelihood_marginal] Error for {diagnosis_name}: {e}")
+                return 0.4
+
+        async def _batch_web_search_for_priors( # type: ignore
+            diagnoses: List[str],
+            patient_context: PatientContext
+        ) -> dict[str, float]:
+            """
+            Perform batched web searches for prior probabilities of multiple diagnoses.
+            This is much more efficient than sequential searches.
+            """
+            try:
+                print(f"[batch_priors] Starting batch web search for {len(diagnoses)} diagnoses")
+                
+                # Prepare demographic context
+                demographic_context = f"Age: {patient_context.age}, Sex: {patient_context.sex}"
+                
+                # Create a combined search query for all diagnoses
+                diagnosis_list = ", ".join(diagnoses)
+                combined_search_query = f"epidemiology prevalence incidence rates {diagnosis_list} age {patient_context.age} {patient_context.sex} population statistics medical literature"
+                
+                print(f"[batch_priors] Combined search query: {combined_search_query}")
+                
+                # Perform single web search for all diagnoses
+                web_response = await self._web_search.search(
+                    query=combined_search_query,
+                    max_results=8,  # Get more results since we're searching for multiple conditions
+                    patient_context=demographic_context,
+                    search_intent="epidemiological_data"
+                )
+                
+                # Prepare web context for LLM analysis
+                web_context = ""
+                if web_response and web_response.results:
+                    web_context = "\n".join([
+                        f"Source {i+1}: {result.title}\nURL: {result.url}\nContent: {result.snippet}"
+                        for i, result in enumerate(web_response.results)
+                    ])
+                    print(f"[batch_priors] Found {len(web_response.results)} web sources")
+                else:
+                    print("[batch_priors] No web results found, will use medical knowledge")
+                
+                # Use LLM to extract prior probabilities for all diagnoses at once
+                batch_prior_prompt = f"""
+                Extract epidemiological prior probabilities for multiple diagnoses based on web search results and medical knowledge.
+                
+                DIAGNOSES TO ANALYZE: {diagnoses}
+                
+                PATIENT DEMOGRAPHICS: {demographic_context}
+                
+                WEB SEARCH RESULTS:
+                {web_context if web_context else "No specific web data available - use established medical knowledge"}
+                
+                For each diagnosis, estimate the prior probability (base rate) considering:
+                1. General prevalence/incidence from search results or medical literature
+                2. Age-specific and sex-specific rates for this demographic
+                3. Population base rates from epidemiological studies
+                4. Risk factors present in this demographic group
+                
+                REFERENCE RANGES:
+                - Very common conditions (diabetes, hypertension): 0.1-0.3
+                - Common conditions (pneumonia, UTI, viral infections): 0.05-0.15
+                - Moderate conditions (autoimmune diseases, specific syndromes): 0.01-0.05
+                - Rare conditions (genetic disorders, rare cancers): 0.001-0.01
+                - Very rare conditions: 0.001-0.005
+                
+                Return ONLY a JSON object with diagnosis names as keys and probability numbers as values:
+                {{
+                    "diagnosis_1": 0.123,
+                    "diagnosis_2": 0.045,
+                    "diagnosis_3": 0.012,
+                    ...
+                }}
+                
+                Base estimates on web search results when available, otherwise use established medical knowledge.
+                Ensure all probabilities are between 0.001 and 0.3.
+                """
+                
+                try:
+                    batch_response = await self._llm.chat([
+                        ChatMessage(role=ChatRole.SYSTEM, content="You are a medical epidemiologist extracting disease prevalence data from web sources and medical knowledge. Return only JSON."),
+                        ChatMessage(role=ChatRole.USER, content=batch_prior_prompt)
+                    ], json_mode=True)
+                    
+                    if batch_response and batch_response.content:
+                        # Parse JSON response
+                        response_content = batch_response.content.strip()
+                        
+                        # Remove markdown code blocks if present
+                        if response_content.startswith("```json"):
+                            start_idx = response_content.find('\n') + 1
+                            end_idx = response_content.rfind("```")
+                            if start_idx > 0 and end_idx > start_idx:
+                                response_content = response_content[start_idx:end_idx].strip()
+                        elif response_content.startswith("```"):
+                            start_idx = response_content.find('\n') + 1
+                            end_idx = response_content.rfind("```")
+                            if start_idx > 0 and end_idx > start_idx:
+                                response_content = response_content[start_idx:end_idx].strip()
+                        
+                        priors_data = json.loads(response_content)
+                        
+                        # Validate and clean the results
+                        validated_priors = {}
+                        for diagnosis in diagnoses:
+                            # Try exact match first
+                            if diagnosis in priors_data:
+                                prob = float(priors_data[diagnosis])
+                                validated_priors[diagnosis] = max(0.001, min(0.3, prob))
+                            else:
+                                # Try partial matching
+                                found_match = False
+                                for key, value in priors_data.items():
+                                    if diagnosis.lower() in key.lower() or key.lower() in diagnosis.lower():
+                                        prob = float(value)
+                                        validated_priors[diagnosis] = max(0.001, min(0.3, prob))
+                                        found_match = True
+                                        break
+                                
+                                if not found_match:
+                                    # Default fallback
+                                    validated_priors[diagnosis] = 0.03
+                        
+                        print(f"[batch_priors] Successfully extracted priors for {len(validated_priors)} diagnoses")
+                        for diagnosis, prior in validated_priors.items():
+                            print(f"[batch_priors] {diagnosis}: {prior:.3f}")
+                        
+                        return validated_priors
+                        
+                except json.JSONDecodeError as e:
+                    print(f"[batch_priors] JSON parsing error: {e}")
+                    # Fall back to individual searches for critical diagnoses
+                    return await _fallback_individual_searches(diagnoses, patient_context)
+                    
+            except Exception as e:
+                print(f"[batch_priors] Error in batch search: {e}")
+                # Fall back to individual searches
+                return await _fallback_individual_searches(diagnoses, patient_context)
+
+        async def _fallback_individual_searches(
+            diagnoses: List[str],
+            patient_context: PatientContext
+        ) -> dict[str, float]:
+            """
+            Fallback to individual web searches if batch search fails.
+            Only search for the most critical diagnoses to save time.
+            """
+            print("[fallback_priors] Performing individual searches for top 3 diagnoses")
+            
+            priors = {}
+            
+            # Only search for top 3 most important diagnoses
+            for diagnosis in diagnoses[:3]:
+                try:
+                    # Use default prior since individual web searches are removed
+                    prior = 0.03
+                    priors[diagnosis] = prior
+                    print(f"[fallback_priors] {diagnosis}: {prior:.3f}")
+                except Exception as e:
+                    print(f"[fallback_priors] Error for {diagnosis}: {e}")
+                    priors[diagnosis] = 0.03
+            
+            # Use defaults for remaining diagnoses to save time
+            for diagnosis in diagnoses[3:]:
+                priors[diagnosis] = 0.03
+                print(f"[fallback_priors] {diagnosis}: 0.030 (default)")
+            
+            return priors
 
 
         @streaming_step("evaluate_query_complexity")
@@ -1558,20 +2303,7 @@ Return ONLY valid JSON without markdown formatting."""
         def should_parse_icd(state: FlowState) -> bool:
             """Conditional function to determine if ICD parsing should be performed."""
             # For pre_meet mode, only parse if differential diagnoses content is detected
-            if state.diagnostic_mode == "pre_meet":
-                if not state.llm_response or not state.llm_response.content:
-                    return False
-                
-                response_lower = state.llm_response.content.lower()
-                differential_keywords = [
-                    "differential", "diagnosis", "diagnoses", "icd", "condition", 
-                    "disease", "disorder", "syndrome", "pathology"
-                ]
-                
-                return any(keyword in response_lower for keyword in differential_keywords)
-            
-            # For other modes, always parse ICD
-            return True
+            return getattr(state, 'should_parse_icd_codes', False)
 
         def check_patient_exists(state: FlowState) -> FlowState:
             """Check if patient_id is provided in the state."""
@@ -1602,6 +2334,7 @@ Return ONLY valid JSON without markdown formatting."""
         _builder.add_node("generate_image", generate_image)
         _builder.add_node("diagnose", diagnose)
         _builder.add_node("store_assistant_response", store_assistant_response)
+        _builder.add_node("evaluate_icd_parsing_need", evaluate_icd_parsing_need)
         _builder.add_node("parse_icd", parse_icd)
 
         _builder.set_entry_point("load_user_context")  # Start with loading user context
@@ -1668,8 +2401,9 @@ Return ONLY valid JSON without markdown formatting."""
         )
 
         _builder.add_edge("perform_web_search", "diagnose")
+        _builder.add_edge("diagnose", "evaluate_icd_parsing_need")
         _builder.add_conditional_edges(
-            "diagnose",
+            "evaluate_icd_parsing_need",
             should_parse_icd,
             {
                 True: "parse_icd",
