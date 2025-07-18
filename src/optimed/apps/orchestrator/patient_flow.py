@@ -887,7 +887,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                                     if threshold != float('inf') and time_diff < threshold:
                                         # Apply recency boost: more recent = higher boost
                                         recency_factor = 1.0 + (0.3 * (1.0 - time_diff / threshold))
-                                        adjusted_score = similarity_score * recency_factor
+                                        adjusted_score = float(similarity_score) * recency_factor 
                                         print(f"[recency] Applied recency boost to {data_type}: {similarity_score:.3f} -> {adjusted_score:.3f}")
                                 
                                 candidate_chunks.append({
@@ -1661,7 +1661,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                                         print(f"[parse_icd] Error calculating confidence for {diff.get('diagnosis_name', 'Unknown')}: {confidence_result}")
                                         bayesian_confidence = 0.5  # Fallback confidence
                                     else:
-                                        bayesian_confidence = confidence_result
+                                        bayesian_confidence = confidence_result # type: ignore
                                     
                                     diagnosis_name = diff.get("diagnosis_name", "Unknown Diagnosis")
                                     differential_list.append(DifferentialDiagnosis(
@@ -1942,7 +1942,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 
                 # Parse the response to extract diagnosis names
                 lines = response.content.strip().split('\n')
-                diagnoses = []
+                diagnoses: list[Any] = []
                 
                 for line in lines:
                     line = line.strip()
@@ -2052,7 +2052,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 print(f"[likelihood_marginal] Error for {diagnosis_name}: {e}")
                 return 0.4
 
-        async def _batch_web_search_for_priors(
+        async def _batch_web_search_for_priors( # type: ignore
             diagnoses: List[str],
             patient_context: PatientContext
         ) -> dict[str, float]:
@@ -2149,7 +2149,6 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                             if start_idx > 0 and end_idx > start_idx:
                                 response_content = response_content[start_idx:end_idx].strip()
                         
-                        import json
                         priors_data = json.loads(response_content)
                         
                         # Validate and clean the results
