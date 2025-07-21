@@ -1003,20 +1003,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                     }
                     message_content["generated_image"] = image_info # type: ignore
                 
-                # Add differential diagnoses if available
-                if state.parsed_response and state.parsed_response.differential:
-                    differential_diagnoses = [
-                        {
-                            "icd_code": diff.icd_code,
-                            "diagnosis_name": diff.diagnosis_name,
-                            "confidence": diff.confidence,
-                            "reasoning": diff.reasoning,
-                            "supporting_evidence": diff.supporting_evidence
-                        }
-                        for diff in state.parsed_response.differential
-                    ]
-                    message_content["differential_diagnoses"] = differential_diagnoses # type: ignore
-
+            
                 # Prepare metadata - ALL VALUES MUST BE STRINGS
                 metadata = {
                     "namespace": "chat_history",
@@ -1036,10 +1023,6 @@ class LangGraphInformationEngine(DiagnosticEngine):
                     metadata["web_search_performed"] = "true"
                     metadata["source_count"] = str(len(state.web_search_response.results))
                 
-                # Add differential diagnosis count
-                if state.parsed_response and state.parsed_response.differential:
-                    metadata["differential_count"] = str(len(state.parsed_response.differential))
-                    print("[Differential Diagnoses] saved differential diagnoses count:", metadata["differential_count"])
                 # Store assistant message
                 await self._vec.upsert(
                     embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_assistant",
@@ -1616,19 +1599,6 @@ Please reference this generated image in your response when relevant and explain
                 completion_update["reasoning"] = previous_state["llm_reasoning"]
                 completion_update["reasoning_steps"] = previous_state.get("reasoning_steps", [])
             
-            # Include structure differential diagnoses in completion if they exist
-            if previous_state and previous_state.get("parsed_response") and hasattr(previous_state["parsed_response"], 'differential'):
-                completion_update["differential_diagnoses"] = [
-                    {
-                        "icd_code": diff.icd_code,
-                        "diagnosis_name": diff.diagnosis_name,
-                        "confidence": diff.confidence,
-                        "reasoning": diff.reasoning,
-                        "supporting_evidence": diff.supporting_evidence
-                    }
-                    for diff in previous_state["parsed_response"].differential
-                ]
-                completion_update["diagnosis_result"] = previous_state["parsed_response"]
 
             # Include image information in completion
             if previous_state and previous_state.get("generated_image"):
