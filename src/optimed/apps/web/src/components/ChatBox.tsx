@@ -34,7 +34,7 @@ export interface GeneratedImageResponse {
   model_info: Record<string, any>;
 }
 
-interface DiagnosticMode {
+interface InfoRetrievalMode {
   id: string;
   name: string;
   description: string;
@@ -445,9 +445,8 @@ const formatTimestamp = (timestamp: string | number): string => {
 export default function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [diagnosticMode, setDiagnosticMode] = useState("post_meet");
-  const [diagnosticModes, setDiagnosticModes] = useState<DiagnosticMode[]>([]);
-  const [defaultPrompts, setDefaultPrompts] = useState<Record<string, string>>({});
+  const [infoRetrievalMode, setInfoRetrievalMode] = useState("info_retrieval");
+  const [defaultPrompt, setDefaultPrompt] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const {
     isStreaming,
@@ -482,57 +481,19 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   
   const { user } = useUser();
 
-  // Initialize diagnostic modes on component mount
+  // Initialize info retrieval mode with default prompt
   useEffect(() => {
     if (mode === "diagnose") {
-      const hardcodedModes: DiagnosticMode[] = [
-        {
-          id: "pre_meet",
-          name: "Pre-Meet",
-          description: "Prepare for patient encounter",
-          default_prompt: "Please provide a comprehensive pre-consultation summary for this patient, including key information from their records, questions I should ask, and examinations I should perform."
-        },
-        {
-          id: "post_meet",
-          name: "Post-Meet", 
-          description: "Diagnostic analysis with treatment plans",
-          default_prompt: "Based on all available information including the patient encounter, please provide a comprehensive diagnostic analysis with differential diagnoses and treatment recommendations."
-        },
-        {
-          id: "research",
-          name: "Research",
-          description: "Deep analysis using all resources",
-          default_prompt: "This is a complex case requiring deep research. Please conduct a comprehensive analysis using all available medical literature and resources to understand this patient's condition and provide evidence-based treatment options."
-        }
-      ];
+      const infoRetrievalPrompt = "Please help me access and understand information about this patient, including their medical history, current medications, recent test results, and any relevant clinical notes. I'm looking for factual information to support clinical decision-making.";
       
-      setDiagnosticModes(hardcodedModes);
+      setDefaultPrompt(infoRetrievalPrompt);
       
-      const prompts: Record<string, string> = {};
-      hardcodedModes.forEach((mode) => {
-        prompts[mode.id] = mode.default_prompt;
-      });
-      setDefaultPrompts(prompts);
-      
-      // Set the default prompt for the current mode if input is empty
-      if (!input.trim() && prompts[diagnosticMode]) {
-        setInput(prompts[diagnosticMode]);
+      // Set the default prompt if input is empty
+      if (!input.trim()) {
+        setInput(infoRetrievalPrompt);
       }
     }
   }, [mode]);
-
-  // Update input when diagnostic mode changes (only if input is empty or contains a default prompt)
-  useEffect(() => {
-    if (mode === "diagnose" && defaultPrompts[diagnosticMode]) {
-      // Check if current input is empty or is a default prompt from another mode
-      const isDefaultPrompt = Object.values(defaultPrompts).includes(input.trim());
-      const isEmpty = !input.trim();
-      
-      if (isEmpty || isDefaultPrompt) {
-        setInput(defaultPrompts[diagnosticMode]);
-      }
-    }
-  }, [diagnosticMode, defaultPrompts, mode]);
 
   // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = () => {
@@ -790,12 +751,12 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
         patient_id: patientId ?? null,
         user_prompt: userText,
         chat_mode: mode === "chat",
-        diagnostic_mode: mode === "diagnose" ? diagnosticMode : "chat",
+        info_retrieval_mode: mode === "diagnose" ? "info_retrieval" : "chat",
         user_id: user?.user_id,
         session_id: currentSessionId
       };
 
-      console.log('Sending message with diagnostic mode:', payload.diagnostic_mode);
+      console.log('Sending message with info retrieval mode:', payload.info_retrieval_mode);
       await startStream(endpoint, payload, sessionId || undefined);
 
     } catch (error) {
@@ -814,64 +775,28 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   const getPlaceholderText = () => {
     if (mode === "chat") return "Type your message...";
     if (mode === "diagnose" && patientId) {
-      const currentMode = diagnosticModes.find(m => m.id === diagnosticMode);
-      return currentMode ? `${currentMode.name} - ${currentMode.description}` : "Ask about diagnosis, symptoms, treatments...";
+      return "Information Retrieval - Ask about patient records, medications, history, or clinical notes";
     }
-    return "How can I help with the diagnosis?";
+    return "How can I help you access medical information?";
   };
 
   const getEmptyStateText = () => {
     if (mode === "chat") return "Start chatting with CLARA...";
     if (mode === "diagnose" && patientId) {
-      const currentMode = diagnosticModes.find(m => m.id === diagnosticMode);
-      return currentMode ? `Ready for ${currentMode.name.toLowerCase()}` : "Ready to assist with diagnosis";
+      return "Ready for information retrieval";
     }
-    return "Enter patient details to begin diagnosis...";
+    return "Enter patient details to begin information access...";
   };
 
   const handleModeChange = (newMode: string) => {
-    setDiagnosticMode(newMode);
-    
-    // Set the default prompt for the new mode
-    if (defaultPrompts[newMode]) {
-      setInput(defaultPrompts[newMode]);
+    // Mode change removed - only info retrieval available
+    if (defaultPrompt) {
+      setInput(defaultPrompt);
     }
   };
 
   return (
     <div className="flex flex-col h-full bg-white max-h-full overflow-hidden">
-      {/* Mode Selection for Diagnose Mode */}
-      {mode === "diagnose" && (
-        <div className="border-b bg-gray-50 px-4 py-2 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-gray-600">Mode:</label>
-            
-            {diagnosticModes.length === 0 ? (
-              <div className="text-xs text-gray-500 italic">Loading...</div>
-            ) : (
-              <div className="flex gap-1">
-                {diagnosticModes.map((modeOption) => (
-                  <button
-                    key={modeOption.id}
-                    type="button"
-                    onClick={() => handleModeChange(modeOption.id)}
-                    disabled={isStreaming}
-                    className={`px-2 py-1 rounded text-xs font-medium transition-all duration-200 ${
-                      diagnosticMode === modeOption.id
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'bg-white text-gray-700 border border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                    } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    title={modeOption.description}
-                  >
-                    {modeOption.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Chat Messages Area - only this part scrolls */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
         <div className="p-4 space-y-3">
@@ -880,9 +805,9 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
               <p className="text-gray-600 font-medium italic">
                 {getEmptyStateText()}
               </p>
-              {mode === "diagnose" && diagnosticModes.length > 0 && (
+              {mode === "diagnose" && (
                 <div className="text-sm text-gray-400 mt-2">
-                  Current mode: {diagnosticModes.find(m => m.id === diagnosticMode)?.name}
+                  Mode: Information Retrieval
                 </div>
               )}
             </div>
@@ -987,7 +912,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
         {mode === "diagnose" && user && (
           <div className="mt-2 text-xs text-gray-600 text-center">
             Consulting as <span className="font-semibold">{user.display_name}</span> ({user.role}) in{" "}
-            <span className="font-semibold">{diagnosticModes.find(m => m.id === diagnosticMode)?.name || diagnosticMode}</span> mode
+            <span className="font-semibold">Information Retrieval</span> mode
           </div>
         )}
       </div>
