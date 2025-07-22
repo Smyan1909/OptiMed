@@ -358,6 +358,8 @@ class LangGraphInformationEngine(DiagnosticEngine):
         @streaming_step("load_current_session_history")
         async def load_current_session_history(state: FlowState) -> FlowState:
             """Load chat history for the patient if available."""
+            print(f"[load_current_session_history] Loading for patient_id={state.patient_id}, session_id={state.session_id}")
+
             if state.patient_id and state.session_id:
                 try:
                     # Get history for this specific session
@@ -366,6 +368,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                         session_id=state.session_id,
                         limit=20
                     )
+                    print(f"[load_current_session_history] Retrieved {len(history_data)} messages")
 
                     chat_messages = []
                     
@@ -383,7 +386,30 @@ class LangGraphInformationEngine(DiagnosticEngine):
                     print(f"[load_current_session_history] Error loading chat history: {e}")
                     state.chat_history = []
             else:
-                state.chat_history = []
+                try:
+                    # Get history for this specific session
+                    history_data = await self._vec.get_chat_history(
+                        patient_id="general_chat", 
+                        session_id=state.session_id,
+                        limit=20
+                    )
+                    print(f"[load_current_session_history] Retrieved {len(history_data)} messages")
+
+                    chat_messages = []
+                    
+                    for item in history_data:
+                        try:
+                            role = ChatRole(item.get("role", "user"))
+                            content = item.get("content", "")
+                            chat_messages.append(ChatMessage(role=role, content=content))
+                        except Exception as e:
+                            print(f"[load_current_session_history] Error parsing item: {e}")
+                            continue
+                            
+                    state.chat_history = chat_messages
+                except Exception as e:
+                    print(f"[load_current_session_history] Error loading chat history: {e}")
+                    state.chat_history = []
 
             return state
         
@@ -709,7 +735,11 @@ class LangGraphInformationEngine(DiagnosticEngine):
                     state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
                     state.chunk_analysis = {"method": "fallback", "reason": "No chunks found, using patient context"}
                     return state
-
+                elif not rows and not state.patient_ctx:
+                    print("[intelligent_retrieve_chunks] No chunks found and no patient context available")
+                    state.retrieved_chunks = []
+                    state.chunk_analysis = {"method": "none", "reason": "No relevant chunks found"}
+                    return state
                 # Step 2: Apply recency-based filtering and prepare chunks
                 current_time = time.time() * 1000  # Current time in milliseconds
                 candidate_chunks = []
@@ -1058,24 +1088,24 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 )
                 messages.append(user_info)
 
+            current_history = state.chat_history[-15:]  # Recent current session history
+            if current_history:
+                history_header = ChatMessage(
+                    role=ChatRole.USER,
+                    content="=== CURRENT SESSION HISTORY ==="
+                )
+                messages.append(history_header)
+                
+                for msg in current_history:
+                    messages.append(msg)
+                
+                history_footer = ChatMessage(
+                    role=ChatRole.USER,
+                    content="=== END OF CURRENT SESSION HISTORY ==="
+                )
+                messages.append(history_footer)
             # Only add complex context for full processing path
             if getattr(state, 'requires_full_processing', True):
-                current_history = state.chat_history[-15:]  # Recent current session history
-                if current_history:
-                    history_header = ChatMessage(
-                        role=ChatRole.USER,
-                        content="=== CURRENT SESSION HISTORY ==="
-                    )
-                    messages.append(history_header)
-                    
-                    for msg in current_history:
-                        messages.append(msg)
-                    
-                    history_footer = ChatMessage(
-                        role=ChatRole.USER,
-                        content="=== END OF CURRENT SESSION HISTORY ==="
-                    )
-                    messages.append(history_footer)
 
                 # Add cross-session relevant history if available
                 if state.relevant_cross_session_history:
@@ -1334,23 +1364,23 @@ Please reference this generated image in your response when relevant and explain
             "store_user_message",
             requires_full_processing,
             {
-                True: "check_patient",     # Full processing path
-                False: "provide_information"               # Direct to information for simple queries
+                True: "load_current_session_history",    # Full processing starts with session history
+                False: "provide_information"                        # Direct path - skip all heavy processing
             }
         )
 
-        # Conditional logic right at the start
+        # SESSION HISTORY LOADING (now happens for both patient and general chat)
+        # After loading session history, decide if we need patient data
         _builder.add_conditional_edges(
-            "check_patient",
+            "load_current_session_history",
             has_patient,
             {
-                True: "load_current_session_history",      # Patient ID provided -> fetch details
-                False: "evaluate_cross_session_history_need"    # No patient ID -> skip to chunks
+                True: "fetch_patient",                   # Patient ID provided -> fetch patient details
+                False: "evaluate_cross_session_history_need"  # No patient ID -> skip patient fetch
             }
         )
 
-        # Linear flow after patient fetch
-        _builder.add_edge("load_current_session_history", "fetch_patient")
+        # PATIENT PROCESSING PATH (only when patient_id exists)
         _builder.add_edge("fetch_patient", "store_patient_chunks")
         _builder.add_edge("store_patient_chunks", "evaluate_cross_session_history_need")
 
