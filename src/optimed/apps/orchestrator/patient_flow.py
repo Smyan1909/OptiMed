@@ -466,6 +466,8 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
         @streaming_step("load_current_session_history")
         async def load_current_session_history(state: FlowState) -> FlowState:
             """Load chat history for the patient if available."""
+            print(f"[load_current_session_history] Loading for patient_id={state.patient_id}, session_id={state.session_id}")
+
             if state.patient_id and state.session_id:
                 try:
                     # Get history for this specific session
@@ -474,6 +476,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                         session_id=state.session_id,
                         limit=20
                     )
+                    print(f"[load_current_session_history] Retrieved {len(history_data)} messages")
 
                     chat_messages = []
                     
@@ -491,7 +494,30 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     print(f"[load_current_session_history] Error loading chat history: {e}")
                     state.chat_history = []
             else:
-                state.chat_history = []
+                try:
+                    # Get history for this specific session
+                    history_data = await self._vec.get_chat_history(
+                        patient_id="general_chat", 
+                        session_id=state.session_id,
+                        limit=20
+                    )
+                    print(f"[load_current_session_history] Retrieved {len(history_data)} messages")
+
+                    chat_messages = []
+                    
+                    for item in history_data:
+                        try:
+                            role = ChatRole(item.get("role", "user"))
+                            content = item.get("content", "")
+                            chat_messages.append(ChatMessage(role=role, content=content))
+                        except Exception as e:
+                            print(f"[load_current_session_history] Error parsing item: {e}")
+                            continue
+                            
+                    state.chat_history = chat_messages
+                except Exception as e:
+                    print(f"[load_current_session_history] Error loading chat history: {e}")
+                    state.chat_history = []
 
             return state
         
@@ -1190,6 +1216,22 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 )
                 messages.append(user_info)
 
+            current_history = state.chat_history[-15:]  # Recent current session history
+            if current_history:
+                history_header = ChatMessage(
+                    role=ChatRole.USER,
+                    content="=== CURRENT SESSION HISTORY ==="
+                )
+                messages.append(history_header)
+                
+                for msg in current_history:
+                    messages.append(msg)
+                
+                history_footer = ChatMessage(
+                    role=ChatRole.USER,
+                    content="=== END OF CURRENT SESSION HISTORY ==="
+                )
+                messages.append(history_footer)
             # Only add complex context for full processing path
             if getattr(state, 'requires_full_processing', True):
                 # Add mode-specific context
@@ -1199,22 +1241,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 )
                 messages.append(mode_context)
 
-                current_history = state.chat_history[-15:]  # Recent current session history
-                if current_history:
-                    history_header = ChatMessage(
-                        role=ChatRole.USER,
-                        content="=== CURRENT SESSION HISTORY ==="
-                    )
-                    messages.append(history_header)
-                    
-                    for msg in current_history:
-                        messages.append(msg)
-                    
-                    history_footer = ChatMessage(
-                        role=ChatRole.USER,
-                        content="=== END OF CURRENT SESSION HISTORY ==="
-                    )
-                    messages.append(history_footer)
+                
 
                 # Add cross-session relevant history if available
                 if state.relevant_cross_session_history:
