@@ -843,6 +843,11 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
                     state.chunk_analysis = {"method": "fallback", "reason": "No chunks found, using patient context"}
                     return state
+                elif not rows and not state.patient_ctx:
+                    print("[intelligent_retrieve_chunks] No chunks found and no patient context available")
+                    state.retrieved_chunks = []
+                    state.chunk_analysis = {"method": "fallback", "reason": "No chunks found and no patient context available"}
+                    return state
 
                 # Step 2: Apply recency-based filtering and prepare chunks
                 current_time = time.time() * 1000  # Current time in milliseconds
@@ -2374,23 +2379,23 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
             "store_user_message",
             requires_full_processing,
             {
-                True: "check_patient",     # Full processing path
-                False: "diagnose"               # Direct to diagnosis for simple queries
+                True: "load_current_session_history",    # Full processing starts with session history
+                False: "diagnose"                        # Direct path - skip all heavy processing
             }
         )
 
-        # Conditional logic right at the start
+        # SESSION HISTORY LOADING (now happens for both patient and general chat)
+        # After loading session history, decide if we need patient data
         _builder.add_conditional_edges(
-            "check_patient",
+            "load_current_session_history",
             has_patient,
             {
-                True: "load_current_session_history",      # Patient ID provided -> fetch details
-                False: "evaluate_cross_session_history_need"    # No patient ID -> skip to chunks
+                True: "fetch_patient",                   # Patient ID provided -> fetch patient details
+                False: "evaluate_cross_session_history_need"  # No patient ID -> skip patient fetch
             }
         )
 
-        # Linear flow after patient fetch
-        _builder.add_edge("load_current_session_history", "fetch_patient")
+        # PATIENT PROCESSING PATH (only when patient_id exists)
         _builder.add_edge("fetch_patient", "store_patient_chunks")
         _builder.add_edge("store_patient_chunks", "evaluate_cross_session_history_need")
 
