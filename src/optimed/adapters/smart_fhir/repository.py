@@ -149,6 +149,29 @@ ENCOUNTER_CODES = {
     "183807002": "Inpatient stay",
     "185345009": "Outpatient visit",
 }
+
+COMPONENT_OBSERVATIONS = {
+    "85354-9": {  # Blood pressure panel
+        "components": {
+            "8480-6": "Systolic BP",
+            "8462-4": "Diastolic BP"
+        }
+    },
+    "55284-4": {  # Blood pressure systolic and diastolic
+        "components": {
+            "8480-6": "Systolic BP", 
+            "8462-4": "Diastolic BP"
+        }
+    },
+    # Add more multi-component observations as needed
+    "33747-0": {  # General appearance panel (example)
+        "components": {
+            "9279-1": "Respiratory rate",
+            "8867-4": "Heart rate",
+            "8310-5": "Body temperature"
+        }
+    }
+}
 """
 optimed.adapters.smart_fhir.repository
 -------------------------------------
@@ -269,6 +292,81 @@ def _fhir_name_to_str(p: Patient) -> str:
         parts.append(n.family)
     return " ".join(parts).strip() or "Unknown"
 
+def _process_observation_components(obs, base_url: str, category: str) -> tuple[dict, dict, dict]:
+    """
+    Process multi-component observations and return individual components.
+    Returns: (result_dict, timestamps_dict, sources_dict)
+    """
+    result = {}
+    timestamps = {}
+    sources = {}
+    
+    if not obs.component:
+        return result, timestamps, sources
+    
+    # Get the main observation's LOINC code
+    main_loinc = None
+    if obs.code and obs.code.coding:
+        for coding in obs.code.coding:
+            if coding.system == "http://loinc.org":
+                main_loinc = coding.code
+                break
+    
+    # Check if this is a known multi-component observation
+    if main_loinc and main_loinc in COMPONENT_OBSERVATIONS:
+        component_config = COMPONENT_OBSERVATIONS[main_loinc]
+        
+        for component in obs.component:
+            if component.code and component.code.coding:
+                for coding in component.code.coding:
+                    component_code = coding.code
+                    
+                    # Check if this component is one we want to extract
+                    if component_code in component_config["components"]:
+                        display_name = component_config["components"][component_code]
+                        
+                        # Extract value
+                        value_str = "N/A"
+                        if component.valueQuantity:
+                            unit = component.valueQuantity.unit or ""
+                            value_str = f"{component.valueQuantity.value} {unit}".strip()
+                        elif component.valueString:
+                            value_str = component.valueString
+                        elif component.valueCodeableConcept:
+                            if component.valueCodeableConcept.text:
+                                value_str = component.valueCodeableConcept.text
+                        
+                        result[display_name] = value_str
+                        
+                        # Extract timestamp from parent observation
+                        timestamp = obs.effectiveDateTime or obs.issued
+                        if timestamp:
+                            if hasattr(timestamp, 'strftime'):
+                                timestamps[display_name] = timestamp.strftime("%Y-%m-%d %H:%M")
+                                source_timestamp = timestamp
+                            else:
+                                try:
+                                    dt = datetime.fromisoformat(str(timestamp).replace('Z', '+00:00'))
+                                    timestamps[display_name] = dt.strftime("%Y-%m-%d %H:%M")
+                                    source_timestamp = dt
+                                except Exception:
+                                    timestamps[display_name] = str(timestamp)[:16] if len(str(timestamp)) > 16 else str(timestamp)
+                                    source_timestamp = None
+                        else:
+                            timestamps[display_name] = "Unknown"
+                            source_timestamp = None
+                        
+                        # Create source link to parent observation
+                        sources[display_name] = _create_data_source(
+                            resource_id=obs.id or "unknown",
+                            resource_type="Observation",
+                            base_url=base_url,
+                            timestamp=source_timestamp,
+                            category=category,
+                            display_name=display_name
+                        )
+    
+    return result, timestamps, sources
 
 def _obs_bundle_to_dict_with_timestamps(entries: list[Observation], base_url:str, category: str = "") -> tuple[dict[str, str], dict[str, str], dict[str, DataSource]]:
     """Convert observation bundle to dict with human-readable names and timestamps."""
@@ -322,6 +420,13 @@ def _obs_bundle_to_dict_with_timestamps(entries: list[Observation], base_url:str
                         loinc_code = coding.code
                         break
                 
+                if loinc_code and loinc_code in COMPONENT_OBSERVATIONS:
+                    comp_result, comp_timestamps, comp_sources = _process_observation_components(obs, base_url, category)
+                    result.update(comp_result)
+                    timestamps.update(comp_timestamps)
+                    sources.update(comp_sources)
+                    continue  # Skip normal processing for multi-component observations
+
                 if loinc_code:
                     # Determine category based on our mappings
                     display_name = None
@@ -762,8 +867,11 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                     value_str += f" (Since: {effective_period['start'][:10]})"
                 
                 statement_obs = {
+                    "id": resource.get("id", "unknown"),
+                    "status": status,
                     "code": {"coding": [{"code": "182840001", "display": "Medication Statement"}]},
                     "valueString": value_str,
+                    "effectiveDateTime": effective_period.get("start", ""),
                     "resource_type": "MedicationStatement"
                 }
                 statements.append(statement_obs)
@@ -812,8 +920,11 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                 value_str = "; ".join(response_text) if response_text else "No responses recorded"
                 
                 response_obs = {
+                    "id": resource.get("id", "unknown"),
+                    "questionnaire": questionnaire_ref,
                     "code": {"coding": [{"code": "273879006", "display": questionnaire_name}]},
                     "valueString": value_str,
+                    "effectiveDateTime": resource.get("authored", ""),
                     "resource_type": "QuestionnaireResponse",
                 }
                 responses.append(response_obs)
@@ -842,8 +953,11 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                 resource = entry["resource"]
                 # Create a simplified observation for medication
                 med_obs = {
+                    "id": resource.get("id", "unknown"),
+                    "status": resource.get("status", "unknown"),
                     "code": {"coding": [{"code": "10160-0", "display": "Medication"}]},
                     "valueString": resource.get("medicationCodeableConcept", {}).get("text", "Unknown medication"),
+                    "effectiveDateTime": resource.get("authoredOn", ""),
                     "resource_type": "MedicationRequest",
                 }
                 medications.append(med_obs)
@@ -869,8 +983,11 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
             for entry in bundle.get("entry", []):
                 resource = entry["resource"]
                 allergy_obs = {
+                    "id": resource.get("id", "unknown"),
+                    "status": resource.get("status", "unknown"),
                     "code": {"coding": [{"code": "48765-2", "display": "Allergies"}]},
                     "valueString": resource.get("code", {}).get("text", "Unknown allergy"),
+                    "effectiveDateTime": resource.get("onsetDateTime", ""),
                     "resource_type": "AllergyIntolerance"
                 }
                 allergies.append(allergy_obs)
@@ -896,8 +1013,11 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
             for entry in bundle.get("entry", []):
                 resource = entry["resource"]
                 condition_obs = {
+                    "id": resource.get("id", "unknown"),
+                    "status": resource.get("clinicalStatus", {}).get("text", "unknown"),
                     "code": {"coding": [{"code": "11348-0", "display": "Diagnosis"}]},
                     "valueString": resource.get("code", {}).get("text", "Unknown condition"),
+                    "effectiveDateTime": resource.get("onsetDateTime", ""),
                     "resource_type": "Condition",
                 }
                 conditions.append(condition_obs)
@@ -946,6 +1066,8 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                     value_str += f" (Lot: {lot_number})"
                 
                 immunization_obs = {
+                    "id": resource.get("id", "unknown"),
+                    "status": status,
                     "code": {"coding": [{"code": "33879002", "display": vaccine_name}]},
                     "valueString": value_str,
                     "effectiveDateTime": resource.get("occurrenceDateTime"),
