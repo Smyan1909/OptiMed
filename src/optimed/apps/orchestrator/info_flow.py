@@ -1576,7 +1576,7 @@ Please reference this generated image in your response when relevant and explain
             session_id = await self.get_or_create_session(
                 user_id=user_id,
                 patient_id=patient.patient_id if patient else None,
-                mode="chat" if chat_mode else "diagnose",
+                mode="chat" if chat_mode else "info_retrieval",
                 session_id=session_id,
                 allow_join_existing=True  # Allow users to join existing sessions
             )
@@ -1617,7 +1617,7 @@ Please reference this generated image in your response when relevant and explain
                 session_id_final = await self.get_or_create_session(
                     user_id=user_id,
                     patient_id=patient.patient_id if patient else None,
-                    mode=diagnostic_mode if not chat_mode else "chat",
+                    mode="chat" if chat_mode else "info_retrieval",
                     session_id=session_id,
                     allow_join_existing=True
                 )
