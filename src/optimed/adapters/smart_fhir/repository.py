@@ -302,9 +302,10 @@ def _obs_bundle_to_dict_with_timestamps(entries: list[Observation], base_url:str
                     source_timestamp = None
                 
                 resource_id = obs.get("id", "unknown")
+                resource_type = obs.get("resource_type", "observation")
                 sources[display_name] = _create_data_source(
                     resource_id=resource_id,
-                    resource_type="observation",
+                    resource_type=resource_type,
                     base_url=base_url,
                     timestamp=source_timestamp,
                     category=category,
@@ -762,7 +763,8 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                 
                 statement_obs = {
                     "code": {"coding": [{"code": "182840001", "display": "Medication Statement"}]},
-                    "valueString": value_str
+                    "valueString": value_str,
+                    "resource_type": "MedicationStatement"
                 }
                 statements.append(statement_obs)
             
@@ -811,7 +813,8 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                 
                 response_obs = {
                     "code": {"coding": [{"code": "273879006", "display": questionnaire_name}]},
-                    "valueString": value_str
+                    "valueString": value_str,
+                    "resource_type": "QuestionnaireResponse",
                 }
                 responses.append(response_obs)
             
@@ -840,7 +843,8 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                 # Create a simplified observation for medication
                 med_obs = {
                     "code": {"coding": [{"code": "10160-0", "display": "Medication"}]},
-                    "valueString": resource.get("medicationCodeableConcept", {}).get("text", "Unknown medication")
+                    "valueString": resource.get("medicationCodeableConcept", {}).get("text", "Unknown medication"),
+                    "resource_type": "MedicationRequest",
                 }
                 medications.append(med_obs)
             
@@ -866,7 +870,8 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                 resource = entry["resource"]
                 allergy_obs = {
                     "code": {"coding": [{"code": "48765-2", "display": "Allergies"}]},
-                    "valueString": resource.get("code", {}).get("text", "Unknown allergy")
+                    "valueString": resource.get("code", {}).get("text", "Unknown allergy"),
+                    "resource_type": "AllergyIntolerance"
                 }
                 allergies.append(allergy_obs)
             
@@ -892,7 +897,8 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                 resource = entry["resource"]
                 condition_obs = {
                     "code": {"coding": [{"code": "11348-0", "display": "Diagnosis"}]},
-                    "valueString": resource.get("code", {}).get("text", "Unknown condition")
+                    "valueString": resource.get("code", {}).get("text", "Unknown condition"),
+                    "resource_type": "Condition",
                 }
                 conditions.append(condition_obs)
             
@@ -942,7 +948,8 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                 immunization_obs = {
                     "code": {"coding": [{"code": "33879002", "display": vaccine_name}]},
                     "valueString": value_str,
-                    "effectiveDateTime": resource.get("occurrenceDateTime")
+                    "effectiveDateTime": resource.get("occurrenceDateTime"),
+                    "resource_type": "Immunization",
                 }
                 immunizations.append(immunization_obs)
             
