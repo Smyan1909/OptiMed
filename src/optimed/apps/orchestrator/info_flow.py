@@ -31,8 +31,14 @@ SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                                     2. If web search results are provided, YOU MUST cite the specific sources by including the titles and URLs in your response.
                                     3. When citing web sources, use this format: "According to [Source Title](URL)" or "As reported in [Source Title](URL)"
                                     4. Always include at least 2-3 source citations when web search results are available.
-                                    5. DO NOT add source citations when web search results are not used.
-                                    
+                                    5. DO NOT add source citations from web sources when web search results are not used.
+                                    6. When referencing patient data from the EHR, ALWAYS include clickable links when available using the format: "According to the EHR record ([Data Name](URL)), the patient shows..."
+                                    7. For EHR data without specific URLs, reference "EHR system records" or "electronic health record".
+                                    8. When you see DATA SOURCE TRACEABILITY information, use those URLs to create clickable links to the original EHR records.
+                                    9. Make EHR source links prominent and easily identifiable in your response.
+                                    10. YOU MUST provide the source for every piece of information you present, whether from the EHR, web search, or previous conversations.
+                                    11. NEVER provide diagnostic conclusions, treatment recommendations, or medical advice. You are not a medical device or diagnostic tool.
+
                                     YOUR ROLE:
                                     - Answer questions about patient demographics, medical history, and records
                                     - Provide information about medications, dosages, and interactions
@@ -41,6 +47,7 @@ SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                                     - Help locate and understand information in patient records
                                     - Engage in helpful medical conversations and provide general health guidance
                                     - Reference previous conversation history to maintain context
+                                    - Provide clear attribution to data sources when available with clickable links
                                     
                                     IMPORTANT RESTRICTIONS:
                                     - You provide information and educational content, not diagnostic conclusions
@@ -1904,6 +1911,13 @@ Please reference this generated image in your response when relevant and explain
             ("Allergies", patient_ctx.allergies, patient_ctx.allergies_sources),
             ("Diagnoses", patient_ctx.diagnoses, patient_ctx.diagnoses_sources),
             ("Immunizations", patient_ctx.immunizations, patient_ctx.immunizations_sources),
+            ("Medication Statements", patient_ctx.medication_statement, patient_ctx.medication_statement_sources),
+            ("Questionnaire Responses", patient_ctx.questionnaire_response, patient_ctx.questionnaire_response_sources),
+            ("Encounters", patient_ctx.encounters, patient_ctx.encounters_sources),
+            ("Exams", patient_ctx.exam, patient_ctx.exam_sources),
+            ("Procedures", patient_ctx.procedure, patient_ctx.procedure_sources),
+            ("Social History", patient_ctx.social_history, patient_ctx.social_history_sources),
+            ("Imaging", patient_ctx.imaging, patient_ctx.imaging_sources)
         ]
         
         for data_type_name, data_dict, sources_dict in data_types:

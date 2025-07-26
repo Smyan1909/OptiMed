@@ -13,7 +13,7 @@ from typing import AsyncGenerator, Dict, Optional, Any, List
 from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, Header, Depends, File, Form, Body, Response # type: ignore
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus, ImageGenerationRequest
+from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus, ImageGenerationRequest, DataSource
 from optimed.core.ports import FHIRRepository
 from optimed.apps.orchestrator.factory import create_app_dependencies
 from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalEntryType
@@ -98,6 +98,20 @@ class PatientOut(BaseModel):
     # Encounters
     encounters: Dict[str, str]
     encounters_timestamps: Dict[str, str]
+
+    vitals_sources: Dict[str, DataSource] = {}
+    labs_sources: Dict[str, DataSource] = {}
+    imaging_sources: Dict[str, DataSource] = {}
+    exam_sources: Dict[str, DataSource] = {}
+    procedure_sources: Dict[str, DataSource] = {}
+    social_history_sources: Dict[str, DataSource] = {}
+    medications_sources: Dict[str, DataSource] = {}
+    allergies_sources: Dict[str, DataSource] = {}
+    diagnoses_sources: Dict[str, DataSource] = {}
+    immunizations_sources: Dict[str, DataSource] = {}
+    medication_statement_sources: Dict[str, DataSource] = {}
+    questionnaire_response_sources: Dict[str, DataSource] = {}
+    encounters_sources: Dict[str, DataSource] = {}
 
 class UserOut(BaseModel):
     user_id: str 
@@ -568,6 +582,21 @@ async def search_patients(
                 # Encounters
                 encounters=p.encounters,
                 encounters_timestamps=p.encounters_timestamps,
+                # Data sources
+                vitals_sources = p.vitals_sources,
+                labs_sources = p.labs_sources,
+                imaging_sources = p.imaging_sources,
+                exam_sources = p.exam_sources,
+                procedure_sources = p.procedure_sources,
+                social_history_sources = p.social_history_sources,
+                medications_sources = p.medications_sources,
+                allergies_sources = p.allergies_sources,
+                diagnoses_sources = p.diagnoses_sources,
+                immunizations_sources = p.immunizations_sources,
+                medication_statement_sources = p.medication_statement_sources,
+                questionnaire_response_sources = p.questionnaire_response_sources,
+                encounters_sources = p.encounters_sources
+
             )
             for p in domain_objs
         ]
@@ -917,6 +946,20 @@ async def get_patient(
                 # Encounters
                 encounters=pctx.encounters,
                 encounters_timestamps=pctx.encounters_timestamps,
+                # Data sources
+                vitals_sources=pctx.vitals_sources,
+                labs_sources=pctx.labs_sources,
+                imaging_sources=pctx.imaging_sources,
+                exam_sources=pctx.exam_sources,
+                procedure_sources=pctx.procedure_sources,
+                social_history_sources=pctx.social_history_sources,
+                medications_sources=pctx.medications_sources,
+                allergies_sources=pctx.allergies_sources,
+                diagnoses_sources=pctx.diagnoses_sources,
+                immunizations_sources=pctx.immunizations_sources,
+                medication_statement_sources=pctx.medication_statement_sources,
+                questionnaire_response_sources=pctx.questionnaire_response_sources,
+                encounters_sources=pctx.encounters_sources
     )
 
 @app.delete("/patients/{patient_id}/chat-history", summary="Delete patient by ID")
