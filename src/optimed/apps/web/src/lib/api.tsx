@@ -126,6 +126,19 @@ export type SessionCreateRequest = {
   session_title?: string | null;
 };
 
+export interface AutocompleteRequest {
+  text: string;
+  entry_type: string;
+  cursor_position: number;
+  max_tokens?: number;
+}
+
+export interface AutocompleteResponse {
+  completion: string;
+  cursor_position: number;
+}
+
+
 interface DICOMImage {
   image_id: string;
   patient_id?: string;
@@ -517,6 +530,21 @@ export async function createJournalEntry(patientId: string, entry: JournalEntryC
     const errorText = await res.text();
     throw new Error(`Failed to create journal entry: ${errorText}`);
   }
+  return res.json();
+}
+
+export async function getJournalAutocomplete(request: AutocompleteRequest): Promise<AutocompleteResponse> {
+  const res = await fetch('/api/journal/autocomplete', {
+    method: 'POST',
+    headers: getSessionHeaders(),
+    body: JSON.stringify(request)
+  });
+  
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to get autocomplete: ${errorText}`);
+  }
+  
   return res.json();
 }
 

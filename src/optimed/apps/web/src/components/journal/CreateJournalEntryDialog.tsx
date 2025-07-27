@@ -16,7 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Textarea } from '@/components/ui/textarea';
+import { TextareaAutocomplete } from '../ui/textarea-autocomplete';
 import { 
   FileText, 
   Eye, 
@@ -25,7 +25,8 @@ import {
   ClipboardList, 
   Calendar,
   Save,
-  X
+  X,
+  Sparkles
 } from 'lucide-react';
 
 interface CreateJournalEntryDialogProps {
@@ -338,9 +339,13 @@ export default function CreateJournalEntryDialog({
           <DialogTitle className="text-xl font-semibold text-gray-900 flex items-center gap-2">
             <FileText className="h-5 w-5 text-blue-600" />
             Create New Journal Entry
+            <Badge variant="secondary" className="ml-2 text-xs flex items-center gap-1">
+              <Sparkles className="h-3 w-3" />
+              AI Autocomplete
+            </Badge>
           </DialogTitle>
           <DialogDescription className="text-gray-600">
-            Document patient care with structured medical templates
+            Document patient care with structured medical templates and AI-powered autocomplete
           </DialogDescription>
         </DialogHeader>
 
@@ -414,24 +419,24 @@ export default function CreateJournalEntryDialog({
               />
             </div>
 
-            {/* Content */}
+            {/* Content with Autocomplete */}
             <div className="space-y-2">
               <Label htmlFor="content" className="text-sm font-medium text-gray-900">
                 Entry Content
               </Label>
-              <Textarea
+              <TextareaAutocomplete
                 id="content"
                 value={content}
-                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setContent(e.target.value)}
+                onChange={setContent}
+                entryType={selectedType}
                 rows={16}
                 placeholder="Enter detailed clinical information..."
                 disabled={isSubmitting}
                 required
-                className="font-mono text-sm resize-none"
               />
               <p className="text-xs text-gray-500 flex items-center gap-1">
                 <FileText className="h-3 w-3" />
-                Template loaded automatically. Modify as needed for this patient.
+                Template loaded automatically. AI suggestions available while typing.
               </p>
             </div>
           </div>

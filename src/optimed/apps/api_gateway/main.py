@@ -13,7 +13,7 @@ from typing import AsyncGenerator, Dict, Optional, Any, List
 from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, Header, Depends, File, Form, Body, Response # type: ignore
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus, ImageGenerationRequest, DataSource
+from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus, ImageGenerationRequest, DataSource, ChatRole, ChatMessage
 from optimed.core.ports import FHIRRepository
 from optimed.apps.orchestrator.factory import create_app_dependencies
 from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalEntryType
@@ -21,7 +21,7 @@ from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalE
 
 from pydantic import BaseModel
 
-_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo = create_app_dependencies()
+_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _llm_service = create_app_dependencies()
 
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
@@ -1779,6 +1779,77 @@ async def delete_journal_entry(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete journal entry: {e}")
     
+@app.post("/journal/autocomplete")
+async def journal_autocomplete(
+    request: dict,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Provide LLM-guided autocomplete for journal entries."""
+    try:
+        current_user = user_ctx.get("user")
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        text = request.get("text", "")
+        entry_type = request.get("entry_type", "note")
+        cursor_position = request.get("cursor_position", len(text))
+        max_tokens = request.get("max_tokens", 50)
+        
+        if not text.strip():
+            return {"completion": "", "suggestions": []}
+        
+        # Get text before cursor
+        text_before_cursor = text[:cursor_position]
+        
+        # Create context-aware prompt based on entry type
+        entry_type_context = {
+            "note": "clinical progress note",
+            "observation": "clinical observation",
+            "treatment": "treatment documentation",
+            "diagnosis": "diagnostic assessment",
+            "assessment": "clinical assessment",
+            "plan": "care plan"
+        }
+        
+        context = entry_type_context.get(entry_type, "medical documentation")
+        
+        completion_prompt = f"""You are assisting with medical documentation. Complete the following {context} text professionally and concisely.
+
+Current text: "{text_before_cursor}"
+
+Provide a natural continuation that:
+- Uses appropriate medical terminology
+- Maintains professional tone
+- Is clinically relevant
+- Follows standard documentation practices
+- Is 1-3 words or a short phrase (max {max_tokens} characters)
+
+Completion:"""
+
+        
+        response = await _llm_service.chat([
+            ChatMessage(role=ChatRole.SYSTEM, content="You are a medical documentation assistant."),
+            ChatMessage(role=ChatRole.USER, content=completion_prompt)
+        ])
+        
+        completion = response.content.strip()
+        
+        # Clean up the completion
+        if completion.startswith('"') and completion.endswith('"'):
+            completion = completion[1:-1]
+        
+        # Limit completion length
+        if len(completion) > max_tokens:
+            completion = completion[:max_tokens].rsplit(' ', 1)[0]
+        
+        return {
+            "completion": completion,
+            "cursor_position": cursor_position
+        }
+        
+    except Exception as e:
+        print(f"[Autocomplete] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Autocomplete failed: {e}")
 
 
 @app.post("/images/generate")

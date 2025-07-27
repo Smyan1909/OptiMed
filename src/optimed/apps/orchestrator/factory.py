@@ -133,4 +133,4 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
         generated_image_repo=generated_image_repo,
     )
     
-    return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine, image_generation_service, generated_image_repo
+    return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine, image_generation_service, generated_image_repo, llm_client
