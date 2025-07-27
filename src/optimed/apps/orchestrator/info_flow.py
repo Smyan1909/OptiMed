@@ -31,8 +31,14 @@ SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                                     2. If web search results are provided, YOU MUST cite the specific sources by including the titles and URLs in your response.
                                     3. When citing web sources, use this format: "According to [Source Title](URL)" or "As reported in [Source Title](URL)"
                                     4. Always include at least 2-3 source citations when web search results are available.
-                                    5. DO NOT add source citations when web search results are not used.
-                                    
+                                    5. DO NOT add source citations from web sources when web search results are not used.
+                                    6. When referencing patient data from the EHR, ALWAYS include clickable links when available using the format: "According to the EHR record ([Data Name](URL)), the patient shows..."
+                                    7. For EHR data without specific URLs, reference "EHR system records" or "electronic health record".
+                                    8. When you see DATA SOURCE TRACEABILITY information, use those URLs to create clickable links to the original EHR records.
+                                    9. Make EHR source links prominent and easily identifiable in your response.
+                                    10. YOU MUST provide the source for every piece of information you present, whether from the EHR, web search, or previous conversations.
+                                    11. NEVER provide diagnostic conclusions, treatment recommendations, or medical advice. You are not a medical device or diagnostic tool.
+
                                     YOUR ROLE:
                                     - Answer questions about patient demographics, medical history, and records
                                     - Provide information about medications, dosages, and interactions
@@ -41,6 +47,7 @@ SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                                     - Help locate and understand information in patient records
                                     - Engage in helpful medical conversations and provide general health guidance
                                     - Reference previous conversation history to maintain context
+                                    - Provide clear attribution to data sources when available with clickable links
                                     
                                     IMPORTANT RESTRICTIONS:
                                     - You provide information and educational content, not diagnostic conclusions
@@ -563,15 +570,33 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 
                 if existing_chunks:
                     print(f"[store_chunks] Patient {patient_id} chunks already exist, checking for new journal entries")
-                    # Still proceed to check for new journal entries
                 else:
                     print(f"[store_chunks] Creating new chunks for patient {patient_id}")
                 
-                # Break down patient context into meaningful chunks
                 patient_data = state.patient_ctx
                 
-                # 1. Demographics chunk (only if no existing chunks)
+                # Helper function to extract sources from patient data - CORRECTED
+                def extract_sources_for_data_type(data_dict: dict, sources_dict: dict) -> list:
+                    """Extract source information for a data type."""
+                    sources_list = []
+                    for key, value in data_dict.items():
+                        if key in sources_dict:
+                            source = sources_dict[key]
+                            sources_list.append({
+                                "data_field": key,
+                                "value": value,
+                                "source_type": source.source_type,
+                                "resource_id": source.resource_id,
+                                "resource_url": source.resource_url,
+                                "timestamp": source.timestamp.isoformat(),
+                                "category": source.category,
+                                "display_name": source.display_name
+                            })
+                    return sources_list
+                
+                # Store chunks with source information
                 if not existing_chunks:
+                    # 1. Demographics chunk
                     demographics_text = f"""
                     Patient Demographics:
                     Name: {patient_data.name}
@@ -592,11 +617,19 @@ class LangGraphInformationEngine(DiagnosticEngine):
                         }
                     )
                     
-                    # 2. Vitals chunk (if available)
+                    # 2. Vitals chunk with sources
                     if patient_data.vitals:
+                        vitals_sources = extract_sources_for_data_type(
+                            patient_data.vitals, 
+                            patient_data.vitals_sources
+                        )
+                        
                         vitals_text = f"""
                         Patient Vitals for {patient_data.name} (ID: {patient_id}):
                         {chr(10).join([f"{key}: {value}" for key, value in patient_data.vitals.items()])}
+                        
+                        Data Sources:
+                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in vitals_sources])}
                         """
                         
                         await embed_and_store(
@@ -607,15 +640,24 @@ class LangGraphInformationEngine(DiagnosticEngine):
                             metadata={
                                 "patient_id": patient_id,
                                 "data_type": "vitals",
-                                "timestamp": str(int(time.time() * 1000))
+                                "timestamp": str(int(time.time() * 1000)),
+                                "sources": vitals_sources
                             }
                         )
                     
-                    # 3. Labs chunk (if available)
+                    # 3. Labs chunk with sources
                     if patient_data.labs:
+                        labs_sources = extract_sources_for_data_type(
+                            patient_data.labs, 
+                            patient_data.labs_sources
+                        )
+                        
                         labs_text = f"""
                         Laboratory Results for {patient_data.name} (ID: {patient_id}):
                         {chr(10).join([f"{key}: {value}" for key, value in patient_data.labs.items()])}
+                        
+                        Data Sources:
+                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in labs_sources])}
                         """
                         
                         await embed_and_store(
@@ -626,23 +668,69 @@ class LangGraphInformationEngine(DiagnosticEngine):
                             metadata={
                                 "patient_id": patient_id,
                                 "data_type": "labs",
-                                "timestamp": str(int(time.time() * 1000))
+                                "timestamp": str(int(time.time() * 1000)),
+                                "sources": labs_sources
                             }
                         )
                     
-                    # 4. Complete patient context as a single chunk for fallback
+                    # 4. Medications chunk with sources
+                    if patient_data.medications:
+                        medications_sources = extract_sources_for_data_type(
+                            patient_data.medications, 
+                            patient_data.medications_sources
+                        )
+                        
+                        medications_text = f"""
+                        Medications for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.medications.items()])}
+                        
+                        Data Sources:
+                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in medications_sources])}
+                        """
+                        
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Medications",
+                            object_id=f"{patient_id}_medications",
+                            text={"content": medications_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "medications",
+                                "timestamp": str(int(time.time() * 1000)),
+                                "sources": medications_sources
+                            }
+                        )
+                    
+                    # 5. Complete patient context with all sources
+                    all_sources = []
+                    for data_type in ['vitals', 'labs', 'medications', 'allergies', 'diagnoses', 'immunizations']:
+                        data_dict = getattr(patient_data, data_type, {})
+                        sources_dict = getattr(patient_data, f"{data_type}_sources", {})
+                        all_sources.extend(extract_sources_for_data_type(data_dict, sources_dict))
+                    
                     complete_context = patient_data.model_dump_json(indent=2)
+                    
+                    complete_context_with_sources = f"""
+                    Complete patient context for {patient_data.name} (ID: {patient_id}):
+                    {complete_context}
+                    
+                    All Data Sources:
+                    {chr(10).join([f"- {s['data_field']} ({s['category']}): {s['resource_url']}" for s in all_sources])}
+                    """
+                    
                     await embed_and_store(
                         namespace="clinical",
                         object_type="PatientContext",
                         object_id=f"{patient_id}_complete",
-                        text={"content": f"Complete patient context for {patient_data.name} (ID: {patient_id}):\n{complete_context}"},
+                        text={"content": complete_context_with_sources.strip()},
                         metadata={
                             "patient_id": patient_id,
                             "data_type": "complete_context",
-                            "timestamp": str(int(time.time() * 1000))
+                            "timestamp": str(int(time.time() * 1000)),
+                            "all_sources": all_sources
                         }
                     )
+
 
                 # 5. Fetch and store recent journal entries
                 try:
@@ -1142,9 +1230,21 @@ class LangGraphInformationEngine(DiagnosticEngine):
                     messages.append(cross_session_footer)
 
                 if state.patient_ctx:
+                    # NEW: Extract and format source information
+                    source_info = self._extract_source_summary(state.patient_ctx)
+                    
+                    ctx_content = f"""Patient context: 
+{state.patient_ctx.model_dump_json(indent=2)}
+
+=== DATA SOURCE TRACEABILITY ===
+{source_info}
+=== END OF DATA SOURCES ===
+
+IMPORTANT: When referencing specific patient data, you MUST provide the source of the information AND include links to the EHR from exactly where the data was retrieved from."""
+                    
                     ctx = ChatMessage(
                         role=ChatRole.USER,
-                        content="Patient context: \n" + state.patient_ctx.model_dump_json(indent=2),
+                        content=ctx_content,
                     )
                     messages.append(ctx)
                 
@@ -1476,7 +1576,7 @@ Please reference this generated image in your response when relevant and explain
             session_id = await self.get_or_create_session(
                 user_id=user_id,
                 patient_id=patient.patient_id if patient else None,
-                mode="chat" if chat_mode else "diagnose",
+                mode="chat" if chat_mode else "info_retrieval",
                 session_id=session_id,
                 allow_join_existing=True  # Allow users to join existing sessions
             )
@@ -1517,7 +1617,7 @@ Please reference this generated image in your response when relevant and explain
                 session_id_final = await self.get_or_create_session(
                     user_id=user_id,
                     patient_id=patient.patient_id if patient else None,
-                    mode=diagnostic_mode if not chat_mode else "chat",
+                    mode="chat" if chat_mode else "info_retrieval",
                     session_id=session_id,
                     allow_join_existing=True
                 )
@@ -1785,6 +1885,51 @@ Please reference this generated image in your response when relevant and explain
             "session_id": data.get("session_id"),
         }
     
+    def _extract_source_summary(self, patient_ctx: PatientContext) -> str:
+        """Extract and format source information from patient context."""
+        source_summary = []
+        
+        # Helper to format sources for a data type
+        def format_sources(data_type: str, data_dict: dict, sources_dict: dict) -> list:
+            sources = []
+            for key, value in data_dict.items():
+                if key in sources_dict:
+                    source = sources_dict[key]
+                    sources.append(f"  • {key}: {value}")
+                    sources.append(f"    └─ Source: {source.resource_url}")
+                    sources.append(f"    └─ Recorded: {source.timestamp.strftime('%Y-%m-%d %H:%M')}")
+                    if source.category:
+                        sources.append(f"    └─ Category: {source.category}")
+                    sources.append("")  # Empty line for spacing
+            return sources
+        
+        # Process each data type
+        data_types = [
+            ("Vital Signs", patient_ctx.vitals, patient_ctx.vitals_sources),
+            ("Laboratory Results", patient_ctx.labs, patient_ctx.labs_sources),
+            ("Medications", patient_ctx.medications, patient_ctx.medications_sources),
+            ("Allergies", patient_ctx.allergies, patient_ctx.allergies_sources),
+            ("Diagnoses", patient_ctx.diagnoses, patient_ctx.diagnoses_sources),
+            ("Immunizations", patient_ctx.immunizations, patient_ctx.immunizations_sources),
+            ("Medication Statements", patient_ctx.medication_statement, patient_ctx.medication_statement_sources),
+            ("Questionnaire Responses", patient_ctx.questionnaire_response, patient_ctx.questionnaire_response_sources),
+            ("Encounters", patient_ctx.encounters, patient_ctx.encounters_sources),
+            ("Exams", patient_ctx.exam, patient_ctx.exam_sources),
+            ("Procedures", patient_ctx.procedure, patient_ctx.procedure_sources),
+            ("Social History", patient_ctx.social_history, patient_ctx.social_history_sources),
+            ("Imaging", patient_ctx.imaging, patient_ctx.imaging_sources)
+        ]
+        
+        for data_type_name, data_dict, sources_dict in data_types:
+            if data_dict:
+                source_summary.append(f"{data_type_name}:")
+                source_summary.extend(format_sources(data_type_name.lower(), data_dict, sources_dict))
+        
+        if not source_summary:
+            return "No specific data sources available for this patient."
+        
+        return "\n".join(source_summary)
+
     @property
     def vector_store(self) -> VectorStore:
         """Access to the underlying vector store."""

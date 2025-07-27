@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import AsyncGenerator, Protocol, Sequence, Any, Union, Optional
 
 from optimed.core.domain import (
-    PatientContext, 
+    PatientContext,
     KPIEvent, 
     ChatMessage, 
     DiagnosisResult, 

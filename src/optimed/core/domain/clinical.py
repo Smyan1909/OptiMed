@@ -10,6 +10,15 @@ from .mixins import FrozenModel
 
 """Domain models for clinical data in the hospital system."""
 
+class DataSource(FrozenModel):
+    """Represents a source of data in the EHR."""
+    source_type: str  # "observation", "condition", "medication", etc.
+    resource_id: str  # FHIR resource ID
+    resource_url: str  # Full URL to the resource in the EHR
+    timestamp: datetime
+    category: Optional[str] = None  # "vital-signs", "laboratory", etc.
+    display_name: str = ""
+
 class PatientContext(FrozenModel):
 
     patient_id: str
@@ -47,6 +56,20 @@ class PatientContext(FrozenModel):
     encounters: Dict[str, str] = {}
     encounters_timestamps: Dict[str, str] = {}
 
+    # NEW: Data source tracking
+    vitals_sources: Dict[str, DataSource] = {}
+    labs_sources: Dict[str, DataSource] = {}
+    imaging_sources: Dict[str, DataSource] = {}
+    exam_sources: Dict[str, DataSource] = {}
+    procedure_sources: Dict[str, DataSource] = {}
+    social_history_sources: Dict[str, DataSource] = {}
+    medications_sources: Dict[str, DataSource] = {}
+    allergies_sources: Dict[str, DataSource] = {}
+    diagnoses_sources: Dict[str, DataSource] = {}
+    immunizations_sources: Dict[str, DataSource] = {}
+    medication_statement_sources: Dict[str, DataSource] = {}
+    questionnaire_response_sources: Dict[str, DataSource] = {}
+    encounters_sources: Dict[str, DataSource] = {}
     
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

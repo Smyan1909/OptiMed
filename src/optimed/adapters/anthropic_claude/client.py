@@ -92,14 +92,14 @@ Example format:
                 messages=claude_msgs_typed,
                 system=system_prompt,
                 temperature=temperature,
-                max_tokens=max_tokens or 4096,  # Claude's default max tokens
+                max_tokens=max_tokens or 32000,  # Claude's default max tokens
             )
         else:
             response = await self._client.messages.create(
                 model=self._model,
                 messages=claude_msgs_typed,
                 temperature=temperature,
-                max_tokens=max_tokens or 4096,  # Claude's default max tokens
+                max_tokens=max_tokens or 32000,  # Claude's default max tokens
             )
 
         assistant_text = "".join(
