@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { patientId: string } }
+  { params }: { params: { id: string } }
 ) {
   try {
-    const { patientId } = params;
+    const patientId = params.id;
     
     // Get session ID from request headers or cookies (following your existing pattern)
     const sessionId = request.headers.get('x-session-id') || 
@@ -43,10 +43,10 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { patientId: string } }
+  { params }: { params: { id: string } }
 ) {
   try {
-    const { patientId } = params;
+    const patientId = params.id;
     const body = await request.json();
     
     const sessionId = request.headers.get('x-session-id') || 
