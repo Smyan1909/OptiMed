@@ -1050,6 +1050,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
 
             return state
         
+
         async def store_user_message(state: FlowState) -> FlowState:
             """Store the user message in chat history."""
             if not state.user_prompt:
@@ -1449,8 +1450,6 @@ Please reference this generated image in your response when relevant and explain
         _builder.add_node("intelligent_retrieve_chunks", intelligent_retrieve_chunks)
         _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
         _builder.add_node("perform_web_search", perform_web_search)
-        _builder.add_node("evaluate_image_generation_need", evaluate_image_generation_need)
-        _builder.add_node("generate_image", generate_image)
         _builder.add_node("provide_information", provide_information)
         _builder.add_node("store_assistant_response", store_assistant_response)
 
@@ -1494,20 +1493,7 @@ Please reference this generated image in your response when relevant and explain
         )
 
         _builder.add_edge("search_cross_session_history", "intelligent_retrieve_chunks")
-        _builder.add_edge("intelligent_retrieve_chunks", "evaluate_image_generation_need")
-
-
-        _builder.add_conditional_edges(
-            "evaluate_image_generation_need",
-            needs_image_generation,
-            {
-                True: "generate_image",
-                False: "evaluate_web_search_need"
-            }
-        )
-
-        _builder.add_edge("generate_image", "evaluate_web_search_need")
-
+        _builder.add_edge("intelligent_retrieve_chunks", "evaluate_web_search_need")
         _builder.add_conditional_edges(
             "evaluate_web_search_need",
             needs_web_search,
