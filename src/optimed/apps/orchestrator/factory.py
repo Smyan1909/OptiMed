@@ -9,7 +9,7 @@ from optimed.adapters.anthropic_claude.client import AnthropicClaudeClient
 from optimed.adapters.anthropic_claude.journal_client import AnthropicClaudeJournalClient
 from optimed.adapters.user_repository.pg_user_repository import PGUserRepository
 from optimed.adapters.user_repository.pg_ehr_connection_repository import PGUserEHRConnectionRepository
-from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine, ImageGenerationService, GeneratedImageRepository
+from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine, ImageGenerationService, GeneratedImageRepository, LLMClient
 from optimed.adapters.dicom.pydicom_processor import PyDICOMProcessor
 from optimed.adapters.dicom.image_service import ImageServiceImpl
 from optimed.adapters.dicom.pg_image_repository import PostgreSQLImageRepository
@@ -61,7 +61,8 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
                                                       Callable[[], ImageServiceImpl], 
                                                       ImageAnalysisEngine,
                                                       Optional[ImageGenerationService],
-                                                      Optional[GeneratedImageRepository]]:
+                                                      Optional[GeneratedImageRepository],
+                                                      Optional[LLMClient]]:
     """Factory function to wire up all application dependencies."""
 
     # Load environment variables from .env file
