@@ -275,10 +275,10 @@ export default function CreateJournalEntryDialog({
       setError('Title and content are required');
       return;
     }
-
+    
     setIsSubmitting(true);
     setError(null);
-
+    
     try {
       const entryData: JournalEntryCreate = {
         patient_id: patientId,
