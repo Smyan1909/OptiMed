@@ -62,7 +62,7 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
                                                       ImageAnalysisEngine,
                                                       Optional[ImageGenerationService],
                                                       Optional[GeneratedImageRepository],
-                                                      Optional[LLMClient]]:
+                                                      LLMClient]:
     """Factory function to wire up all application dependencies."""
 
     # Load environment variables from .env file
