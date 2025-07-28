@@ -21,7 +21,7 @@ from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalE
 
 from pydantic import BaseModel
 
-_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _llm_service = create_app_dependencies()
+_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service = create_app_dependencies()
 
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
@@ -1778,7 +1778,174 @@ async def delete_journal_entry(
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete journal entry: {e}")
-    
+
+@app.post("/journal/generate")
+async def generate_journal_entry(
+    request: dict,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Generate a complete journal entry based on user prompt."""
+    try:
+        current_user = user_ctx.get("user")
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        prompt = request.get("prompt", "")
+        entry_type = request.get("entry_type", "note")
+        patient_id = request.get("patient_id")
+        
+        if not prompt.strip():
+            raise HTTPException(status_code=400, detail="Prompt is required")
+        
+        # Get patient context if provided
+        patient_context = ""
+        if patient_id:
+            try:
+                # Get FHIR repository for this user
+                fhir_repo = await _connection_service.create_fhir_repository(
+                    current_user.user_id, 
+                    provider_type="smart_fhir"
+                ) or _fhir
+                
+                patient = await fhir_repo.get_patient(patient_id)
+                patient_context = f"""
+Patient Information:
+- Name: {patient.name}
+- Age: {patient.age}
+- Sex: {patient.sex}
+- Recent Vitals: {', '.join([f"{k}: {v}" for k, v in list(patient.vitals.items())[:5]])}
+- Current Medications: {', '.join([f"{k}: {v}" for k, v in list(patient.medications.items())[:5]])}
+- Active Diagnoses: {', '.join([f"{k}: {v}" for k, v in list(patient.diagnoses.items())[:3]])}
+"""
+            except Exception as e:
+                print(f"[Warning] Could not fetch patient context: {e}")
+                patient_context = ""
+        
+        # Define entry type contexts and templates
+        entry_type_info = {
+            "note": {
+                "name": "Progress Note",
+                "structure": """SUBJECTIVE: Patient's reported symptoms and concerns
+OBJECTIVE: Vital signs, physical examination findings
+ASSESSMENT: Clinical impression and analysis
+PLAN: Treatment plan and follow-up"""
+            },
+            "observation": {
+                "name": "Clinical Observation",
+                "structure": """OBSERVATION: What was observed
+FINDINGS: Key clinical findings
+CLINICAL SIGNIFICANCE: Importance of findings
+RECOMMENDATIONS: Suggested actions"""
+            },
+            "treatment": {
+                "name": "Treatment Note",
+                "structure": """TREATMENT PROVIDED: Intervention details
+PATIENT RESPONSE: Response to treatment
+POST-TREATMENT ASSESSMENT: Current status
+PLAN: Next steps and monitoring"""
+            },
+            "diagnosis": {
+                "name": "Diagnostic Assessment",
+                "structure": """PRESENTING COMPLAINT: Chief complaint
+HISTORY OF PRESENT ILLNESS: Timeline and details
+EXAMINATION FINDINGS: Physical exam results
+DIFFERENTIAL DIAGNOSIS: Possible diagnoses
+WORKING DIAGNOSIS: Most likely diagnosis
+PLAN FOR FURTHER EVALUATION: Next steps"""
+            },
+            "assessment": {
+                "name": "Clinical Assessment",
+                "structure": """PATIENT STATUS: Current condition
+REVIEW OF SYSTEMS: System-by-system review
+CLINICAL IMPRESSION: Assessment summary
+RISK FACTORS: Identified risks
+RECOMMENDATIONS: Clinical recommendations"""
+            },
+            "plan": {
+                "name": "Care Plan",
+                "structure": """CARE GOALS: Treatment objectives
+INTERVENTIONS: Planned treatments
+MONITORING PLAN: Follow-up schedule
+PATIENT EDUCATION: Education provided
+COORDINATION OF CARE: Team involvement"""
+            }
+        }
+        
+        entry_info = entry_type_info.get(entry_type, entry_type_info["note"])
+        current_date = datetime.now().strftime("%B %d, %Y")
+        
+        # Create comprehensive prompt for journal generation
+        generation_prompt = f"""You are an expert medical documentation assistant. Generate a complete {entry_info['name']} based on the following user request.
+
+{patient_context}
+
+User Request: "{prompt}"
+
+Create a comprehensive {entry_info['name']} that follows this structure:
+{entry_info['structure']}
+
+Requirements:
+- Use professional medical terminology
+- Be specific and detailed where appropriate
+- Include relevant clinical observations
+- Follow standard medical documentation practices
+- Ensure all sections are clinically relevant
+- Use proper medical abbreviations when appropriate
+- Make realistic clinical assessments based on the prompt
+
+Generate both a title and complete content for this journal entry.
+
+Please format your response as JSON with the following structure:
+{{
+    "title": "Generated title for the entry",
+    "content": "Complete journal entry content with proper formatting and line breaks"
+}}
+
+Focus on creating realistic, clinically sound documentation that a healthcare provider would actually write."""
+
+        # Generate using the journal LLM service
+        response = await _journal_llm_service.chat([
+            ChatMessage(role=ChatRole.SYSTEM, content="You are an expert medical documentation assistant. Always respond with valid JSON format."),
+            ChatMessage(role=ChatRole.USER, content=generation_prompt)
+        ])
+        
+        # Parse the response
+        try:
+            # Try to extract JSON from the response
+            response_text = response.content.strip()
+            
+            # Handle potential markdown code blocks
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+            response_text = response_text.strip()
+            
+            generated_data = json.loads(response_text)
+            
+            title = generated_data.get("title", f"{entry_info['name']} - {current_date}")
+            content = generated_data.get("content", "")
+            
+        except json.JSONDecodeError:
+            # Fallback: treat entire response as content
+            content = response.content.strip()
+            title = f"{entry_info['name']} - {current_date}"
+        
+        # Clean up content formatting
+        content = content.replace("\\n", "\n").strip()
+        
+        return {
+            "title": title,
+            "content": content,
+            "entry_type": entry_type,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "prompt": prompt
+        }
+        
+    except Exception as e:
+        print(f"[Journal Generation] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Journal generation failed: {e}")
+
 @app.post("/journal/autocomplete")
 async def journal_autocomplete(
     request: dict,
@@ -1827,7 +1994,7 @@ Provide a natural continuation that:
 Completion:"""
 
         
-        response = await _llm_service.chat([
+        response = await _journal_llm_service.chat([
             ChatMessage(role=ChatRole.SYSTEM, content="You are a medical documentation assistant."),
             ChatMessage(role=ChatRole.USER, content=completion_prompt)
         ])

@@ -17,6 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { TextareaAutocomplete } from '../ui/textarea-autocomplete';
+import JournalGenerationDialog from './JournalGenerationDialog';
 import { 
   FileText, 
   Eye, 
@@ -26,7 +27,8 @@ import {
   Calendar,
   Save,
   X,
-  Sparkles
+  Sparkles,
+  Wand2
 } from 'lucide-react';
 
 interface CreateJournalEntryDialogProps {
@@ -256,6 +258,7 @@ export default function CreateJournalEntryDialog({
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showGenerationDialog, setShowGenerationDialog] = useState(false);
 
   const handleTypeChange = (type: JournalEntryType) => {
     setSelectedType(type);
@@ -330,150 +333,179 @@ export default function CreateJournalEntryDialog({
     }
   }, [isOpen]);
 
+  const handleGenerate = (generatedTitle: string, generatedContent: string) => {
+    setTitle(generatedTitle);
+    setContent(generatedContent);
+  };
+
   const selectedOption = ENTRY_TYPE_OPTIONS.find(option => option.value === selectedType);
 
   return (
-    <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-        <DialogHeader className="border-b border-gray-200 pb-4">
-          <DialogTitle className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-            <FileText className="h-5 w-5 text-blue-600" />
-            Create New Journal Entry
-            <Badge variant="secondary" className="ml-2 text-xs flex items-center gap-1">
-              <Sparkles className="h-3 w-3" />
-              AI Autocomplete
-            </Badge>
-          </DialogTitle>
-          <DialogDescription className="text-gray-600">
-            Document patient care with structured medical templates and AI-powered autocomplete
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={isOpen} onOpenChange={handleClose}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader className="border-b border-gray-200 pb-4">
+            <DialogTitle className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+              <FileText className="h-5 w-5 text-blue-600" />
+              Create New Journal Entry
+              <Badge variant="secondary" className="ml-2 text-xs flex items-center gap-1">
+                <Sparkles className="h-3 w-3" />
+                AI Enhanced
+              </Badge>
+            </DialogTitle>
+            <DialogDescription className="text-gray-600">
+              Document patient care with structured medical templates, AI-powered autocomplete, and automatic generation
+            </DialogDescription>
+          </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
-            {/* Error Display */}
-            {error && (
-              <Alert variant="destructive">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-
-            {/* Entry Type Selection */}
-            <div>
-              <Label className="text-base font-medium text-gray-900 mb-4 block">
-                Select Entry Type
-              </Label>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {ENTRY_TYPE_OPTIONS.map((option) => {
-                  const IconComponent = option.icon;
-                  const isSelected = selectedType === option.value;
-                  
-                  return (
-                    <Card
-                      key={option.value}
-                      className={`cursor-pointer transition-all duration-200 ${
-                        isSelected 
-                          ? option.color + ' ring-2 ring-offset-2 ring-blue-500' 
-                          : 'hover:shadow-md border-gray-200'
-                      }`}
-                      onClick={() => handleTypeChange(option.value)}
-                    >
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-sm flex items-center gap-2">
-                          <IconComponent className="h-4 w-4" />
-                          {option.label}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <CardDescription className="text-xs">
-                          {option.description}
-                        </CardDescription>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-              
-              {selectedOption && (
-                <div className="mt-3">
-                  <Badge variant="secondary" className="text-xs">
-                    Selected: {selectedOption.label}
-                  </Badge>
-                </div>
+          <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {/* Error Display */}
+              {error && (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
               )}
-            </div>
 
-            {/* Title */}
-            <div className="space-y-2">
-              <Label htmlFor="title" className="text-sm font-medium text-gray-900">
-                Entry Title
-              </Label>
-              <Input
-                id="title"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Enter a descriptive title for this entry..."
-                disabled={isSubmitting}
-                required
-                className="font-medium"
-              />
-            </div>
-
-            {/* Content with Autocomplete */}
-            <div className="space-y-2">
-              <Label htmlFor="content" className="text-sm font-medium text-gray-900">
-                Entry Content
-              </Label>
-              <TextareaAutocomplete
-                id="content"
-                value={content}
-                onChange={setContent}
-                entryType={selectedType}
-                rows={16}
-                placeholder="Enter detailed clinical information..."
-                disabled={isSubmitting}
-                required
-              />
-              <p className="text-xs text-gray-500 flex items-center gap-1">
-                <FileText className="h-3 w-3" />
-                Template loaded automatically. AI suggestions available while typing.
-              </p>
-            </div>
-          </div>
-
-          {/* Footer */}
-          <DialogFooter className="border-t border-gray-200 pt-4 bg-gray-50">
-            <div className="flex items-center gap-3 w-full justify-end">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleClose}
-                disabled={isSubmitting}
-              >
-                <X className="h-4 w-4 mr-2" />
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={isSubmitting || !title.trim() || !content.trim()}
-                className="min-w-[120px]"
-              >
-                {isSubmitting ? (
-                  <>
-                    <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
-                    Creating...
-                  </>
-                ) : (
-                  <>
-                    <Save className="h-4 w-4 mr-2" />
-                    Create Entry
-                  </>
+              {/* Entry Type Selection */}
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <Label className="text-base font-medium text-gray-900">
+                    Select Entry Type
+                  </Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowGenerationDialog(true)}
+                    disabled={isSubmitting}
+                    className="flex items-center gap-2 text-purple-600 border-purple-200 hover:bg-purple-50"
+                  >
+                    <Wand2 className="h-4 w-4" />
+                    Generate with AI
+                  </Button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {ENTRY_TYPE_OPTIONS.map((option) => {
+                    const IconComponent = option.icon;
+                    const isSelected = selectedType === option.value;
+                    
+                    return (
+                      <Card
+                        key={option.value}
+                        className={`cursor-pointer transition-all duration-200 ${
+                          isSelected 
+                            ? option.color + ' ring-2 ring-offset-2 ring-blue-500' 
+                            : 'hover:shadow-md border-gray-200'
+                        }`}
+                        onClick={() => handleTypeChange(option.value)}
+                      >
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <IconComponent className="h-4 w-4" />
+                            {option.label}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <CardDescription className="text-xs">
+                            {option.description}
+                          </CardDescription>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+                
+                {selectedOption && (
+                  <div className="mt-3">
+                    <Badge variant="secondary" className="text-xs">
+                      Selected: {selectedOption.label}
+                    </Badge>
+                  </div>
                 )}
-              </Button>
+              </div>
+
+              {/* Title */}
+              <div className="space-y-2">
+                <Label htmlFor="title" className="text-sm font-medium text-gray-900">
+                  Entry Title
+                </Label>
+                <Input
+                  id="title"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Enter a descriptive title for this entry..."
+                  disabled={isSubmitting}
+                  required
+                  className="font-medium"
+                />
+              </div>
+
+              {/* Content with Autocomplete */}
+              <div className="space-y-2">
+                <Label htmlFor="content" className="text-sm font-medium text-gray-900">
+                  Entry Content
+                </Label>
+                <TextareaAutocomplete
+                  id="content"
+                  value={content}
+                  onChange={setContent}
+                  entryType={selectedType}
+                  rows={16}
+                  placeholder="Enter detailed clinical information..."
+                  disabled={isSubmitting}
+                  required
+                />
+                <p className="text-xs text-gray-500 flex items-center gap-1">
+                  <FileText className="h-3 w-3" />
+                  Template loaded automatically. AI suggestions available while typing.
+                </p>
+              </div>
             </div>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+
+            {/* Footer */}
+            <DialogFooter className="border-t border-gray-200 pt-4 bg-gray-50">
+              <div className="flex items-center gap-3 w-full justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleClose}
+                  disabled={isSubmitting}
+                >
+                  <X className="h-4 w-4 mr-2" />
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={isSubmitting || !title.trim() || !content.trim()}
+                  className="min-w-[120px]"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4 mr-2" />
+                      Create Entry
+                    </>
+                  )}
+                </Button>
+              </div>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Generation Dialog */}
+      <JournalGenerationDialog
+        isOpen={showGenerationDialog}
+        onClose={() => setShowGenerationDialog(false)}
+        onGenerate={handleGenerate}
+        entryType={selectedType}
+        patientId={patientId}
+      />
+    </>
   );
 }
