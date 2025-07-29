@@ -2,72 +2,65 @@
 
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { Header } from '@/components/Header';
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
-import { fetchPatient, PatientDetail } from "@/lib/api";
+import { useEffect, useState } from 'react';
+import { useParams } from 'next/navigation';
+import Link from 'next/link';
+import { fetchPatient, PatientDetail } from '@/lib/api';
 import { useUser } from '@/contexts/UserContext';
-import ChatBox from "@/components/ChatBox";
-import SessionsList from "@/components/SessionsList";
-import { Badge } from "@/components/ui/badge";
-
+import ChatBox from '@/components/ChatBox';
+import SessionsList from '@/components/SessionsList';
 
 function PatientDetailContent() {
   const params = useParams();
-  const router = useRouter();
   const { user } = useUser();
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
-  const [chatKey, setChatKey] = useState(0); // Force ChatBox re-render
-  const [sessionsKey, setSessionsKey] = useState(0); // Force SessionsList re-render
-  const [showSessions, setShowSessions] = useState(true); // Toggle sessions visibility
-
+  const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>();
+  const [chatKey, setChatKey] = useState(0);
+  const [sessionsKey, setSessionsKey] = useState(0);
+  const [showSessions, setShowSessions] = useState(true);
 
   const patientId = params?.id as string;
 
   useEffect(() => {
     const loadPatient = async () => {
       if (!patientId) return;
-      
       setLoading(true);
       setError(null);
       try {
         const result = await fetchPatient(patientId);
         setPatient(result);
       } catch (err: any) {
-        setError(err.message || "Failed to load patient");
+        setError(err.message || 'Failed to load patient');
         console.error('Patient load error:', err);
       } finally {
         setLoading(false);
       }
     };
-
     loadPatient();
   }, [patientId]);
 
   const handleSessionSelect = (sessionId: string) => {
     setSelectedSessionId(sessionId);
-    setChatKey(prev => prev + 1); // Force ChatBox to reload with new session
+    setChatKey(prev => prev + 1);
   };
 
   const handleNewSession = () => {
     setSelectedSessionId(undefined);
-    setChatKey(prev => prev + 1); // Force ChatBox to reset for new session
-    setSessionsKey(prev => prev + 1); // Force SessionsList to reload
+    setChatKey(prev => prev + 1);
+    setSessionsKey(prev => prev + 1);
   };
 
+  /* ---------------------- STATE SCREENS ---------------------- */
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
         <Header />
-        <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <div className="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-              <p className="text-gray-900 font-medium">Loading patient details...</p>
-            </div>
+        <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8 flex justify-center items-center">
+          <div className="text-center">
+            <div className="animate-spin h-10 w-10 border-[6px] border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+            <p className="text-gray-900 font-medium">Loading patient details...</p>
           </div>
         </main>
       </div>
@@ -80,165 +73,171 @@ function PatientDetailContent() {
         <Header />
         <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
           <div className="bg-red-50 border border-red-200 rounded-md p-6">
-            <div className="flex">
-              <div className="flex-shrink-0">
-                <span className="text-red-400 text-2xl">⚠️</span>
-              </div>
-              <div className="ml-3">
-                <h3 className="text-lg font-medium text-red-800">Error Loading Patient</h3>
-                <div className="mt-2 text-sm text-red-700">
-                  <p>{error}</p>
-                </div>
-                <div className="mt-4">
-                  <Link href="/patients">
-                    <button className="bg-red-100 text-red-800 px-4 py-2 rounded-md hover:bg-red-200 transition-colors font-semibold">
-                      ← Back to Patients
-                    </button>
-                  </Link>
-                </div>
-              </div>
-            </div>
+            <h3 className="text-lg font-medium text-red-800">Error Loading Patient</h3>
+            <p className="mt-2 text-sm text-red-700">{error}</p>
+            <Link href="/patients">
+              <button className="mt-4 bg-red-100 text-red-800 px-4 py-2 rounded-md hover:bg-red-200 font-semibold">
+                ← Back to Patients
+              </button>
+            </Link>
           </div>
         </main>
       </div>
     );
   }
 
+  /* ---------------------- HELPERS ---------------------- */
+  const initials = patient?.name ? patient.name.split(' ').map(n => n[0]).join('').substring(0, 2) : '';
+
+  /* ---------------------- MAIN RENDER ---------------------- */
   return (
-    <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
+    <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
       <Header />
-      <main className="flex-1 w-full flex flex-col overflow-hidden">
-        <div className="flex flex-col flex-1 overflow-hidden">
-          {/* Breadcrumb - kompakt */}
-          <nav className="flex mb-2 px-6 pt-4 flex-shrink-0" aria-label="Breadcrumb">
-            <ol className="flex items-center space-x-4">
-              <li>
-                <Link href="/patients" className="text-blue-600 hover:text-blue-800 font-medium">
-                  Patients
-                </Link>
-              </li>
-              <li>
-                <span className="text-gray-400">/</span>
-              </li>
-              <li>
-                <span className="text-gray-900 font-medium">{patient?.name}</span>
-              </li>
-            </ol>
-          </nav>
 
-          {/* Patient Header - extra stor med mer detaljer */}
-          <div className="bg-gradient-to-r from-blue-50 to-white border-b border-gray-200 px-8 py-8 shadow-sm flex-shrink-0">
-            <div className="flex items-start justify-between">
-              <div className="flex items-start">
-                <div className="h-20 w-20 bg-blue-100 rounded-full flex items-center justify-center mr-6 shadow-md">
-                  <span className="text-blue-600 font-bold text-3xl">
-                    {patient?.name.split(' ').map(n => n[0]).join('').substring(0, 2)}
-                  </span>
+      {/* The whole content pane */}
+      <main className="relative flex flex-1 overflow-hidden">
+
+        {/* ─────  FLOATING   Show/Hide button  ───── */}
+        <button
+          onClick={() => setShowSessions(!showSessions)}
+          className={`absolute top-3 z-30
+                      ${showSessions ? 'left-[20.25rem]' : 'left-3'}   /* outside the 20-rem sidebar */
+                      bg-white/80 backdrop-blur-md border shadow
+                      rounded-full hover:bg-white transition-colors
+                      flex items-center justify-center
+                      h-8 w-8`}                        
+          title={showSessions ? 'Hide sessions panel' : 'Show sessions panel'}
+        >
+          <svg
+            className="w-4 h-4 text-gray-600"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            {showSessions ? (
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            ) : (
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            )}
+          </svg>
+        </button>
+
+        {/* ─────  SIDEBAR  (patient details + sessions)  ───── */}
+        {showSessions && (
+          <aside className="w-80 flex-shrink-0 border-r border-gray-200 flex flex-col overflow-y-auto bg-white">
+            {/* Patient details */}
+            <div className="p-3 bg-gradient-to-r from-blue-50 to-white border-b border-gray-200 shadow-sm">
+              <div className="flex items-start space-x-3">
+                <div className="h-12 w-12 bg-blue-100 rounded-full flex items-center justify-center shadow text-blue-600 font-bold">
+                  {initials}
                 </div>
-                <div>
-                  <h1 className="text-4xl font-bold text-gray-900 mb-2">{patient?.name}</h1>
-                  <div className="grid grid-cols-3 gap-6 text-gray-600 mb-3">
+                <div className="flex-1">
+                  <h2 className="text-lg font-bold text-gray-900">{patient?.name}</h2>
+                  <div className="grid grid-cols-2 gap-1 text-xs text-gray-700">
                     <div>
-                      <span className="text-sm text-gray-500 block">Age</span>
-                      <span className="text-lg font-semibold">{patient?.age} years</span>
+                      <span className="text-gray-500 block">Age</span>
+                      <span className="font-medium">{patient?.age}</span>
                     </div>
                     <div>
-                      <span className="text-sm text-gray-500 block">Gender</span>
-                      <span className="text-lg font-semibold">{patient?.sex}</span>
+                      <span className="text-gray-500 block">Gender</span>
+                      <span className="font-medium">{patient?.sex}</span>
                     </div>
-                    <div>
-                      <span className="text-sm text-gray-500 block">Care Unit</span>
-                      <span className="text-lg font-semibold">{patient?.care_unit}</span>
+                    <div className="col-span-2">
+                      <span className="text-gray-500 block">Care Unit</span>
+                      <span className="font-medium">{patient?.care_unit}</span>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-4">
-                    <span className="text-sm text-gray-500">Patient ID: <span className="font-mono">{patientId}</span></span>
-                    <span className="text-sm text-gray-500">•</span>
-                    <span className="text-sm text-gray-500">Last accessed: {new Date().toLocaleDateString()}</span>
+                  <div className="mt-1 text-[10px] text-gray-500">
+                    ID:&nbsp;<span className="font-mono">{patientId}</span>
                   </div>
                 </div>
               </div>
-              <div className="flex flex-col items-end space-y-3">
-                <div className="flex items-center space-x-3">
+
+              {/* Quick Links */}
+              <div className="mt-4">
+                {/* Clinical Data button */}
+                <div className="mb-3">
                   <Link href={`/vitals?id=${patientId}`}>
-                    <button className="bg-blue-600 text-white px-8 py-4 text-base font-semibold rounded-xl hover:bg-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl flex items-center space-x-3 group">
-                      <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    <button className="w-full bg-blue-600 text-white text-xs font-medium rounded-lg px-3 py-2 flex items-center justify-center gap-2 group hover:bg-blue-700 transition">
+                      {/* bar-chart icon */}
+                      <svg
+                        className="w-4 h-4 group-hover:scale-110 transition-transform"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                        />
                       </svg>
-                      <span>Clinical Data</span>
-                    </button>
-                  </Link>
-                  <Link href={`/journal?id=${patientId}`}>
-                    <button className="bg-blue-600 text-white px-8 py-4 text-base font-semibold rounded-xl hover:bg-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl flex items-center space-x-3 group">
-                      <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      <span>Medical Journal</span>
+                      <span>Clinical&nbsp;Data</span>
                     </button>
                   </Link>
                 </div>
-                <div className="flex flex-col items-end space-y-2">
-                  <div className="text-right">
-                    <div className="text-sm text-gray-600">
-                      Consulting as <span className="font-semibold">{user?.display_name}</span>
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {user?.role} • Multi-mode diagnostic assistance
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
 
-          {/* Chat Section - tar resten av skärmen */}
-          <div className="bg-white flex-1 flex flex-col min-h-0 overflow-hidden">
-            <div className="px-6 py-2 border-b border-gray-200 flex-shrink-0">
-              <button
-                onClick={() => setShowSessions(!showSessions)}
-                className="flex items-center space-x-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  {showSessions ? (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
-                  ) : (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
-                  )}
-                </svg>
-                <span>{showSessions ? 'Hide Sessions' : 'Show Sessions'}</span>
-              </button>
-            </div>
-            
-            {/* Sessions and Chat Layout - tar resten av utrymmet */}
-            <div className="flex flex-1 min-h-0 overflow-hidden">
-              {showSessions && (
-                <SessionsList
-                  key={sessionsKey}
-                  patientId={patientId}
-                  selectedSessionId={selectedSessionId}
-                  onSessionSelect={handleSessionSelect}
-                  onNewSession={handleNewSession}
-                  mode="diagnose"
-                />
-              )}
-              
-              {/* Chat Area - tar upp resten av utrymmet */}
-              <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-                <ChatBox 
-                  key={chatKey}
-                  mode="diagnose" 
-                  patientId={patientId}
-                  sessionId={selectedSessionId}
-                />
+                {/* Medical Journal button */}
+                <div>
+                  <Link href={`/journal?id=${patientId}`}>
+                    <button className="w-full bg-blue-600 text-white text-xs font-medium rounded-lg px-3 py-2 flex items-center justify-center gap-2 group hover:bg-blue-700 transition">
+                      {/* document icon */}
+                      <svg
+                        className="w-4 h-4 group-hover:scale-110 transition-transform"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                        />
+                      </svg>
+                      <span>Medical&nbsp;Journal</span>
+                    </button>
+                  </Link>
+                </div>
+              </div>
+
+              <div className="mt-4 text-[10px] text-right text-gray-500">
+                Consulting as <span className="font-semibold">{user?.display_name}</span>
               </div>
             </div>
-          </div>
-        </div>
+
+            {/* Sessions list */}
+            <div className="flex-1 overflow-y-auto">
+              <SessionsList
+                key={sessionsKey}
+                patientId={patientId}
+                selectedSessionId={selectedSessionId}
+                onSessionSelect={handleSessionSelect}
+                onNewSession={handleNewSession}
+                mode="diagnose"
+              />
+            </div>
+          </aside>
+        )}
+
+        {/* ─────  CHAT AREA  ───── */}
+        <section className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <ChatBox
+            key={chatKey}
+            mode="diagnose"
+            patientId={patientId}
+            sessionId={selectedSessionId}
+          />
+        </section>
       </main>
     </div>
   );
 }
 
+/* ───────────────────────────────────
+      PAGE WRAPPER WITH PROTECTION
+─────────────────────────────────── */
 export default function PatientDetailPage() {
   return (
     <ProtectedRoute>

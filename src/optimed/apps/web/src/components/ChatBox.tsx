@@ -9,6 +9,7 @@ import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
 import { ReasoningViewer } from "./ReasoningViewer";
 import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCards";
+import { useLayoutEffect } from "react";
 
 export interface GeneratedImageInfo {
   image_generated: boolean;
@@ -64,6 +65,20 @@ interface ChatBoxProps {
   mode: "chat" | "diagnose";
   patientId?: string;
   sessionId?: string | null;
+}
+
+function useAutosizeTextArea(textAreaRef: React.RefObject<HTMLTextAreaElement | null>, value: string, maxPx = 240) {
+  useLayoutEffect(() => {
+    const el = textAreaRef.current;
+    if (!el) return;
+
+    // reset to shrink when deleting text
+    el.style.height = 'auto';
+
+    // grow, but clamp to maxPx
+    const newHeight = Math.min(el.scrollHeight + 2, maxPx); // +2 for border
+    el.style.height = `${newHeight}px`;
+  }, [textAreaRef, value, maxPx]);
 }
 
 const parseLinksInText = (text: string, isUser: boolean = false) => {
@@ -795,127 +810,149 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     }
   };
 
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  useAutosizeTextArea(textAreaRef, input);
+
   return (
-    <div className="flex flex-col h-full bg-white max-h-full overflow-hidden">
-      {/* Chat Messages Area - only this part scrolls */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
-        <div className="p-4 space-y-3">
-          {messages.length === 0 && !isStreaming && (
-            <div className="text-center py-8">
-              <p className="text-gray-600 font-medium italic">
-                {getEmptyStateText()}
-              </p>
-              {mode === "diagnose" && (
-                <div className="text-sm text-gray-400 mt-2">
-                  Mode: Information Retrieval
+        /* ──────────────────────────────────────────
+          OUTER WRAPPER — must be relative
+        ────────────────────────────────────────── */
+        <div className="relative flex flex-col h-full bg-white overflow-hidden">
+          {/* ───────────────────────────────────
+              SCROLLABLE MESSAGES
+              (only this part scrolls)
+          ─────────────────────────────────── */}
+          <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 px-4 pt-4 pb-[112px] space-y-3">
+            {/* Empty-state notice */}
+            {messages.length === 0 && !isStreaming && (
+              <div className="text-center py-8">
+                <p className="text-gray-600 font-medium italic">{getEmptyStateText()}</p>
+                {mode === 'diagnose' && (
+                  <div className="text-sm text-gray-400 mt-2">Mode: Information Retrieval</div>
+                )}
+              </div>
+            )}
+
+            {/* All chat bubbles */}
+            {messages.map((msg, idx) => (
+              <div
+                key={idx}
+                className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                <div className="max-w-[80%]">
+                  <div
+                    className={`px-3 py-2 text-sm rounded-md ${
+                      msg.sender === 'user'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-100 text-gray-900 border'
+                    }`}
+                  >
+                    <MessageContent text={msg.text} isUser={msg.sender === 'user'} />
+                  </div>
+
+                  {msg.generatedImage && <GeneratedImageDisplay imageInfo={msg.generatedImage} />}
+
+                  {msg.sender === 'system' && msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0 && (
+                    <div className="mt-3">
+                      <DifferentialDiagnosisCards diagnoses={msg.differentialDiagnoses} />
+                    </div>
+                  )}
+
+                  {msg.sender === 'system' && msg.reasoningSteps &&
+                    (msg.reasoning || msg.reasoningSteps?.length > 0) && (
+                      <div className="mt-3">
+                        <ReasoningViewer
+                          reasoning={msg.reasoning || ''}
+                          reasoningSteps={msg.reasoningSteps}
+                        />
+                      </div>
+                    )}
+
+                  {msg.timestamp && (
+                    <div
+                      className={`text-xs mt-1 ${
+                        msg.sender === 'user' ? 'text-right text-gray-500' : 'text-left text-gray-500'
+                      }`}
+                    >
+                      {msg.timestamp}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {/* Streaming progress bar */}
+            <StreamingProgress
+              isStreaming={isStreaming}
+              currentStep={currentStep}
+              currentDescription={currentDescription}
+              progress={progress}
+              reasoning={reasoning}
+              currentReasoning={currentReasoning}
+            />
+
+            {/* Auto-scroll anchor */}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* ───────────────────────────────────
+              FLOATING INPUT BAR  (ChatGPT-style)
+          ─────────────────────────────────── */}
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] sm:w-[min(960px,calc(100%-2rem))] z-10">
+            <div className="border bg-white/80 backdrop-blur-md shadow-xl rounded-2xl">
+              <form onSubmit={sendMessage} className="flex gap-3 p-4">
+                {/* -------- TEXTAREA (auto-grow) -------- */}
+                <textarea
+                    ref={textAreaRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    placeholder={getPlaceholderText()}
+                    className="flex-1 resize-none overflow-y-auto max-h-60  /* 60×4 = 240px */
+                              border border-gray-300 bg-transparent placeholder-gray-500
+                              text-gray-900 rounded-lg px-4 py-2 focus:outline-none
+                              focus:ring-2 focus:ring-blue-500 focus:border-blue-500
+                              font-medium"
+                    disabled={isStreaming}
+                    rows={1}                      // start at a single row
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendMessage(e as any);
+                      }
+                    }}
+                  />
+
+                {/* -------- BUTTONS -------- */}
+                <div className="flex flex-col gap-2 shrink-0">
+                  <button
+                    type="submit"
+                    disabled={!input.trim() || isStreaming}
+                    className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isStreaming ? 'Analyzing…' : 'Send'}
+                  </button>
+
+                  {isStreaming && (
+                    <button
+                      type="button"
+                      onClick={stopStream}
+                      className="px-4 py-2 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors"
+                    >
+                      Stop
+                    </button>
+                  )}
+                </div>
+              </form>
+
+              {/* Small footer line (optional) */}
+              {mode === 'diagnose' && user && (
+                <div className="pb-3 text-center text-xs text-gray-600">
+                  Consulting as <span className="font-semibold">{user.display_name}</span> ({user.role}) in{' '}
+                  <span className="font-semibold">Information Retrieval</span> mode
                 </div>
               )}
             </div>
-          )}
-          
-          {messages.map((msg, idx) => (
-            <div key={idx} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
-              <div className="max-w-[80%]">
-                <div className={`px-4 py-3 rounded-lg ${
-                  msg.sender === "user" 
-                    ? "bg-blue-600 text-white" 
-                    : "bg-gray-100 text-gray-900 border"
-                }`}>
-                  <MessageContent text={msg.text} isUser={msg.sender === "user"} />
-                </div>
-                
-                {/* Display generated image if available */}
-                {msg.generatedImage && (
-                  <GeneratedImageDisplay imageInfo={msg.generatedImage} />
-                )}
-                
-                {/* Display differential diagnoses FIRST if available */}
-                {msg.sender === "system" && msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0 && (
-                  <div className="mt-3">
-                    <DifferentialDiagnosisCards diagnoses={msg.differentialDiagnoses} />
-                  </div>
-                )}
-                
-                {/* Display reasoning viewer AFTER differential diagnoses */}
-                {msg.sender === "system" && (msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)) && (
-                  <div className="mt-3">
-                    <ReasoningViewer 
-                      reasoning={msg.reasoning || ''} 
-                      reasoningSteps={msg.reasoningSteps} 
-                    />
-                  </div>
-                )}
-                
-                {msg.timestamp && (
-                  <div className={`text-xs mt-1 ${
-                    msg.sender === "user" ? "text-right text-gray-500" : "text-left text-gray-500"
-                  }`}>
-                    {msg.timestamp}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-
-          {/* Streaming Progress */}
-          <StreamingProgress
-            isStreaming={isStreaming}
-            currentStep={currentStep}
-            currentDescription={currentDescription}
-            progress={progress}
-            reasoning={reasoning}
-            currentReasoning={currentReasoning}
-          />
-
-          {/* Invisible scroll target */}
-          <div ref={messagesEndRef} />
+          </div>
         </div>
-      </div>
-
-      {/* Input Form - fixed at bottom, doesn't scroll */}
-      <div className="border-t bg-gray-50 p-4 flex-shrink-0">
-        <form onSubmit={sendMessage} className="flex gap-3">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={getPlaceholderText()}
-            className="flex-1 border border-gray-300 bg-white placeholder-gray-500 text-gray-900 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium resize-none"
-            disabled={isStreaming}
-            rows={3}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage(e as any);
-              }
-            }}
-          />
-          <div className="flex flex-col gap-2">
-            <button
-              type="submit"
-              disabled={!input.trim() || isStreaming}
-              className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isStreaming ? 'Analyzing...' : 'Send'}
-            </button>
-            {isStreaming && (
-              <button
-                type="button"
-                onClick={stopStream}
-                className="px-4 py-2 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors"
-              >
-                Stop
-              </button>
-            )}
-          </div>
-        </form>
-        
-        {mode === "diagnose" && user && (
-          <div className="mt-2 text-xs text-gray-600 text-center">
-            Consulting as <span className="font-semibold">{user.display_name}</span> ({user.role}) in{" "}
-            <span className="font-semibold">Information Retrieval</span> mode
-          </div>
-        )}
-      </div>
-    </div>
-  );
+      );
 }
