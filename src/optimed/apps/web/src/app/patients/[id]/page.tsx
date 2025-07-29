@@ -102,10 +102,10 @@ function PatientDetailContent() {
           onClick={() => setShowSessions(!showSessions)}
           className={`absolute top-3 z-30
                       ${showSessions ? 'left-[20.25rem]' : 'left-3'}   /* outside the 20-rem sidebar */
-                      bg-white/80 backdrop-blur-md border shadow
+                      bg-white/10 backdrop-blur-md border shadow
                       rounded-full hover:bg-white transition-colors
                       flex items-center justify-center
-                      h-8 w-8`}                        
+                      h-8 w-8 hover:bg-white/70 transition-colors`}                        
           title={showSessions ? 'Hide sessions panel' : 'Show sessions panel'}
         >
           <svg
