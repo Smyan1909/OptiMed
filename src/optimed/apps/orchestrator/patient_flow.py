@@ -2374,12 +2374,13 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
         # Add edges for user context loading
         _builder.add_edge("load_user_context", "evaluate_query_complexity")
         _builder.add_edge("evaluate_query_complexity", "store_user_message")
+        _builder.add_edge("store_user_messsage", "load_current_session_history")
         # Branch based on query complexity
         _builder.add_conditional_edges(
-            "store_user_message",
+            "load_current_session_history",
             requires_full_processing,
             {
-                True: "load_current_session_history",    # Full processing starts with session history
+                True: "check_patient",    # Full processing starts with session history
                 False: "diagnose"                        # Direct path - skip all heavy processing
             }
         )
@@ -2387,7 +2388,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
         # SESSION HISTORY LOADING (now happens for both patient and general chat)
         # After loading session history, decide if we need patient data
         _builder.add_conditional_edges(
-            "load_current_session_history",
+            "check_patient",
             has_patient,
             {
                 True: "fetch_patient",                   # Patient ID provided -> fetch patient details
