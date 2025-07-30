@@ -163,28 +163,28 @@ const MessageContent = ({ text, isUser }: MessageContentProps) => {
     ),
     // Headers
     h1: ({ children }: any) => (
-      <h1 className={`text-xl font-bold mb-2 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <h1 className={`text-xl font-bold mb-2 text-gray-900`}>
         {children}
       </h1>
     ),
     h2: ({ children }: any) => (
-      <h2 className={`text-lg font-bold mb-2 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <h2 className={`text-lg font-bold mb-2 text-gray-900`}>
         {children}
       </h2>
     ),
     h3: ({ children }: any) => (
-      <h3 className={`text-md font-bold mb-1 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <h3 className={`text-md font-bold mb-1 text-gray-900`}>
         {children}
       </h3>
     ),
     // Emphasis
     strong: ({ children }: any) => (
-      <strong className={`font-bold ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <strong className={`font-bold text-gray-900`}>
         {children}
       </strong>
     ),
     em: ({ children }: any) => (
-      <em className={`italic ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <em className={`italic text-gray-900`}>
         {children}
       </em>
     ),
@@ -210,17 +210,17 @@ const MessageContent = ({ text, isUser }: MessageContentProps) => {
     },
     // Lists
     ul: ({ children }: any) => (
-      <ul className={`list-disc list-inside my-2 space-y-1 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <ul className={`list-disc list-inside my-2 space-y-1 text-gray-900`}>
         {children}
       </ul>
     ),
     ol: ({ children }: any) => (
-      <ol className={`list-decimal list-inside my-2 space-y-1 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <ol className={`list-decimal list-inside my-2 space-y-1 text-gray-900`}>
         {children}
       </ol>
     ),
     li: ({ children }: any) => (
-      <li className={`${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <li className={`text-gray-900`}>
         {children}
       </li>
     ),
@@ -236,7 +236,7 @@ const MessageContent = ({ text, isUser }: MessageContentProps) => {
     ),
     // Paragraphs
     p: ({ children }: any) => (
-      <p className={`mb-2 last:mb-0 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <p className={`mb-2 last:mb-0 text-gray-900`}>
         {children}
       </p>
     ),
@@ -249,7 +249,7 @@ const MessageContent = ({ text, isUser }: MessageContentProps) => {
   };
   
   return (
-    <div className={`font-medium ${isUser ? 'text-white' : 'text-gray-900'}`}>
+    <div className={`font-medium text-gray-900`}>
       <ReactMarkdown components={markdownComponents}>
         {text}
       </ReactMarkdown>
@@ -814,145 +814,128 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   useAutosizeTextArea(textAreaRef, input);
 
   return (
-        /* ──────────────────────────────────────────
-          OUTER WRAPPER — must be relative
-        ────────────────────────────────────────── */
-        <div className="relative flex flex-col h-full bg-white overflow-hidden">
-          {/* ───────────────────────────────────
-              SCROLLABLE MESSAGES
-              (only this part scrolls)
-          ─────────────────────────────────── */}
-          <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 px-4 pt-4 pb-[112px] space-y-3">
-            {/* Empty-state notice */}
-            {messages.length === 0 && !isStreaming && (
-              <div className="text-center py-8">
-                <p className="text-gray-600 font-medium italic">{getEmptyStateText()}</p>
-                {mode === 'diagnose' && (
-                  <div className="text-sm text-gray-400 mt-2">Mode: Information Retrieval</div>
-                )}
-              </div>
-            )}
-
-            {/* All chat bubbles */}
-            {messages.map((msg, idx) => (
-              <div
-                key={idx}
-                className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div className="max-w-[80%]">
-                  <div
-                    className={`px-3 py-2 text-sm rounded-md ${
-                      msg.sender === 'user'
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-100 text-gray-900 border'
-                    }`}
-                  >
-                    <MessageContent text={msg.text} isUser={msg.sender === 'user'} />
-                  </div>
-
-                  {msg.generatedImage && <GeneratedImageDisplay imageInfo={msg.generatedImage} />}
-
-                  {msg.sender === 'system' && msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0 && (
-                    <div className="mt-3">
-                      <DifferentialDiagnosisCards diagnoses={msg.differentialDiagnoses} />
-                    </div>
-                  )}
-
-                  {msg.sender === 'system' && msg.reasoningSteps &&
-                    (msg.reasoning || msg.reasoningSteps?.length > 0) && (
-                      <div className="mt-3">
-                        <ReasoningViewer
-                          reasoning={msg.reasoning || ''}
-                          reasoningSteps={msg.reasoningSteps}
-                        />
-                      </div>
-                    )}
-
-                  {msg.timestamp && (
-                    <div
-                      className={`text-xs mt-1 ${
-                        msg.sender === 'user' ? 'text-right text-gray-500' : 'text-left text-gray-500'
-                      }`}
-                    >
-                      {msg.timestamp}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-
-            {/* Streaming progress bar */}
-            <StreamingProgress
-              isStreaming={isStreaming}
-              currentStep={currentStep}
-              currentDescription={currentDescription}
-              progress={progress}
-              reasoning={reasoning}
-              currentReasoning={currentReasoning}
-            />
-
-            {/* Auto-scroll anchor */}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* ───────────────────────────────────
-              FLOATING INPUT BAR  (ChatGPT-style)
-          ─────────────────────────────────── */}
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] sm:w-[min(960px,calc(100%-2rem))] z-10">
-            <div className="border bg-white/80 backdrop-blur-md shadow-xl rounded-2xl">
-              <form onSubmit={sendMessage} className="flex gap-3 p-4">
-                {/* -------- TEXTAREA (auto-grow) -------- */}
-                <textarea
-                    ref={textAreaRef}
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder={getPlaceholderText()}
-                    className="flex-1 resize-none overflow-y-auto max-h-60  /* 60×4 = 240px */
-                              border border-gray-300 bg-transparent placeholder-gray-500
-                              text-gray-900 rounded-lg px-4 py-2 focus:outline-none
-                              focus:ring-2 focus:ring-blue-500 focus:border-blue-500
-                              font-medium"
-                    disabled={isStreaming}
-                    rows={1}                      // start at a single row
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        sendMessage(e as any);
-                      }
-                    }}
-                  />
-
-                {/* -------- BUTTONS -------- */}
-                <div className="flex flex-col gap-2 shrink-0">
-                  <button
-                    type="submit"
-                    disabled={!input.trim() || isStreaming}
-                    className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isStreaming ? 'Analyzing…' : 'Send'}
-                  </button>
-
-                  {isStreaming && (
-                    <button
-                      type="button"
-                      onClick={stopStream}
-                      className="px-4 py-2 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors"
-                    >
-                      Stop
-                    </button>
-                  )}
-                </div>
-              </form>
-
-              {/* Small footer line (optional) */}
-              {mode === 'diagnose' && user && (
-                <div className="pb-3 text-center text-xs text-gray-600">
-                  Consulting as <span className="font-semibold">{user.display_name}</span> ({user.role}) in{' '}
-                  <span className="font-semibold">Information Retrieval</span> mode
-                </div>
+    <div className="flex-1 flex flex-col items-center justify-center min-h-0 h-full w-full relative bg-gray-50">
+      {/* Chat area with scrollable messages */}
+      <div className="flex-1 w-full flex justify-center overflow-y-auto min-h-0 pt-4 pb-[112px]">
+        <div className="w-full max-w-4xl px-4 space-y-3">
+          {/* Messages */}
+          {messages.length === 0 && !isStreaming && (
+            <div className="text-center py-8">
+              <p className="text-gray-600 font-medium italic">{getEmptyStateText()}</p>
+              {mode === 'diagnose' && (
+                <div className="text-sm text-gray-400 mt-2">Mode: Information Retrieval</div>
               )}
             </div>
-          </div>
+          )}
+
+          {messages.map((msg, idx) => (
+            <div
+              key={idx}
+              className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              <div className={msg.sender === 'user' ? "max-w-[80%]" : "max-w-4xl w-full"}>
+                {msg.sender === 'user' ? (
+                  <div className="px-3 py-2 text-sm rounded-xl bg-gray-200 text-gray-900 mb-1">
+                    <MessageContent text={msg.text} isUser={true} />
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-900 mb-1">
+                    <MessageContent text={msg.text} isUser={false}/>
+                  </div>
+                )}
+
+                {msg.generatedImage && <GeneratedImageDisplay imageInfo={msg.generatedImage} />}
+
+                {msg.sender === 'system' && msg.differentialDiagnoses && msg.differentialDiagnoses?.length > 0 && (
+                  <div className="mt-3">
+                    <DifferentialDiagnosisCards diagnoses={msg.differentialDiagnoses} />
+                  </div>
+                )}
+
+                {msg.sender === 'system' && msg.reasoningSteps && (msg.reasoning || msg.reasoningSteps?.length > 0) && (
+                  <div className="mt-3">
+                    <ReasoningViewer
+                      reasoning={msg.reasoning || ''}
+                      reasoningSteps={msg.reasoningSteps}
+                    />
+                  </div>
+                )}
+
+                {msg.timestamp && (
+                  <div
+                    className={`text-xs mt-1 ${
+                      msg.sender === 'user' ? 'text-right text-gray-500' : 'text-left text-gray-500'
+                    }`}
+                  >
+                    {msg.timestamp}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {/* Streaming progress bar */}
+          <StreamingProgress
+            isStreaming={isStreaming}
+            currentStep={currentStep}
+            currentDescription={currentDescription}
+            progress={progress}
+            reasoning={reasoning}
+            currentReasoning={currentReasoning}
+          />
+
+          {/* Auto-scroll anchor */}
+          <div ref={messagesEndRef} />
         </div>
-      );
+      </div>
+
+      {/* Absolutely positioned, centered input bar within the chat pane */}
+      <div className="absolute bottom-0 left-0 right-0 px-4 z-20 pointer-events-none flex justify-center">
+        <div className="w-full max-w-4xl border border-gray-300 bg-white/80 backdrop-blur-md shadow-xl rounded-2xl pointer-events-auto">
+          <form onSubmit={sendMessage} className="flex gap-3 p-4">
+            <textarea
+              ref={textAreaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder={getPlaceholderText()}
+              className="flex-1 resize-none overflow-y-auto border border-gray-200 bg-white/70 placeholder-gray-500
+                        text-gray-900 rounded-2xl px-3 py-1.5 focus:outline-none
+                        focus:ring-2 focus:ring-blue-400 focus:border-blue-400 font-medium text-sm shadow-sm"
+              disabled={isStreaming}
+              rows={1}
+              style={{ minHeight: 40, maxHeight: 240 }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  sendMessage(e as any);
+                }
+              }}
+            />
+            <div className="flex flex-col gap-2 shrink-0">
+              <button
+                type="submit"
+                disabled={!input.trim() || isStreaming}
+                className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isStreaming ? 'Analyzing…' : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                  </svg>
+                )}
+              </button>
+              {isStreaming && (
+                <button
+                  type="button"
+                  onClick={stopStream}
+                  className="px-4 py-2 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors"
+                >
+                  Stop
+                </button>
+              )}
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
 }
