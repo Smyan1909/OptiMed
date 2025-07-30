@@ -816,7 +816,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   return (
     <div className="flex-1 flex flex-col items-center justify-center min-h-0 h-full w-full relative bg-gray-50">
       {/* Chat area with scrollable messages */}
-      <div className="flex-1 w-full flex justify-center overflow-y-auto min-h-0 pt-4 pb-[112px]">
+      <div className="flex-1 w-full flex justify-center overflow-y-auto min-h-0 pt-4 pb-[180px]">
         <div className="w-full max-w-4xl px-4 space-y-3">
           {/* Messages */}
           {messages.length === 0 && !isStreaming && (
@@ -886,6 +886,8 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
 
           {/* Auto-scroll anchor */}
           <div ref={messagesEndRef} />
+          {/* Spacer to ensure last message is visible above input bar */}
+          <div style={{ height: 120 }} aria-hidden="true" />
         </div>
       </div>
 
