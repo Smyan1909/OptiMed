@@ -118,13 +118,13 @@ Example format:
                 },
         )
     
-    async def chat_stream(
+    async def chat_stream( # type: ignore
         self,
         messages: Sequence[ChatMessage],
         json_mode: bool = False,
         temperature: float = 0.7,
         max_tokens: int | None = None,
-    ) -> AsyncGenerator[str, None]: # type: ignore
+    ) -> AsyncGenerator[str, None]: 
         
         system_prompt: str | None = None
         claude_msgs: list[dict[str, str]] = []

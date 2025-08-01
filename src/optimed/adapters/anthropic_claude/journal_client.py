@@ -113,13 +113,13 @@ Example format:
                 },
         )
 
-    async def chat_stream(
+    async def chat_stream(  # type: ignore
             self,
             messages: Sequence[ChatMessage],
             json_mode: bool = False, 
             temperature: float = 0.7,
             max_tokens: int | None = None,
-    ) -> AsyncGenerator[str, None]: # type: ignore
+    ) -> AsyncGenerator[str, None]: 
         """
         Stream chat response from Claude.
         Yields text chunks as they are generated.
