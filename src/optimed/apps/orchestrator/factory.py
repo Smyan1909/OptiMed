@@ -1,6 +1,6 @@
 import os
 from typing import Tuple, Callable, Optional
-from optimed.apps.orchestrator.info_flow import LangGraphInformationEngine
+from optimed.apps.orchestrator.patient_flow import LangGraphDiagnosticEngine
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
 from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
 from optimed.adapters.smart_fhir.repository import SMARTFHIRRepository
@@ -127,7 +127,7 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
 
 
     # Main engine with connection service
-    engine: DiagnosticEngine = LangGraphInformationEngine(
+    engine: DiagnosticEngine = LangGraphDiagnosticEngine(
         fhir_repo=fhir_repo,
         vector_store=vector_store,
         llm_client=llm_client,

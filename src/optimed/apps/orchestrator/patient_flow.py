@@ -34,6 +34,11 @@ SYSTEM_MSG_PRE_MEET = ChatMessage(role=ChatRole.SYSTEM,
                                     2. Focus on information gathering and clinical preparation, NOT diagnosis
                                     3. If web search results are provided, cite sources using format: "According to [Source Title](URL)"
                                     4. Reference previous conversation history when available
+                                    5. When referencing patient data from the EHR, ALWAYS include clickable links when available using the format: "According to the EHR record ([Data Name](URL)), the patient shows..."
+                                    6. For EHR data without specific URLs, reference "EHR system records" or "electronic health record".
+                                    7. When you see DATA SOURCE TRACEABILITY information, use those URLs to create clickable links to the original EHR records.
+                                    8. Make EHR source links prominent and easily identifiable in your response.
+                                    9. YOU MUST provide the source for every piece of information you present, whether from the EHR, web search, or previous conversations.
                                     
                                     YOUR ROLE:
                                     - Summarize key patient information from EHR and chat history
@@ -70,6 +75,11 @@ SYSTEM_MSG_POST_MEET = ChatMessage(role=ChatRole.SYSTEM,
                                     3. Suggest treatment plans when diagnosis is established
                                     4. If web search results are provided, cite sources using format: "According to [Source Title](URL)"
                                     5. Reference previous conversation history and examination findings
+                                    6. When referencing patient data from the EHR, ALWAYS include clickable links when available using the format: "According to the EHR record ([Data Name](URL)), the patient shows..."
+                                    7. For EHR data without specific URLs, reference "EHR system records" or "electronic health record".
+                                    8. When you see DATA SOURCE TRACEABILITY information, use those URLs to create clickable links to the original EHR records.
+                                    9. Make EHR source links prominent and easily identifiable in your response.
+                                    10. YOU MUST provide the source for every piece of information you present, whether from the EHR, web search, or previous conversations.
                                     
                                     YOUR ROLE:
                                     - Analyze all patient data to generate differential diagnoses
@@ -106,6 +116,11 @@ SYSTEM_MSG_RESEARCH = ChatMessage(role=ChatRole.SYSTEM,
                                     3. MUST cite all sources using format: "According to [Source Title](URL)" for web sources
                                     4. Provide evidence-based analysis with current medical literature
                                     5. Consider multiple perspectives and treatment approaches
+                                    6. When referencing patient data from the EHR, ALWAYS include clickable links when available using the format: "According to the EHR record ([Data Name](URL)), the patient shows..."
+                                    7. For EHR data without specific URLs, reference "EHR system records" or "electronic health record".
+                                    8. When you see DATA SOURCE TRACEABILITY information, use those URLs to create clickable links to the original EHR records.
+                                    9. Make EHR source links prominent and easily identifiable in your response.
+                                    10. YOU MUST provide the source for every piece of information you present, whether from the EHR, web search, or previous conversations.
                                     
                                     YOUR ROLE:
                                     - Conduct deep research into complex medical cases
@@ -144,6 +159,11 @@ SYSTEM_MSG_CHAT = ChatMessage(role=ChatRole.SYSTEM,
                                     3. When citing web sources, use this format: "According to [Source Title](URL)" or "As reported in [Source Title](URL)"
                                     4. Always include at least 2-3 source citations when web search results are available.
                                     5. DO NOT add source citations when web search results are not used.
+                                    6. When referencing patient data from the EHR, ALWAYS include clickable links when available using the format: "According to the EHR record ([Data Name](URL)), the patient shows..."
+                                    7. For EHR data without specific URLs, reference "EHR system records" or "electronic health record".
+                                    8. When you see DATA SOURCE TRACEABILITY information, use those URLs to create clickable links to the original EHR records.
+                                    9. Make EHR source links prominent and easily identifiable in your response.
+                                    10. YOU MUST provide the source for every piece of information you present, whether from the EHR, web search, or previous conversations.
                                     
                                     - Engage in friendly conversation
                                     - Provide general health advice and wellness tips
@@ -214,6 +234,10 @@ class FlowState(BaseModel):
     # Streaming diagnosis updates
     prelim_diagnosis_name: str = ""
     diff_diag_compute_step: str = ""
+
+    should_stream_response: bool = False  # New field to control streaming behavior
+    streaming_response: str = ""  # Accumulated response during streaming
+    stream_callback: Optional[Any] = None  # Callback for streaming updates
 
 
 class LangGraphDiagnosticEngine(DiagnosticEngine):
@@ -1283,9 +1307,21 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     messages.append(cross_session_footer)
 
                 if state.patient_ctx:
+                    # NEW: Extract and format source information
+                    source_info = self._extract_source_summary(state.patient_ctx)
+                    
+                    ctx_content = f"""Patient context: 
+{state.patient_ctx.model_dump_json(indent=2)}
+
+=== DATA SOURCE TRACEABILITY ===
+{source_info}
+=== END OF DATA SOURCES ===
+
+IMPORTANT: When referencing specific patient data, you MUST provide the source of the information AND include links to the EHR from exactly where the data was retrieved from."""
+                    
                     ctx = ChatMessage(
                         role=ChatRole.USER,
-                        content="Patient context: \n" + state.patient_ctx.model_dump_json(indent=2),
+                        content=ctx_content,
                     )
                     messages.append(ctx)
                 
@@ -1375,7 +1411,44 @@ Please reference this generated image in your response when relevant and explain
 2. What medical knowledge can I provide to help?
 3. How can I give a clear, helpful response?"""
 
-            state.llm_response = await self._streaming_llm.chat_with_reasoning(messages=messages, state=state, reasoning_prompt=reasoning_prompt)
+            if getattr(state, 'should_stream_response', False):
+                state.streaming_response = ""  # Reset streaming response
+                
+                # Initialize streaming callback to emit chunks in real-time
+                if not hasattr(state, 'streaming_updates'):
+                    state.streaming_updates = []
+                
+                async for update in self._streaming_llm.chat_with_reasoning_stream(messages=messages, state=state, reasoning_prompt=reasoning_prompt):
+                    if update["type"] == "content":
+                        state.streaming_response = update.get("accumulated_content", "")
+
+                        chunk_update = {
+                            "type": "response_chunk",
+                            "content": update.get("content", ""),
+                            "accumulated_content": state.streaming_response,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                        state.streaming_updates.append(chunk_update)
+
+                        state.current_step = "Generating Response"
+                        state.step_details = f"Generated {len(state.streaming_response)} characters..."
+                        
+                        # CRITICAL: Call the streaming callback if it exists to emit immediately
+                        if hasattr(state, 'stream_callback') and state.stream_callback:
+                            await state.stream_callback(chunk_update)
+
+                    elif update["type"] == "completion":
+                        state.llm_response = ChatMessage(
+                            role = ChatRole.ASSISTANT,
+                            content=update.get("full_content", state.streaming_response),
+                            metadata={
+                                "reasoning": update.get("reasoning", ""),
+                                "reasoning_steps": update.get("reasoning_steps", []),
+                            }
+                        )
+                        break
+            else:
+                state.llm_response = await self._streaming_llm.chat_with_reasoning(messages=messages, state=state, reasoning_prompt=reasoning_prompt)
 
             # Log user action (same as before)
             if state.user_id and state.user_context:
@@ -2374,7 +2447,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
         # Add edges for user context loading
         _builder.add_edge("load_user_context", "evaluate_query_complexity")
         _builder.add_edge("evaluate_query_complexity", "store_user_message")
-        _builder.add_edge("store_user_messsage", "load_current_session_history")
+        _builder.add_edge("store_user_message", "load_current_session_history")
         # Branch based on query complexity
         _builder.add_conditional_edges(
             "load_current_session_history",
@@ -2581,6 +2654,13 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
 
             prompt = user_prompt or self._default_prompt
             
+            # Create a queue for real-time streaming chunks
+            chunk_queue = asyncio.Queue()
+            
+            # Define the streaming callback to emit chunks immediately
+            async def stream_callback(chunk_update):
+                await chunk_queue.put(chunk_update)
+            
             # Create initial input
             if patient is not None:
                 initial_input = {
@@ -2589,7 +2669,9 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                     "chat_mode": chat_mode,
                     "diagnostic_mode": diagnostic_mode if not chat_mode else "chat",
                     "user_id": user_id,
-                    "session_id": session_id_final
+                    "session_id": session_id_final,
+                    "should_stream_response": True,  # Indicate we want streaming
+                    "stream_callback": stream_callback  # Pass the callback
                 }
             else:
                 initial_input = {
@@ -2597,115 +2679,156 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                     "chat_mode": chat_mode,
                     "diagnostic_mode": diagnostic_mode if not chat_mode else "chat",
                     "user_id": user_id,
-                    "session_id": session_id_final
+                    "session_id": session_id_final,
+                    "should_stream_response": True,  # Indicate we want streaming
+                    "stream_callback": stream_callback  # Pass the callback
                 }
 
-            previous_state = None
-            reasoning_emitted = set()  # Track which reasoning steps we've emitted
+            graph_task = None
             
-            async for update in self._compiled_graph.astream(initial_input):
-                # Extract the current state from the update
-                for node_name, node_output in update.items():
-                    if isinstance(node_output, dict):
-                        current_state = node_output
-                        
-                        # Emit status updates for step changes with auto-generated detailed descriptions
-                        if (previous_state is None or 
-                            current_state.get("current_step") != previous_state.get("current_step") or
-                            current_state.get("step_status") != previous_state.get("step_status")):
-                            
-                            status_update = {
-                                "type": "status",
-                                "step": current_state.get("current_step", ""),
-                                "description": current_state.get("step_details", ""),  # Use auto-generated details
-                                "status": current_state.get("step_status", ""),
-                                "progress": current_state.get("progress_percentage", 0.0),
-                                "timestamp": datetime.now().isoformat()
-                            }
-                            
-                            # Add special flags for important events
-                            if current_state.get("current_step") == "generate_image":
-                                if current_state.get("step_status") == "in_progress":
-                                    status_update["is_long_running"] = True
-                                    status_update["estimated_time"] = "30-60 seconds"
-                                elif current_state.get("step_status") == "completed" and current_state.get("generated_image"):
-                                    status_update["image_generated"] = True
-                                    status_update["image_id"] = current_state["generated_image"].generation_id
-                            
-                            yield status_update
-                        
-                        # NEW: Emit reasoning steps as they become available from the streaming LLM
-                        if current_state.get("reasoning_steps"):
-                            for i, step in enumerate(current_state["reasoning_steps"]):
-                                step_id = f"{current_state.get('session_id', 'unknown')}_{i}"
-                                if step_id not in reasoning_emitted:
-                                    reasoning_update = {
-                                        "type": "reasoning",
-                                        "step_number": i + 1,
-                                        "total_steps": len(current_state["reasoning_steps"]),
-                                        "content": step,  # This is the actual reasoning content
+            try:
+                # Start the graph processing as a background task
+                async def run_graph():
+                    # Move these variables inside the function to avoid scope issues
+                    previous_state = None
+                    reasoning_emitted = set()  # Track which reasoning steps we've emitted
+                    
+                    async for update in self._compiled_graph.astream(initial_input):
+                        # Extract the current state from the update
+                        for node_name, node_output in update.items():
+                            if isinstance(node_output, dict):
+                                current_state = node_output
+                                
+                                # Handle status updates (non-streaming steps)
+                                if (previous_state is None or 
+                                    current_state.get("current_step") != previous_state.get("current_step") or
+                                    current_state.get("step_status") != previous_state.get("step_status")):
+                                    
+                                    status_update = {
+                                        "type": "status",
+                                        "step": current_state.get("current_step", ""),
+                                        "description": current_state.get("step_details", ""),  # Use auto-generated details
+                                        "status": current_state.get("step_status", ""),
+                                        "progress": current_state.get("progress_percentage", 0.0),
                                         "timestamp": datetime.now().isoformat()
                                     }
-                                    yield reasoning_update
-                                    reasoning_emitted.add(step_id)
-                        
-                        # Emit reasoning complete when LLM finishes thinking
-                        if (current_state.get("llm_reasoning") and 
-                            current_state.get("reasoning_complete") and
-                            (not previous_state or not previous_state.get("reasoning_complete"))):
-                            
-                            reasoning_complete_update = {
-                                "type": "reasoning_complete",
-                                "full_reasoning": current_state["llm_reasoning"],
-                                "timestamp": datetime.now().isoformat()
-                            }
-                            yield reasoning_complete_update
-                        
-                        previous_state = current_state
-            
-            # Emit final completion with image info
-            final_response_content = ""
-            if previous_state and previous_state.get("llm_response"):
-                final_response_content = previous_state["llm_response"].content if hasattr(previous_state["llm_response"], 'content') else str(previous_state["llm_response"])
-            
-            completion_update = {
-                "type": "completion",
-                "status": "completed",
-                "details": "Analysis complete",
-                "progress": 100.0,
-                "timestamp": datetime.now().isoformat(),
-                "final_response": final_response_content
-            }
-            
-            # Include reasoning in completion
-            if previous_state and previous_state.get("llm_reasoning"):
-                completion_update["reasoning"] = previous_state["llm_reasoning"]
-                completion_update["reasoning_steps"] = previous_state.get("reasoning_steps", [])
-            
-            # Include structure differential diagnoses in completion if they exist
-            if previous_state and previous_state.get("parsed_response") and hasattr(previous_state["parsed_response"], 'differential'):
-                completion_update["differential_diagnoses"] = [
-                    {
-                        "icd_code": diff.icd_code,
-                        "diagnosis_name": diff.diagnosis_name,
-                        "confidence": diff.confidence,
-                        "reasoning": diff.reasoning,
-                        "supporting_evidence": diff.supporting_evidence
-                    }
-                    for diff in previous_state["parsed_response"].differential
-                ]
-                completion_update["diagnosis_result"] = previous_state["parsed_response"]
+                                    
+                                    # Add special flags for important events
+                                    if current_state.get("current_step") == "generate_image":
+                                        if current_state.get("step_status") == "in_progress":
+                                            status_update["is_long_running"] = True
+                                            status_update["estimated_time"] = "30-60 seconds"
+                                        elif current_state.get("step_status") == "completed" and current_state.get("generated_image"):
+                                            status_update["image_generated"] = True
+                                            status_update["image_id"] = current_state["generated_image"].generation_id
+                                
+                                    await chunk_queue.put(status_update)
+                                
 
-            # Include image information in completion
-            if previous_state and previous_state.get("generated_image"):
-                completion_update["generated_image"] = {
-                    "image_id": previous_state["generated_image"].generation_id,
-                    "prompt": previous_state["generated_image"].prompt,
-                    "created_at": previous_state["generated_image"].created_at.isoformat() if hasattr(previous_state["generated_image"], 'created_at') else None,
-                    "metadata": previous_state["generated_image"].metadata if hasattr(previous_state["generated_image"], 'metadata') else {}
-                }
-            
-            yield completion_update
+                                #Emit reasoning steps as they become available from the streaming LLM
+                                if current_state.get("reasoning_steps"):
+                                    for i, step in enumerate(current_state["reasoning_steps"]):
+                                        step_id = f"{current_state.get('session_id', 'unknown')}_{i}"
+                                        if step_id not in reasoning_emitted:
+                                            reasoning_update = {
+                                                "type": "reasoning",
+                                                "step_number": i + 1,
+                                                "total_steps": len(current_state["reasoning_steps"]),
+                                                "content": step,  # This is the actual reasoning content
+                                                "timestamp": datetime.now().isoformat()
+                                            }
+                                            await chunk_queue.put(reasoning_update)
+                                            reasoning_emitted.add(step_id)
+                                
+                                # Emit reasoning complete when LLM finishes thinking
+                                if (current_state.get("llm_reasoning") and 
+                                    current_state.get("reasoning_complete") and
+                                    (not previous_state or not previous_state.get("reasoning_complete"))):
+                                    
+                                    reasoning_complete_update = {
+                                        "type": "reasoning_complete",
+                                        "full_reasoning": current_state["llm_reasoning"],
+                                        "timestamp": datetime.now().isoformat()
+                                    }
+                                    await chunk_queue.put(reasoning_complete_update)
+                                
+                                previous_state = current_state
+                    
+                    # Emit final completion
+                    final_response_content = ""
+                    if previous_state and previous_state.get("llm_response"):
+                        final_response_content = previous_state["llm_response"].content if hasattr(previous_state["llm_response"], 'content') else str(previous_state["llm_response"])
+                    
+                    completion_update = {
+                        "type": "completion",
+                        "status": "completed",
+                        "details": "Analysis complete",
+                        "progress": 100.0,
+                        "timestamp": datetime.now().isoformat(),
+                        "final_response": final_response_content
+                    }
+                    
+                    # Include reasoning in completion
+                    if previous_state and previous_state.get("llm_reasoning"):
+                        completion_update["reasoning"] = previous_state["llm_reasoning"]
+                        completion_update["reasoning_steps"] = previous_state.get("reasoning_steps", [])
+                    
+                    # Include structure differential diagnoses in completion if they exist
+                    if previous_state and previous_state.get("parsed_response") and hasattr(previous_state["parsed_response"], 'differential'):
+                        completion_update["differential_diagnoses"] = [
+                            {
+                                "icd_code": diff.icd_code,
+                                "diagnosis_name": diff.diagnosis_name,
+                                "confidence": diff.confidence,
+                                "reasoning": diff.reasoning,
+                                "supporting_evidence": diff.supporting_evidence
+                            }
+                            for diff in previous_state["parsed_response"].differential
+                        ]
+                        completion_update["diagnosis_result"] = previous_state["parsed_response"]
+
+                    # Include image information in completion
+                    if previous_state and previous_state.get("generated_image"):
+                        completion_update["generated_image"] = {
+                            "image_id": previous_state["generated_image"].generation_id,
+                            "prompt": previous_state["generated_image"].prompt,
+                            "created_at": previous_state["generated_image"].created_at.isoformat() if hasattr(previous_state["generated_image"], 'created_at') else None,
+                            "metadata": previous_state["generated_image"].metadata if hasattr(previous_state["generated_image"], 'metadata') else {}
+                        }
+                    
+                    await chunk_queue.put(completion_update)
+                    await chunk_queue.put(None)  # Signal end of stream
+                
+                # Start graph processing
+                graph_task = asyncio.create_task(run_graph())
+                
+                # Yield chunks as they become available in real-time
+                while True:
+                    try:
+                        # Wait for next chunk with a timeout
+                        chunk = await asyncio.wait_for(chunk_queue.get(), timeout=0.1)
+                        
+                        if chunk is None:  # End of stream signal
+                            break
+                            
+                        yield chunk
+                        
+                    except asyncio.TimeoutError:
+                        # Check if graph is still running
+                        if graph_task.done():
+                            # Graph finished, drain remaining chunks
+                            while not chunk_queue.empty():
+                                chunk = chunk_queue.get_nowait()
+                                if chunk is None:
+                                    break
+                                yield chunk
+                            break
+                        continue
+                        
+            except Exception:
+                if graph_task and not graph_task.done():
+                    graph_task.cancel()
+                raise
 
         return _stream_generator()
 
@@ -2853,6 +2976,51 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
             "session_id": data.get("session_id"),
         }
     
+    def _extract_source_summary(self, patient_ctx: PatientContext) -> str:
+        """Extract and format source information from patient context."""
+        source_summary = []
+        
+        # Helper to format sources for a data type
+        def format_sources(data_type: str, data_dict: dict, sources_dict: dict) -> list:
+            sources = []
+            for key, value in data_dict.items():
+                if key in sources_dict:
+                    source = sources_dict[key]
+                    sources.append(f"  • {key}: {value}")
+                    sources.append(f"    └─ Source: {source.resource_url}")
+                    sources.append(f"    └─ Recorded: {source.timestamp.strftime('%Y-%m-%d %H:%M')}")
+                    if source.category:
+                        sources.append(f"    └─ Category: {source.category}")
+                    sources.append("")  # Empty line for spacing
+            return sources
+        
+        # Process each data type
+        data_types = [
+            ("Vital Signs", patient_ctx.vitals, patient_ctx.vitals_sources),
+            ("Laboratory Results", patient_ctx.labs, patient_ctx.labs_sources),
+            ("Medications", patient_ctx.medications, patient_ctx.medications_sources),
+            ("Allergies", patient_ctx.allergies, patient_ctx.allergies_sources),
+            ("Diagnoses", patient_ctx.diagnoses, patient_ctx.diagnoses_sources),
+            ("Immunizations", patient_ctx.immunizations, patient_ctx.immunizations_sources),
+            ("Medication Statements", patient_ctx.medication_statement, patient_ctx.medication_statement_sources),
+            ("Questionnaire Responses", patient_ctx.questionnaire_response, patient_ctx.questionnaire_response_sources),
+            ("Encounters", patient_ctx.encounters, patient_ctx.encounters_sources),
+            ("Exams", patient_ctx.exam, patient_ctx.exam_sources),
+            ("Procedures", patient_ctx.procedure, patient_ctx.procedure_sources),
+            ("Social History", patient_ctx.social_history, patient_ctx.social_history_sources),
+            ("Imaging", patient_ctx.imaging, patient_ctx.imaging_sources)
+        ]
+        
+        for data_type_name, data_dict, sources_dict in data_types:
+            if data_dict:
+                source_summary.append(f"{data_type_name}:")
+                source_summary.extend(format_sources(data_type_name.lower(), data_dict, sources_dict))
+        
+        if not source_summary:
+            return "No specific data sources available for this patient."
+        
+        return "\n".join(source_summary)
+
     @property
     def vector_store(self) -> VectorStore:
         """Access to the underlying vector store."""
