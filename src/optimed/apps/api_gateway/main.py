@@ -985,7 +985,6 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
             session_id=session_id
         ):
             chunk_count += 1
-            update_type = update.get("type", "unknown")
             
             # Handle different update types
             if update.get("type") == "status":
@@ -1127,8 +1126,6 @@ async def diagnose_stream(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # Disable nginx buffering
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "*",
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "*",
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",

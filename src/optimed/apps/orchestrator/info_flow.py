@@ -872,7 +872,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                                 is_recent = time_diff <= threshold
                                 days_old = time_diff / (24 * 60 * 60 * 1000)
                                 
-                            except (ValueError, TypeError) as e:
+                            except (ValueError, TypeError):
                                 is_recent = True  # Default to including if timestamp parsing fails
                         
                         # Apply recency filter - skip old time-sensitive data
@@ -908,7 +908,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                                     "days_old": days_old
                                 })
                         
-                    except Exception as e:
+                    except Exception:
                         continue
 
                 if not candidate_chunks:
@@ -1787,7 +1787,7 @@ Please reference this generated image in your response when relevant and explain
                             break
                         continue
                         
-            except Exception as e:
+            except Exception:
                 if graph_task and not graph_task.done():
                     graph_task.cancel()
                 raise

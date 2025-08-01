@@ -312,4 +312,4 @@ Important: Your analysis should be thorough but remember that final diagnostic d
             vitals_list = ", ".join([f"{k}: {v}" for k, v in list(context.vitals.items())[:3]])
             patient_info.append(f"Recent Vitals: {vitals_list}")
         
-        return f"\nPatient Context:\n" + "\n".join([f"- {info}" for info in patient_info]) if patient_info else ""
+        return "\nPatient Context:\n" + "\n".join([f"- {info}" for info in patient_info]) if patient_info else ""
