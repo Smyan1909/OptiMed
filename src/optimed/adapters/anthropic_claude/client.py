@@ -124,7 +124,7 @@ Example format:
         json_mode: bool = False,
         temperature: float = 0.7,
         max_tokens: int | None = None,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str, None]: # type: ignore
         
         system_prompt: str | None = None
         claude_msgs: list[dict[str, str]] = []

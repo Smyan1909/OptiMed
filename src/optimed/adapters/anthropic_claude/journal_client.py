@@ -119,7 +119,7 @@ Example format:
             json_mode: bool = False, 
             temperature: float = 0.7,
             max_tokens: int | None = None,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str, None]: # type: ignore
         """
         Stream chat response from Claude.
         Yields text chunks as they are generated.
