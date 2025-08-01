@@ -16,7 +16,7 @@ interface GeneratedImage {
 }
 
 interface StreamingUpdate {
-  type: 'status' | 'reasoning' | 'reasoning_complete' | 'completion' | 'error';
+  type: 'status' | 'reasoning' | 'reasoning_complete' | 'response_chunk' | 'completion' | 'error';
   step?: string;
   description?: string;
   message?: string;
@@ -26,6 +26,7 @@ interface StreamingUpdate {
   timestamp?: string;
   estimated_time?: string;
   is_long_running?: boolean;
+  accumulated_content?: string;
   generated_image?: GeneratedImage;
   differential_diagnoses?: DifferentialDiagnosis[];
   reasoning_steps?: string[];
@@ -37,6 +38,7 @@ interface StreamingState {
   currentDescription: string;
   reasoning: string[];
   finalResponse: string;
+  streamingResponse: string;
   error: string | null;
   progress: number;
   updates: StreamingUpdate[];
@@ -51,6 +53,7 @@ export const useStreamingChat = () => {
     currentDescription: '',
     reasoning: [],
     finalResponse: '',
+    streamingResponse: '',
     error: null,
     progress: 0,
     updates: [],
@@ -62,6 +65,160 @@ export const useStreamingChat = () => {
   const stepCountRef = useRef(0);
   const reasoningTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [streamDifferentialDiagnoses, setStreamDifferentialDiagnoses] = useState<DifferentialDiagnosis[]>([]);
+
+  // Handle streaming updates
+  const handleStreamUpdate = useCallback((update: StreamingUpdate) => {
+    console.log('🔄 Processing update:', update.type, update);
+    
+    setState(prev => {
+      const newUpdates = [...prev.updates, update];
+      
+      switch (update.type) {
+        case 'status':
+          stepCountRef.current += 1;
+          return {
+            ...prev,
+            currentStep: update.step || 'Processing...',
+            currentDescription: update.description || '',
+            progress: Math.min((stepCountRef.current / 12) * 100, 95),
+            updates: newUpdates,
+            currentReasoning: update.step?.toLowerCase().includes('reason') ? prev.currentReasoning : ''
+          };
+
+        case 'reasoning':
+          const newReasoning = [...prev.reasoning, update.reasoning || ''];
+          console.log('🧠 Adding reasoning step:', update.reasoning, 'Total steps:', newReasoning.length);
+          
+          if (reasoningTimeoutRef.current) {
+            clearTimeout(reasoningTimeoutRef.current);
+          }
+          
+          const newState = {
+            ...prev,
+            reasoning: newReasoning,
+            currentReasoning: update.reasoning || '',
+            currentStep: 'AI Reasoning',
+            currentDescription: 'Analyzing and thinking through the problem...',
+            updates: newUpdates
+          };
+          
+          reasoningTimeoutRef.current = setTimeout(() => {
+            setState(currentState => ({
+              ...currentState,
+              currentReasoning: ''
+            }));
+          }, 3000);
+          
+          return newState;
+
+        case 'reasoning_complete':
+          console.log('🧠 Reasoning complete, total steps:', prev.reasoning.length);
+          
+          if (reasoningTimeoutRef.current) {
+            clearTimeout(reasoningTimeoutRef.current);
+          }
+          
+          return {
+            ...prev,
+            currentStep: 'Analysis Complete',
+            currentDescription: 'Generating final response...',
+            currentReasoning: '',
+            progress: 90,
+            updates: newUpdates
+          };
+
+        case 'response_chunk':
+          console.log('📝 Streaming response chunk received:', {
+            content: update.content,
+            accumulated: update.accumulated_content,
+            currentLength: prev.streamingResponse.length,
+            contentLength: update.content?.length || 0,
+            accumulatedLength: update.accumulated_content?.length || 0
+          });
+          
+          // CRITICAL: Make sure we actually update the streamingResponse
+          const newStreamingResponse = update.accumulated_content || prev.streamingResponse + (update.content || '');
+          
+          return {
+            ...prev,
+            streamingResponse: newStreamingResponse,
+            currentStep: 'Generating Response',
+            currentDescription: 'Streaming response...',
+            progress: 85,
+            updates: newUpdates
+          };
+
+        case 'completion':
+          console.log('✅ Completion received with content:', update.content);
+          console.log('🖼️ Generated image:', update.generated_image);
+          console.log('🩺 Differential diagnoses received:', update.differential_diagnoses);
+          console.log('🧠 Reasoning steps received:', update.reasoning_steps);
+          
+          // Handle differential diagnoses - set them immediately
+          if (update.differential_diagnoses && Array.isArray(update.differential_diagnoses) && update.differential_diagnoses.length > 0) {
+            console.log('🩺 Setting differential diagnoses state:', update.differential_diagnoses);
+            setStreamDifferentialDiagnoses(update.differential_diagnoses);
+          } else {
+            console.log('🩺 No differential diagnoses in completion or empty array');
+            setStreamDifferentialDiagnoses([]);
+          }
+          
+          if (reasoningTimeoutRef.current) {
+            clearTimeout(reasoningTimeoutRef.current);
+          }
+
+          // CRITICAL FIX: Prioritize reasoning from completion, but preserve streaming reasoning if completion has none
+          let finalReasoning = prev.reasoning;
+          if (update.reasoning_steps && Array.isArray(update.reasoning_steps) && update.reasoning_steps.length > 0) {
+            console.log('🧠 Using reasoning from completion:', update.reasoning_steps);
+            finalReasoning = update.reasoning_steps;
+          } else if (prev.reasoning.length > 0) {
+            console.log('🧠 Using reasoning from streaming:', prev.reasoning);
+            finalReasoning = prev.reasoning;
+          } else {
+            console.log('🧠 No reasoning available from either source');
+            finalReasoning = prev.reasoning;
+          }
+          
+          return {
+            ...prev,
+            isStreaming: false,
+            finalResponse: update.content || prev.streamingResponse || '', // Use streamed content if available
+            generatedImage: update.generated_image || null,
+            reasoning: finalReasoning,
+            progress: 100,
+            currentStep: 'Complete',
+            currentDescription: 'Analysis finished',
+            currentReasoning: '',
+            streamingResponse: '', // Clear streaming response
+            updates: newUpdates
+          };
+
+        case 'error':
+          console.error('❌ Stream error:', update.error);
+          
+          if (reasoningTimeoutRef.current) {
+            clearTimeout(reasoningTimeoutRef.current);
+          }
+          
+          return {
+            ...prev,
+            isStreaming: false,
+            error: update.error || 'An error occurred',
+            progress: 0,
+            currentStep: 'Error',
+            currentDescription: 'Stream failed',
+            currentReasoning: '',
+            streamingResponse: '', // Clear streaming response
+            updates: newUpdates
+          };
+
+        default:
+          console.log('🔄 Unknown update type:', update.type);
+          return { ...prev, updates: newUpdates };
+      }
+    });
+  }, []);
 
   const startStream = useCallback(async (
     endpoint: string,
@@ -83,6 +240,7 @@ export const useStreamingChat = () => {
       currentDescription: 'Starting analysis',
       reasoning: [],
       finalResponse: '',
+      streamingResponse: '',
       error: null,
       progress: 0,
       updates: [],
@@ -134,17 +292,19 @@ export const useStreamingChat = () => {
             buffer = lines.pop() || '';
 
             for (const line of lines) {
+              console.log('🔍 Processing SSE line:', line.slice(0, 100) + '...');
               if (line.startsWith('data: ')) {
                 const data = line.slice(6).trim();
                 if (data && data !== '[DONE]') {
                   try {
                     const update = JSON.parse(data);
-                    console.log('📥 Received update:', update);
                     handleStreamUpdate(update);
                   } catch (e) {
-                    console.error('Failed to parse SSE data:', e, 'Data:', data);
+                    console.error('❌ Failed to parse SSE data:', e, 'Raw data:', data.slice(0, 200));
                   }
                 }
+              } else if (line.trim()) {
+                console.log('⚠️ Non-data SSE line:', line);
               }
             }
           }
@@ -168,132 +328,7 @@ export const useStreamingChat = () => {
         error: error instanceof Error ? error.message : 'Unknown error occurred',
       }));
     }
-  }, []);
-
-  const handleStreamUpdate = useCallback((update: StreamingUpdate) => {
-    console.log('🔄 Processing update:', update.type, update);
-    
-    setState(prev => {
-      const newUpdates = [...prev.updates, update];
-      
-      switch (update.type) {
-        case 'status':
-          stepCountRef.current += 1;
-          return {
-            ...prev,
-            currentStep: update.step || 'Processing...',
-            currentDescription: update.description || '',
-            progress: Math.min((stepCountRef.current / 12) * 100, 95),
-            updates: newUpdates,
-            currentReasoning: update.step?.toLowerCase().includes('reason') ? prev.currentReasoning : ''
-          };
-
-        case 'reasoning':
-          const newReasoning = [...prev.reasoning, update.reasoning || ''];
-          console.log('🧠 Adding reasoning step:', update.reasoning, 'Total steps:', newReasoning.length);
-          
-          if (reasoningTimeoutRef.current) {
-            clearTimeout(reasoningTimeoutRef.current);
-          }
-          
-          const newState = {
-            ...prev,
-            reasoning: newReasoning,
-            currentReasoning: update.reasoning || '',
-            currentStep: 'AI Reasoning',
-            currentDescription: 'Analyzing and thinking through the problem...',
-            updates: newUpdates
-          };
-          
-          reasoningTimeoutRef.current = setTimeout(() => {
-            setState(currentState => ({
-              ...currentState,
-              currentReasoning: ''
-            }));
-          }, 3000);
-          
-          return newState;
-
-        case 'reasoning_complete':
-          console.log('🧠 Reasoning complete, total steps:', prev.reasoning.length);
-          if (reasoningTimeoutRef.current) {
-            clearTimeout(reasoningTimeoutRef.current);
-          }
-          
-          return {
-            ...prev,
-            currentStep: 'Analysis Complete',
-            currentDescription: 'Generating final response...',
-            currentReasoning: '',
-            progress: 90,
-            updates: newUpdates
-          };
-
-        case 'completion':
-          console.log('✅ Completion received with content:', update.content);
-          console.log('🖼️ Generated image:', update.generated_image);
-          console.log('🩺 Differential diagnoses received:', update.differential_diagnoses);
-          console.log('🧠 Reasoning steps received:', update.reasoning_steps);
-          
-          // Handle differential diagnoses - set them immediately
-          if (update.differential_diagnoses && Array.isArray(update.differential_diagnoses) && update.differential_diagnoses.length > 0) {
-            console.log('🩺 Setting differential diagnoses state:', update.differential_diagnoses);
-            setStreamDifferentialDiagnoses(update.differential_diagnoses);
-          } else {
-            console.log('🩺 No differential diagnoses in completion or empty array');
-            setStreamDifferentialDiagnoses([]);
-          }
-          
-          if (reasoningTimeoutRef.current) {
-            clearTimeout(reasoningTimeoutRef.current);
-          }
-
-          // CRITICAL FIX: Prioritize reasoning from completion, but preserve streaming reasoning if completion has none
-          let finalReasoning = prev.reasoning;
-          if (update.reasoning_steps && Array.isArray(update.reasoning_steps) && update.reasoning_steps.length > 0) {
-            console.log('🧠 Using reasoning from completion:', update.reasoning_steps);
-            finalReasoning = update.reasoning_steps;
-          } else if (prev.reasoning.length > 0) {
-            console.log('🧠 Using reasoning from streaming:', prev.reasoning);
-            finalReasoning = prev.reasoning;
-          } else {
-            console.log('🧠 No reasoning available from either source');
-            finalReasoning = prev.reasoning;
-          }
-          
-          return {
-            ...prev,
-            isStreaming: false,
-            finalResponse: update.content || '',
-            generatedImage: update.generated_image || null,
-            reasoning: finalReasoning,
-            progress: 100,
-            currentStep: 'Complete',
-            currentDescription: 'Analysis finished',
-            currentReasoning: '',
-            updates: newUpdates
-          };
-
-        case 'error':
-          if (reasoningTimeoutRef.current) {
-            clearTimeout(reasoningTimeoutRef.current);
-          }
-          
-          return {
-            ...prev,
-            isStreaming: false,
-            error: update.error || 'Unknown error',
-            progress: 0,
-            currentReasoning: '',
-            updates: newUpdates
-          };
-
-        default:
-          console.log('🔄 Unknown update type:', update.type);
-          return { ...prev, updates: newUpdates };
-      }
-    });
-  }, []);
+  }, [handleStreamUpdate]);
 
   const stopStream = useCallback(() => {
     if (eventSourceRef.current) {
@@ -323,16 +358,6 @@ export const useStreamingChat = () => {
     };
   }, []);
 
-  // Debug effect to monitor differential diagnoses changes
-  useEffect(() => {
-    console.log('🩺 streamDifferentialDiagnoses state changed:', streamDifferentialDiagnoses);
-  }, [streamDifferentialDiagnoses]);
-
-  // Debug effect to monitor reasoning changes
-  useEffect(() => {
-    console.log('🧠 reasoning state changed:', state.reasoning);
-  }, [state.reasoning]);
-
   return {
     // State properties
     isStreaming: state.isStreaming,
@@ -340,6 +365,7 @@ export const useStreamingChat = () => {
     currentDescription: state.currentDescription,
     reasoning: state.reasoning,
     finalResponse: state.finalResponse,
+    streamingResponse: state.streamingResponse, // This is now properly returned
     error: state.error,
     progress: state.progress,
     updates: state.updates,

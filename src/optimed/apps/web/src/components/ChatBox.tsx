@@ -470,6 +470,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     reasoning,
     currentReasoning,
     finalResponse,
+    streamingResponse,
     generatedImage,
     streamDifferentialDiagnoses, // Add this for differential diagnoses
     error: streamError,
@@ -743,6 +744,18 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     }
   }, [streamError]);
 
+  // Debug logging to see streaming state
+  useEffect(() => {
+    console.log('🖥️ ChatBox streaming state update:', {
+      isStreaming,
+      streamingResponseLength: streamingResponse?.length || 0,
+      streamingResponsePreview: streamingResponse?.substring(0, 50) + '...',
+      hasTrimmedContent: !!(streamingResponse && streamingResponse.trim()),
+      currentStep,
+      progress
+    });
+  }, [isStreaming, streamingResponse, currentStep, progress]);
+
   const sendMessage = async (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isStreaming) return;
@@ -803,6 +816,17 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     return "Enter patient details to begin information access...";
   };
 
+  useEffect(() => {
+    if (streamingResponse) {
+      console.log('🔄 ChatBox: streamingResponse updated:', {
+        length: streamingResponse.length,
+        preview: streamingResponse.slice(0, 100) + '...',
+        isStreaming
+      });
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [streamingResponse]);
+
   const handleModeChange = (newMode: string) => {
     // Mode change removed - only info retrieval available
     if (defaultPrompt) {
@@ -812,6 +836,89 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
 
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   useAutosizeTextArea(textAreaRef, input);
+
+  const markdownComponents = {
+    // Links
+    a: ({ href, children }: any) => (
+      <a 
+        href={href} 
+        target="_blank" 
+        rel="noopener noreferrer" 
+        className="text-blue-600 hover:text-blue-800 underline font-medium transition-colors duration-200 break-words"
+      >
+        {children}
+        <svg className="w-3 h-3 inline ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+        </svg>
+      </a>
+    ),
+    // Headers
+    h1: ({ children }: any) => (
+      <h1 className="text-xl font-bold mb-2 text-gray-900">
+        {children}
+      </h1>
+    ),
+    h2: ({ children }: any) => (
+      <h2 className="text-lg font-bold mb-2 text-gray-900">
+        {children}
+      </h2>
+    ),
+    h3: ({ children }: any) => (
+      <h3 className="text-md font-bold mb-1 text-gray-900">
+        {children}
+      </h3>
+    ),
+    // Emphasis
+    strong: ({ children }: any) => (
+      <strong className="font-bold text-gray-900">
+        {children}
+      </strong>
+    ),
+    em: ({ children }: any) => (
+      <em className="italic text-gray-900">
+        {children}
+      </em>
+    ),
+    // Code
+    code: ({ children, className }: any) => {
+      const isCodeBlock = className?.includes('language-');
+      if (isCodeBlock) {
+        return (
+          <pre className="bg-gray-800 text-green-400 p-3 rounded-lg overflow-x-auto text-sm my-2">
+            <code className="font-mono">{children}</code>
+          </pre>
+        );
+      }
+      return (
+        <code className="px-1 py-0.5 rounded text-sm font-mono bg-gray-200 text-gray-800">
+          {children}
+        </code>
+      );
+    },
+    // Lists
+    ul: ({ children }: any) => (
+      <ul className="list-disc list-inside my-2 space-y-1 text-gray-900">
+        {children}
+      </ul>
+    ),
+    ol: ({ children }: any) => (
+      <ol className="list-decimal list-inside my-2 space-y-1 text-gray-900">
+        {children}
+      </ol>
+    ),
+    li: ({ children }: any) => (
+      <li className="text-gray-900">
+        {children}
+      </li>
+    ),
+    // Paragraphs
+    p: ({ children }: any) => (
+      <p className="mb-2 last:mb-0 text-gray-900">
+        {children}
+      </p>
+    ),
+  };
+
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center min-h-0 h-full w-full relative bg-gray-50">
@@ -874,15 +981,35 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
             </div>
           ))}
 
-          {/* Streaming progress bar */}
-          <StreamingProgress
-            isStreaming={isStreaming}
-            currentStep={currentStep}
-            currentDescription={currentDescription}
-            progress={progress}
-            reasoning={reasoning}
-            currentReasoning={currentReasoning}
-          />
+          {/* Streaming response display - show when we have streaming content */}
+          {isStreaming && streamingResponse && streamingResponse.trim() && (
+            <div className="flex justify-start mb-4">
+              <div className="max-w-4xl w-full">
+                <div className="text-sm text-gray-900 mb-1">
+                  <div className="rounded-2xl px-4 py-3 bg-white border border-gray-200 shadow-sm">
+                    <div className="text-sm leading-relaxed text-gray-900">
+                      <ReactMarkdown components={markdownComponents}>
+                        {streamingResponse}
+                      </ReactMarkdown>
+                      <span className="inline-block w-2 h-5 bg-blue-600 animate-pulse ml-1" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Streaming progress bar - show when streaming but no response content yet */}
+          {isStreaming && (!streamingResponse || !streamingResponse.trim()) && (
+            <StreamingProgress
+              isStreaming={isStreaming}
+              currentStep={currentStep}
+              currentDescription={currentDescription}
+              progress={progress}
+              reasoning={reasoning}
+              currentReasoning={currentReasoning}
+            />
+          )}
 
           {/* Auto-scroll anchor */}
           <div ref={messagesEndRef} />

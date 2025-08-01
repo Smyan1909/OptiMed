@@ -5,6 +5,7 @@ import httpx
 import json
 import base64
 import time
+import asyncio
 import io
 from PIL import Image
 from datetime import datetime, timezone, timedelta
@@ -974,6 +975,7 @@ async def clear_patient_chat_history(patient_id: str = Path(..., description="Th
 async def _event_stream(patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[str, None]:
     """Stream events from the diagnostic engine."""
     try:
+        chunk_count = 0
         async for update in _engine.run_stream(
             patient=patient, 
             user_prompt=user_prompt, 
@@ -982,6 +984,8 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
             user_id=user_id, 
             session_id=session_id
         ):
+            chunk_count += 1
+            
             # Handle different update types
             if update.get("type") == "status":
                 status_data = {
@@ -992,7 +996,8 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
                     "progress": update.get("progress", 0.0),
                     "timestamp": update.get("timestamp", datetime.now().isoformat())
                 }
-                yield f"data: {json.dumps(status_data)}\n\n"
+                chunk_line = f"data: {json.dumps(status_data)}\n\n"
+                yield chunk_line
                 
             elif update.get("type") == "reasoning":
                 reasoning_data = {
@@ -1011,7 +1016,22 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
                     "timestamp": update.get("timestamp", datetime.now().isoformat())
                 }
                 yield f"data: {json.dumps(reasoning_complete_data)}\n\n"
+            
+            elif update.get("type") == "response_chunk":
+                response_chunk_data = {
+                    "type": "response_chunk",
+                    "content": update.get("content", ""),
+                    "accumulated_content": update.get("accumulated_content", ""),
+                    "timestamp": update.get("timestamp", datetime.now().isoformat())
+                }
                 
+                # Immediately yield the chunk with explicit flush markers
+                chunk_line = f"data: {json.dumps(response_chunk_data)}\n\n"
+                yield chunk_line
+                
+                # Force a small delay to ensure chunk is sent
+                await asyncio.sleep(0.001)
+
             elif update.get("type") == "completion":
                 # Extract final response and differential diagnosis data
                 final_content = (
@@ -1072,7 +1092,7 @@ async def diagnose_stream(
     current_user = user_ctx.get("user")
 
     if current_user:
-        print(f"[API] Streaming diagnosis request from {current_user.display_name} ({current_user.role.value}) in {req.diagnostic_mode} mode")
+        pass  # User context loaded
 
     patient_ctx = None
     if req.patient_id:
@@ -1105,6 +1125,7 @@ async def diagnose_stream(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "*",
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -1124,7 +1145,7 @@ async def chat_stream(
     current_user = user_ctx.get("user")
 
     if current_user:
-        print(f"[API] Streaming chat request from {current_user.display_name} ({current_user.role.value})")
+        pass  # User context loaded
 
     patient_ctx = None
     if req.patient_id:
