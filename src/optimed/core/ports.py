@@ -128,6 +128,16 @@ class LLMClient(Protocol):
     ) -> ChatMessage:
         """Send a chat message sequence to the LLM and get a response."""
         ...
+    
+    async def chat_stream(
+        self,
+        messages: Sequence[ChatMessage],
+        json_mode: bool = False,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """Stream chat responses from the LLM."""
+        ...
 
 class VectorStore(Protocol):
 

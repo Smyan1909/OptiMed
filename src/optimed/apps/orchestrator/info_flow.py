@@ -5,6 +5,7 @@ from .streaming_llm import StreamingLLMWrapper
 import uuid 
 import json
 import time
+import asyncio
 from typing import List, Any, Union, AsyncGenerator, Optional
 from datetime import datetime
 
@@ -120,9 +121,10 @@ class FlowState(BaseModel):
     completed_steps: int = 0
     streaming_updates: List[dict] = Field(default_factory=list)
 
-    # Remove diagnostic-specific streaming fields
-    # prelim_diagnosis_name: str = ""
-    # diff_diag_compute_step: str = ""
+    should_stream_response: bool = False  # New field to control streaming behavior
+    streaming_response: str = ""  # Accumulated response during streaming
+    stream_callback: Optional[Any] = None  # Callback for streaming updates
+    
 
 
 class LangGraphInformationEngine(DiagnosticEngine):
@@ -821,12 +823,10 @@ class LangGraphInformationEngine(DiagnosticEngine):
 
                 if not rows and state.patient_ctx:
                     # Fallback to patient context
-                    print("[intelligent_retrieve_chunks] fallback to patient context as no chunks found")
                     state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
                     state.chunk_analysis = {"method": "fallback", "reason": "No chunks found, using patient context"}
                     return state
                 elif not rows and not state.patient_ctx:
-                    print("[intelligent_retrieve_chunks] No chunks found and no patient context available")
                     state.retrieved_chunks = []
                     state.chunk_analysis = {"method": "none", "reason": "No relevant chunks found"}
                     return state
@@ -872,17 +872,11 @@ class LangGraphInformationEngine(DiagnosticEngine):
                                 is_recent = time_diff <= threshold
                                 days_old = time_diff / (24 * 60 * 60 * 1000)
                                 
-                                # Log recency analysis for debugging
-                                threshold_days = threshold / (24 * 60 * 60 * 1000) if threshold != float('inf') else "∞"
-                                print(f"[recency] {data_type} chunk is {days_old:.1f} days old, threshold: {threshold_days} days, recent: {is_recent}")
-                                
                             except (ValueError, TypeError) as e:
-                                print(f"[recency] Could not parse timestamp '{timestamp_str}' for {data_type} chunk: {e}")
                                 is_recent = True  # Default to including if timestamp parsing fails
                         
                         # Apply recency filter - skip old time-sensitive data
                         if not is_recent:
-                            print(f"[recency] Skipping {data_type} chunk due to age ({chunk_timestamp})")
                             continue
                         
                         # Verify patient relevance
@@ -900,7 +894,6 @@ class LangGraphInformationEngine(DiagnosticEngine):
                                         # Apply recency boost: more recent = higher boost
                                         recency_factor = 1.0 + (0.3 * (1.0 - time_diff / threshold))
                                         adjusted_score = similarity_score * recency_factor # type: ignore
-                                        print(f"[recency] Applied recency boost to {data_type}: {similarity_score:.3f} -> {adjusted_score:.3f}")
                                 
                                 candidate_chunks.append({
                                     "id": f"chunk_{i}",
@@ -916,7 +909,6 @@ class LangGraphInformationEngine(DiagnosticEngine):
                                 })
                         
                     except Exception as e:
-                        print(f"[intelligent_retrieve] Error processing chunk {i}: {e}")
                         continue
 
                 if not candidate_chunks:
@@ -979,13 +971,11 @@ class LangGraphInformationEngine(DiagnosticEngine):
                     ], json_mode=True)
 
                     if not analysis_response or not analysis_response.content:
-                        print("[intelligent_retrieve] Empty response from LLM, using fallback")
                         raise ValueError("Empty response from LLM")
 
                     # Strip whitespace and check if content is empty
                     response_content = analysis_response.content.strip()
                     if not response_content:
-                        print("[intelligent_retrieve] Empty content in response, using fallback")
                         raise ValueError("Empty content in response")
 
                     # Remove markdown code block markers if present
@@ -1013,19 +1003,8 @@ class LangGraphInformationEngine(DiagnosticEngine):
                     state.retrieved_chunks = selected_chunks
                     state.chunk_analysis = analysis_data
                     state.retrieval_reasoning = analysis_data.get("reasoning", "")
-                    
-                    print(f"[intelligent_retrieve] Selected {len(selected_chunks)} chunks out of {len(candidate_chunks)} candidates")
-                    print(f"[intelligent_retrieve] Reasoning: {state.retrieval_reasoning}")
-
-                    # Log which data types were selected for debugging
-                    selected_data_types = []
-                    for chunk in candidate_chunks:
-                        if chunk["id"] in selected_chunk_ids:
-                            selected_data_types.append(chunk.get("data_type", "unknown"))
-                    print(f"[intelligent_retrieve] Selected data types: {selected_data_types}")
 
                 except Exception as e:
-                    print(f"[intelligent_retrieve] Error in LLM analysis: {e}, falling back to similarity-based selection")
                     # Fallback to top similarity scores, but prioritize journal entries and recent data
                     journal_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") == "journal_entry"]
                     recent_time_sensitive = [chunk for chunk in candidate_chunks if chunk.get("data_type") in ["vitals", "labs", "medications"] and chunk.get("is_recent", True)]
@@ -1041,7 +1020,6 @@ class LangGraphInformationEngine(DiagnosticEngine):
                     state.chunk_analysis = {"method": "fallback_similarity", "error": str(e)}
 
             except Exception as e:
-                print(f"[intelligent_retrieve] Critical error in chunk retrieval: {e}")
                 # Ultimate fallback to patient context if everything fails
                 if state.patient_ctx:
                     state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
@@ -1336,7 +1314,44 @@ Please reference this generated image in your response when relevant and explain
 2. What medical knowledge can I provide to help?
 3. How can I give a clear, helpful response?"""
 
-            state.llm_response = await self._streaming_llm.chat_with_reasoning(messages=messages, state=state, reasoning_prompt=reasoning_prompt)
+            if getattr(state, 'should_stream_response', False):
+                state.streaming_response = ""  # Reset streaming response
+                
+                # Initialize streaming callback to emit chunks in real-time
+                if not hasattr(state, 'streaming_updates'):
+                    state.streaming_updates = []
+                
+                async for update in self._streaming_llm.chat_with_reasoning_stream(messages=messages, state=state, reasoning_prompt=reasoning_prompt):
+                    if update["type"] == "content":
+                        state.streaming_response = update.get("accumulated_content", "")
+
+                        chunk_update = {
+                            "type": "response_chunk",
+                            "content": update.get("content", ""),
+                            "accumulated_content": state.streaming_response,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                        state.streaming_updates.append(chunk_update)
+
+                        state.current_step = "Generating Response"
+                        state.step_details = f"Generated {len(state.streaming_response)} characters..."
+                        
+                        # CRITICAL: Call the streaming callback if it exists to emit immediately
+                        if hasattr(state, 'stream_callback') and state.stream_callback:
+                            await state.stream_callback(chunk_update)
+
+                    elif update["type"] == "completion":
+                        state.llm_response = ChatMessage(
+                            role = ChatRole.ASSISTANT,
+                            content=update.get("full_content", state.streaming_response),
+                            metadata={
+                                "reasoning": update.get("reasoning", ""),
+                                "reasoning_steps": update.get("reasoning_steps", []),
+                            }
+                        )
+                        break
+            else:
+                state.llm_response = await self._streaming_llm.chat_with_reasoning(messages=messages, state=state, reasoning_prompt=reasoning_prompt)
 
             # Log user action (same as before)
             if state.user_id and state.user_context:
@@ -1614,6 +1629,13 @@ Please reference this generated image in your response when relevant and explain
 
             prompt = user_prompt or self._default_prompt
             
+            # Create a queue for real-time streaming chunks
+            chunk_queue = asyncio.Queue()
+            
+            # Define the streaming callback to emit chunks immediately
+            async def stream_callback(chunk_update):
+                await chunk_queue.put(chunk_update)
+            
             # Create initial input
             if patient is not None:
                 initial_input = {
@@ -1622,7 +1644,9 @@ Please reference this generated image in your response when relevant and explain
                     "chat_mode": chat_mode,
                     "info_retrieval_mode": diagnostic_mode if not chat_mode else "chat",
                     "user_id": user_id,
-                    "session_id": session_id_final
+                    "session_id": session_id_final,
+                    "should_stream_response": True,  # Indicate we want streaming
+                    "stream_callback": stream_callback  # Pass the callback
                 }
             else:
                 initial_input = {
@@ -1630,102 +1654,143 @@ Please reference this generated image in your response when relevant and explain
                     "chat_mode": chat_mode,
                     "info_retrieval_mode": diagnostic_mode if not chat_mode else "chat",
                     "user_id": user_id,
-                    "session_id": session_id_final
+                    "session_id": session_id_final,
+                    "should_stream_response": True,  # Indicate we want streaming
+                    "stream_callback": stream_callback  # Pass the callback
                 }
 
-            previous_state = None
-            reasoning_emitted = set()  # Track which reasoning steps we've emitted
+            graph_task = None
             
-            async for update in self._compiled_graph.astream(initial_input):
-                # Extract the current state from the update
-                for node_name, node_output in update.items():
-                    if isinstance(node_output, dict):
-                        current_state = node_output
-                        
-                        # Emit status updates for step changes with auto-generated detailed descriptions
-                        if (previous_state is None or 
-                            current_state.get("current_step") != previous_state.get("current_step") or
-                            current_state.get("step_status") != previous_state.get("step_status")):
-                            
-                            status_update = {
-                                "type": "status",
-                                "step": current_state.get("current_step", ""),
-                                "description": current_state.get("step_details", ""),  # Use auto-generated details
-                                "status": current_state.get("step_status", ""),
-                                "progress": current_state.get("progress_percentage", 0.0),
-                                "timestamp": datetime.now().isoformat()
-                            }
-                            
-                            # Add special flags for important events
-                            if current_state.get("current_step") == "generate_image":
-                                if current_state.get("step_status") == "in_progress":
-                                    status_update["is_long_running"] = True
-                                    status_update["estimated_time"] = "30-60 seconds"
-                                elif current_state.get("step_status") == "completed" and current_state.get("generated_image"):
-                                    status_update["image_generated"] = True
-                                    status_update["image_id"] = current_state["generated_image"].generation_id
-                            
-                            yield status_update
-                        
-                        # NEW: Emit reasoning steps as they become available from the streaming LLM
-                        if current_state.get("reasoning_steps"):
-                            for i, step in enumerate(current_state["reasoning_steps"]):
-                                step_id = f"{current_state.get('session_id', 'unknown')}_{i}"
-                                if step_id not in reasoning_emitted:
-                                    reasoning_update = {
-                                        "type": "reasoning",
-                                        "step_number": i + 1,
-                                        "total_steps": len(current_state["reasoning_steps"]),
-                                        "content": step,  # This is the actual reasoning content
+            try:
+                # Start the graph processing as a background task
+                async def run_graph():
+                    # Move these variables inside the function to avoid scope issues
+                    previous_state = None
+                    reasoning_emitted = set()  # Track which reasoning steps we've emitted
+                    
+                    async for update in self._compiled_graph.astream(initial_input):
+                        # Extract the current state from the update
+                        for node_name, node_output in update.items():
+                            if isinstance(node_output, dict):
+                                current_state = node_output
+                                
+                                # Handle status updates (non-streaming steps)
+                                if (previous_state is None or 
+                                    current_state.get("current_step") != previous_state.get("current_step") or
+                                    current_state.get("step_status") != previous_state.get("step_status")):
+                                    
+                                    status_update = {
+                                        "type": "status",
+                                        "step": current_state.get("current_step", ""),
+                                        "description": current_state.get("step_details", ""),  # Use auto-generated details
+                                        "status": current_state.get("step_status", ""),
+                                        "progress": current_state.get("progress_percentage", 0.0),
                                         "timestamp": datetime.now().isoformat()
                                     }
-                                    yield reasoning_update
-                                    reasoning_emitted.add(step_id)
-                        
-                        # Emit reasoning complete when LLM finishes thinking
-                        if (current_state.get("llm_reasoning") and 
-                            current_state.get("reasoning_complete") and
-                            (not previous_state or not previous_state.get("reasoning_complete"))):
-                            
-                            reasoning_complete_update = {
-                                "type": "reasoning_complete",
-                                "full_reasoning": current_state["llm_reasoning"],
-                                "timestamp": datetime.now().isoformat()
-                            }
-                            yield reasoning_complete_update
-                        
-                        previous_state = current_state
-            
-            # Emit final completion with image info
-            final_response_content = ""
-            if previous_state and previous_state.get("llm_response"):
-                final_response_content = previous_state["llm_response"].content if hasattr(previous_state["llm_response"], 'content') else str(previous_state["llm_response"])
-            
-            completion_update = {
-                "type": "completion",
-                "status": "completed",
-                "details": "Analysis complete",
-                "progress": 100.0,
-                "timestamp": datetime.now().isoformat(),
-                "final_response": final_response_content
-            }
-            
-            # Include reasoning in completion
-            if previous_state and previous_state.get("llm_reasoning"):
-                completion_update["reasoning"] = previous_state["llm_reasoning"]
-                completion_update["reasoning_steps"] = previous_state.get("reasoning_steps", [])
-            
+                                    
+                                    # Add special flags for important events
+                                    if current_state.get("current_step") == "generate_image":
+                                        if current_state.get("step_status") == "in_progress":
+                                            status_update["is_long_running"] = True
+                                            status_update["estimated_time"] = "30-60 seconds"
+                                        elif current_state.get("step_status") == "completed" and current_state.get("generated_image"):
+                                            status_update["image_generated"] = True
+                                            status_update["image_id"] = current_state["generated_image"].generation_id
+                                
+                                    await chunk_queue.put(status_update)
+                                
 
-            # Include image information in completion
-            if previous_state and previous_state.get("generated_image"):
-                completion_update["generated_image"] = {
-                    "image_id": previous_state["generated_image"].generation_id,
-                    "prompt": previous_state["generated_image"].prompt,
-                    "created_at": previous_state["generated_image"].created_at.isoformat() if hasattr(previous_state["generated_image"], 'created_at') else None,
-                    "metadata": previous_state["generated_image"].metadata if hasattr(previous_state["generated_image"], 'metadata') else {}
-                }
-            
-            yield completion_update
+                                #Emit reasoning steps as they become available from the streaming LLM
+                                if current_state.get("reasoning_steps"):
+                                    for i, step in enumerate(current_state["reasoning_steps"]):
+                                        step_id = f"{current_state.get('session_id', 'unknown')}_{i}"
+                                        if step_id not in reasoning_emitted:
+                                            reasoning_update = {
+                                                "type": "reasoning",
+                                                "step_number": i + 1,
+                                                "total_steps": len(current_state["reasoning_steps"]),
+                                                "content": step,  # This is the actual reasoning content
+                                                "timestamp": datetime.now().isoformat()
+                                            }
+                                            await chunk_queue.put(reasoning_update)
+                                            reasoning_emitted.add(step_id)
+                                
+                                # Emit reasoning complete when LLM finishes thinking
+                                if (current_state.get("llm_reasoning") and 
+                                    current_state.get("reasoning_complete") and
+                                    (not previous_state or not previous_state.get("reasoning_complete"))):
+                                    
+                                    reasoning_complete_update = {
+                                        "type": "reasoning_complete",
+                                        "full_reasoning": current_state["llm_reasoning"],
+                                        "timestamp": datetime.now().isoformat()
+                                    }
+                                    await chunk_queue.put(reasoning_complete_update)
+                                
+                                previous_state = current_state
+                    
+                    # Emit final completion
+                    final_response_content = ""
+                    if previous_state and previous_state.get("llm_response"):
+                        final_response_content = previous_state["llm_response"].content if hasattr(previous_state["llm_response"], 'content') else str(previous_state["llm_response"])
+                    
+                    completion_update = {
+                        "type": "completion",
+                        "status": "completed",
+                        "details": "Analysis complete",
+                        "progress": 100.0,
+                        "timestamp": datetime.now().isoformat(),
+                        "final_response": final_response_content
+                    }
+                    
+                    # Include reasoning in completion
+                    if previous_state and previous_state.get("llm_reasoning"):
+                        completion_update["reasoning"] = previous_state["llm_reasoning"]
+                        completion_update["reasoning_steps"] = previous_state.get("reasoning_steps", [])
+                    
+
+                    # Include image information in completion
+                    if previous_state and previous_state.get("generated_image"):
+                        completion_update["generated_image"] = {
+                            "image_id": previous_state["generated_image"].generation_id,
+                            "prompt": previous_state["generated_image"].prompt,
+                            "created_at": previous_state["generated_image"].created_at.isoformat() if hasattr(previous_state["generated_image"], 'created_at') else None,
+                            "metadata": previous_state["generated_image"].metadata if hasattr(previous_state["generated_image"], 'metadata') else {}
+                        }
+                    
+                    await chunk_queue.put(completion_update)
+                    await chunk_queue.put(None)  # Signal end of stream
+                
+                # Start graph processing
+                graph_task = asyncio.create_task(run_graph())
+                
+                # Yield chunks as they become available in real-time
+                while True:
+                    try:
+                        # Wait for next chunk with a timeout
+                        chunk = await asyncio.wait_for(chunk_queue.get(), timeout=0.1)
+                        
+                        if chunk is None:  # End of stream signal
+                            break
+                            
+                        yield chunk
+                        
+                    except asyncio.TimeoutError:
+                        # Check if graph is still running
+                        if graph_task.done():
+                            # Graph finished, drain remaining chunks
+                            while not chunk_queue.empty():
+                                chunk = chunk_queue.get_nowait()
+                                if chunk is None:
+                                    break
+                                yield chunk
+                            break
+                        continue
+                        
+            except Exception as e:
+                if graph_task and not graph_task.done():
+                    graph_task.cancel()
+                raise
 
         return _stream_generator()
 

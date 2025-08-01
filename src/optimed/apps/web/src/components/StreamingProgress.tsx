@@ -36,6 +36,15 @@ export const StreamingProgress: React.FC<StreamingProgressProps> = ({
   isLongRunning
 }) => {
   if (!isStreaming) return null;
+  
+  if (currentStep.toLowerCase().includes('generating response')) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-blue-600 mb-4 px-4 py-2 bg-blue-50 rounded-lg">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <span>Generating response...</span>
+      </div>
+    );
+  }
 
   return (
     <Card className="mb-4 border-blue-200 bg-blue-50">
