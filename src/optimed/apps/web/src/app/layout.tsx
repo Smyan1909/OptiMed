@@ -6,7 +6,7 @@ import { UserProvider } from "@/contexts/UserContext";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "OptiMed - AI Medical Diagnostic Assistant",
+  title: "CLARA - AI Medical Diagnostic Assistant",
   description: "Advanced AI-powered medical diagnostic system",
 };
 

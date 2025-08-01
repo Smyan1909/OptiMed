@@ -1,4 +1,4 @@
-from .clinical import PatientContext, BedState, Encounter, JournalEntry, JournalEntryCreate, JournalEntryUpdate
+from .clinical import PatientContext, BedState, Encounter, JournalEntry, JournalEntryCreate, JournalEntryUpdate, DataSource
 from .diagnosis import DiagnosisResult, WebSearchInfo, CrossSessionHistoryInfo, GeneratedImageInfo, DifferentialDiagnosis
 from .info import InfoEvent, Notification, CommThread, ChatMessage, WebSearchQuery, WebSearchResult, WebSearchResponse, ChatSession, SessionParticipant
 from .kpi import KPIEvent, Alert
@@ -35,6 +35,7 @@ __all__ = [
     "JournalEntry",
     "JournalEntryCreate", 
     "JournalEntryUpdate",
+    "DataSource",
     # info
     "InfoEvent",
     "Notification",
