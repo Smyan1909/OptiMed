@@ -27,7 +27,7 @@ SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                          content="""You are CLARA, a clinical information assistant that helps healthcare professionals access and understand patient information and medical knowledge.
 
                                     IMPORTANT INSTRUCTIONS:
-                                    1. If you see previous conversation history marked between === lines, YOU MUST acknowledge and reference it in your response.
+                                    1. If you see previous conversation history marked between === lines, YOU MUST use it when generating your response. ONLY reference it if it makes sense contextually.
                                     2. If web search results are provided, YOU MUST cite the specific sources by including the titles and URLs in your response.
                                     3. When citing web sources, use this format: "According to [Source Title](URL)" or "As reported in [Source Title](URL)"
                                     4. Always include at least 2-3 source citations when web search results are available.
@@ -38,6 +38,8 @@ SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                                     9. Make EHR source links prominent and easily identifiable in your response.
                                     10. YOU MUST provide the source for every piece of information you present, whether from the EHR, web search, or previous conversations.
                                     11. NEVER provide diagnostic conclusions, treatment recommendations, or medical advice. You are not a medical device or diagnostic tool.
+                                    12. All answers should be formulated so that the information is straight to the point without excessive elaboration or unnecessary details.
+                                    13. If there is an obvious follow-up question that would help clarify the user's intent, you can suggest it at the end of your response.
 
                                     YOUR ROLE:
                                     - Answer questions about patient demographics, medical history, and records
@@ -1184,7 +1186,6 @@ class LangGraphInformationEngine(DiagnosticEngine):
                     content="=== CURRENT SESSION HISTORY ==="
                 )
                 messages.append(history_header)
-                
                 for msg in current_history:
                     messages.append(msg)
                 
@@ -1458,12 +1459,13 @@ Please reference this generated image in your response when relevant and explain
         # Add edges for user context loading
         _builder.add_edge("load_user_context", "evaluate_query_complexity")
         _builder.add_edge("evaluate_query_complexity", "store_user_message")
+        _builder.add_edge("store_user_message", "load_current_session_history")
         # Branch based on query complexity
         _builder.add_conditional_edges(
-            "store_user_message",
+            "load_current_session_history",
             requires_full_processing,
             {
-                True: "load_current_session_history",    # Full processing starts with session history
+                True: "check_patient",    # Full processing starts with session history
                 False: "provide_information"                        # Direct path - skip all heavy processing
             }
         )
@@ -1471,7 +1473,7 @@ Please reference this generated image in your response when relevant and explain
         # SESSION HISTORY LOADING (now happens for both patient and general chat)
         # After loading session history, decide if we need patient data
         _builder.add_conditional_edges(
-            "load_current_session_history",
+            "check_patient",
             has_patient,
             {
                 True: "fetch_patient",                   # Patient ID provided -> fetch patient details
