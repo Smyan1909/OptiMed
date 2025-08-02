@@ -1750,7 +1750,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                                 state, 
                                 "Differential Diagnosis System", 
                                 "Baseline probabilities retrieved", 
-                                f"Starting Bayesian analysis for each diagnosis"
+                                "Starting Bayesian analysis for each diagnosis"
                             )
                         
                         # Create concurrent tasks for all differential diagnoses
@@ -1952,7 +1952,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                     }
                     print(f"[DEBUG] Calling stream_callback with update: {update}")
                     await state.stream_callback(update)
-                    print(f"[DEBUG] Successfully emitted differential diagnosis progress")
+                    print("[DEBUG] Successfully emitted differential diagnosis progress")
                 except Exception as e:
                     print(f"[streaming] Error emitting diagnosis progress: {e}")
             else:
