@@ -70,7 +70,7 @@ RESPONSE:
         in_thinking_section = False
         in_response_section = False
         
-        async for chunk in self.llm_client.chat_stream(thinking_messages, **kwargs):
+        async for chunk in self.llm_client.chat_stream(thinking_messages, **kwargs): # type: ignore
             full_content += chunk
             
             # Check if we've entered the thinking section
@@ -265,7 +265,7 @@ RESPONSE:
     
     async def chat_stream(self, messages: List[ChatMessage], **kwargs) -> AsyncGenerator[str, None]:
         """Stream chat response directly."""
-        async for chunk in self.llm_client.chat_stream(messages, **kwargs):
+        async for chunk in self.llm_client.chat_stream(messages, **kwargs): # type: ignore
             yield chunk
 
     async def chat(self, messages: List[ChatMessage], **kwargs) -> ChatMessage:
