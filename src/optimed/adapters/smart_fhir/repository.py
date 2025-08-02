@@ -10,7 +10,7 @@ from fhir.resources.patient import Patient  # type: ignore[import-untyped]
 from fhir.resources.observation import Observation  # type: ignore[import-untyped]
 
 from optimed.core.ports import FHIRRepository, AuthenticatedFHIRRepository, AuthenticationProvider
-from optimed.core.domain import PatientContext, UserEHRConnection, JournalEntry, JournalEntryCreate, JournalEntryUpdate, JournalEntryType, User
+from optimed.core.domain import PatientContext, UserEHRConnection, JournalEntry, JournalEntryCreate, JournalEntryUpdate, JournalEntryType, User, DataSource
 import uuid
 import base64
 
@@ -149,6 +149,29 @@ ENCOUNTER_CODES = {
     "183807002": "Inpatient stay",
     "185345009": "Outpatient visit",
 }
+
+COMPONENT_OBSERVATIONS = {
+    "85354-9": {  # Blood pressure panel
+        "components": {
+            "8480-6": "Systolic BP",
+            "8462-4": "Diastolic BP"
+        }
+    },
+    "55284-4": {  # Blood pressure systolic and diastolic
+        "components": {
+            "8480-6": "Systolic BP", 
+            "8462-4": "Diastolic BP"
+        }
+    },
+    # Add more multi-component observations as needed
+    "33747-0": {  # General appearance panel (example)
+        "components": {
+            "9279-1": "Respiratory rate",
+            "8867-4": "Heart rate",
+            "8310-5": "Body temperature"
+        }
+    }
+}
 """
 optimed.adapters.smart_fhir.repository
 -------------------------------------
@@ -156,6 +179,24 @@ optimed.adapters.smart_fhir.repository
 SMART on FHIR adapter that implements the FHIRRepository protocol with OAuth2 authentication
 for secure access to EHR systems.
 """
+
+def _create_data_source(
+    resource_id: str,
+    resource_type: str,
+    base_url: str,
+    timestamp: Optional[datetime] = None,
+    category: Optional[str] = None,
+    display_name: str = ""
+) -> DataSource:
+    """Create a DataSource object for traceability."""
+    return DataSource(
+        source_type=resource_type.lower(),
+        resource_id=resource_id,
+        resource_url=f"{base_url}/{resource_type}/{resource_id}",
+        timestamp=timestamp or datetime.now(timezone.utc),
+        category=category,
+        display_name=display_name
+    )
 
 def _map_entry_type_to_fhir_type(entry_type: JournalEntryType) -> str:
     """Map journal entry type to FHIR DocumentReference type."""
@@ -251,76 +292,87 @@ def _fhir_name_to_str(p: Patient) -> str:
         parts.append(n.family)
     return " ".join(parts).strip() or "Unknown"
 
-def _obs_bundle_to_dict(entries: list[Observation]) -> dict[str, str]:
-    """Convert observation bundle to dict with human-readable names."""
+def _process_observation_components(obs, base_url: str, category: str) -> tuple[dict, dict, dict]:
+    """
+    Process multi-component observations and return individual components.
+    Returns: (result_dict, timestamps_dict, sources_dict)
+    """
     result = {}
-    for obs in entries:
-        # Handle both Observation objects and dict representations
-        if isinstance(obs, dict):
-            # Handle dict-based observations (from medications, allergies, diagnoses)
-            if obs.get("code") and obs["code"].get("coding"):
-                coding = obs["code"]["coding"][0]
-                display_name = coding.get("display", "Unknown")
-                value_str = obs.get("valueString", "N/A")
-                result[display_name] = value_str
-        else:
-            # Handle actual Observation objects
-            if obs.code and obs.code.coding:
-                # Get the LOINC code
-                loinc_code = None
-                for coding in obs.code.coding:
-                    if coding.system == "http://loinc.org":
-                        loinc_code = coding.code
-                        break
-                
-                if loinc_code:
-                    # Determine category based on our mappings
-                    display_name = None
-                    if loinc_code in VITAL_CODES:
-                        display_name = VITAL_CODES[loinc_code]
-                    elif loinc_code in CRITICAL_LAB_CODES:
-                        display_name = CRITICAL_LAB_CODES[loinc_code]
-                    elif loinc_code in IMAGING_CODES:
-                        display_name = IMAGING_CODES[loinc_code]
-                    elif loinc_code in EXAM_CODES:
-                        display_name = EXAM_CODES[loinc_code]
-                    elif loinc_code in PROCEDURE_CODES:
-                        display_name = PROCEDURE_CODES[loinc_code]
-                    elif loinc_code in SOCIAL_HISTORY_CODES:
-                        display_name = SOCIAL_HISTORY_CODES[loinc_code]
-                    elif loinc_code in MEDICATION_CODES:
-                        display_name = MEDICATION_CODES[loinc_code]
-                    elif loinc_code in ALLERGY_CODES:
-                        display_name = ALLERGY_CODES[loinc_code]
-                    elif loinc_code in DIAGNOSIS_CODES:
-                        display_name = DIAGNOSIS_CODES[loinc_code]
-                    elif loinc_code in MEDICATION_STATEMENT_CODES:
-                        display_name = MEDICATION_STATEMENT_CODES[loinc_code]
-                    elif loinc_code in QUESTIONNAIRE_CODES:
-                        display_name = QUESTIONNAIRE_CODES[loinc_code]
-                    else:
-                        # Fallback to the display name from FHIR or the code itself
-                        display_name = obs.code.coding[0].display or loinc_code
-                    
-                    # Get the value
-                    value_str = "N/A"
-                    if obs.valueQuantity:
-                        unit = obs.valueQuantity.unit or ""
-                        value_str = f"{obs.valueQuantity.value} {unit}".strip()
-                    elif obs.valueString:
-                        value_str = obs.valueString
-                    elif obs.valueCodeableConcept:
-                        if obs.valueCodeableConcept.text:
-                            value_str = obs.valueCodeableConcept.text
-                    
-                    result[display_name] = value_str
+    timestamps = {}
+    sources = {}
     
-    return result
+    if not obs.component:
+        return result, timestamps, sources
+    
+    # Get the main observation's LOINC code
+    main_loinc = None
+    if obs.code and obs.code.coding:
+        for coding in obs.code.coding:
+            if coding.system == "http://loinc.org":
+                main_loinc = coding.code
+                break
+    
+    # Check if this is a known multi-component observation
+    if main_loinc and main_loinc in COMPONENT_OBSERVATIONS:
+        component_config = COMPONENT_OBSERVATIONS[main_loinc]
+        
+        for component in obs.component:
+            if component.code and component.code.coding:
+                for coding in component.code.coding:
+                    component_code = coding.code
+                    
+                    # Check if this component is one we want to extract
+                    if component_code in component_config["components"]:
+                        display_name = component_config["components"][component_code]
+                        
+                        # Extract value
+                        value_str = "N/A"
+                        if component.valueQuantity:
+                            unit = component.valueQuantity.unit or ""
+                            value_str = f"{component.valueQuantity.value} {unit}".strip()
+                        elif component.valueString:
+                            value_str = component.valueString
+                        elif component.valueCodeableConcept:
+                            if component.valueCodeableConcept.text:
+                                value_str = component.valueCodeableConcept.text
+                        
+                        result[display_name] = value_str
+                        
+                        # Extract timestamp from parent observation
+                        timestamp = obs.effectiveDateTime or obs.issued
+                        if timestamp:
+                            if hasattr(timestamp, 'strftime'):
+                                timestamps[display_name] = timestamp.strftime("%Y-%m-%d %H:%M")
+                                source_timestamp = timestamp
+                            else:
+                                try:
+                                    dt = datetime.fromisoformat(str(timestamp).replace('Z', '+00:00'))
+                                    timestamps[display_name] = dt.strftime("%Y-%m-%d %H:%M")
+                                    source_timestamp = dt
+                                except Exception:
+                                    timestamps[display_name] = str(timestamp)[:16] if len(str(timestamp)) > 16 else str(timestamp)
+                                    source_timestamp = None
+                        else:
+                            timestamps[display_name] = "Unknown"
+                            source_timestamp = None
+                        
+                        # Create source link to parent observation
+                        sources[display_name] = _create_data_source(
+                            resource_id=obs.id or "unknown",
+                            resource_type="Observation",
+                            base_url=base_url,
+                            timestamp=source_timestamp,
+                            category=category,
+                            display_name=display_name
+                        )
+    
+    return result, timestamps, sources
 
-def _obs_bundle_to_dict_with_timestamps(entries: list[Observation]) -> tuple[dict[str, str], dict[str, str]]:
+def _obs_bundle_to_dict_with_timestamps(entries: list[Observation], base_url:str, category: str = "") -> tuple[dict[str, str], dict[str, str], dict[str, DataSource]]:
     """Convert observation bundle to dict with human-readable names and timestamps."""
     result = {}
     timestamps = {}
+    sources = {}
     
     for obs in entries:
         # Handle both Observation objects and dict representations
@@ -339,10 +391,25 @@ def _obs_bundle_to_dict_with_timestamps(entries: list[Observation]) -> tuple[dic
                         # Parse and format timestamp
                         dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                         timestamps[display_name] = dt.strftime("%Y-%m-%d %H:%M")
+                        source_timestamp = dt
                     except Exception:
                         timestamps[display_name] = timestamp[:16] if len(timestamp) > 16 else timestamp
+                        source_timestamp = None
                 else:
                     timestamps[display_name] = "Unknown"
+                    source_timestamp = None
+                
+                resource_id = obs.get("id", "unknown")
+                resource_type = obs.get("resource_type", "observation")
+                sources[display_name] = _create_data_source(
+                    resource_id=resource_id,
+                    resource_type=resource_type,
+                    base_url=base_url,
+                    timestamp=source_timestamp,
+                    category=category,
+                    display_name=display_name
+                )
+                
         else:
             # Handle actual Observation objects
             if obs.code and obs.code.coding:
@@ -353,6 +420,13 @@ def _obs_bundle_to_dict_with_timestamps(entries: list[Observation]) -> tuple[dic
                         loinc_code = coding.code
                         break
                 
+                if loinc_code and loinc_code in COMPONENT_OBSERVATIONS:
+                    comp_result, comp_timestamps, comp_sources = _process_observation_components(obs, base_url, category)
+                    result.update(comp_result)
+                    timestamps.update(comp_timestamps)
+                    sources.update(comp_sources)
+                    continue  # Skip normal processing for multi-component observations
+
                 if loinc_code:
                     # Determine category based on our mappings
                     display_name = None
@@ -402,17 +476,30 @@ def _obs_bundle_to_dict_with_timestamps(entries: list[Observation]) -> tuple[dic
                     if timestamp:
                         if hasattr(timestamp, 'strftime'):
                             timestamps[display_name] = timestamp.strftime("%Y-%m-%d %H:%M")
+                            source_timestamp = timestamp
                         else:
                             # Handle string timestamps
                             try:
                                 dt = datetime.fromisoformat(str(timestamp).replace('Z', '+00:00'))
                                 timestamps[display_name] = dt.strftime("%Y-%m-%d %H:%M")
+                                source_timestamp = dt
                             except Exception:
                                 timestamps[display_name] = str(timestamp)[:16] if len(str(timestamp)) > 16 else str(timestamp)
+                                source_timestamp = None
                     else:
                         timestamps[display_name] = "Unknown"
+                        source_timestamp = None
+                    
+                    sources[display_name] = _create_data_source(
+                        resource_id=obs.id or "unknown",
+                        resource_type="Observation",
+                        base_url=base_url,
+                        timestamp=source_timestamp,
+                        category=category,
+                        display_name=display_name
+                    )
     
-    return result, timestamps
+    return result, timestamps, sources
 
 
 def get_display_name(code: str, code_type: str = "vital") -> str:
@@ -438,34 +525,68 @@ def _to_patient_ctx(
         medication_statement: list[Observation] | None = None,
         questionnaire_response: list[Observation] | None = None,
         encounters: list[Any] | None = None,
+        base_url: str = "http://example.com/fhir"  # Default base URL, can be overridden
 ) -> PatientContext:
     """Convert FHIR Patient + observations to PatientContext domain model."""
     if not patient.id:
         raise ValueError("Patient must have an ID")
 
     # Process observations with timestamps
-    vitals_data, vitals_timestamps = _obs_bundle_to_dict_with_timestamps(vitals or [])
-    labs_data, labs_timestamps = _obs_bundle_to_dict_with_timestamps(labs or [])
-    imaging_data, imaging_timestamps = _obs_bundle_to_dict_with_timestamps(imaging or [])
-    exam_data, exam_timestamps = _obs_bundle_to_dict_with_timestamps(exam or [])
-    procedure_data, procedure_timestamps = _obs_bundle_to_dict_with_timestamps(procedure or [])
-    social_history_data, social_history_timestamps = _obs_bundle_to_dict_with_timestamps(social_history or [])
-    medications_data, medications_timestamps = _obs_bundle_to_dict_with_timestamps(medications or [])
-    allergies_data, allergies_timestamps = _obs_bundle_to_dict_with_timestamps(allergies or [])
-    diagnoses_data, diagnoses_timestamps = _obs_bundle_to_dict_with_timestamps(diagnoses or [])
-    immunizations_data, immunizations_timestamps = _obs_bundle_to_dict_with_timestamps(immunizations or [])
-    medication_statement_data, medication_statement_timestamps = _obs_bundle_to_dict_with_timestamps(medication_statement or [])
-    questionnaire_response_data, questionnaire_response_timestamps = _obs_bundle_to_dict_with_timestamps(questionnaire_response or [])
+    vitals_data, vitals_timestamps, vitals_sources = _obs_bundle_to_dict_with_timestamps(vitals or [], base_url, "vital-signs")
+    labs_data, labs_timestamps, labs_sources = _obs_bundle_to_dict_with_timestamps(labs or [], base_url, "laboratory")
+    imaging_data, imaging_timestamps, imaging_sources = _obs_bundle_to_dict_with_timestamps(imaging or [], base_url, "imaging")
+    exam_data, exam_timestamps, exam_sources = _obs_bundle_to_dict_with_timestamps(exam or [], base_url, "exam")
+    procedure_data, procedure_timestamps, procedure_sources = _obs_bundle_to_dict_with_timestamps(procedure or [], base_url, "procedure")
+    social_history_data, social_history_timestamps, social_history_sources = _obs_bundle_to_dict_with_timestamps(social_history or [], base_url, "social-history")
+    medications_data, medications_timestamps, medications_sources = _obs_bundle_to_dict_with_timestamps(medications or [], base_url, "medication")
+    allergies_data, allergies_timestamps, allergies_sources = _obs_bundle_to_dict_with_timestamps(allergies or [], base_url, "allergy")
+    diagnoses_data, diagnoses_timestamps, diagnoses_sources = _obs_bundle_to_dict_with_timestamps(diagnoses or [], base_url, "condition")
+    immunizations_data, immunizations_timestamps, immunizations_sources = _obs_bundle_to_dict_with_timestamps(immunizations or [], base_url, "immunization")
+    medication_statement_data, medication_statement_timestamps, medication_statement_sources = _obs_bundle_to_dict_with_timestamps(medication_statement or [], base_url, "medication-statement")
+    questionnaire_response_data, questionnaire_response_timestamps, questionnaire_response_sources = _obs_bundle_to_dict_with_timestamps(questionnaire_response or [], base_url, "questionnaire")
     
-    # Process encounters
+    # Process encounters and extract care unit information
     encounters_data = {}
     encounters_timestamps = {}
+    encounters_sources = {}
+    care_unit = "UNKNOWN"
+    
     if encounters:
         for encounter in encounters:
             if isinstance(encounter, dict):
                 encounter_type = encounter.get("type", [{}])[0].get("text", "Unknown Encounter")
                 encounter_id = encounter.get("id", "unknown")
                 encounters_data[encounter_id] = encounter_type
+                
+                # Extract care unit from encounter location or serviceType
+                if care_unit == "UNKNOWN":
+                    # Try to get care unit from location
+                    locations = encounter.get("location", [])
+                    if locations and len(locations) > 0:
+                        location = locations[0].get("location", {})
+                        if location.get("display"):
+                            care_unit = location["display"]
+                        elif location.get("reference"):
+                            # Extract location name from reference
+                            location_name = location["reference"].split("/")[-1]
+                            care_unit = location_name
+                    
+                    # If no location found, try serviceType
+                    if care_unit == "UNKNOWN":
+                        service_type = encounter.get("serviceType")
+                        if service_type and service_type.get("text"):
+                            care_unit = service_type["text"]
+                        elif service_type and service_type.get("coding"):
+                            for coding in service_type["coding"]:
+                                if coding.get("display"):
+                                    care_unit = coding["display"]
+                                    break
+                    
+                    # If still no care unit, try class display
+                    if care_unit == "UNKNOWN":
+                        encounter_class = encounter.get("class", {})
+                        if encounter_class.get("display"):
+                            care_unit = encounter_class["display"]
                 
                 # Extract encounter timestamp
                 period = encounter.get("period", {})
@@ -474,17 +595,30 @@ def _to_patient_ctx(
                     try:
                         dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
                         encounters_timestamps[encounter_id] = dt.strftime("%Y-%m-%d %H:%M")
+                        source_timestamp = dt
                     except Exception:
                         encounters_timestamps[encounter_id] = start_time[:16] if len(start_time) > 16 else start_time
+                        source_timestamp = None
                 else:
                     encounters_timestamps[encounter_id] = "Unknown"
+                    source_timestamp = None
+                
+                encounters_sources[encounter_id] = _create_data_source(
+                    resource_id=encounter_id,
+                    resource_type="Encounter",
+                    base_url=base_url,
+                    timestamp=source_timestamp,
+                    display_name=encounter_type
+                )
 
     return PatientContext(
         patient_id=patient.id,
         name=_fhir_name_to_str(patient),
         age=_age_from_birthdate(patient.birthDate),
         sex=patient.gender or "unknown",
-        care_unit="UNKNOWN",  # May need enhancement with SMART on FHIR data
+        care_unit=care_unit,
+        
+        # Data fields
         vitals=vitals_data,
         labs=labs_data,
         imaging=imaging_data,
@@ -497,7 +631,9 @@ def _to_patient_ctx(
         immunizations=immunizations_data,
         medication_statement=medication_statement_data,
         questionnaire_response=questionnaire_response_data,
-        # Add timestamp fields
+        encounters=encounters_data,
+        
+        # Timestamp fields
         vitals_timestamps=vitals_timestamps,
         labs_timestamps=labs_timestamps,
         imaging_timestamps=imaging_timestamps,
@@ -510,8 +646,22 @@ def _to_patient_ctx(
         immunizations_timestamps=immunizations_timestamps,
         medication_statement_timestamps=medication_statement_timestamps,
         questionnaire_response_timestamps=questionnaire_response_timestamps,
-        encounters=encounters_data,
         encounters_timestamps=encounters_timestamps,
+        
+        # Source tracking fields
+        vitals_sources=vitals_sources,
+        labs_sources=labs_sources,
+        imaging_sources=imaging_sources,
+        exam_sources=exam_sources,
+        procedure_sources=procedure_sources,
+        social_history_sources=social_history_sources,
+        medications_sources=medications_sources,
+        allergies_sources=allergies_sources,
+        diagnoses_sources=diagnoses_sources,
+        immunizations_sources=immunizations_sources,
+        medication_statement_sources=medication_statement_sources,
+        questionnaire_response_sources=questionnaire_response_sources,
+        encounters_sources=encounters_sources,
     )
 
 class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
@@ -671,7 +821,7 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
         return _to_patient_ctx(
             patient, vitals, labs, imaging, exam, procedure, 
             social_history, medications, allergies, diagnoses, immunizations,
-            medication_statement, questionnaire_response, encounters
+            medication_statement, questionnaire_response, encounters, self._base
         )
         
     async def search_patients(self, query: Any) -> Sequence[PatientContext]:
@@ -749,8 +899,12 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                     value_str += f" (Since: {effective_period['start'][:10]})"
                 
                 statement_obs = {
+                    "id": resource.get("id", "unknown"),
+                    "status": status,
                     "code": {"coding": [{"code": "182840001", "display": "Medication Statement"}]},
-                    "valueString": value_str
+                    "valueString": value_str,
+                    "effectiveDateTime": effective_period.get("start", ""),
+                    "resource_type": "MedicationStatement"
                 }
                 statements.append(statement_obs)
             
@@ -798,8 +952,12 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                 value_str = "; ".join(response_text) if response_text else "No responses recorded"
                 
                 response_obs = {
+                    "id": resource.get("id", "unknown"),
+                    "questionnaire": questionnaire_ref,
                     "code": {"coding": [{"code": "273879006", "display": questionnaire_name}]},
-                    "valueString": value_str
+                    "valueString": value_str,
+                    "effectiveDateTime": resource.get("authored", ""),
+                    "resource_type": "QuestionnaireResponse",
                 }
                 responses.append(response_obs)
             
@@ -827,8 +985,12 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                 resource = entry["resource"]
                 # Create a simplified observation for medication
                 med_obs = {
+                    "id": resource.get("id", "unknown"),
+                    "status": resource.get("status", "unknown"),
                     "code": {"coding": [{"code": "10160-0", "display": "Medication"}]},
-                    "valueString": resource.get("medicationCodeableConcept", {}).get("text", "Unknown medication")
+                    "valueString": resource.get("medicationCodeableConcept", {}).get("text", "Unknown medication"),
+                    "effectiveDateTime": resource.get("authoredOn", ""),
+                    "resource_type": "MedicationRequest",
                 }
                 medications.append(med_obs)
             
@@ -853,8 +1015,12 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
             for entry in bundle.get("entry", []):
                 resource = entry["resource"]
                 allergy_obs = {
+                    "id": resource.get("id", "unknown"),
+                    "status": resource.get("status", "unknown"),
                     "code": {"coding": [{"code": "48765-2", "display": "Allergies"}]},
-                    "valueString": resource.get("code", {}).get("text", "Unknown allergy")
+                    "valueString": resource.get("code", {}).get("text", "Unknown allergy"),
+                    "effectiveDateTime": resource.get("onsetDateTime", ""),
+                    "resource_type": "AllergyIntolerance"
                 }
                 allergies.append(allergy_obs)
             
@@ -879,8 +1045,12 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
             for entry in bundle.get("entry", []):
                 resource = entry["resource"]
                 condition_obs = {
+                    "id": resource.get("id", "unknown"),
+                    "status": resource.get("clinicalStatus", {}).get("text", "unknown"),
                     "code": {"coding": [{"code": "11348-0", "display": "Diagnosis"}]},
-                    "valueString": resource.get("code", {}).get("text", "Unknown condition")
+                    "valueString": resource.get("code", {}).get("text", "Unknown condition"),
+                    "effectiveDateTime": resource.get("onsetDateTime", ""),
+                    "resource_type": "Condition",
                 }
                 conditions.append(condition_obs)
             
@@ -928,9 +1098,12 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                     value_str += f" (Lot: {lot_number})"
                 
                 immunization_obs = {
+                    "id": resource.get("id", "unknown"),
+                    "status": status,
                     "code": {"coding": [{"code": "33879002", "display": vaccine_name}]},
                     "valueString": value_str,
-                    "effectiveDateTime": resource.get("occurrenceDateTime")
+                    "effectiveDateTime": resource.get("occurrenceDateTime"),
+                    "resource_type": "Immunization",
                 }
                 immunizations.append(immunization_obs)
             

@@ -16,37 +16,82 @@ export async function POST(request: NextRequest) {
       headers['X-Session-ID'] = sessionId;
     }
 
-    console.log('🔄 Forwarding chat streaming request to backend:', body);
+    console.log('🔄 [CHAT API] Forwarding streaming request to backend:', {
+      endpoint: 'chat/stream',
+      payload: body,
+      sessionId
+    });
 
     // Make request to streaming endpoint
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
-    const response = await fetch(`${baseUrl}/chat/stream`, {
+    const backendUrl = `${baseUrl}/chat/stream`;
+    console.log('🎯 [CHAT API] Backend URL:', backendUrl);
+    
+    const response = await fetch(backendUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify(body)
     });
 
     if (!response.ok) {
+      console.error('❌ [CHAT API] Backend error:', response.status, response.statusText);
       throw new Error(`Backend error: ${response.status}`);
     }
 
-    console.log('✅ Backend response received, forwarding chat stream...');
+    console.log('✅ [CHAT API] Backend response received, content-type:', response.headers.get('content-type'));
+    console.log('📡 [CHAT API] Starting SSE forwarding...');
 
-    // Return the streaming response
-    return new Response(response.body, {
-      status: 200,
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Session-ID',
-      },
-    });
+    // Log the first chunk to debug
+    if (response.body) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            const pump = async (): Promise<void> => {
+              try {
+                while (true) {
+                  const { done, value } = await reader.read();
+                  
+                  if (done) {
+                    console.log('📡 [CHAT API] Stream ended');
+                    controller.close();
+                    break;
+                  }
+                  
+                  const chunk = decoder.decode(value, { stream: true });
+                  console.log('📦 [CHAT API] Forwarding chunk:', chunk.slice(0, 100) + '...');
+                  
+                  controller.enqueue(value);
+                }
+              } catch (error) {
+                console.error('❌ [CHAT API] Stream error:', error);
+                controller.error(error);
+              }
+            };
+            
+            pump();
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Session-ID',
+          },
+        }
+      );
+    } else {
+      throw new Error('No response body from backend');
+    }
 
   } catch (error) {
-    console.error('Streaming API error:', error);
+    console.error('❌ [CHAT API] Streaming API error:', error);
     return new Response(JSON.stringify({ error: 'Streaming failed' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }

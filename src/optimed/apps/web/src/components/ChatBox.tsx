@@ -9,6 +9,8 @@ import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
 import { ReasoningViewer } from "./ReasoningViewer";
 import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCards";
+import { useLayoutEffect } from "react";
+import ModeSelector from "./ModeSelector";
 
 export interface GeneratedImageInfo {
   image_generated: boolean;
@@ -34,7 +36,7 @@ export interface GeneratedImageResponse {
   model_info: Record<string, any>;
 }
 
-interface DiagnosticMode {
+interface InfoRetrievalMode {
   id: string;
   name: string;
   description: string;
@@ -64,6 +66,20 @@ interface ChatBoxProps {
   mode: "chat" | "diagnose";
   patientId?: string;
   sessionId?: string | null;
+}
+
+function useAutosizeTextArea(textAreaRef: React.RefObject<HTMLTextAreaElement | null>, value: string, maxPx = 240) {
+  useLayoutEffect(() => {
+    const el = textAreaRef.current;
+    if (!el) return;
+
+    // reset to shrink when deleting text
+    el.style.height = 'auto';
+
+    // grow, but clamp to maxPx
+    const newHeight = Math.min(el.scrollHeight + 2, maxPx); // +2 for border
+    el.style.height = `${newHeight}px`;
+  }, [textAreaRef, value, maxPx]);
 }
 
 const parseLinksInText = (text: string, isUser: boolean = false) => {
@@ -148,28 +164,28 @@ const MessageContent = ({ text, isUser }: MessageContentProps) => {
     ),
     // Headers
     h1: ({ children }: any) => (
-      <h1 className={`text-xl font-bold mb-2 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <h1 className={`text-xl font-bold mb-2 text-gray-900`}>
         {children}
       </h1>
     ),
     h2: ({ children }: any) => (
-      <h2 className={`text-lg font-bold mb-2 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <h2 className={`text-lg font-bold mb-2 text-gray-900`}>
         {children}
       </h2>
     ),
     h3: ({ children }: any) => (
-      <h3 className={`text-md font-bold mb-1 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <h3 className={`text-md font-bold mb-1 text-gray-900`}>
         {children}
       </h3>
     ),
     // Emphasis
     strong: ({ children }: any) => (
-      <strong className={`font-bold ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <strong className={`font-bold text-gray-900`}>
         {children}
       </strong>
     ),
     em: ({ children }: any) => (
-      <em className={`italic ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <em className={`italic text-gray-900`}>
         {children}
       </em>
     ),
@@ -195,17 +211,17 @@ const MessageContent = ({ text, isUser }: MessageContentProps) => {
     },
     // Lists
     ul: ({ children }: any) => (
-      <ul className={`list-disc list-inside my-2 space-y-1 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <ul className={`list-disc list-inside my-2 space-y-1 text-gray-900`}>
         {children}
       </ul>
     ),
     ol: ({ children }: any) => (
-      <ol className={`list-decimal list-inside my-2 space-y-1 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <ol className={`list-decimal list-inside my-2 space-y-1 text-gray-900`}>
         {children}
       </ol>
     ),
     li: ({ children }: any) => (
-      <li className={`${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <li className={`text-gray-900`}>
         {children}
       </li>
     ),
@@ -221,7 +237,7 @@ const MessageContent = ({ text, isUser }: MessageContentProps) => {
     ),
     // Paragraphs
     p: ({ children }: any) => (
-      <p className={`mb-2 last:mb-0 ${isUser ? 'text-white' : 'text-gray-900'}`}>
+      <p className={`mb-2 last:mb-0 text-gray-900`}>
         {children}
       </p>
     ),
@@ -234,7 +250,7 @@ const MessageContent = ({ text, isUser }: MessageContentProps) => {
   };
   
   return (
-    <div className={`font-medium ${isUser ? 'text-white' : 'text-gray-900'}`}>
+    <div className={`font-medium text-gray-900`}>
       <ReactMarkdown components={markdownComponents}>
         {text}
       </ReactMarkdown>
@@ -445,10 +461,12 @@ const formatTimestamp = (timestamp: string | number): string => {
 export default function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [diagnosticMode, setDiagnosticMode] = useState("post_meet");
-  const [diagnosticModes, setDiagnosticModes] = useState<DiagnosticMode[]>([]);
-  const [defaultPrompts, setDefaultPrompts] = useState<Record<string, string>>({});
+  const [infoRetrievalMode, setInfoRetrievalMode] = useState("post_meet");
+  const [defaultPrompt, setDefaultPrompt] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // Check if info mode selection is enabled
+  const isInfoModeEnabled = process.env.NEXT_PUBLIC_INFO_MODE === 'false';
   const {
     isStreaming,
     currentStep,
@@ -456,8 +474,10 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     reasoning,
     currentReasoning,
     finalResponse,
+    streamingResponse,
     generatedImage,
     streamDifferentialDiagnoses, // Add this for differential diagnoses
+    differentialDiagnosisProgress, // Add this for progress tracking
     error: streamError,
     progress,
     startStream,
@@ -482,57 +502,19 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   
   const { user } = useUser();
 
-  // Initialize diagnostic modes on component mount
+  // Initialize info retrieval mode with default prompt
   useEffect(() => {
     if (mode === "diagnose") {
-      const hardcodedModes: DiagnosticMode[] = [
-        {
-          id: "pre_meet",
-          name: "Pre-Meet",
-          description: "Prepare for patient encounter",
-          default_prompt: "Please provide a comprehensive pre-consultation summary for this patient, including key information from their records, questions I should ask, and examinations I should perform."
-        },
-        {
-          id: "post_meet",
-          name: "Post-Meet", 
-          description: "Diagnostic analysis with treatment plans",
-          default_prompt: "Based on all available information including the patient encounter, please provide a comprehensive diagnostic analysis with differential diagnoses and treatment recommendations."
-        },
-        {
-          id: "research",
-          name: "Research",
-          description: "Deep analysis using all resources",
-          default_prompt: "This is a complex case requiring deep research. Please conduct a comprehensive analysis using all available medical literature and resources to understand this patient's condition and provide evidence-based treatment options."
-        }
-      ];
+      const postMeetPrompt = "Following a patient encounter, I need to analyze the clinical data and findings. Please help me review the patient information, examination findings, and any relevant background data to support clinical decision-making and documentation.";
       
-      setDiagnosticModes(hardcodedModes);
+      setDefaultPrompt(postMeetPrompt);
       
-      const prompts: Record<string, string> = {};
-      hardcodedModes.forEach((mode) => {
-        prompts[mode.id] = mode.default_prompt;
-      });
-      setDefaultPrompts(prompts);
-      
-      // Set the default prompt for the current mode if input is empty
-      if (!input.trim() && prompts[diagnosticMode]) {
-        setInput(prompts[diagnosticMode]);
+      // Set the default prompt if input is empty (only if info mode is not enabled for selection)
+      if (!input.trim() && !isInfoModeEnabled) {
+        setInput(postMeetPrompt);
       }
     }
-  }, [mode]);
-
-  // Update input when diagnostic mode changes (only if input is empty or contains a default prompt)
-  useEffect(() => {
-    if (mode === "diagnose" && defaultPrompts[diagnosticMode]) {
-      // Check if current input is empty or is a default prompt from another mode
-      const isDefaultPrompt = Object.values(defaultPrompts).includes(input.trim());
-      const isEmpty = !input.trim();
-      
-      if (isEmpty || isDefaultPrompt) {
-        setInput(defaultPrompts[diagnosticMode]);
-      }
-    }
-  }, [diagnosticMode, defaultPrompts, mode]);
+  }, [mode, isInfoModeEnabled]);
 
   // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = () => {
@@ -542,6 +524,22 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   useEffect(() => {
     scrollToBottom();
   }, [messages, isStreaming]);
+
+  // Auto-scroll when differential diagnosis computation starts
+  useEffect(() => {
+    if (differentialDiagnosisProgress?.isComputing) {
+      console.log('🔄 Differential diagnosis computation started - auto-scrolling');
+      scrollToBottom();
+    }
+  }, [differentialDiagnosisProgress?.isComputing]);
+
+  // Auto-scroll when differential diagnosis progress updates
+  useEffect(() => {
+    if (differentialDiagnosisProgress?.currentDiagnosis || differentialDiagnosisProgress?.currentStep) {
+      console.log('🔄 Differential diagnosis progress updated - auto-scrolling');
+      scrollToBottom();
+    }
+  }, [differentialDiagnosisProgress?.currentDiagnosis, differentialDiagnosisProgress?.currentStep]);
 
   // Update sessionId when prop changes
   useEffect(() => {
@@ -767,6 +765,24 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     }
   }, [streamError]);
 
+  // Debug logging to see streaming state
+  useEffect(() => {
+    console.log('🖥️ ChatBox streaming state update:', {
+      isStreaming,
+      streamingResponseLength: streamingResponse?.length || 0,
+      streamingResponsePreview: streamingResponse?.substring(0, 50) + '...',
+      hasTrimmedContent: !!(streamingResponse && streamingResponse.trim()),
+      currentStep,
+      progress
+    });
+  }, [isStreaming, streamingResponse, currentStep, progress]);
+
+  const handleModeChange = (newMode: string, newDefaultPrompt: string) => {
+    setInfoRetrievalMode(newMode);
+    setDefaultPrompt(newDefaultPrompt);
+    setInput(newDefaultPrompt);
+  };
+
   const sendMessage = async (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isStreaming) return;
@@ -790,7 +806,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
         patient_id: patientId ?? null,
         user_prompt: userText,
         chat_mode: mode === "chat",
-        diagnostic_mode: mode === "diagnose" ? diagnosticMode : "chat",
+        diagnostic_mode: mode === "diagnose" ? infoRetrievalMode : "chat",
         user_id: user?.user_id,
         session_id: currentSessionId
       };
@@ -814,117 +830,167 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   const getPlaceholderText = () => {
     if (mode === "chat") return "Type your message...";
     if (mode === "diagnose" && patientId) {
-      const currentMode = diagnosticModes.find(m => m.id === diagnosticMode);
-      return currentMode ? `${currentMode.name} - ${currentMode.description}` : "Ask about diagnosis, symptoms, treatments...";
+      return "Ask about patient records, medications, history, or clinical notes";
     }
-    return "How can I help with the diagnosis?";
+    return "How can I help you access medical information?";
   };
 
   const getEmptyStateText = () => {
     if (mode === "chat") return "Start chatting with CLARA...";
     if (mode === "diagnose" && patientId) {
-      const currentMode = diagnosticModes.find(m => m.id === diagnosticMode);
-      return currentMode ? `Ready for ${currentMode.name.toLowerCase()}` : "Ready to assist with diagnosis";
+      return "CLARA Färdiga Gå!";
     }
-    return "Enter patient details to begin diagnosis...";
+    return "Enter patient details to begin information access...";
   };
 
-  const handleModeChange = (newMode: string) => {
-    setDiagnosticMode(newMode);
-    
-    // Set the default prompt for the new mode
-    if (defaultPrompts[newMode]) {
-      setInput(defaultPrompts[newMode]);
+  useEffect(() => {
+    if (streamingResponse) {
+      console.log('🔄 ChatBox: streamingResponse updated:', {
+        length: streamingResponse.length,
+        preview: streamingResponse.slice(0, 100) + '...',
+        isStreaming
+      });
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
+  }, [streamingResponse]);
+
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  useAutosizeTextArea(textAreaRef, input);
+
+  const markdownComponents = {
+    // Links
+    a: ({ href, children }: any) => (
+      <a 
+        href={href} 
+        target="_blank" 
+        rel="noopener noreferrer" 
+        className="text-blue-600 hover:text-blue-800 underline font-medium transition-colors duration-200 break-words"
+      >
+        {children}
+        <svg className="w-3 h-3 inline ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+        </svg>
+      </a>
+    ),
+    // Headers
+    h1: ({ children }: any) => (
+      <h1 className="text-xl font-bold mb-2 text-gray-900">
+        {children}
+      </h1>
+    ),
+    h2: ({ children }: any) => (
+      <h2 className="text-lg font-bold mb-2 text-gray-900">
+        {children}
+      </h2>
+    ),
+    h3: ({ children }: any) => (
+      <h3 className="text-md font-bold mb-1 text-gray-900">
+        {children}
+      </h3>
+    ),
+    // Emphasis
+    strong: ({ children }: any) => (
+      <strong className="font-bold text-gray-900">
+        {children}
+      </strong>
+    ),
+    em: ({ children }: any) => (
+      <em className="italic text-gray-900">
+        {children}
+      </em>
+    ),
+    // Code
+    code: ({ children, className }: any) => {
+      const isCodeBlock = className?.includes('language-');
+      if (isCodeBlock) {
+        return (
+          <pre className="bg-gray-800 text-green-400 p-3 rounded-lg overflow-x-auto text-sm my-2">
+            <code className="font-mono">{children}</code>
+          </pre>
+        );
+      }
+      return (
+        <code className="px-1 py-0.5 rounded text-sm font-mono bg-gray-200 text-gray-800">
+          {children}
+        </code>
+      );
+    },
+    // Lists
+    ul: ({ children }: any) => (
+      <ul className="list-disc list-inside my-2 space-y-1 text-gray-900">
+        {children}
+      </ul>
+    ),
+    ol: ({ children }: any) => (
+      <ol className="list-decimal list-inside my-2 space-y-1 text-gray-900">
+        {children}
+      </ol>
+    ),
+    li: ({ children }: any) => (
+      <li className="text-gray-900">
+        {children}
+      </li>
+    ),
+    // Paragraphs
+    p: ({ children }: any) => (
+      <p className="mb-2 last:mb-0 text-gray-900">
+        {children}
+      </p>
+    ),
   };
+
 
   return (
-    <div className="flex flex-col h-full bg-white max-h-full overflow-hidden">
-      {/* Mode Selection for Diagnose Mode */}
-      {mode === "diagnose" && (
-        <div className="border-b bg-gray-50 px-4 py-2 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-gray-600">Mode:</label>
-            
-            {diagnosticModes.length === 0 ? (
-              <div className="text-xs text-gray-500 italic">Loading...</div>
-            ) : (
-              <div className="flex gap-1">
-                {diagnosticModes.map((modeOption) => (
-                  <button
-                    key={modeOption.id}
-                    type="button"
-                    onClick={() => handleModeChange(modeOption.id)}
-                    disabled={isStreaming}
-                    className={`px-2 py-1 rounded text-xs font-medium transition-all duration-200 ${
-                      diagnosticMode === modeOption.id
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'bg-white text-gray-700 border border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                    } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    title={modeOption.description}
-                  >
-                    {modeOption.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Chat Messages Area - only this part scrolls */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
-        <div className="p-4 space-y-3">
+    <div className="flex-1 flex flex-col items-center justify-center min-h-0 h-full w-full relative bg-gray-50">
+      {/* Chat area with scrollable messages */}
+      <div className="flex-1 w-full flex justify-center overflow-y-auto min-h-0 pt-4 pb-[180px]">
+        <div className="w-full max-w-4xl px-4 space-y-3">
+          {/* Messages */}
           {messages.length === 0 && !isStreaming && (
             <div className="text-center py-8">
-              <p className="text-gray-600 font-medium italic">
-                {getEmptyStateText()}
-              </p>
-              {mode === "diagnose" && diagnosticModes.length > 0 && (
-                <div className="text-sm text-gray-400 mt-2">
-                  Current mode: {diagnosticModes.find(m => m.id === diagnosticMode)?.name}
-                </div>
-              )}
+              <p className="text-gray-600 font-medium italic">{getEmptyStateText()}</p>
             </div>
           )}
-          
+
           {messages.map((msg, idx) => (
-            <div key={idx} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
-              <div className="max-w-[80%]">
-                <div className={`px-4 py-3 rounded-lg ${
-                  msg.sender === "user" 
-                    ? "bg-blue-600 text-white" 
-                    : "bg-gray-100 text-gray-900 border"
-                }`}>
-                  <MessageContent text={msg.text} isUser={msg.sender === "user"} />
-                </div>
-                
-                {/* Display generated image if available */}
-                {msg.generatedImage && (
-                  <GeneratedImageDisplay imageInfo={msg.generatedImage} />
+            <div
+              key={idx}
+              className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              <div className={msg.sender === 'user' ? "max-w-[80%]" : "max-w-4xl w-full"}>
+                {msg.sender === 'user' ? (
+                  <div className="px-3 py-2 text-sm rounded-xl bg-gray-200 text-gray-900 mb-1">
+                    <MessageContent text={msg.text} isUser={true} />
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-900 mb-1">
+                    <MessageContent text={msg.text} isUser={false}/>
+                  </div>
                 )}
-                
-                {/* Display differential diagnoses FIRST if available */}
-                {msg.sender === "system" && msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0 && (
+
+                {msg.generatedImage && <GeneratedImageDisplay imageInfo={msg.generatedImage} />}
+
+                {msg.sender === 'system' && msg.differentialDiagnoses && msg.differentialDiagnoses?.length > 0 && (
                   <div className="mt-3">
                     <DifferentialDiagnosisCards diagnoses={msg.differentialDiagnoses} />
                   </div>
                 )}
-                
-                {/* Display reasoning viewer AFTER differential diagnoses */}
-                {msg.sender === "system" && (msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)) && (
+
+                {msg.sender === 'system' && msg.reasoningSteps && (msg.reasoning || msg.reasoningSteps?.length > 0) && (
                   <div className="mt-3">
-                    <ReasoningViewer 
-                      reasoning={msg.reasoning || ''} 
-                      reasoningSteps={msg.reasoningSteps} 
+                    <ReasoningViewer
+                      reasoning={msg.reasoning || ''}
+                      reasoningSteps={msg.reasoningSteps}
                     />
                   </div>
                 )}
-                
+
                 {msg.timestamp && (
-                  <div className={`text-xs mt-1 ${
-                    msg.sender === "user" ? "text-right text-gray-500" : "text-left text-gray-500"
-                  }`}>
+                  <div
+                    className={`text-xs mt-1 ${
+                      msg.sender === 'user' ? 'text-right text-gray-500' : 'text-left text-gray-500'
+                    }`}
+                  >
                     {msg.timestamp}
                   </div>
                 )}
@@ -932,65 +998,107 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
             </div>
           ))}
 
-          {/* Streaming Progress */}
-          <StreamingProgress
-            isStreaming={isStreaming}
-            currentStep={currentStep}
-            currentDescription={currentDescription}
-            progress={progress}
-            reasoning={reasoning}
-            currentReasoning={currentReasoning}
-          />
+          {/* Streaming response display - show when we have streaming content */}
+          {isStreaming && streamingResponse && streamingResponse.trim() && (
+            <div className="flex justify-start mb-4">
+              <div className="max-w-4xl w-full">
+                <div className="text-sm text-gray-900 mb-1">
+                  <div className="rounded-2xl px-4 py-3 bg-white border border-gray-200 shadow-sm">
+                    <div className="text-sm leading-relaxed text-gray-900">
+                      <ReactMarkdown components={markdownComponents}>
+                        {streamingResponse}
+                      </ReactMarkdown>
+                      <span className="inline-block w-2 h-5 bg-blue-600 animate-pulse ml-1" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
-          {/* Invisible scroll target */}
+          {/* Streaming progress bar - show when streaming, or when differential diagnosis is computing, or has any progress data */}
+          {(isStreaming && (!streamingResponse || !streamingResponse.trim())) || 
+           differentialDiagnosisProgress?.isComputing ||
+           (differentialDiagnosisProgress?.currentDiagnosis && differentialDiagnosisProgress.currentDiagnosis.trim() !== '') ? (
+            <StreamingProgress
+              isStreaming={isStreaming}
+              currentStep={currentStep}
+              currentDescription={currentDescription}
+              progress={progress}
+              reasoning={reasoning}
+              currentReasoning={currentReasoning}
+              differentialDiagnosisProgress={differentialDiagnosisProgress}
+            />
+          ) : null}
+
+          {/* Auto-scroll anchor */}
           <div ref={messagesEndRef} />
+          {/* Spacer to ensure last message is visible above input bar */}
+          <div style={{ height: 120 }} aria-hidden="true" />
         </div>
       </div>
 
-      {/* Input Form - fixed at bottom, doesn't scroll */}
-      <div className="border-t bg-gray-50 p-4 flex-shrink-0">
-        <form onSubmit={sendMessage} className="flex gap-3">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={getPlaceholderText()}
-            className="flex-1 border border-gray-300 bg-white placeholder-gray-500 text-gray-900 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium resize-none"
-            disabled={isStreaming}
-            rows={3}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage(e as any);
-              }
-            }}
-          />
-          <div className="flex flex-col gap-2">
-            <button
-              type="submit"
-              disabled={!input.trim() || isStreaming}
-              className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isStreaming ? 'Analyzing...' : 'Send'}
-            </button>
-            {isStreaming && (
+      {/* Absolutely positioned, centered input bar within the chat pane */}
+      <div className="absolute bottom-0 left-0 right-0 px-4 z-20 pointer-events-none flex justify-center">
+        <div className="w-full max-w-4xl border border-gray-300 bg-white/80 backdrop-blur-md shadow-xl rounded-2xl pointer-events-auto">
+          <form onSubmit={sendMessage} className="flex gap-3 p-4">
+            <textarea
+              ref={textAreaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder={getPlaceholderText()}
+              className="flex-1 resize-none overflow-y-auto border border-gray-200 bg-white/70 placeholder-gray-500
+                        text-gray-900 rounded-2xl px-3 py-1.5 focus:outline-none
+                        focus:ring-2 focus:ring-blue-400 focus:border-blue-400 font-medium text-sm shadow-sm"
+              disabled={isStreaming}
+              rows={1}
+              style={{ minHeight: 40, maxHeight: 240 }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  sendMessage(e as any);
+                }
+              }}
+            />
+            <div className="flex flex-col gap-2 shrink-0">
               <button
-                type="button"
-                onClick={stopStream}
-                className="px-4 py-2 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors"
+                type="submit"
+                disabled={!input.trim() || isStreaming}
+                className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Stop
+                {isStreaming ? 'Analyzing…' : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                  </svg>
+                )}
               </button>
-            )}
-          </div>
-        </form>
-        
-        {mode === "diagnose" && user && (
-          <div className="mt-2 text-xs text-gray-600 text-center">
-            Consulting as <span className="font-semibold">{user.display_name}</span> ({user.role}) in{" "}
-            <span className="font-semibold">{diagnosticModes.find(m => m.id === diagnosticMode)?.name || diagnosticMode}</span> mode
-          </div>
-        )}
+              {isStreaming && (
+                <button
+                  type="button"
+                  onClick={stopStream}
+                  className="px-4 py-2 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors"
+                >
+                  Stop
+                </button>
+              )}
+            </div>
+          </form>
+        </div>
       </div>
+
+      {/* Right-side mode selector - only show if info mode is enabled and we're in diagnose mode */}
+      {isInfoModeEnabled && mode === "diagnose" && (
+        <div className="absolute right-4 bottom-4 z-30 pointer-events-auto">
+          <div className="p-3 border border-gray-300 bg-white/90 backdrop-blur-md shadow-xl rounded-xl">
+            <ModeSelector
+              selectedMode={infoRetrievalMode}
+              onModeChange={handleModeChange}
+              disabled={isStreaming}
+              layout="vertical"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

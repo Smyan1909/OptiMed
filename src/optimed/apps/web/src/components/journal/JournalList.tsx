@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { JournalEntry, JournalEntryType, fetchPatientJournalEntries } from '@/lib/api';
 import { formatDistanceToNow } from 'date-fns';
 import { enUS } from 'date-fns/locale';
+import CreateJournalEntryDialog from './CreateJournalEntryDialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 interface JournalListProps {
   patientId: string;
@@ -14,6 +16,8 @@ export default function JournalList({ patientId }: JournalListProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<JournalEntry | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     fetchJournalEntries();
@@ -25,7 +29,6 @@ export default function JournalList({ patientId }: JournalListProps) {
       setError(null);
       console.log('Fetching journal entries for patient:', patientId);
       
-      // Use the API function instead of direct fetch
       const data = await fetchPatientJournalEntries(patientId);
       console.log('Journal entries received:', data);
       setEntries(data);
@@ -37,14 +40,22 @@ export default function JournalList({ patientId }: JournalListProps) {
     }
   };
 
+  const handleCreateSuccess = () => {
+    // Refresh the journal entries after successful creation
+    setIsRefreshing(true);
+    fetchJournalEntries().finally(() => {
+      setIsRefreshing(false);
+    });
+  };
+
   const getEntryTypeLabel = (type: JournalEntryType): string => {
     const labels = {
-      [JournalEntryType.NOTE]: 'Note',
-      [JournalEntryType.OBSERVATION]: 'Observation',
-      [JournalEntryType.TREATMENT]: 'Treatment',
-      [JournalEntryType.DIAGNOSIS]: 'Diagnosis',
-      [JournalEntryType.ASSESSMENT]: 'Assessment',
-      [JournalEntryType.PLAN]: 'Plan'
+      [JournalEntryType.NOTE]: 'Progress Note',
+      [JournalEntryType.OBSERVATION]: 'Clinical Observation',
+      [JournalEntryType.TREATMENT]: 'Treatment Note',
+      [JournalEntryType.DIAGNOSIS]: 'Diagnostic Assessment',
+      [JournalEntryType.ASSESSMENT]: 'Clinical Assessment',
+      [JournalEntryType.PLAN]: 'Care Plan'
     };
     return labels[type] || type;
   };
@@ -64,13 +75,8 @@ export default function JournalList({ patientId }: JournalListProps) {
   if (loading) {
     return (
       <div className="bg-white rounded-lg shadow border border-gray-200 p-6">
-        <div className="animate-pulse space-y-4">
-          <div className="h-4 bg-gray-200 rounded w-1/4"></div>
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-20 bg-gray-200 rounded"></div>
-            ))}
-          </div>
+        <div className="flex items-center justify-center h-32">
+          <div className="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full"></div>
         </div>
       </div>
     );
@@ -95,17 +101,44 @@ export default function JournalList({ patientId }: JournalListProps) {
   return (
     <div className="bg-white rounded-lg shadow border border-gray-200">
       <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-        <h2 className="text-lg font-bold text-gray-900">Journal Entries</h2>
-        <button className="flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
-          <span>+</span>
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Journal Entries</h2>
+          <p className="text-sm text-gray-600 mt-1">
+            Patient care documentation and notes
+            {isRefreshing && (
+              <span className="ml-2 text-blue-600 animate-pulse">
+                • Updating...
+              </span>
+            )}
+          </p>
+        </div>
+        <button 
+          onClick={() => setShowCreateModal(true)}
+          className="flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+          </svg>
           <span>New Entry</span>
         </button>
       </div>
 
       <div className="divide-y divide-gray-200">
         {entries.length === 0 ? (
-          <div className="p-8 text-center text-gray-500">
-            <p>No journal entries to display</p>
+          <div className="p-12 text-center">
+            <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+              <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">No journal entries yet</h3>
+            <p className="text-gray-600 mb-6 max-w-sm mx-auto">Start documenting patient care by creating your first journal entry.</p>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
+            >
+              Create First Entry
+            </button>
           </div>
         ) : (
           entries.map((entry) => (
@@ -116,28 +149,30 @@ export default function JournalList({ patientId }: JournalListProps) {
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center space-x-3 mb-2">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getEntryTypeColor(entry.entry_type)}`}>
+                  <div className="flex items-center space-x-3 mb-3">
+                    <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${getEntryTypeColor(entry.entry_type)}`}>
                       {getEntryTypeLabel(entry.entry_type)}
                     </span>
-                    <span className="text-sm text-gray-500">
+                    <span className="text-sm text-gray-500 font-medium">
                       {formatDistanceToNow(new Date(entry.created_at), { addSuffix: true, locale: enUS })}
                     </span>
                   </div>
-                  <h3 className="text-base font-medium text-gray-900 mb-2 truncate">
+                  <h3 className="text-base font-semibold text-gray-900 mb-2 line-clamp-1">
                     {entry.title}
                   </h3>
-                  <p className="text-sm text-gray-600 line-clamp-2 mb-3">
+                  <p className="text-sm text-gray-600 line-clamp-2 mb-3 leading-relaxed">
                     {entry.content}
                   </p>
-                  <div className="flex items-center space-x-4 text-sm text-gray-500">
-                    <span className="font-medium">{entry.author_name}</span>
-                    <span>•</span>
-                    <span>{entry.author_role}</span>
+                  <div className="flex items-center space-x-4 text-sm">
+                    <span className="font-medium text-gray-900">{entry.author_name}</span>
+                    <span className="text-gray-400">•</span>
+                    <span className="text-gray-600">{entry.author_role}</span>
                   </div>
                 </div>
                 <div className="ml-4 flex-shrink-0">
-                  <span className="text-gray-400">→</span>
+                  <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                  </svg>
                 </div>
               </div>
             </div>
@@ -145,11 +180,20 @@ export default function JournalList({ patientId }: JournalListProps) {
         )}
       </div>
 
+      {/* Create Journal Entry Modal */}
+      <CreateJournalEntryDialog
+        patientId={patientId}
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSuccess={handleCreateSuccess}
+      />
+
       {/* Journal Entry Modal */}
       {selectedEntry && (
-        <JournalEntryModal
+        <JournalEntryModal 
           entry={selectedEntry}
-          onClose={() => setSelectedEntry(null)}
+          open={!!selectedEntry}
+          onOpenChange={(open: boolean) => !open && setSelectedEntry(null)}
         />
       )}
     </div>
@@ -159,18 +203,19 @@ export default function JournalList({ patientId }: JournalListProps) {
 // Journal Entry Modal Component
 interface JournalEntryModalProps {
   entry: JournalEntry;
-  onClose: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
-function JournalEntryModal({ entry, onClose }: JournalEntryModalProps) {
+function JournalEntryModal({ entry, open, onOpenChange }: JournalEntryModalProps) {
   const getEntryTypeLabel = (type: JournalEntryType): string => {
     const labels = {
-      [JournalEntryType.NOTE]: 'Note',
-      [JournalEntryType.OBSERVATION]: 'Observation',
-      [JournalEntryType.TREATMENT]: 'Treatment',
-      [JournalEntryType.DIAGNOSIS]: 'Diagnosis',
-      [JournalEntryType.ASSESSMENT]: 'Assessment',
-      [JournalEntryType.PLAN]: 'Plan'
+      [JournalEntryType.NOTE]: 'Progress Note',
+      [JournalEntryType.OBSERVATION]: 'Clinical Observation',
+      [JournalEntryType.TREATMENT]: 'Treatment Note',
+      [JournalEntryType.DIAGNOSIS]: 'Diagnostic Assessment',
+      [JournalEntryType.ASSESSMENT]: 'Clinical Assessment',
+      [JournalEntryType.PLAN]: 'Care Plan'
     };
     return labels[type] || type;
   };
@@ -188,47 +233,63 @@ function JournalEntryModal({ entry, onClose }: JournalEntryModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-6 border-b border-gray-200">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-gray-900">Journal Entry</h2>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 transition-colors text-xl"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Journal Entry Details</DialogTitle>
+        </DialogHeader>
 
-        <div className="p-6 space-y-4">
-          <div className="flex items-center space-x-3">
-            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getEntryTypeColor(entry.entry_type)}`}>
+        <div className="space-y-6">
+          {/* Entry Type Badge and Timestamp */}
+          <div className="flex items-center justify-between">
+            <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getEntryTypeColor(entry.entry_type)}`}>
               {getEntryTypeLabel(entry.entry_type)}
             </span>
-            <span className="text-sm text-gray-500">
-              {new Date(entry.created_at).toLocaleString('en-US')}
-            </span>
+            <div className="text-sm text-gray-500">
+              Created: {new Date(entry.created_at).toLocaleString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })}
+            </div>
           </div>
 
-          <h3 className="text-lg font-medium text-gray-900">{entry.title}</h3>
-
-          <div className="prose prose-sm max-w-none">
-            <p className="text-gray-700 whitespace-pre-wrap">{entry.content}</p>
+          {/* Title */}
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">{entry.title}</h3>
           </div>
 
-          <div className="pt-4 border-t border-gray-200">
-            <div className="flex items-center space-x-4 text-sm text-gray-500">
-              <span className="font-medium">{entry.author_name}</span>
-              <span>•</span>
-              <span>{entry.author_role}</span>
-              <span>•</span>
-              <span>Updated: {new Date(entry.updated_at).toLocaleString('en-US')}</span>
+          {/* Content */}
+          <div className="bg-gray-50 rounded-lg p-4">
+            <h4 className="text-sm font-medium text-gray-700 mb-3">Entry Content</h4>
+            <div className="prose prose-sm max-w-none">
+              <pre className="whitespace-pre-wrap text-gray-900 font-mono text-sm leading-relaxed">
+                {entry.content}
+              </pre>
+            </div>
+          </div>
+
+          {/* Author Information */}
+          <div className="border-t border-gray-200 pt-4">
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center space-x-4 text-gray-600">
+                <span>
+                  <span className="font-medium text-gray-900">Author:</span> {entry.author_name}
+                </span>
+                <span>•</span>
+                <span>
+                  <span className="font-medium text-gray-900">Role:</span> {entry.author_role}
+                </span>
+              </div>
+              <div className="text-gray-500">
+                Last updated: {new Date(entry.updated_at).toLocaleString('en-US')}
+              </div>
             </div>
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

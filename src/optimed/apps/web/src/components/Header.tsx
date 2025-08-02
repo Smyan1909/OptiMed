@@ -13,7 +13,7 @@ import { useRouter } from 'next/navigation'; // Import useRouter for navigation
 const navigation = [
   { name: 'Patients', href: '/patients', icon: Users },
   { name: 'Chat', href: '/chat', icon: MessageSquare },
-  { name: 'DICOM Viewer', href: '/dicom', icon: Images },
+  // { name: 'DICOM Viewer', href: '/dicom', icon: Images },
   { name: 'Admin', href: '/admin', icon: Settings, adminOnly: true },
 ];
 
@@ -37,12 +37,6 @@ export function Header() {
               </div>
               <span className="text-xl font-bold text-gray-900">CLARA</span>
             </Link>
-            
-            {user && (
-              <Badge variant="outline" className="text-xs">
-                {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
-              </Badge>
-            )}
           </div>
 
           <nav className="hidden md:flex space-x-1">

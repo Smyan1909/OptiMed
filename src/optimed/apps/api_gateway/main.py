@@ -5,6 +5,7 @@ import httpx
 import json
 import base64
 import time
+import asyncio
 import io
 from PIL import Image
 from datetime import datetime, timezone, timedelta
@@ -13,7 +14,7 @@ from typing import AsyncGenerator, Dict, Optional, Any, List
 from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, Header, Depends, File, Form, Body, Response # type: ignore
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus, ImageGenerationRequest
+from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus, ImageGenerationRequest, DataSource, ChatRole, ChatMessage
 from optimed.core.ports import FHIRRepository
 from optimed.apps.orchestrator.factory import create_app_dependencies
 from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalEntryType
@@ -21,7 +22,7 @@ from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalE
 
 from pydantic import BaseModel
 
-_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo = create_app_dependencies()
+_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service = create_app_dependencies()
 
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
@@ -98,6 +99,20 @@ class PatientOut(BaseModel):
     # Encounters
     encounters: Dict[str, str]
     encounters_timestamps: Dict[str, str]
+
+    vitals_sources: Dict[str, DataSource] = {}
+    labs_sources: Dict[str, DataSource] = {}
+    imaging_sources: Dict[str, DataSource] = {}
+    exam_sources: Dict[str, DataSource] = {}
+    procedure_sources: Dict[str, DataSource] = {}
+    social_history_sources: Dict[str, DataSource] = {}
+    medications_sources: Dict[str, DataSource] = {}
+    allergies_sources: Dict[str, DataSource] = {}
+    diagnoses_sources: Dict[str, DataSource] = {}
+    immunizations_sources: Dict[str, DataSource] = {}
+    medication_statement_sources: Dict[str, DataSource] = {}
+    questionnaire_response_sources: Dict[str, DataSource] = {}
+    encounters_sources: Dict[str, DataSource] = {}
 
 class UserOut(BaseModel):
     user_id: str 
@@ -568,6 +583,21 @@ async def search_patients(
                 # Encounters
                 encounters=p.encounters,
                 encounters_timestamps=p.encounters_timestamps,
+                # Data sources
+                vitals_sources = p.vitals_sources,
+                labs_sources = p.labs_sources,
+                imaging_sources = p.imaging_sources,
+                exam_sources = p.exam_sources,
+                procedure_sources = p.procedure_sources,
+                social_history_sources = p.social_history_sources,
+                medications_sources = p.medications_sources,
+                allergies_sources = p.allergies_sources,
+                diagnoses_sources = p.diagnoses_sources,
+                immunizations_sources = p.immunizations_sources,
+                medication_statement_sources = p.medication_statement_sources,
+                questionnaire_response_sources = p.questionnaire_response_sources,
+                encounters_sources = p.encounters_sources
+
             )
             for p in domain_objs
         ]
@@ -917,6 +947,20 @@ async def get_patient(
                 # Encounters
                 encounters=pctx.encounters,
                 encounters_timestamps=pctx.encounters_timestamps,
+                # Data sources
+                vitals_sources=pctx.vitals_sources,
+                labs_sources=pctx.labs_sources,
+                imaging_sources=pctx.imaging_sources,
+                exam_sources=pctx.exam_sources,
+                procedure_sources=pctx.procedure_sources,
+                social_history_sources=pctx.social_history_sources,
+                medications_sources=pctx.medications_sources,
+                allergies_sources=pctx.allergies_sources,
+                diagnoses_sources=pctx.diagnoses_sources,
+                immunizations_sources=pctx.immunizations_sources,
+                medication_statement_sources=pctx.medication_statement_sources,
+                questionnaire_response_sources=pctx.questionnaire_response_sources,
+                encounters_sources=pctx.encounters_sources
     )
 
 @app.delete("/patients/{patient_id}/chat-history", summary="Delete patient by ID")
@@ -931,6 +975,7 @@ async def clear_patient_chat_history(patient_id: str = Path(..., description="Th
 async def _event_stream(patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[str, None]:
     """Stream events from the diagnostic engine."""
     try:
+        chunk_count = 0
         async for update in _engine.run_stream(
             patient=patient, 
             user_prompt=user_prompt, 
@@ -939,6 +984,8 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
             user_id=user_id, 
             session_id=session_id
         ):
+            chunk_count += 1
+            
             # Handle different update types
             if update.get("type") == "status":
                 status_data = {
@@ -949,7 +996,8 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
                     "progress": update.get("progress", 0.0),
                     "timestamp": update.get("timestamp", datetime.now().isoformat())
                 }
-                yield f"data: {json.dumps(status_data)}\n\n"
+                chunk_line = f"data: {json.dumps(status_data)}\n\n"
+                yield chunk_line
                 
             elif update.get("type") == "reasoning":
                 reasoning_data = {
@@ -968,7 +1016,36 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
                     "timestamp": update.get("timestamp", datetime.now().isoformat())
                 }
                 yield f"data: {json.dumps(reasoning_complete_data)}\n\n"
+            
+            elif update.get("type") == "differential_diagnosis_progress":
+                # Handle differential diagnosis progress updates
+                print(f"[DEBUG] API Gateway received differential diagnosis progress: {update}")
+                diagnosis_progress_data = {
+                    "type": "differential_diagnosis_progress",
+                    "diagnosis_name": update.get("diagnosis_name", ""),
+                    "step": update.get("step", ""),
+                    "details": update.get("details", ""),
+                    "message": update.get("message", ""),
+                    "timestamp": update.get("timestamp", datetime.now().isoformat())
+                }
+                print(f"[DEBUG] Emitting diagnosis progress data: {diagnosis_progress_data}")
+                yield f"data: {json.dumps(diagnosis_progress_data)}\n\n"
+            
+            elif update.get("type") == "response_chunk":
+                response_chunk_data = {
+                    "type": "response_chunk",
+                    "content": update.get("content", ""),
+                    "accumulated_content": update.get("accumulated_content", ""),
+                    "timestamp": update.get("timestamp", datetime.now().isoformat())
+                }
                 
+                # Immediately yield the chunk with explicit flush markers
+                chunk_line = f"data: {json.dumps(response_chunk_data)}\n\n"
+                yield chunk_line
+                
+                # Force a small delay to ensure chunk is sent
+                await asyncio.sleep(0.001)
+
             elif update.get("type") == "completion":
                 # Extract final response and differential diagnosis data
                 final_content = (
@@ -1029,7 +1106,7 @@ async def diagnose_stream(
     current_user = user_ctx.get("user")
 
     if current_user:
-        print(f"[API] Streaming diagnosis request from {current_user.display_name} ({current_user.role.value}) in {req.diagnostic_mode} mode")
+        pass  # User context loaded
 
     patient_ctx = None
     if req.patient_id:
@@ -1062,6 +1139,7 @@ async def diagnose_stream(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "*",
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -1081,7 +1159,7 @@ async def chat_stream(
     current_user = user_ctx.get("user")
 
     if current_user:
-        print(f"[API] Streaming chat request from {current_user.display_name} ({current_user.role.value})")
+        pass  # User context loaded
 
     patient_ctx = None
     if req.patient_id:
@@ -1735,7 +1813,245 @@ async def delete_journal_entry(
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete journal entry: {e}")
-    
+
+@app.post("/journal/generate")
+async def generate_journal_entry(
+    request: dict,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Generate a complete journal entry based on user prompt."""
+    try:
+        current_user = user_ctx.get("user")
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        prompt = request.get("prompt", "")
+        entry_type = request.get("entry_type", "note")
+        patient_id = request.get("patient_id")
+        
+        if not prompt.strip():
+            raise HTTPException(status_code=400, detail="Prompt is required")
+        
+        # Get patient context if provided
+        patient_context = ""
+        if patient_id:
+            try:
+                # Get FHIR repository for this user
+                fhir_repo = await _connection_service.create_fhir_repository(
+                    current_user.user_id, 
+                    provider_type="smart_fhir"
+                ) or _fhir
+                
+                patient = await fhir_repo.get_patient(patient_id)
+                patient_context = f"""
+Patient Information:
+- Name: {patient.name}
+- Age: {patient.age}
+- Sex: {patient.sex}
+- Recent Vitals: {', '.join([f"{k}: {v}" for k, v in list(patient.vitals.items())[:5]])}
+- Current Medications: {', '.join([f"{k}: {v}" for k, v in list(patient.medications.items())[:5]])}
+- Active Diagnoses: {', '.join([f"{k}: {v}" for k, v in list(patient.diagnoses.items())[:3]])}
+"""
+            except Exception as e:
+                print(f"[Warning] Could not fetch patient context: {e}")
+                patient_context = ""
+        
+        # Define entry type contexts and templates
+        entry_type_info = {
+            "note": {
+                "name": "Progress Note",
+                "structure": """SUBJECTIVE: Patient's reported symptoms and concerns
+OBJECTIVE: Vital signs, physical examination findings
+ASSESSMENT: Clinical impression and analysis
+PLAN: Treatment plan and follow-up"""
+            },
+            "observation": {
+                "name": "Clinical Observation",
+                "structure": """OBSERVATION: What was observed
+FINDINGS: Key clinical findings
+CLINICAL SIGNIFICANCE: Importance of findings
+RECOMMENDATIONS: Suggested actions"""
+            },
+            "treatment": {
+                "name": "Treatment Note",
+                "structure": """TREATMENT PROVIDED: Intervention details
+PATIENT RESPONSE: Response to treatment
+POST-TREATMENT ASSESSMENT: Current status
+PLAN: Next steps and monitoring"""
+            },
+            "diagnosis": {
+                "name": "Diagnostic Assessment",
+                "structure": """PRESENTING COMPLAINT: Chief complaint
+HISTORY OF PRESENT ILLNESS: Timeline and details
+EXAMINATION FINDINGS: Physical exam results
+DIFFERENTIAL DIAGNOSIS: Possible diagnoses
+WORKING DIAGNOSIS: Most likely diagnosis
+PLAN FOR FURTHER EVALUATION: Next steps"""
+            },
+            "assessment": {
+                "name": "Clinical Assessment",
+                "structure": """PATIENT STATUS: Current condition
+REVIEW OF SYSTEMS: System-by-system review
+CLINICAL IMPRESSION: Assessment summary
+RISK FACTORS: Identified risks
+RECOMMENDATIONS: Clinical recommendations"""
+            },
+            "plan": {
+                "name": "Care Plan",
+                "structure": """CARE GOALS: Treatment objectives
+INTERVENTIONS: Planned treatments
+MONITORING PLAN: Follow-up schedule
+PATIENT EDUCATION: Education provided
+COORDINATION OF CARE: Team involvement"""
+            }
+        }
+        
+        entry_info = entry_type_info.get(entry_type, entry_type_info["note"])
+        current_date = datetime.now().strftime("%B %d, %Y")
+        
+        # Create comprehensive prompt for journal generation
+        generation_prompt = f"""You are an expert medical documentation assistant. Generate a complete {entry_info['name']} based on the following user request.
+
+{patient_context}
+
+User Request: "{prompt}"
+
+Create a comprehensive {entry_info['name']} that follows this structure:
+{entry_info['structure']}
+
+Requirements:
+- Use professional medical terminology
+- Be specific and detailed where appropriate
+- Include relevant clinical observations
+- Follow standard medical documentation practices
+- Ensure all sections are clinically relevant
+- Use proper medical abbreviations when appropriate
+- Make realistic clinical assessments based on the prompt
+
+Generate both a title and complete content for this journal entry.
+
+Please format your response as JSON with the following structure:
+{{
+    "title": "Generated title for the entry",
+    "content": "Complete journal entry content with proper formatting and line breaks"
+}}
+
+Focus on creating realistic, clinically sound documentation that a healthcare provider would actually write."""
+
+        # Generate using the journal LLM service
+        response = await _journal_llm_service.chat([
+            ChatMessage(role=ChatRole.SYSTEM, content="You are an expert medical documentation assistant. Always respond with valid JSON format."),
+            ChatMessage(role=ChatRole.USER, content=generation_prompt)
+        ])
+        
+        # Parse the response
+        try:
+            # Try to extract JSON from the response
+            response_text = response.content.strip()
+            
+            # Handle potential markdown code blocks
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+            response_text = response_text.strip()
+            
+            generated_data = json.loads(response_text)
+            
+            title = generated_data.get("title", f"{entry_info['name']} - {current_date}")
+            content = generated_data.get("content", "")
+            
+        except json.JSONDecodeError:
+            # Fallback: treat entire response as content
+            content = response.content.strip()
+            title = f"{entry_info['name']} - {current_date}"
+        
+        # Clean up content formatting
+        content = content.replace("\\n", "\n").strip()
+        
+        return {
+            "title": title,
+            "content": content,
+            "entry_type": entry_type,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "prompt": prompt
+        }
+        
+    except Exception as e:
+        print(f"[Journal Generation] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Journal generation failed: {e}")
+
+@app.post("/journal/autocomplete")
+async def journal_autocomplete(
+    request: dict,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Provide LLM-guided autocomplete for journal entries."""
+    try:
+        current_user = user_ctx.get("user")
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        text = request.get("text", "")
+        entry_type = request.get("entry_type", "note")
+        cursor_position = request.get("cursor_position", len(text))
+        max_tokens = request.get("max_tokens", 50)
+        
+        if not text.strip():
+            return {"completion": "", "suggestions": []}
+        
+        # Get text before cursor
+        text_before_cursor = text[:cursor_position]
+        
+        # Create context-aware prompt based on entry type
+        entry_type_context = {
+            "note": "clinical progress note",
+            "observation": "clinical observation",
+            "treatment": "treatment documentation",
+            "diagnosis": "diagnostic assessment",
+            "assessment": "clinical assessment",
+            "plan": "care plan"
+        }
+        
+        context = entry_type_context.get(entry_type, "medical documentation")
+        
+        completion_prompt = f"""You are assisting with medical documentation. Complete the following {context} text professionally and concisely.
+
+Current text: "{text_before_cursor}"
+
+Provide a natural continuation that:
+- Uses appropriate medical terminology
+- Maintains professional tone
+- Is clinically relevant
+- Follows standard documentation practices
+- Is 1-3 words or a short phrase (max {max_tokens} characters)
+
+Completion:"""
+
+        
+        response = await _journal_llm_service.chat([
+            ChatMessage(role=ChatRole.SYSTEM, content="You are a medical documentation assistant."),
+            ChatMessage(role=ChatRole.USER, content=completion_prompt)
+        ])
+        
+        completion = response.content.strip()
+        
+        # Clean up the completion
+        if completion.startswith('"') and completion.endswith('"'):
+            completion = completion[1:-1]
+        
+        # Limit completion length
+        if len(completion) > max_tokens:
+            completion = completion[:max_tokens].rsplit(' ', 1)[0]
+        
+        return {
+            "completion": completion,
+            "cursor_position": cursor_position
+        }
+        
+    except Exception as e:
+        print(f"[Autocomplete] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Autocomplete failed: {e}")
 
 
 @app.post("/images/generate")
