@@ -507,16 +507,48 @@ def _to_patient_ctx(
     medication_statement_data, medication_statement_timestamps, medication_statement_sources = _obs_bundle_to_dict_with_timestamps(medication_statement or [], base_url, "medication-statement")
     questionnaire_response_data, questionnaire_response_timestamps, questionnaire_response_sources = _obs_bundle_to_dict_with_timestamps(questionnaire_response or [], base_url, "questionnaire")
     
-    # Process encounters
+    # Process encounters and extract care unit information
     encounters_data = {}
     encounters_timestamps = {}
     encounters_sources = {}
+    care_unit = "UNKNOWN"
+    
     if encounters:
         for encounter in encounters:
             if isinstance(encounter, dict):
                 encounter_type = encounter.get("type", [{}])[0].get("text", "Unknown Encounter")
                 encounter_id = encounter.get("id", "unknown")
                 encounters_data[encounter_id] = encounter_type
+                
+                # Extract care unit from encounter location or serviceType
+                if care_unit == "UNKNOWN":
+                    # Try to get care unit from location
+                    locations = encounter.get("location", [])
+                    if locations and len(locations) > 0:
+                        location = locations[0].get("location", {})
+                        if location.get("display"):
+                            care_unit = location["display"]
+                        elif location.get("reference"):
+                            # Extract location name from reference
+                            location_name = location["reference"].split("/")[-1]
+                            care_unit = location_name
+                    
+                    # If no location found, try serviceType
+                    if care_unit == "UNKNOWN":
+                        service_type = encounter.get("serviceType")
+                        if service_type and service_type.get("text"):
+                            care_unit = service_type["text"]
+                        elif service_type and service_type.get("coding"):
+                            for coding in service_type["coding"]:
+                                if coding.get("display"):
+                                    care_unit = coding["display"]
+                                    break
+                    
+                    # If still no care unit, try class display
+                    if care_unit == "UNKNOWN":
+                        encounter_class = encounter.get("class", {})
+                        if encounter_class.get("display"):
+                            care_unit = encounter_class["display"]
                 
                 # Extract encounter timestamp
                 period = encounter.get("period", {})
@@ -546,7 +578,7 @@ def _to_patient_ctx(
         name=_fhir_name_to_str(patient),
         age=_age_from_birthdate(patient.birthDate),
         sex=patient.gender or "unknown",
-        care_unit="UNKNOWN",
+        care_unit=care_unit,
         
         # Data fields
         vitals=vitals_data,
