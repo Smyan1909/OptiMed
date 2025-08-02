@@ -1726,15 +1726,44 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                                 diagnosis_names.append(diagnosis_name)
                                 diagnosis_data.append(diff)
                         
+                        # Emit initial progress update
+                        if diagnosis_names:
+                            await _emit_diagnosis_progress_update(
+                                state, 
+                                "Differential Diagnosis System", 
+                                "Initializing analysis", 
+                                f"Found {len(diagnosis_names)} potential diagnoses to analyze"
+                            )
+                        
                         # Batch retrieve priors for ALL diagnoses once (for consistency)
                         batch_priors = {}
                         if diagnosis_names:
+                            await _emit_diagnosis_progress_update(
+                                state, 
+                                "Differential Diagnosis System", 
+                                "Retrieving baseline probabilities", 
+                                f"Searching medical literature for {len(diagnosis_names)} conditions"
+                            )
                             print(f"[parse_icd] Batch retrieving priors for {len(diagnosis_names)} diagnoses")
                             batch_priors = await _batch_web_search_for_priors(diagnosis_names, state.patient_ctx)
+                            await _emit_diagnosis_progress_update(
+                                state, 
+                                "Differential Diagnosis System", 
+                                "Baseline probabilities retrieved", 
+                                f"Starting Bayesian analysis for each diagnosis"
+                            )
                         
                         # Create concurrent tasks for all differential diagnoses
                         confidence_tasks = []
-                        for diagnosis_name, diff in zip(diagnosis_names, diagnosis_data):
+                        for i, (diagnosis_name, diff) in enumerate(zip(diagnosis_names, diagnosis_data)):
+                            # Emit progress update for this specific diagnosis
+                            await _emit_diagnosis_progress_update(
+                                state, 
+                                diagnosis_name, 
+                                "Queued for analysis", 
+                                f"Position {i+1} of {len(diagnosis_names)}"
+                            )
+                            
                             state.prelim_diagnosis_name = diagnosis_name  # Store for streaming updates
                             print(f"[parse_icd] Preparing Bayesian confidence calculation for: {diagnosis_name}")
                             
@@ -1753,13 +1782,30 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                         if confidence_tasks:
                             print(f"[parse_icd] Computing Bayesian confidence for {len(confidence_tasks)} diagnoses in parallel")
                             
+                            # Emit start of concurrent processing
+                            await _emit_diagnosis_progress_update(
+                                state, 
+                                "Bayesian Analysis Engine", 
+                                "Computing all diagnoses", 
+                                f"Processing {len(confidence_tasks)} diagnoses concurrently"
+                            )
+                            
                             # Run all tasks concurrently
                             task_results = await asyncio.gather(
                                 *[task for task, _ in confidence_tasks],
                                 return_exceptions=True
                             )
                             
+                            # Emit completion of concurrent processing
+                            await _emit_diagnosis_progress_update(
+                                state, 
+                                "Bayesian Analysis Engine", 
+                                "Analysis complete", 
+                                "Finalizing confidence scores and rankings"
+                            )
+                            
                             # Process results and create DifferentialDiagnosis objects
+                            processed_count = 0
                             for i, (confidence_result, diff) in enumerate(zip(task_results, [diff for _, diff in confidence_tasks])):
                                 try:
                                     if isinstance(confidence_result, Exception):
@@ -1777,11 +1823,32 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                                         supporting_evidence=diff.get("supporting_evidence", [])
                                     ))
                                     
+                                    processed_count += 1
                                     print(f"[parse_icd] {diagnosis_name}: Bayesian confidence = {bayesian_confidence:.3f}")
+                                    
+                                    # Emit progress for each processed diagnosis
+                                    await _emit_diagnosis_progress_update(
+                                        state, 
+                                        diagnosis_name, 
+                                        "Analysis complete", 
+                                        f"Confidence: {bayesian_confidence:.1%} ({processed_count}/{len(task_results)})"
+                                    )
                                     
                                 except Exception as e:
                                     print(f"[parse_icd] Error processing result for differential {i}: {e}")
                                     continue
+
+                    # Emit final completion update
+                    if differential_list:
+                        # Sort by confidence for display
+                        sorted_diagnoses = sorted(differential_list, key=lambda x: x.confidence, reverse=True)
+                        top_diagnosis = sorted_diagnoses[0]
+                        await _emit_diagnosis_progress_update(
+                            state, 
+                            "Differential Diagnosis Complete", 
+                            "Analysis finished", 
+                            f"Top diagnosis: {top_diagnosis.diagnosis_name} ({top_diagnosis.confidence:.1%})"
+                        )
 
                     # Calculate overall confidence as the maximum individual confidence
                     overall_confidence = max([diff.confidence for diff in differential_list]) if differential_list else 0.0
@@ -1828,13 +1895,20 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
             P(Diagnosis|Evidence) = P(Evidence|Diagnosis) * P(Diagnosis) / P(Evidence)
             """
             try:
+                # Emit update that we're starting this diagnosis
+                await _emit_diagnosis_progress_update(state, diagnosis_name, "Retrieving baseline probability")
+                
                 # Step 1: Use the batch-computed prior (ensures consistency)
                 prior_probability = batch_priors.get(diagnosis_name, 0.03)
                 state.diff_diag_compute_step = f"Prior probability for {diagnosis_name}: {prior_probability:.3f}"
+                
+                await _emit_diagnosis_progress_update(state, diagnosis_name, "Calculating evidence likelihood", f"Prior: {prior_probability:.3f}")
 
                 # Step 2: Get likelihood from patient evidence
                 likelihood = await _calculate_likelihood(diagnosis_name, patient_context, supporting_evidence)
                 state.diff_diag_compute_step = f"Likelihood for {diagnosis_name}: {likelihood:.3f}"
+                
+                await _emit_diagnosis_progress_update(state, diagnosis_name, "Computing marginal probability", f"Likelihood: {likelihood:.3f}")
 
                 # Step 3: Estimate marginal probability using the SAME batch priors for consistency
                 marginal_probability = await _estimate_marginal_probability_with_batch_priors(
@@ -1853,13 +1927,36 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 # Ensure result is between 0 and 1
                 posterior = max(0.0, min(1.0, posterior))
                 
+                await _emit_diagnosis_progress_update(state, diagnosis_name, "Diagnosis computed", f"Confidence: {posterior:.1%}")
+                
                 print(f"[bayesian] {diagnosis_name}: Prior={prior_probability:.3f}, Likelihood={likelihood:.3f}, Marginal={marginal_probability:.3f}, Posterior={posterior:.3f}")
                 
                 return posterior
                 
             except Exception as e:
                 print(f"[bayesian] Error calculating confidence for {diagnosis_name}: {e}")
+                await _emit_diagnosis_progress_update(state, diagnosis_name, "Error in calculation", "Using fallback confidence")
                 return 0.5
+        
+        async def _emit_diagnosis_progress_update(state: FlowState, diagnosis_name: str, step: str, details: str = ""):
+            """Emit streaming update for differential diagnosis computation progress."""
+            print(f"[DEBUG] Emitting differential diagnosis progress: {diagnosis_name} - {step} - {details}")
+            if hasattr(state, 'stream_callback') and state.stream_callback:
+                try:
+                    update = {
+                        "type": "differential_diagnosis_progress",
+                        "diagnosis_name": diagnosis_name,
+                        "step": step,
+                        "details": details,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    print(f"[DEBUG] Calling stream_callback with update: {update}")
+                    await state.stream_callback(update)
+                    print(f"[DEBUG] Successfully emitted differential diagnosis progress")
+                except Exception as e:
+                    print(f"[streaming] Error emitting diagnosis progress: {e}")
+            else:
+                print(f"[DEBUG] No stream_callback available, hasattr: {hasattr(state, 'stream_callback')}, callback: {getattr(state, 'stream_callback', None)}")
 
         async def _estimate_marginal_probability_with_batch_priors(
             patient_context: PatientContext,

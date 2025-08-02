@@ -16,7 +16,7 @@ interface GeneratedImage {
 }
 
 interface StreamingUpdate {
-  type: 'status' | 'reasoning' | 'reasoning_complete' | 'response_chunk' | 'completion' | 'error';
+  type: 'status' | 'reasoning' | 'reasoning_complete' | 'response_chunk' | 'completion' | 'error' | 'differential_diagnosis_progress';
   step?: string;
   description?: string;
   message?: string;
@@ -30,6 +30,9 @@ interface StreamingUpdate {
   generated_image?: GeneratedImage;
   differential_diagnoses?: DifferentialDiagnosis[];
   reasoning_steps?: string[];
+  // New fields for differential diagnosis progress
+  diagnosis_name?: string;
+  details?: string;
 }
 
 interface StreamingState {
@@ -44,6 +47,13 @@ interface StreamingState {
   updates: StreamingUpdate[];
   currentReasoning: string;
   generatedImage: GeneratedImage | null;
+  // New fields for differential diagnosis progress
+  differentialDiagnosisProgress: {
+    isComputing: boolean;
+    currentDiagnosis: string;
+    currentStep: string;
+    details: string;
+  };
 }
 
 export const useStreamingChat = () => {
@@ -58,7 +68,13 @@ export const useStreamingChat = () => {
     progress: 0,
     updates: [],
     currentReasoning: '',
-    generatedImage: null
+    generatedImage: null,
+    differentialDiagnosisProgress: {
+      isComputing: false,
+      currentDiagnosis: '',
+      currentStep: '',
+      details: ''
+    }
   });
 
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -191,6 +207,36 @@ export const useStreamingChat = () => {
             currentDescription: 'Analysis finished',
             currentReasoning: '',
             streamingResponse: '', // Clear streaming response
+            differentialDiagnosisProgress: {
+              isComputing: false,
+              currentDiagnosis: '',
+              currentStep: '',
+              details: ''
+            },
+            updates: newUpdates
+          };
+
+        case 'differential_diagnosis_progress':
+          console.log('🩺 Differential diagnosis progress received:', update);
+          console.log('🩺 Current diagnosis:', update.diagnosis_name, 'Step:', update.step, 'Details:', update.details);
+          
+          // Check if this is a completion update
+          const isCompleting = update.step?.toLowerCase().includes('complete') || 
+                              update.step?.toLowerCase().includes('finished') || 
+                              update.diagnosis_name?.toLowerCase().includes('complete');
+          
+          console.log('🩺 Is completing?', isCompleting);
+          
+          return {
+            ...prev,
+            differentialDiagnosisProgress: {
+              isComputing: !isCompleting,
+              currentDiagnosis: update.diagnosis_name || '',
+              currentStep: update.step || '',
+              details: update.details || ''
+            },
+            currentStep: isCompleting ? 'Differential Diagnoses Complete' : 'Computing Differential Diagnoses',
+            currentDescription: `${isCompleting ? 'Completed: ' : 'Analyzing '}${update.diagnosis_name}: ${update.step}${update.details ? ' - ' + update.details : ''}`,
             updates: newUpdates
           };
 
@@ -245,7 +291,13 @@ export const useStreamingChat = () => {
       progress: 0,
       updates: [],
       currentReasoning: '',
-      generatedImage: null
+      generatedImage: null,
+      differentialDiagnosisProgress: {
+        isComputing: false,
+        currentDiagnosis: '',
+        currentStep: '',
+        details: ''
+      }
     });
 
     // Reset differential diagnoses
@@ -371,6 +423,7 @@ export const useStreamingChat = () => {
     updates: state.updates,
     currentReasoning: state.currentReasoning,
     generatedImage: state.generatedImage,
+    differentialDiagnosisProgress: state.differentialDiagnosisProgress,
     
     // Additional state
     streamDifferentialDiagnoses,

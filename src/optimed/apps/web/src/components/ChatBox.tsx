@@ -473,6 +473,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     streamingResponse,
     generatedImage,
     streamDifferentialDiagnoses, // Add this for differential diagnoses
+    differentialDiagnosisProgress, // Add this for progress tracking
     error: streamError,
     progress,
     startStream,
@@ -519,6 +520,22 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   useEffect(() => {
     scrollToBottom();
   }, [messages, isStreaming]);
+
+  // Auto-scroll when differential diagnosis computation starts
+  useEffect(() => {
+    if (differentialDiagnosisProgress?.isComputing) {
+      console.log('🔄 Differential diagnosis computation started - auto-scrolling');
+      scrollToBottom();
+    }
+  }, [differentialDiagnosisProgress?.isComputing]);
+
+  // Auto-scroll when differential diagnosis progress updates
+  useEffect(() => {
+    if (differentialDiagnosisProgress?.currentDiagnosis || differentialDiagnosisProgress?.currentStep) {
+      console.log('🔄 Differential diagnosis progress updated - auto-scrolling');
+      scrollToBottom();
+    }
+  }, [differentialDiagnosisProgress?.currentDiagnosis, differentialDiagnosisProgress?.currentStep]);
 
   // Update sessionId when prop changes
   useEffect(() => {
@@ -999,8 +1016,10 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
             </div>
           )}
 
-          {/* Streaming progress bar - show when streaming but no response content yet */}
-          {isStreaming && (!streamingResponse || !streamingResponse.trim()) && (
+          {/* Streaming progress bar - show when streaming, or when differential diagnosis is computing, or has any progress data */}
+          {(isStreaming && (!streamingResponse || !streamingResponse.trim())) || 
+           differentialDiagnosisProgress?.isComputing ||
+           (differentialDiagnosisProgress?.currentDiagnosis && differentialDiagnosisProgress.currentDiagnosis.trim() !== '') ? (
             <StreamingProgress
               isStreaming={isStreaming}
               currentStep={currentStep}
@@ -1008,8 +1027,9 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
               progress={progress}
               reasoning={reasoning}
               currentReasoning={currentReasoning}
+              differentialDiagnosisProgress={differentialDiagnosisProgress}
             />
-          )}
+          ) : null}
 
           {/* Auto-scroll anchor */}
           <div ref={messagesEndRef} />

@@ -1017,6 +1017,20 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
                 }
                 yield f"data: {json.dumps(reasoning_complete_data)}\n\n"
             
+            elif update.get("type") == "differential_diagnosis_progress":
+                # Handle differential diagnosis progress updates
+                print(f"[DEBUG] API Gateway received differential diagnosis progress: {update}")
+                diagnosis_progress_data = {
+                    "type": "differential_diagnosis_progress",
+                    "diagnosis_name": update.get("diagnosis_name", ""),
+                    "step": update.get("step", ""),
+                    "details": update.get("details", ""),
+                    "message": update.get("message", ""),
+                    "timestamp": update.get("timestamp", datetime.now().isoformat())
+                }
+                print(f"[DEBUG] Emitting diagnosis progress data: {diagnosis_progress_data}")
+                yield f"data: {json.dumps(diagnosis_progress_data)}\n\n"
+            
             elif update.get("type") == "response_chunk":
                 response_chunk_data = {
                     "type": "response_chunk",

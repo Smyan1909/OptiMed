@@ -33,6 +33,37 @@ class StreamingStatus:
         self.state.step_status = status
         self.state.step_details = details
     
+    def update_diagnosis_progress(self, diagnosis_name: str, step: str, progress_detail: str = ""):
+        """Special update method for differential diagnosis computation."""
+        self.state.step_status = "computing_differential"
+        self.state.prelim_diagnosis_name = diagnosis_name
+        self.state.diff_diag_compute_step = step
+        
+        # Create detailed status message
+        if progress_detail:
+            status_message = f"Analyzing {diagnosis_name}: {step} - {progress_detail}"
+        else:
+            status_message = f"Analyzing {diagnosis_name}: {step}"
+        
+        self.state.step_details = status_message
+        
+        # Emit streaming update if callback exists
+        if hasattr(self.state, 'stream_callback') and self.state.stream_callback:
+            import asyncio
+            update = {
+                "type": "differential_diagnosis_progress",
+                "diagnosis_name": diagnosis_name,
+                "step": step,
+                "details": progress_detail,
+                "message": status_message,
+                "timestamp": None  # Will be set by the receiver
+            }
+            # Schedule the callback to run asynchronously
+            try:
+                asyncio.create_task(self.state.stream_callback(update))
+            except Exception as e:
+                print(f"[streaming] Error emitting differential diagnosis update: {e}")
+    
     def _generate_detailed_description(self, status: str) -> str:
         """Generate detailed descriptions based on step name and current state."""
         step_lower = self.step_name.lower()
@@ -62,8 +93,8 @@ class StreamingStatus:
             "store_user_message": f"Storing user message in chat history for session {getattr(self.state, 'session_id', 'unknown')}",
             "store_assistant_response": "Saving AI response and reasoning to chat history",
             "evaluate_query_complexity": "Determining if the user query requires full processing or can be answered directly",
-            "evaluate_icd_parsing_need": "Checking if Diagnosis should be delivered for this patient",
-            "parse_icd": "Parsing ICD codes from the patient data",
+            "evaluate_icd_parsing_need": "Analyzing if differential diagnoses should be generated for this patient case",
+            "parse_icd": "Computing differential diagnoses with confidence scores using Bayesian analysis...",
         }
         
         return descriptions.get(step_lower, f"Starting {self.step_name}...")
@@ -82,11 +113,19 @@ class StreamingStatus:
             return f"Query complexity evaluated - {'requires full processing' if requires_full_processing else 'can be answered directly'}"
         elif step_lower == "evaluate_icd_parsing_need":
             icd_parsing_needed = getattr(self.state, 'should_parse_icd_codes', False)
-            return f"{'Computing differential diagnoses probability' if icd_parsing_needed else 'No differential diagnoses computation needed'} for this query"
+            return f"{'Will generate differential diagnoses' if icd_parsing_needed else 'No differential diagnoses needed'} for this query"
         elif step_lower == "parse_icd":
-            diag_name = getattr(self.state, 'prelim_diagnosis_name', "")
-            compute_step = getattr(self.state, 'diff_diag_compute_step', "")
-            return f"Assessing diagnosis: {diag_name} - {compute_step}" if diag_name else "No preliminary diagnosis found"
+            # Show the final count of differential diagnoses generated
+            parsed_response = getattr(self.state, 'parsed_response', None)
+            if parsed_response and hasattr(parsed_response, 'differential') and parsed_response.differential:
+                diag_count = len(parsed_response.differential)
+                diag_names = [d.diagnosis_name for d in parsed_response.differential[:3]]  # Show first 3
+                names_display = ", ".join(diag_names)
+                if diag_count > 3:
+                    names_display += f" and {diag_count - 3} more"
+                return f"Generated {diag_count} differential diagnoses: {names_display}"
+            else:
+                return "No differential diagnoses generated"
         elif step_lower == "fetch_patient":
             patient_ctx = getattr(self.state, 'patient_ctx', None)
             if patient_ctx:
