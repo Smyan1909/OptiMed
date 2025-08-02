@@ -130,7 +130,7 @@ export default function SessionsList({
         return `General Chat - ${dateStr} ${timeStr}`;
       }
     } else {
-      return `Information Retrieval Session - ${dateStr} ${timeStr}`;
+      return `Patient Session - ${dateStr} ${timeStr}`;
     }
   };
 
@@ -164,7 +164,7 @@ export default function SessionsList({
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-semibold text-gray-900">
-            {mode === 'chat' ? 'Chat Sessions' : 'Info Retrieval Sessions'}
+            {mode === 'chat' ? 'Chat Sessions' : 'Patient Sessions'}
           </h3>
           <button
             onClick={handleCreateNewSession}
@@ -265,15 +265,6 @@ export default function SessionsList({
                         {!isParticipant && (
                           <span className="text-xs bg-yellow-100 text-yellow-800 px-1 py-0.5 rounded">
                             Join
-                          </span>
-                        )}
-                        {session.mode && (
-                          <span className={`text-xs px-1 py-0.5 rounded ${
-                            session.mode === 'chat' 
-                              ? 'bg-green-100 text-green-800' 
-                              : 'bg-purple-100 text-purple-800'
-                          }`}>
-                            {session.mode === 'info_retrieval' ? 'Info Retrieval' : session.mode}
                           </span>
                         )}
                       </div>

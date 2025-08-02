@@ -830,7 +830,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   const getPlaceholderText = () => {
     if (mode === "chat") return "Type your message...";
     if (mode === "diagnose" && patientId) {
-      return "Information Retrieval - Ask about patient records, medications, history, or clinical notes";
+      return "Ask about patient records, medications, history, or clinical notes";
     }
     return "How can I help you access medical information?";
   };
@@ -838,7 +838,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   const getEmptyStateText = () => {
     if (mode === "chat") return "Start chatting with CLARA...";
     if (mode === "diagnose" && patientId) {
-      return "Ready for information retrieval";
+      return "CLARA Färdiga Gå!";
     }
     return "Enter patient details to begin information access...";
   };
@@ -949,9 +949,6 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
           {messages.length === 0 && !isStreaming && (
             <div className="text-center py-8">
               <p className="text-gray-600 font-medium italic">{getEmptyStateText()}</p>
-              {mode === 'diagnose' && (
-                <div className="text-sm text-gray-400 mt-2">Mode: Information Retrieval</div>
-              )}
             </div>
           )}
 
