@@ -10,6 +10,7 @@ import { StreamingProgress } from "./StreamingProgress";
 import { ReasoningViewer } from "./ReasoningViewer";
 import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCards";
 import { useLayoutEffect } from "react";
+import ModeSelector from "./ModeSelector";
 
 export interface GeneratedImageInfo {
   image_generated: boolean;
@@ -460,9 +461,12 @@ const formatTimestamp = (timestamp: string | number): string => {
 export default function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [infoRetrievalMode, setInfoRetrievalMode] = useState("info_retrieval");
+  const [infoRetrievalMode, setInfoRetrievalMode] = useState("post_meet");
   const [defaultPrompt, setDefaultPrompt] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // Check if info mode selection is enabled
+  const isInfoModeEnabled = process.env.NEXT_PUBLIC_INFO_MODE === 'false';
   const {
     isStreaming,
     currentStep,
@@ -501,16 +505,16 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   // Initialize info retrieval mode with default prompt
   useEffect(() => {
     if (mode === "diagnose") {
-      const infoRetrievalPrompt = "Please help me access and understand information about this patient, including their medical history, current medications, recent test results, and any relevant clinical notes. I'm looking for factual information to support clinical decision-making.";
+      const postMeetPrompt = "Following a patient encounter, I need to analyze the clinical data and findings. Please help me review the patient information, examination findings, and any relevant background data to support clinical decision-making and documentation.";
       
-      setDefaultPrompt(infoRetrievalPrompt);
+      setDefaultPrompt(postMeetPrompt);
       
-      // Set the default prompt if input is empty
-      if (!input.trim()) {
-        setInput(infoRetrievalPrompt);
+      // Set the default prompt if input is empty (only if info mode is not enabled for selection)
+      if (!input.trim() && !isInfoModeEnabled) {
+        setInput(postMeetPrompt);
       }
     }
-  }, [mode]);
+  }, [mode, isInfoModeEnabled]);
 
   // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = () => {
@@ -773,6 +777,12 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     });
   }, [isStreaming, streamingResponse, currentStep, progress]);
 
+  const handleModeChange = (newMode: string, newDefaultPrompt: string) => {
+    setInfoRetrievalMode(newMode);
+    setDefaultPrompt(newDefaultPrompt);
+    setInput(newDefaultPrompt);
+  };
+
   const sendMessage = async (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isStreaming) return;
@@ -796,12 +806,12 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
         patient_id: patientId ?? null,
         user_prompt: userText,
         chat_mode: mode === "chat",
-        info_retrieval_mode: mode === "diagnose" ? "info_retrieval" : "chat",
+        diagnostic_mode: mode === "diagnose" ? infoRetrievalMode : "chat",
         user_id: user?.user_id,
         session_id: currentSessionId
       };
 
-      console.log('Sending message with info retrieval mode:', payload.info_retrieval_mode);
+      console.log('Sending message with diagnostic mode:', payload.diagnostic_mode);
       await startStream(endpoint, payload, sessionId || undefined);
 
     } catch (error) {
@@ -843,13 +853,6 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [streamingResponse]);
-
-  const handleModeChange = (newMode: string) => {
-    // Mode change removed - only info retrieval available
-    if (defaultPrompt) {
-      setInput(defaultPrompt);
-    }
-  };
 
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   useAutosizeTextArea(textAreaRef, input);
@@ -1085,6 +1088,20 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
           </form>
         </div>
       </div>
+
+      {/* Right-side mode selector - only show if info mode is enabled and we're in diagnose mode */}
+      {isInfoModeEnabled && mode === "diagnose" && (
+        <div className="absolute right-4 bottom-4 z-30 pointer-events-auto">
+          <div className="p-3 border border-gray-300 bg-white/90 backdrop-blur-md shadow-xl rounded-xl">
+            <ModeSelector
+              selectedMode={infoRetrievalMode}
+              onModeChange={handleModeChange}
+              disabled={isStreaming}
+              layout="vertical"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

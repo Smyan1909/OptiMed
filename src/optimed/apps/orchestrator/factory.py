@@ -1,6 +1,7 @@
 import os
 from typing import Tuple, Callable, Optional
 from optimed.apps.orchestrator.patient_flow import LangGraphDiagnosticEngine
+from optimed.apps.orchestrator.info_flow import LangGraphInformationEngine
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
 from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
 from optimed.adapters.smart_fhir.repository import SMARTFHIRRepository
@@ -136,6 +137,15 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
         web_search_service=web_search_service,
         image_generation_service=image_generation_service,
         generated_image_repo=generated_image_repo,
+    ) if os.getenv("NEXT_PUBLIC_INFO_MODE") == "false" else LangGraphInformationEngine(
+        fhir_repo=fhir_repo,
+        vector_store=vector_store,
+        llm_client=llm_client,
+        user_repo=user_repo,
+        connection_service=connection_service,
+        web_search_service=web_search_service,
+        image_generation_service=image_generation_service,
+        generated_image_repo=generated_image_repo,  
     )
     
     return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine, image_generation_service, generated_image_repo, journal_client
