@@ -23,6 +23,7 @@ export default function SessionsList({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAllSessions, setShowAllSessions] = useState(false);
+  const [sessionMessageCounts, setSessionMessageCounts] = useState<Record<string, number>>({});
   
   const { user } = useUser();
 
@@ -45,6 +46,9 @@ export default function SessionsList({
       console.log('Sessions loaded:', data);
       setSessions(data);
       
+      // Load actual message counts for each session
+      await loadSessionMessageCounts(data);
+      
       // Auto-select the most recent session if none is selected and we have sessions
       if (!selectedSessionId && data.length > 0) {
         const mostRecentSession = data[0]; // They're ordered by last_message_at DESC
@@ -55,6 +59,56 @@ export default function SessionsList({
       setError(err.message || 'Failed to load sessions');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadSessionMessageCounts = async (sessionsList: Session[]) => {
+    const counts: Record<string, number> = {};
+    
+    try {
+      for (const session of sessionsList) {
+        try {
+          // Get chat history for this session to count actual messages
+          const response = await fetch('/api/chat-history', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(typeof window !== 'undefined' && localStorage.getItem('session_id') ? {
+                'X-Session-ID': localStorage.getItem('session_id')!
+              } : {})
+            },
+            body: JSON.stringify({ 
+              patient_id: session.patient_id,
+              session_id: session.session_id,
+              mode: session.mode
+            })
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            // Count actual messages, excluding system messages
+            const messageCount = data.messages ? data.messages.filter((msg: any) => msg.role !== 'system').length : 0;
+            counts[session.session_id] = messageCount;
+          } else {
+            // Fallback to the stored count if API call fails
+            counts[session.session_id] = session.message_count;
+          }
+        } catch (sessionError) {
+          console.error(`Failed to load message count for session ${session.session_id}:`, sessionError);
+          // Fallback to the stored count
+          counts[session.session_id] = session.message_count;
+        }
+      }
+      
+      setSessionMessageCounts(counts);
+    } catch (err) {
+      console.error('Failed to load session message counts:', err);
+      // Fallback to stored counts
+      const fallbackCounts: Record<string, number> = {};
+      sessionsList.forEach(session => {
+        fallbackCounts[session.session_id] = session.message_count;
+      });
+      setSessionMessageCounts(fallbackCounts);
     }
   };
 
@@ -138,7 +192,7 @@ export default function SessionsList({
     try {
       await joinSession(sessionId);
       onSessionSelect(sessionId);
-      // Reload to update participant info
+      // Reload to update participant info and message counts
       await loadSessions();
     } catch (err: any) {
       console.error('Failed to join session:', err);
@@ -252,7 +306,7 @@ export default function SessionsList({
                       </div>
                       
                       <div className="mt-1 flex items-center space-x-2 text-xs text-gray-500">
-                        <span>{session.message_count} messages</span>
+                        <span>{sessionMessageCounts[session.session_id] ?? session.message_count} messages</span>
                         <span>•</span>
                         <span>{formatSessionTime(session.last_message_at)}</span>
                       </div>
