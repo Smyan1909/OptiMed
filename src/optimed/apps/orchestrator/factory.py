@@ -8,6 +8,7 @@ from optimed.adapters.smart_fhir.repository import SMARTFHIRRepository
 from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
 from optimed.adapters.anthropic_claude.client import AnthropicClaudeClient
 from optimed.adapters.anthropic_claude.journal_client import AnthropicClaudeJournalClient
+from optimed.adapters.openai_gpt.client import OpenAIGPT4oClient
 from optimed.adapters.user_repository.pg_user_repository import PGUserRepository
 from optimed.adapters.user_repository.pg_ehr_connection_repository import PGUserEHRConnectionRepository
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine, ImageGenerationService, GeneratedImageRepository, LLMClient
@@ -71,7 +72,7 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
     # Create repositories
     fhir_repo: FHIRRepository = HAPIFHIRRepository() if not use_smart else create_smart_fhir_repository()
     vector_store: VectorStore = PGVectorAdapter(dsn=str(os.getenv("PGVECTOR_DSN")))
-    llm_client = AnthropicClaudeClient()
+    llm_client = OpenAIGPT4oClient()
     journal_client = AnthropicClaudeJournalClient()
     user_repo: UserRepository = PGUserRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
     
