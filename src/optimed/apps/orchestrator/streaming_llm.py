@@ -33,6 +33,8 @@ class StreamingLLMWrapper:
 
 Structure your thinking process clearly, explaining your reasoning for each step. Then provide your final response.
 
+Important: Write both THINKING and RESPONSE in the same language as the user's prompt.
+
 Format your response as:
 THINKING:
 [Your step-by-step reasoning here]

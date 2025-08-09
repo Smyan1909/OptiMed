@@ -13,6 +13,7 @@ from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
 from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, ImageGenerationRequest, GeneratedImage, ImageGenerationContext, WebSearchInfo, CrossSessionHistoryInfo, GeneratedImageInfo, GeneratedImagePurpose
+from optimed.core.lang import detect_language_code
 
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, ImageGenerationService, GeneratedImageRepository
 
@@ -474,7 +475,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 
             try:
                 # Use embedding-based search to find relevant historical conversations
-                query_embedding = await embed(state.user_prompt)
+                query_embedding = await embed(state.user_prompt, "query")
                 
                 # Search for relevant chat history across all sessions
                 if state.patient_id:
@@ -505,6 +506,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 for row in rows:
                     try:
                         # Extract content and metadata
+                        # rows are (id, similarity, content)
                         content_text = row[2] if len(row) > 2 else row[1]
                         
                         # Parse if it's JSON
@@ -535,7 +537,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                             "role": role,
                             "session_id": session_id_from_content,
                             "timestamp": timestamp,
-                            "similarity_score": row[0] if len(row) > 0 else 0.0
+                            "similarity_score": row[1] if len(row) > 1 else 0.0
                         })
                         
                     except Exception as e:
@@ -564,7 +566,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 
                 # Check if we already have chunks for this patient
                 existing_chunks = await self._vec.similarity_search(
-                    await embed("patient context"),
+                    await embed("patient context", "query"),
                     top_k=1,
                     filter_={
                         "namespace": "clinical",
@@ -809,7 +811,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
             try:
                 # Step 1: Initial similarity search (broader search)
                 if state.patient_id:
-                    q_vec = await embed(state.user_prompt)
+                    q_vec = await embed(state.user_prompt, "query")
                     rows = await self._vec.similarity_search(
                         q_vec,
                         top_k=20,  # Increased to accommodate recency filtering
@@ -851,8 +853,9 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 
                 for i, row in enumerate(rows):
                     try:
+                        # rows are (id, similarity, content)
                         chunk_text = row[2] if len(row) > 2 else row[1]
-                        similarity_score = row[0] if len(row) > 0 else 0.0
+                        similarity_score = row[1] if len(row) > 1 else 0.0
                         
                         # Extract metadata if available (for data type identification)
                         metadata: dict[str, Any] = row[3] if len(row) > 3 else {}
@@ -1049,7 +1052,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 # Store user message - ALL METADATA VALUES MUST BE STRINGS
                 await self._vec.upsert(
                     embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_{state.user_id}",
-                    embedding=await embed(state.user_prompt),
+                    embedding=await embed(state.user_prompt, "passage"),
                     object_type="chat_message",
                     object_id=str(state.session_id),
                     content={
@@ -1064,7 +1067,8 @@ class LangGraphInformationEngine(DiagnosticEngine):
                         "session_id": state.session_id or "",
                         "timestamp": str(int(user_message.timestamp.timestamp() * 1000)),
                         "user_id": state.user_id or "",
-                        "message_type": "user"
+                        "message_type": "user",
+                        "language": detect_language_code(state.user_prompt or "")
                     }
                 )
                 
@@ -1123,11 +1127,14 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 # Store assistant message
                 await self._vec.upsert(
                     embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_assistant",
-                    embedding=await embed(state.llm_response.content),
+                    embedding=await embed(state.llm_response.content, "passage"),
                     object_type="chat_message",
                     object_id=str(state.session_id),
                     content=message_content,
-                    metadata=metadata
+                    metadata={
+                        **metadata,
+                        "language": detect_language_code(state.llm_response.content or "")
+                    }
                 )
                 
             except Exception as e:
@@ -1141,6 +1148,21 @@ class LangGraphInformationEngine(DiagnosticEngine):
         async def provide_information(state: FlowState) -> FlowState:
             # Use the single system message for information relay
             messages = [SYSTEM_MSG_INFO_RELAY]
+
+            # Language policy system message (answer in user's prompt language)
+            try:
+                from optimed.core.lang import detect_language_code  # local import to avoid cycles
+                active_lang = detect_language_code(state.user_prompt or "")
+            except Exception:
+                active_lang = "en"
+            language_system_msg = ChatMessage(
+                role=ChatRole.SYSTEM,
+                content=(
+                    f"Language policy: Respond in '{active_lang}'. Use clinically appropriate terminology in this language. "
+                    f"If citing or quoting sources in another language, translate faithfully and, if relevant, include the original term in parentheses."
+                )
+            )
+            messages.insert(0, language_system_msg)
 
             # For direct path (simple queries), use a simplified system message
             if not getattr(state, 'requires_full_processing', True):

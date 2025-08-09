@@ -51,8 +51,8 @@ class PGVectorAdapter(VectorStore):
         async with pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO embeddings
-                (id, key, object_type, object_id, content, embedding, metadata)
+                 INSERT INTO embeddings
+                 (id, key, object_type, object_id, content, embedding, metadata)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                 ON CONFLICT (key) DO UPDATE
                 SET embedding = EXCLUDED.embedding,
@@ -91,7 +91,10 @@ class PGVectorAdapter(VectorStore):
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 f"""
-                SELECT id, embedding <#> $1 AS distance, content
+                SELECT id,
+                       embedding <=> $1 AS distance,
+                       1 - (embedding <=> $1) AS similarity,
+                       content
                 FROM embeddings
                 {where_sql}
                 ORDER BY distance
@@ -99,7 +102,8 @@ class PGVectorAdapter(VectorStore):
                 """,
                 *values
             )
-            return [(row['id'], row['distance'], row['content']) for row in rows]
+            # Return (id, similarity, content) for clearer semantics upstream
+            return [(row['id'], float(row['similarity']), row['content']) for row in rows]
 
     async def delete(self, embedding_ids: Sequence[str]) -> None:
         pool = await self._get_pool()
