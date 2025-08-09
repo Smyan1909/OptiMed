@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { JournalEntry, JournalEntryType, fetchPatientJournalEntries } from '@/lib/api';
 import { formatDistanceToNow } from 'date-fns';
-import { enUS } from 'date-fns/locale';
+import { useLocale, useTranslations } from 'next-intl';
 import CreateJournalEntryDialog from './CreateJournalEntryDialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
@@ -12,6 +12,8 @@ interface JournalListProps {
 }
 
 export default function JournalList({ patientId }: JournalListProps) {
+  const t = useTranslations('journal');
+  const locale = useLocale();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,17 +50,7 @@ export default function JournalList({ patientId }: JournalListProps) {
     });
   };
 
-  const getEntryTypeLabel = (type: JournalEntryType): string => {
-    const labels = {
-      [JournalEntryType.NOTE]: 'Progress Note',
-      [JournalEntryType.OBSERVATION]: 'Clinical Observation',
-      [JournalEntryType.TREATMENT]: 'Treatment Note',
-      [JournalEntryType.DIAGNOSIS]: 'Diagnostic Assessment',
-      [JournalEntryType.ASSESSMENT]: 'Clinical Assessment',
-      [JournalEntryType.PLAN]: 'Care Plan'
-    };
-    return labels[type] || type;
-  };
+  const getEntryTypeLabel = (type: JournalEntryType): string => t(`types.${type.toLowerCase()}` as any);
 
   const getEntryTypeColor = (type: JournalEntryType): string => {
     const colors = {
@@ -91,7 +83,7 @@ export default function JournalList({ patientId }: JournalListProps) {
             onClick={fetchJournalEntries}
             className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
           >
-            Try Again
+            {t('actions.tryAgain')}
           </button>
         </div>
       </div>
@@ -102,12 +94,12 @@ export default function JournalList({ patientId }: JournalListProps) {
     <div className="bg-white rounded-lg shadow border border-gray-200">
       <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold text-gray-900">Journal Entries</h2>
+          <h2 className="text-lg font-bold text-gray-900">{t('list.title')}</h2>
           <p className="text-sm text-gray-600 mt-1">
-            Patient care documentation and notes
+            {t('list.subtitle')}
             {isRefreshing && (
               <span className="ml-2 text-blue-600 animate-pulse">
-                • Updating...
+                • {t('list.updating')}
               </span>
             )}
           </p>
@@ -119,7 +111,7 @@ export default function JournalList({ patientId }: JournalListProps) {
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
           </svg>
-          <span>New Entry</span>
+          <span>{t('actions.newEntry')}</span>
         </button>
       </div>
 
@@ -131,13 +123,13 @@ export default function JournalList({ patientId }: JournalListProps) {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No journal entries yet</h3>
-            <p className="text-gray-600 mb-6 max-w-sm mx-auto">Start documenting patient care by creating your first journal entry.</p>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">{t('empty.title')}</h3>
+            <p className="text-gray-600 mb-6 max-w-sm mx-auto">{t('empty.subtitle')}</p>
             <button
               onClick={() => setShowCreateModal(true)}
               className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
             >
-              Create First Entry
+              {t('actions.createFirst')}
             </button>
           </div>
         ) : (
@@ -154,7 +146,7 @@ export default function JournalList({ patientId }: JournalListProps) {
                       {getEntryTypeLabel(entry.entry_type)}
                     </span>
                     <span className="text-sm text-gray-500 font-medium">
-                      {formatDistanceToNow(new Date(entry.created_at), { addSuffix: true, locale: enUS })}
+                      {formatDistanceToNow(new Date(entry.created_at), { addSuffix: true, locale: undefined })}
                     </span>
                   </div>
                   <h3 className="text-base font-semibold text-gray-900 mb-2 line-clamp-1">
@@ -208,6 +200,7 @@ interface JournalEntryModalProps {
 }
 
 function JournalEntryModal({ entry, open, onOpenChange }: JournalEntryModalProps) {
+  const t = useTranslations('journal');
   const getEntryTypeLabel = (type: JournalEntryType): string => {
     const labels = {
       [JournalEntryType.NOTE]: 'Progress Note',
@@ -236,7 +229,7 @@ function JournalEntryModal({ entry, open, onOpenChange }: JournalEntryModalProps
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Journal Entry Details</DialogTitle>
+          <DialogTitle>{t('detail.title')}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-6">
@@ -246,7 +239,7 @@ function JournalEntryModal({ entry, open, onOpenChange }: JournalEntryModalProps
               {getEntryTypeLabel(entry.entry_type)}
             </span>
             <div className="text-sm text-gray-500">
-              Created: {new Date(entry.created_at).toLocaleString('en-US', {
+              {t('detail.created')}: {new Date(entry.created_at).toLocaleString(undefined, {
                 year: 'numeric',
                 month: 'long',
                 day: 'numeric',
@@ -263,7 +256,7 @@ function JournalEntryModal({ entry, open, onOpenChange }: JournalEntryModalProps
 
           {/* Content */}
           <div className="bg-gray-50 rounded-lg p-4">
-            <h4 className="text-sm font-medium text-gray-700 mb-3">Entry Content</h4>
+            <h4 className="text-sm font-medium text-gray-700 mb-3">{t('detail.content')}</h4>
             <div className="prose prose-sm max-w-none">
               <pre className="whitespace-pre-wrap text-gray-900 font-mono text-sm leading-relaxed">
                 {entry.content}
@@ -276,15 +269,15 @@ function JournalEntryModal({ entry, open, onOpenChange }: JournalEntryModalProps
             <div className="flex items-center justify-between text-sm">
               <div className="flex items-center space-x-4 text-gray-600">
                 <span>
-                  <span className="font-medium text-gray-900">Author:</span> {entry.author_name}
+                  <span className="font-medium text-gray-900">{t('detail.author')}:</span> {entry.author_name}
                 </span>
                 <span>•</span>
                 <span>
-                  <span className="font-medium text-gray-900">Role:</span> {entry.author_role}
+                  <span className="font-medium text-gray-900">{t('detail.role')}:</span> {entry.author_role}
                 </span>
               </div>
               <div className="text-gray-500">
-                Last updated: {new Date(entry.updated_at).toLocaleString('en-US')}
+                {t('detail.updated')}: {new Date(entry.updated_at).toLocaleString(undefined)}
               </div>
             </div>
           </div>
