@@ -59,7 +59,7 @@
     "age": "Ålder",
     "years": "år",
     "sex": "Kön",
-    "sex": {
+    "Sex": {
       "male": "Man",
       "female": "Kvinna",
       "other": "Annat",
@@ -298,7 +298,7 @@
       "participants": "{count} {count, plural, one {deltagare} other {deltagare}}"
     },
     "unknownUser": "Okänd användare",
-    "you": "Du",
+    "you": "Dig",
     "ehrUser": "EHR-användare",
     "unknownTime": "Okänd tid",
     "titles": {
@@ -322,7 +322,9 @@
       "oxygenSaturation": "Syrgasmättnad",
       "headCircumference": "Huvudomfång",
       "weight": "Kroppsvikt",
-      "height": "Kroppslängd"
+      "height": "Kroppslängd",
+      "bloodPressurePanel": "Blodtryckspanel",
+      "bpSystolicDiastolic": "Blodtryck (systoliskt/diastoliskt)"
     },
     "labs": {
       "potassium": "Kalium",
@@ -336,9 +338,235 @@
       "creatinine": "Kreatinin",
       "bun": "Urea (BUN)",
       "albumin": "Albumin",
-      "bilirubin": "Bilirubin"
+      "bilirubin": "Bilirubin",
+      "cholesterol": "Kolesterol",
+      "ldl": "LDL-kolesterol",
+      "hdl": "HDL-kolesterol",
+      "triglycerides": "Triglycerider",
+      "calcium": "Kalcium",
+      "chloride": "Klorid",
+      "co2": "Koldioxid",
+      "anionGap": "Anjongap",
+      "magnesium": "Magnesium",
+      "phosphorus": "Fosfat",
+      "alt": "ALT",
+      "ast": "AST",
+      "alp": "Alkaliskt fosfatas",
+      "ggt": "GGT",
+      "crp": "CRP",
+      "esr": "SR",
+      "tsh": "TSH",
+      "freeT4": "Fritt T4",
+      "freeT3": "Fritt T3",
+      "inr": "INR",
+      "pt": "Protrombintid (PT)",
+      "aptt": "aPTT",
+      "bnp": "BNP",
+      "troponinI": "Troponin I",
+      "troponinT": "Troponin T",
+      "lactate": "Laktat",
+      "ferritin": "Ferritin",
+      "ddimer": "D-dimer"
+    },
+    "imaging": {
+      "radiologyReport": "Röntgenutlåtande",
+      "diagnosticImaging": "Diagnostisk bilddiagnostik",
+      "ctScan": "DT-undersökning",
+      "ultrasound": "Ultraljud",
+      "xray": "Röntgen",
+      "cardiacCatheterization": "Hjärtkateterisering",
+      "colonoscopy": "Koloskopi"
+    },
+    "exam": {
+      "physicalExam": "Status",
+      "physicalFindings": "Statusfynd",
+      "bmi": "Body mass index",
+      "generalAppearance": "Allmäntillstånd"
+    },
+    "procedures": {
+      "historyOfProcedures": "Tidigare åtgärder",
+      "surgicalProcedure": "Kirurgisk åtgärd",
+      "treatmentPlan": "Behandlingsplan",
+      "procedurePerformed": "Genomförd åtgärd",
+      "procedureIndication": "Indikation för åtgärd",
+      "procedureOutcome": "Åtgärdsutfall"
+    },
+    "social": {
+      "tobaccoSmokingStatus": "Tobaksrökning",
+      "occupationalExposure": "Yrkesexponering",
+      "sexAssignedAtBirth": "Kön tilldelat vid födelsen",
+      "socialHistory": "Social anamnes",
+      "tobaccoUse": "Tobaksanvändning",
+      "alcoholIntake": "Alkoholkonsumtion",
+      "reviewOfSystems": "Systemgenomgång",
+      "bodyPiercing": "Kroppspiercing",
+      "drugMisuseFinding": "Fynd relaterat till drogmissbruk"
+    },
+    "medications": {
+      "historyOfMedicationUse": "Läkemedelshistorik",
+      "medicationAdministration": "Läkemedelsadministration",
+      "drugTherapy": "Läkemedelsbehandling"
+    },
+    "allergies": {
+      "allergiesAndAdverseReactions": "Allergier och biverkningar",
+      "historyOfAllergicReaction": "Tidigare allergiska reaktioner",
+      "propensityToAdverseReactions": "Benägenhet för biverkningar"
+    },
+    "diagnoses": {
+      "historyOfPastIllness": "Tidigare sjukdomar",
+      "chiefComplaint": "Huvudsymtom",
+      "reasonForEncounter": "Orsak till vårdkontakt",
+      "problemList": "Problemlista"
+    },
+    "medicationStatement": {
+      "drugTreatment": "Läkemedelsbehandling",
+      "reviewOfMedication": "Genomgång av läkemedel",
+      "administrationOfSubstance": "Administrering av substans",
+      "drugTherapyDiscontinued": "Läkemedelsbehandling avslutad",
+      "drugTreatmentStarted": "Läkemedelsbehandling påbörjad",
+      "drugTreatmentStopped": "Läkemedelsbehandling stoppad"
+    },
+    "questionnaire": {
+      "patientQuestionnaire": "Patientformulär",
+      "generalExamination": "Allmän undersökning",
+      "suicideRiskAssessment": "Suicidriskbedömning",
+      "qualityOfLifeAssessment": "Livskvalitetsbedömning",
+      "painAssessment": "Smärtbedömning",
+      "evaluationProcedure": "Utvärderingsåtgärd",
+      "assessmentOfAnxiety": "Bedömning av ångest"
+    },
+    "immunizations": {
+      "immunizationProcedure": "Vaccinationsåtgärd",
+      "injectionOfVaccine": "Injektion av vaccinprodukt",
+      "administrationOfVaccine": "Administrering av vaccin",
+      "covid19Vaccination": "Vaccination mot covid-19",
+      "influenzaVaccination": "Influensavaccination",
+      "hepatitisBVaccination": "Hepatit B-vaccination",
+      "pneumococcalVaccination": "Pneumokockvaccination",
+      "tetanusVaccination": "Stelkrampvaccination",
+      "pertussisVaccination": "Kikhostevaccination",
+      "diphtheriaVaccination": "Difteri-vaccination",
+      "polioVaccination": "Poliovaccination",
+      "mmrVaccination": "MPR-vaccination",
+      "zosterVaccination": "Zostervaccination"
+    },
+    "encounters": {
+      "patientEncounterProcedure": "Vårdkontakt",
+      "encounterForCheckUp": "Kontrollbesök",
+      "patientInitiatedEncounter": "Patientinitierad vårdkontakt",
+      "emergencyRoomVisit": "Akutbesök",
+      "inpatientStay": "Slutenvård",
+      "outpatientVisit": "Öppenvårdsbesök"
     }
   }
+  ,
+  "loinc": {
+    "Heart rate": "Puls",
+    "Respiratory rate": "Andningsfrekvens",
+    "Systolic BP": "Systoliskt blodtryck",
+    "Diastolic BP": "Diastoliskt blodtryck",
+    "Systolic blood pressure": "Systoliskt blodtryck",
+    "Diastolic blood pressure": "Diastoliskt blodtryck",
+    "Body temperature": "Kroppstemperatur",
+    "Oxygen saturation": "Syrgasmättnad",
+    "Head circumference": "Huvudomfång",
+    "Body weight": "Kroppsvikt",
+    "Body height": "Kroppslängd",
+
+    "Potassium": "Kalium",
+    "Glucose": "Glukos",
+    "Sodium": "Natrium",
+    "Hemoglobin A1c": "HbA1c",
+    "Hemoglobin": "Hemoglobin",
+    "Hematocrit": "Hematokrit",
+    "White blood cells": "Leukocyter",
+    "Platelets": "Trombocyter",
+    "Creatinine": "Kreatinin",
+    "BUN": "Urea (BUN)",
+    "Albumin": "Albumin",
+    "Bilirubin": "Bilirubin",
+
+    "Radiology report": "Röntgenutlåtande",
+    "Diagnostic imaging study": "Diagnostisk bilddiagnostik",
+    "CT scan": "DT-undersökning",
+    "Ultrasound": "Ultraljud",
+    "X-ray": "Röntgen",
+    "Cardiac catheterization": "Hjärtkateterisering",
+    "Colonoscopy": "Koloskopi",
+
+    "Physical examination": "Status",
+    "Physical findings": "Statusfynd",
+    "Body mass index": "Body mass index",
+    "General appearance": "Allmäntillstånd",
+
+    "History of procedures": "Tidigare åtgärder",
+    "Surgical procedure": "Kirurgisk åtgärd",
+    "Treatment plan": "Behandlingsplan",
+    "Procedure performed": "Genomförd åtgärd",
+    "Procedure indication": "Indikation för åtgärd",
+    "Procedure outcome": "Åtgärdsutfall",
+
+    "Tobacco smoking status": "Tobaksrökning",
+    "History of occupational exposure": "Yrkesexponering",
+    "Sex assigned at birth": "Kön tilldelat vid födelsen",
+    "Social history": "Social anamnes",
+    "Tobacco use": "Tobaksanvändning",
+    "Alcohol intake": "Alkoholkonsumtion",
+    "Review of systems": "Systemgenomgång",
+    "Body piercing": "Kroppspiercing",
+    "Finding relating to drug misuse": "Fynd relaterat till drogmissbruk",
+
+    "History of medication use": "Läkemedelshistorik",
+    "Medication administration": "Läkemedelsadministration",
+    "Drug therapy": "Läkemedelsbehandling",
+
+    "Allergies and adverse reactions": "Allergier och biverkningar",
+    "History of allergic reaction": "Tidigare allergiska reaktioner",
+    "Propensity to adverse reactions": "Benägenhet för biverkningar",
+
+    "History of past illness": "Tidigare sjukdomar",
+    "Chief complaint": "Huvudsymtom",
+    "Reason for encounter": "Orsak till vårdkontakt",
+    "Problem list": "Problemlista",
+
+    "Drug treatment": "Läkemedelsbehandling",
+    "Review of medication": "Genomgång av läkemedel",
+    "Administration of substance": "Administrering av substans",
+    "Drug therapy discontinued": "Läkemedelsbehandling avslutad",
+    "Drug treatment started": "Läkemedelsbehandling påbörjad",
+    "Drug treatment stopped": "Läkemedelsbehandling stoppad",
+
+    "Patient questionnaire": "Patientformulär",
+    "General examination of patient": "Allmän undersökning",
+    "Suicide risk assessment": "Suicidriskbedömning",
+    "Quality of life assessment": "Livskvalitetsbedömning",
+    "Pain assessment": "Smärtbedömning",
+    "Evaluation procedure": "Utvärderingsåtgärd",
+    "Assessment of anxiety": "Bedömning av ångest",
+
+    "Immunization procedure": "Vaccinationsåtgärd",
+    "Injection of vaccine product": "Injektion av vaccinprodukt",
+    "Administration of vaccine": "Administrering av vaccin",
+    "Vaccination for COVID-19": "Vaccination mot covid-19",
+    "Influenza vaccination": "Influensavaccination",
+    "Hepatitis B vaccination": "Hepatit B-vaccination",
+    "Pneumococcal vaccination": "Pneumokockvaccination",
+    "Tetanus vaccination": "Stelkrampvaccination",
+    "Pertussis vaccination": "Kikhostevaccination",
+    "Diphtheria vaccination": "Difteri-vaccination",
+    "Polio vaccination": "Poliovaccination",
+    "MMR vaccination": "MPR-vaccination",
+
+    "Patient encounter procedure": "Vårdkontakt",
+    "Encounter for check up": "Kontrollbesök",
+    "Patient-initiated encounter": "Patientinitierad vårdkontakt",
+    "Emergency room visit": "Akutbesök",
+    "Inpatient stay": "Slutenvård",
+    "Outpatient visit": "Öppenvårdsbesök"
+  },
+  "back" : {
+    "toPatients": "Tillbaka till patientsida"
+  } 
 }
 
 

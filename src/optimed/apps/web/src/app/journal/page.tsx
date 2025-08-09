@@ -73,7 +73,7 @@ function JournalPageContent() {
                 <div className="mt-4">
                   <Link href="/patients">
                     <button className="bg-red-100 text-red-800 px-4 py-2 rounded-md hover:bg-red-200 transition-colors font-semibold">
-                      ← {t('common.backToPatients')}
+                      ← {t('back.toPatients')}
                     </button>
                   </Link>
                 </div>
@@ -126,14 +126,18 @@ function JournalPageContent() {
                     </span>
                   </div>
                   <div className="ml-4">
-                    <h1 className="text-2xl font-bold text-gray-900">{t('journalPage.header.journalOf', {name: patient?.name})}</h1>
-                    <p className="text-gray-700 font-medium">{t('common.patientId')}: {patient?.id}</p>
+                    <h1 className="text-2xl font-bold text-gray-900">
+                      {t('journalPage.header.journalOf', {name: patient?.name ?? ''})}
+                    </h1>
+                    <p className="text-gray-700 font-medium">
+                      {t('common.patientId')}: {patient?.id ?? ''}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-3">
                   <Link href={`/patients/${patientId}`}>
                     <button className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors">
-                      ← Back to Patient
+                      ← {t('back.toPatients')}
                     </button>
                   </Link>
                 </div>

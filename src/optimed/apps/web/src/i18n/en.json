@@ -59,7 +59,7 @@
     "age": "Age",
     "years": "years",
     "sex": "Sex",
-    "sex": {
+    "Sex": {
       "male": "Male",
       "female": "Female",
       "other": "Other",
@@ -322,7 +322,9 @@
       "oxygenSaturation": "Oxygen Saturation",
       "headCircumference": "Head Circumference",
       "weight": "Body Weight",
-      "height": "Body Height"
+      "height": "Body Height",
+      "bloodPressurePanel": "Blood Pressure Panel",
+      "bpSystolicDiastolic": "Blood Pressure (Systolic/Diastolic)"
     },
     "labs": {
       "potassium": "Potassium",
@@ -336,9 +338,235 @@
       "creatinine": "Creatinine",
       "bun": "Blood Urea Nitrogen",
       "albumin": "Albumin",
-      "bilirubin": "Bilirubin"
+      "bilirubin": "Bilirubin",
+      "cholesterol": "Cholesterol",
+      "ldl": "LDL Cholesterol",
+      "hdl": "HDL Cholesterol",
+      "triglycerides": "Triglycerides",
+      "calcium": "Calcium",
+      "chloride": "Chloride",
+      "co2": "Carbon Dioxide",
+      "anionGap": "Anion Gap",
+      "magnesium": "Magnesium",
+      "phosphorus": "Phosphorus",
+      "alt": "ALT",
+      "ast": "AST",
+      "alp": "Alkaline Phosphatase",
+      "ggt": "GGT",
+      "crp": "C-reactive Protein",
+      "esr": "Erythrocyte Sedimentation Rate",
+      "tsh": "TSH",
+      "freeT4": "Free T4",
+      "freeT3": "Free T3",
+      "inr": "INR",
+      "pt": "Prothrombin Time (PT)",
+      "aptt": "aPTT",
+      "bnp": "BNP",
+      "troponinI": "Troponin I",
+      "troponinT": "Troponin T",
+      "lactate": "Lactate",
+      "ferritin": "Ferritin",
+      "ddimer": "D-dimer"
+    },
+    "imaging": {
+      "radiologyReport": "Radiology report",
+      "diagnosticImaging": "Diagnostic imaging study",
+      "ctScan": "CT scan",
+      "ultrasound": "Ultrasound",
+      "xray": "X-ray",
+      "cardiacCatheterization": "Cardiac catheterization",
+      "colonoscopy": "Colonoscopy"
+    },
+    "exam": {
+      "physicalExam": "Physical examination",
+      "physicalFindings": "Physical findings",
+      "bmi": "Body mass index",
+      "generalAppearance": "General appearance"
+    },
+    "procedures": {
+      "historyOfProcedures": "History of procedures",
+      "surgicalProcedure": "Surgical procedure",
+      "treatmentPlan": "Treatment plan",
+      "procedurePerformed": "Procedure performed",
+      "procedureIndication": "Procedure indication",
+      "procedureOutcome": "Procedure outcome"
+    },
+    "social": {
+      "tobaccoSmokingStatus": "Tobacco smoking status",
+      "occupationalExposure": "History of occupational exposure",
+      "sexAssignedAtBirth": "Sex assigned at birth",
+      "socialHistory": "Social history",
+      "tobaccoUse": "Tobacco use",
+      "alcoholIntake": "Alcohol intake",
+      "reviewOfSystems": "Review of systems",
+      "bodyPiercing": "Body piercing",
+      "drugMisuseFinding": "Finding relating to drug misuse"
+    },
+    "medications": {
+      "historyOfMedicationUse": "History of medication use",
+      "medicationAdministration": "Medication administration",
+      "drugTherapy": "Drug therapy"
+    },
+    "allergies": {
+      "allergiesAndAdverseReactions": "Allergies and adverse reactions",
+      "historyOfAllergicReaction": "History of allergic reaction",
+      "propensityToAdverseReactions": "Propensity to adverse reactions"
+    },
+    "diagnoses": {
+      "historyOfPastIllness": "History of past illness",
+      "chiefComplaint": "Chief complaint",
+      "reasonForEncounter": "Reason for encounter",
+      "problemList": "Problem list"
+    },
+    "medicationStatement": {
+      "drugTreatment": "Drug treatment",
+      "reviewOfMedication": "Review of medication",
+      "administrationOfSubstance": "Administration of substance",
+      "drugTherapyDiscontinued": "Drug therapy discontinued",
+      "drugTreatmentStarted": "Drug treatment started",
+      "drugTreatmentStopped": "Drug treatment stopped"
+    },
+    "questionnaire": {
+      "patientQuestionnaire": "Patient questionnaire",
+      "generalExamination": "General examination of patient",
+      "suicideRiskAssessment": "Suicide risk assessment",
+      "qualityOfLifeAssessment": "Quality of life assessment",
+      "painAssessment": "Pain assessment",
+      "evaluationProcedure": "Evaluation procedure",
+      "assessmentOfAnxiety": "Assessment of anxiety"
+    },
+    "immunizations": {
+      "immunizationProcedure": "Immunization procedure",
+      "injectionOfVaccine": "Injection of vaccine product",
+      "administrationOfVaccine": "Administration of vaccine",
+      "covid19Vaccination": "Vaccination for COVID-19",
+      "influenzaVaccination": "Influenza vaccination",
+      "hepatitisBVaccination": "Hepatitis B vaccination",
+      "pneumococcalVaccination": "Pneumococcal vaccination",
+      "tetanusVaccination": "Tetanus vaccination",
+      "pertussisVaccination": "Pertussis vaccination",
+      "diphtheriaVaccination": "Diphtheria vaccination",
+      "polioVaccination": "Polio vaccination",
+      "mmrVaccination": "MMR vaccination",
+      "zosterVaccination": "Zoster vaccination"
+    },
+    "encounters": {
+      "patientEncounterProcedure": "Patient encounter procedure",
+      "encounterForCheckUp": "Encounter for check up",
+      "patientInitiatedEncounter": "Patient-initiated encounter",
+      "emergencyRoomVisit": "Emergency room visit",
+      "inpatientStay": "Inpatient stay",
+      "outpatientVisit": "Outpatient visit"
     }
   }
+  ,
+  "loinc": {
+    "Heart rate": "Heart rate",
+    "Respiratory rate": "Respiratory rate",
+    "Systolic BP": "Systolic BP",
+    "Diastolic BP": "Diastolic BP",
+    "Systolic blood pressure": "Systolic blood pressure",
+    "Diastolic blood pressure": "Diastolic blood pressure",
+    "Body temperature": "Body temperature",
+    "Oxygen saturation": "Oxygen saturation",
+    "Head circumference": "Head circumference",
+    "Body weight": "Body weight",
+    "Body height": "Body height",
+
+    "Potassium": "Potassium",
+    "Glucose": "Glucose",
+    "Sodium": "Sodium",
+    "Hemoglobin A1c": "Hemoglobin A1c",
+    "Hemoglobin": "Hemoglobin",
+    "Hematocrit": "Hematocrit",
+    "White blood cells": "White blood cells",
+    "Platelets": "Platelets",
+    "Creatinine": "Creatinine",
+    "BUN": "BUN",
+    "Albumin": "Albumin",
+    "Bilirubin": "Bilirubin",
+
+    "Radiology report": "Radiology report",
+    "Diagnostic imaging study": "Diagnostic imaging study",
+    "CT scan": "CT scan",
+    "Ultrasound": "Ultrasound",
+    "X-ray": "X-ray",
+    "Cardiac catheterization": "Cardiac catheterization",
+    "Colonoscopy": "Colonoscopy",
+
+    "Physical examination": "Physical examination",
+    "Physical findings": "Physical findings",
+    "Body mass index": "Body mass index",
+    "General appearance": "General appearance",
+
+    "History of procedures": "History of procedures",
+    "Surgical procedure": "Surgical procedure",
+    "Treatment plan": "Treatment plan",
+    "Procedure performed": "Procedure performed",
+    "Procedure indication": "Procedure indication",
+    "Procedure outcome": "Procedure outcome",
+
+    "Tobacco smoking status": "Tobacco smoking status",
+    "History of occupational exposure": "History of occupational exposure",
+    "Sex assigned at birth": "Sex assigned at birth",
+    "Social history": "Social history",
+    "Tobacco use": "Tobacco use",
+    "Alcohol intake": "Alcohol intake",
+    "Review of systems": "Review of systems",
+    "Body piercing": "Body piercing",
+    "Finding relating to drug misuse": "Finding relating to drug misuse",
+
+    "History of medication use": "History of medication use",
+    "Medication administration": "Medication administration",
+    "Drug therapy": "Drug therapy",
+
+    "Allergies and adverse reactions": "Allergies and adverse reactions",
+    "History of allergic reaction": "History of allergic reaction",
+    "Propensity to adverse reactions": "Propensity to adverse reactions",
+
+    "History of past illness": "History of past illness",
+    "Chief complaint": "Chief complaint",
+    "Reason for encounter": "Reason for encounter",
+    "Problem list": "Problem list",
+
+    "Drug treatment": "Drug treatment",
+    "Review of medication": "Review of medication",
+    "Administration of substance": "Administration of substance",
+    "Drug therapy discontinued": "Drug therapy discontinued",
+    "Drug treatment started": "Drug treatment started",
+    "Drug treatment stopped": "Drug treatment stopped",
+
+    "Patient questionnaire": "Patient questionnaire",
+    "General examination of patient": "General examination of patient",
+    "Suicide risk assessment": "Suicide risk assessment",
+    "Quality of life assessment": "Quality of life assessment",
+    "Pain assessment": "Pain assessment",
+    "Evaluation procedure": "Evaluation procedure",
+    "Assessment of anxiety": "Assessment of anxiety",
+
+    "Immunization procedure": "Immunization procedure",
+    "Injection of vaccine product": "Injection of vaccine product",
+    "Administration of vaccine": "Administration of vaccine",
+    "Vaccination for COVID-19": "Vaccination for COVID-19",
+    "Influenza vaccination": "Influenza vaccination",
+    "Hepatitis B vaccination": "Hepatitis B vaccination",
+    "Pneumococcal vaccination": "Pneumococcal vaccination",
+    "Tetanus vaccination": "Tetanus vaccination",
+    "Pertussis vaccination": "Pertussis vaccination",
+    "Diphtheria vaccination": "Diphtheria vaccination",
+    "Polio vaccination": "Polio vaccination",
+    "MMR vaccination": "MMR vaccination",
+
+    "Patient encounter procedure": "Patient encounter procedure",
+    "Encounter for check up": "Encounter for check up",
+    "Patient-initiated encounter": "Patient-initiated encounter",
+    "Emergency room visit": "Emergency room visit",
+    "Inpatient stay": "Inpatient stay",
+    "Outpatient visit": "Outpatient visit"
+  },
+  "back" : {
+    "toPatients": "Back to Patients"
+  } 
 }
 
 
