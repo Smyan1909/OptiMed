@@ -179,7 +179,7 @@ Example format:
                 if hasattr(chunk.delta, "text"):
                     yield chunk.delta.text
 
-
+    
     async def analyze_dicom_image(
         self, 
         pixel_data: ImagePixelData, 
