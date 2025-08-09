@@ -4,20 +4,24 @@ import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { Header } from '@/components/Header';
 import { useState } from "react";
 import { useUser } from '@/contexts/UserContext';
+import { useLocale, useTranslations } from 'next-intl';
+import { localeOptions } from '@/i18n/config';
 
 function SettingsContent() {
   const { user } = useUser();
+  const locale = useLocale();
+  const t = useTranslations('settings');
   const [activeTab, setActiveTab] = useState('preferences');
   const [formData, setFormData] = useState({
     notifications: true,
     darkMode: false,
-    language: 'en'
+    language: locale
   });
 
   const tabs = [
-    { id: 'preferences', name: 'Preferences', icon: '⚙️' },
-    { id: 'notifications', name: 'Notifications', icon: '🔔' },
-    { id: 'security', name: 'Security', icon: '🔒' }
+    { id: 'preferences', name: t('tabs.preferences'), icon: '⚙️' },
+    { id: 'notifications', name: t('tabs.notifications'), icon: '🔔' },
+    { id: 'security', name: t('tabs.security'), icon: '🔒' }
   ];
 
   if (!user) {
@@ -26,9 +30,9 @@ function SettingsContent() {
         <Header />
         <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
           <div className="flex items-center justify-center h-64">
-            <div className="text-center">
+              <div className="text-center">
               <div className="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-              <p className="text-gray-900 font-medium">Loading settings...</p>
+                <p className="text-gray-900 font-medium">{t('loading')}</p>
             </div>
           </div>
         </main>
@@ -42,10 +46,8 @@ function SettingsContent() {
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
           <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-            <p className="mt-2 text-gray-600">
-              Manage your application settings and preferences.
-            </p>
+            <h1 className="text-3xl font-bold text-gray-900">{t('title')}</h1>
+            <p className="mt-2 text-gray-600">{t('subtitle')}</p>
           </div>
 
           <div className="bg-white shadow rounded-lg overflow-hidden">
@@ -74,13 +76,13 @@ function SettingsContent() {
               {/* Preferences Tab */}
               {activeTab === 'preferences' && (
                 <div className="space-y-6">
-                  <h3 className="text-lg font-medium text-gray-900">Application Preferences</h3>
+                  <h3 className="text-lg font-medium text-gray-900">{t('preferences.title')}</h3>
                   
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <label className="text-sm font-medium text-gray-700">Dark Mode</label>
-                        <p className="text-sm text-gray-500">Toggle dark mode interface</p>
+                        <label className="text-sm font-medium text-gray-700">{t('preferences.darkMode.label')}</label>
+                        <p className="text-sm text-gray-500">{t('preferences.darkMode.description')}</p>
                       </div>
                       <button
                         onClick={() => setFormData({...formData, darkMode: !formData.darkMode})}
@@ -97,18 +99,24 @@ function SettingsContent() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Language
-                      </label>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">{t('preferences.language.label')}</label>
                       <select
                         value={formData.language}
-                        onChange={(e) => setFormData({...formData, language: e.target.value})}
+                        onChange={async (e) => {
+                          const newLocale = e.target.value;
+                          setFormData({...formData, language: newLocale});
+                          try {
+                            // Use redirect-capable endpoint to ensure a full reload
+                            const currentPath = window.location.pathname + window.location.search;
+                            const url = `/api/locale?locale=${encodeURIComponent(newLocale)}&redirect=${encodeURIComponent(currentPath)}`;
+                            window.location.assign(url);
+                          } catch {}
+                        }}
                         className="w-full md:w-auto border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       >
-                        <option value="en">English</option>
-                        <option value="sv">Svenska</option>
-                        <option value="no">Norsk</option>
-                        <option value="da">Dansk</option>
+                        {localeOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
                       </select>
                     </div>
                   </div>
@@ -118,13 +126,13 @@ function SettingsContent() {
               {/* Notifications Tab */}
               {activeTab === 'notifications' && (
                 <div className="space-y-6">
-                  <h3 className="text-lg font-medium text-gray-900">Notification Settings</h3>
+                  <h3 className="text-lg font-medium text-gray-900">{t('notifications.title')}</h3>
                   
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <label className="text-sm font-medium text-gray-700">Email Notifications</label>
-                        <p className="text-sm text-gray-500">Receive notifications via email</p>
+                        <label className="text-sm font-medium text-gray-700">{t('notifications.email.label')}</label>
+                        <p className="text-sm text-gray-500">{t('notifications.email.description')}</p>
                       </div>
                       <button
                         onClick={() => setFormData({...formData, notifications: !formData.notifications})}
@@ -146,7 +154,7 @@ function SettingsContent() {
               {/* Security Tab */}
               {activeTab === 'security' && (
                 <div className="space-y-6">
-                  <h3 className="text-lg font-medium text-gray-900">Security Settings</h3>
+                  <h3 className="text-lg font-medium text-gray-900">{t('security.title')}</h3>
                   
                   <div className="space-y-6">
                     <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
@@ -155,20 +163,18 @@ function SettingsContent() {
                           <span className="text-yellow-400">⚠️</span>
                         </div>
                         <div className="ml-3">
-                          <h4 className="text-sm font-medium text-yellow-800">Password Management</h4>
-                          <p className="mt-1 text-sm text-yellow-700">
-                            Password changes are managed through your organization's SSO system.
-                          </p>
+                          <h4 className="text-sm font-medium text-yellow-800">{t('security.password.title')}</h4>
+                          <p className="mt-1 text-sm text-yellow-700">{t('security.password.description')}</p>
                         </div>
                       </div>
                     </div>
 
                     <div className="border border-gray-200 rounded-lg p-4">
-                      <h4 className="text-sm font-medium text-gray-700 mb-3">Session Information</h4>
+                      <h4 className="text-sm font-medium text-gray-700 mb-3">{t('security.session.title')}</h4>
                       <div className="space-y-2 text-sm text-gray-600">
-                        <p>Last login: {new Date().toLocaleDateString()}</p>
-                        <p>Session expires: In 8 hours</p>
-                        <p>Login method: SSO</p>
+                        <p>{t('security.session.lastLogin')}: {new Date().toLocaleDateString()}</p>
+                        <p>{t('security.session.expires')}: {t('security.session.inHours', { hours: 8 })}</p>
+                        <p>{t('security.session.loginMethod')}: {t('security.session.sso')}</p>
                       </div>
                     </div>
                   </div>

@@ -6,8 +6,11 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { fetchPatients, Patient } from "@/lib/api";
 import { useUser } from '@/contexts/UserContext';
+import { useTranslations } from 'next-intl';
+import { getSexKey } from '@/lib/codeMapping';
 
 function PatientsPageContent() {
+  const t = useTranslations();
   const [query, setQuery] = useState("");
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(false);
@@ -46,10 +49,9 @@ function PatientsPageContent() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
             </div>
-            <h1 className="text-4xl font-bold text-gray-900 mb-2">Patient Directory</h1>
+            <h1 className="text-4xl font-bold text-gray-900 mb-2">{t('patientsPage.title')}</h1>
             <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-              Welcome back, <span className="font-semibold text-blue-600">{user?.display_name}</span>. 
-              Search and manage your patients with ease.
+              {t('patientsPage.welcome', {name: user?.display_name || ''})} {t('patientsPage.welcomeSuffix')}
             </p>
           </div>
 
@@ -64,8 +66,8 @@ function PatientsPageContent() {
                     </svg>
                   </div>
                   <div className="ml-4">
-                    <h3 className="font-semibold text-gray-900 group-hover:text-green-600 transition-colors">General Chat</h3>
-                    <p className="text-sm text-gray-500">Talk with CLARA</p>
+                    <h3 className="font-semibold text-gray-900 group-hover:text-green-600 transition-colors">{t('patientsPage.quick.chatTitle')}</h3>
+                    <p className="text-sm text-gray-500">{t('patientsPage.quick.chatSubtitle')}</p>
                   </div>
                 </div>
               </div>
@@ -79,7 +81,7 @@ function PatientsPageContent() {
                   </svg>
                 </div>
                 <div className="ml-4">
-                  <h3 className="font-semibold text-gray-900">Last Updated</h3>
+                  <h3 className="font-semibold text-gray-900">{t('patientsPage.quick.lastUpdated')}</h3>
                   <p className="text-sm text-gray-500">{new Date().toLocaleDateString()}</p>
                 </div>
               </div>
@@ -95,8 +97,8 @@ function PatientsPageContent() {
                 </svg>
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900">Search Patients</h2>
-                <p className="text-sm text-gray-500">Find patients by name, MRN, or ID</p>
+                <h2 className="text-xl font-bold text-gray-900">{t('patientsPage.search.title')}</h2>
+                <p className="text-sm text-gray-500">{t('patientsPage.search.subtitle')}</p>
               </div>
             </div>
             
@@ -113,7 +115,7 @@ function PatientsPageContent() {
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search by name, MRN, or ID..."
+                    placeholder={t('patientsPage.search.placeholder')}
                     className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-lg"
                   />
                 </div>
@@ -126,14 +128,14 @@ function PatientsPageContent() {
                 {loading ? (
                   <span className="flex items-center">
                     <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full mr-2"></div>
-                    Searching...
+                    {t('patientsPage.search.searching')}
                   </span>
                 ) : (
                   <span className="flex items-center">
                     <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>
-                    Search
+                    {t('patientsPage.search.button')}
                   </span>
                 )}
               </button>
@@ -152,13 +154,13 @@ function PatientsPageContent() {
                   </div>
                 </div>
                 <div className="ml-4">
-                  <h3 className="text-lg font-medium text-red-800">Search Error</h3>
+                  <h3 className="text-lg font-medium text-red-800">{t('patientsPage.error.title')}</h3>
                   <p className="mt-1 text-red-700">{error}</p>
                   <button 
                     onClick={() => setError(null)}
                     className="mt-2 text-sm text-red-600 hover:text-red-800 underline"
                   >
-                    Dismiss
+                    {t('patientsPage.error.dismiss')}
                   </button>
                 </div>
               </div>
@@ -171,14 +173,14 @@ function PatientsPageContent() {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-2xl font-bold text-gray-900">
-                    {loading ? 'Searching...' : `${patients.length} Patients`}
+                    {loading ? t('patientsPage.search.searching') : t('patientsPage.resultsHeader', {count: patients.length})}
                   </h2>
-                  <p className="text-gray-600 mt-1">Click on any patient to view details</p>
+                  <p className="text-gray-600 mt-1">{t('common.clickToViewDetails')}</p>
                 </div>
                 {!loading && patients.length > 0 && (
                   <div className="flex items-center space-x-2">
                     <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
-                      {patients.length} results
+                      {patients.length} {t('common.results')}
                     </span>
                   </div>
                 )}
@@ -189,8 +191,8 @@ function PatientsPageContent() {
             {loading && (
               <div className="p-16 text-center">
                 <div className="animate-spin h-12 w-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-6"></div>
-                <h3 className="text-lg font-medium text-gray-900 mb-2">Searching patients...</h3>
-                <p className="text-gray-500">Please wait while we find your patients</p>
+                <h3 className="text-lg font-medium text-gray-900 mb-2">{t('patientsPage.loading.title')}</h3>
+                <p className="text-gray-500">{t('patientsPage.loading.subtitle')}</p>
               </div>
             )}
 
@@ -202,16 +204,16 @@ function PatientsPageContent() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                   </svg>
                 </div>
-                <h3 className="text-xl font-medium text-gray-900 mb-2">No patients found</h3>
+                <h3 className="text-xl font-medium text-gray-900 mb-2">{t('patientsPage.empty.title')}</h3>
                 <p className="text-gray-500 mb-6 max-w-md mx-auto">
-                  {query ? `No patients match "${query}". Try a different search term or check your spelling.` : 'No patients are currently available in the system.'}
+                  {query ? t('patientsPage.empty.withQuery', {query}) : t('patientsPage.empty.withoutQuery')}
                 </p>
                 {query && (
                   <button 
                     onClick={() => { setQuery(''); doSearch(); }}
                     className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                   >
-                    Show All Patients
+                    {t('patientsPage.empty.showAll')}
                   </button>
                 )}
               </div>
@@ -242,9 +244,7 @@ function PatientsPageContent() {
                                 <h3 className="text-xl font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">
                                   {patient.name}
                                 </h3>
-                                <span className="ml-3 px-3 py-1 text-xs bg-green-100 text-green-700 rounded-full font-medium">
-                                  Active
-                                </span>
+                                <span className="ml-3 px-3 py-1 text-xs bg-green-100 text-green-700 rounded-full font-medium">{t('common.active')}</span>
                               </div>
                               <div className="flex items-center space-x-6 text-sm text-gray-600">
                                 <div className="flex items-center">
@@ -258,7 +258,7 @@ function PatientsPageContent() {
                                     <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                                     </svg>
-                                    Age: {patient.age}
+                                    {t('common.age')}: {patient.age}
                                   </div>
                                 )}
                                 {patient.dob && (
@@ -269,13 +269,21 @@ function PatientsPageContent() {
                                     DOB: {patient.dob}
                                   </div>
                                 )}
+                                {patient.sex && (
+                                  <div className="flex items-center">
+                                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5.121 17.804A13.937 13.937 0 0112 15c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    </svg>
+                                    {t(getSexKey(patient.sex) as any)}
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
                         </div>
                         <div className="flex-shrink-0 ml-4">
                           <div className="flex items-center text-blue-600 group-hover:text-blue-800 transition-colors">
-                            <span className="text-sm font-medium mr-2">View Details</span>
+                            <span className="text-sm font-medium mr-2">{t('common.viewDetails')}</span>
                             <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
                             </svg>

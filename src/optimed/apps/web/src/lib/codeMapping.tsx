@@ -1,31 +1,32 @@
 // Code mappings for display purposes
+// NOTE: These are translation keys, not final display strings.
 export const VITAL_CODE_MAPPINGS: Record<string, string> = {
-  "8867-4": "Heart Rate",
-  "59408-5": "Respiratory Rate", 
-  "8480-6": "Systolic Blood Pressure",
-  "8462-4": "Diastolic Blood Pressure",
-  "8310-5": "Body Temperature",
-  "2708-6": "Oxygen Saturation",
-  "9279-1": "Respiratory Rate",
-  "8287-5": "Head Circumference",
-  "29463-7": "Body Weight",
-  "8302-2": "Body Height",
+  "8867-4": "codes.vitals.heartRate",
+  "59408-5": "codes.vitals.respiratoryRate", 
+  "8480-6": "codes.vitals.systolicBP",
+  "8462-4": "codes.vitals.diastolicBP",
+  "8310-5": "codes.vitals.temperature",
+  "2708-6": "codes.vitals.oxygenSaturation",
+  "9279-1": "codes.vitals.respiratoryRate",
+  "8287-5": "codes.vitals.headCircumference",
+  "29463-7": "codes.vitals.weight",
+  "8302-2": "codes.vitals.height",
 };
 
 export const LAB_CODE_MAPPINGS: Record<string, string> = {
-  "2823-3": "Potassium",
-  "2339-0": "Glucose",
-  "2951-2": "Sodium", 
-  "6298-4": "Potassium",
-  "33747-0": "Hemoglobin A1c",
-  "718-7": "Hemoglobin",
-  "4544-3": "Hematocrit",
-  "6690-2": "White Blood Cells",
-  "777-3": "Platelets",
-  "2160-0": "Creatinine",
-  "3094-0": "Blood Urea Nitrogen",
-  "1751-7": "Albumin",
-  "1975-2": "Bilirubin",
+  "2823-3": "codes.labs.potassium",
+  "2339-0": "codes.labs.glucose",
+  "2951-2": "codes.labs.sodium", 
+  "6298-4": "codes.labs.potassium",
+  "33747-0": "codes.labs.hba1c",
+  "718-7": "codes.labs.hemoglobin",
+  "4544-3": "codes.labs.hematocrit",
+  "6690-2": "codes.labs.wbc",
+  "777-3": "codes.labs.platelets",
+  "2160-0": "codes.labs.creatinine",
+  "3094-0": "codes.labs.bun",
+  "1751-7": "codes.labs.albumin",
+  "1975-2": "codes.labs.bilirubin",
 };
 
 export function getDisplayName(code: string, type: 'vital' | 'lab' = 'vital'): string {
@@ -85,4 +86,13 @@ export function formatNumericalValue(value: string): string {
   
   // Return original value if no number found
   return value;
+}
+
+export function getSexKey(raw: string | undefined): string {
+  const v = (raw || '').toString().toLowerCase();
+  if (v.startsWith('m')) return 'common.sex.male';
+  if (v.startsWith('f') || v.startsWith('kv')) return 'common.sex.female';
+  if (v.includes('other')) return 'common.sex.other';
+  if (v.includes('unknown')) return 'common.sex.unknown';
+  return 'common.sex.unknown';
 }

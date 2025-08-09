@@ -1,0 +1,312 @@
+{
+  "app": {
+    "title": "CLARA"
+  },
+  "nav": {
+    "home": "Home",
+    "patients": "Patients",
+    "chat": "Chat",
+    "admin": "Admin",
+    "dicom": "DICOM Viewer"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Manage your application settings and preferences.",
+    "loading": "Loading settings...",
+    "tabs": {
+      "preferences": "Preferences",
+      "notifications": "Notifications",
+      "security": "Security"
+    },
+    "preferences": {
+      "title": "Application Preferences",
+      "darkMode": {
+        "label": "Dark Mode",
+        "description": "Toggle dark mode interface"
+      },
+      "language": {
+        "label": "Language"
+      }
+    },
+    "notifications": {
+      "title": "Notification Settings",
+      "email": {
+        "label": "Email Notifications",
+        "description": "Receive notifications via email"
+      }
+    },
+    "security": {
+      "title": "Security Settings",
+      "password": {
+        "title": "Password Management",
+        "description": "Password changes are managed through your organization's SSO system."
+      },
+      "session": {
+        "title": "Session Information",
+        "lastLogin": "Last login",
+        "expires": "Session expires",
+        "loginMethod": "Login method",
+        "sso": "SSO",
+        "inHours": "In {hours} hours"
+      }
+    }
+  }
+  ,
+  "common": {
+    "backToPatients": "Back to Patients",
+    "patients": "Patients",
+    "patientId": "Patient ID",
+    "age": "Age",
+    "years": "years",
+    "sex": "Sex",
+    "sex": {
+      "male": "Male",
+      "female": "Female",
+      "other": "Other",
+      "unknown": "Unknown"
+    },
+    "unit": "Unit",
+    "loadingPatient": "Loading patient details...",
+    "errorLoadingPatient": "Error Loading Patient",
+    "consultingAs": "Consulting as",
+    "showAllPatients": "Show All Patients",
+    "viewDetails": "View Details",
+    "active": "Active",
+    "clickToViewDetails": "Click on any patient to view details",
+    "results": "results",
+    "search": "Search",
+    "searching": "Searching...",
+    "searchingPatients": "Searching patients...",
+    "pleaseWait": "Please wait while we find your patients",
+    "noPatientsFound": "No patients found",
+    "noPatientsMatch": "No patients match \"{query}\". Try a different search term or check your spelling.",
+    "noPatientsAvailable": "No patients are currently available in the system.",
+    "hideSessions": "Hide sessions panel",
+    "showSessions": "Show sessions panel"
+  },
+  "login": {
+    "title": "CLARA",
+    "subtitle": "Choose your preferred sign-in method",
+    "tabs": {
+      "regular": "System Login",
+      "ehr": "EHR Login"
+    },
+    "regular": {
+      "title": "System Credentials",
+      "subtitle": "Use your OptiMed account credentials",
+      "username": "Username",
+      "usernamePlaceholder": "Enter your username",
+      "password": "Password",
+      "passwordPlaceholder": "Enter your password",
+      "signIn": "Sign in",
+      "signingIn": "Signing in...",
+      "demo": {
+        "title": "Demo Accounts:",
+        "doctor": "Doctor",
+        "nurse": "Nurse",
+        "admin": "Admin"
+      }
+    },
+    "ehr": {
+      "title": "EHR Authentication",
+      "subtitle": "Connect using your hospital's EHR system",
+      "fhirUrl": "FHIR Server URL",
+      "fhirPlaceholder": "https://your-fhir-server.com/fhir",
+      "clientId": "Client ID",
+      "scope": "Scope",
+      "connect": "Connect to EHR System",
+      "connecting": "Connecting to EHR...",
+      "secure": "🔒 Secure EHR Integration",
+      "secureBullets": [
+        "SMART on FHIR compliant",
+        "OAuth 2.0 authentication",
+        "Automatic user creation",
+        "No credentials stored locally"
+      ]
+    },
+    "errors": {
+      "ehrInitFailed": "Failed to initiate EHR login: {message}"
+    }
+  },
+  "patientsPage": {
+    "title": "Patient Directory",
+    "welcome": "Welcome back, {name}.",
+    "welcomeSuffix": "Search and manage your patients with ease.",
+    "quick": {
+      "chatTitle": "General Chat",
+      "chatSubtitle": "Talk with CLARA",
+      "lastUpdated": "Last Updated"
+    },
+    "search": {
+      "title": "Search Patients",
+      "subtitle": "Find patients by name, MRN, or ID",
+      "placeholder": "Search by name, MRN, or ID...",
+      "button": "Search",
+      "searching": "Searching..."
+    },
+    "error": {
+      "title": "Search Error",
+      "dismiss": "Dismiss"
+    },
+    "resultsHeader": "{count} Patients",
+    "loading": {
+      "title": "Searching patients...",
+      "subtitle": "Please wait while we find your patients"
+    },
+    "empty": {
+      "title": "No patients found",
+      "withQuery": "No patients match \"{query}\". Try a different search term or check your spelling.",
+      "withoutQuery": "No patients are currently available in the system.",
+      "showAll": "Show All Patients"
+    }
+  },
+  "patientDetail": {
+    "quickLinks": {
+      "clinicalData": "Clinical Data",
+      "medicalJournal": "Medical Journal"
+    }
+  },
+  "journalPage": {
+    "breadcrumb": {
+      "journal": "Journal"
+    },
+    "header": {
+      "journalOf": "{name} - Journal"
+    }
+  },
+  "vitalsPage": {
+    "breadcrumb": {
+      "clinicalData": "Clinical Data"
+    },
+    "sections": {
+      "vitals": "Vital Signs",
+      "labs": "Lab Results",
+      "imaging": "Imaging Studies",
+      "exam": "Physical Exam",
+      "procedures": "Procedures",
+      "social": "Social History",
+      "medications": "Medications",
+      "immunizations": "Immunizations",
+      "allergies": "Allergies",
+      "diagnoses": "Diagnoses",
+      "medicationStatement": "Medication Usage",
+      "questionnaire": "Questionnaire Responses",
+      "encounters": "Encounters"
+    },
+    "noData": {
+      "vitals": "No vital signs recorded for this patient",
+      "labs": "No laboratory results available for this patient",
+      "imaging": "No imaging studies recorded for this patient",
+      "exam": "No physical exam findings recorded for this patient",
+      "procedures": "No procedures recorded for this patient",
+      "social": "No social history recorded for this patient",
+      "medications": "No medications recorded for this patient",
+      "immunizations": "No immunizations recorded for this patient",
+      "allergies": "No known allergies recorded for this patient",
+      "diagnoses": "No diagnoses recorded for this patient",
+      "medicationStatement": "No medication usages recorded for this patient",
+      "questionnaire": "No questionnaire responses recorded for this patient",
+      "encounters": "No encounters recorded for this patient"
+    },
+    "summary": {
+      "title": "Clinical Data Summary",
+      "vitals": "Vital Signs",
+      "labs": "Lab Results",
+      "imaging": "Imaging Studies",
+      "exam": "Exam Findings",
+      "procedures": "Procedures",
+      "immunizations": "Immunizations",
+      "encounters": "Encounters"
+    },
+    "viewSection": "View {title} ({count} {itemLabel})",
+    "item": "item",
+    "items": "items",
+    "recorded": "Recorded: {timestamp}",
+    "recentEncounters": "Recent Encounters",
+    "andMore": "And {count} more encounters..."
+  },
+  "unauthorized": {
+    "title": "Access Denied",
+    "description": "You don't have permission to access this page.",
+    "backToPatients": "Back to Patients"
+  },
+  "dicomPage": {
+    "back": "Back to Patients",
+    "title": "DICOM Viewer",
+    "subtitle": "Upload and view DICOM medical images with advanced viewing controls, windowing, and 3D volume navigation."
+  },
+  "chatPage": {
+    "generalChat": "General Chat",
+    "aiUser": "AI User"
+  },
+  "sessions": {
+    "headers": {
+      "chatSessions": "Chat Sessions",
+      "patientSessions": "Patient Sessions"
+    },
+    "actions": {
+      "new": "New",
+      "join": "Join"
+    },
+    "filters": {
+      "showAll": "Show all sessions"
+    },
+    "info": {
+      "generalNoPatient": "General chat sessions (no patient context)"
+    },
+    "loading": "Loading sessions...",
+    "empty": {
+      "title": "No sessions yet",
+      "subtitle": "Create a new session to get started"
+    },
+    "meta": {
+      "createdBy": "Created by {name}",
+      "last": "Last: {name}",
+      "messages": "{count} messages",
+      "participants": "{count} {count, plural, one {participant} other {participants}}"
+    },
+    "unknownUser": "Unknown User",
+    "you": "You",
+    "ehrUser": "EHR User",
+    "unknownTime": "Unknown time",
+    "titles": {
+      "patientChat": "Patient Chat - {date} {time}",
+      "generalChat": "General Chat - {date} {time}",
+      "patientSession": "Patient Session - {date} {time}"
+    },
+    "footer": {
+      "showingAll": "Showing all patient sessions",
+      "showingYours": "Showing your sessions only",
+      "general": "General chat sessions"
+    }
+  },
+  "codes": {
+    "vitals": {
+      "heartRate": "Heart Rate",
+      "respiratoryRate": "Respiratory Rate",
+      "systolicBP": "Systolic Blood Pressure",
+      "diastolicBP": "Diastolic Blood Pressure",
+      "temperature": "Body Temperature",
+      "oxygenSaturation": "Oxygen Saturation",
+      "headCircumference": "Head Circumference",
+      "weight": "Body Weight",
+      "height": "Body Height"
+    },
+    "labs": {
+      "potassium": "Potassium",
+      "glucose": "Glucose",
+      "sodium": "Sodium",
+      "hba1c": "Hemoglobin A1c",
+      "hemoglobin": "Hemoglobin",
+      "hematocrit": "Hematocrit",
+      "wbc": "White Blood Cells",
+      "platelets": "Platelets",
+      "creatinine": "Creatinine",
+      "bun": "Blood Urea Nitrogen",
+      "albumin": "Albumin",
+      "bilirubin": "Bilirubin"
+    }
+  }
+}
+
+

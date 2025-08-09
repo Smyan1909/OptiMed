@@ -2,20 +2,19 @@ import { DICOMViewer } from '@/components/DICOMViewer';
 import { Header } from '@/components/Header';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 
 export default function DICOMViewerPage() {
+  const t = useTranslations('dicomPage');
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Navigation Breadcrumb */}
         <div className="mb-6">
-          <Link 
-            href="/patients" 
-            className="inline-flex items-center text-sm text-gray-500 hover:text-gray-700 transition-colors"
-          >
+          <Link href="/patients" className="inline-flex items-center text-sm text-gray-500 hover:text-gray-700 transition-colors">
             <ArrowLeft className="h-4 w-4 mr-1" />
-            Back to Patients
+            {t('back')}
           </Link>
         </div>
 
@@ -23,10 +22,8 @@ export default function DICOMViewerPage() {
         <div className="bg-white shadow rounded-lg p-6 mb-6">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">DICOM Viewer</h1>
-              <p className="mt-1 text-sm text-gray-600">
-                Upload and view DICOM medical images with advanced viewing controls, windowing, and 3D volume navigation.
-              </p>
+              <h1 className="text-2xl font-bold text-gray-900">{t('title')}</h1>
+              <p className="mt-1 text-sm text-gray-600">{t('subtitle')}</p>
             </div>
             <div className="flex items-center space-x-2">
               <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center">
