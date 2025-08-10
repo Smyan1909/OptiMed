@@ -7,8 +7,9 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { fetchPatient, PatientDetail } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
-import { getDisplayName, formatLabValue, formatVitalValue, formatNumericalValue } from '@/lib/codeMapping';
+import { getDisplayKey, formatLabValue, formatVitalValue, formatNumericalValue, type ObservationCategory } from '@/lib/codeMapping';
 import { Heart, Beaker, Camera, Stethoscope, Scissors, UserCheck, Pill, AlertTriangle, FileText, ClipboardList, ChevronDown, ChevronRight, Calendar, Clock, Shield } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 
 // Helper function to format timestamps
 const formatTimestamp = (timestamp: string | undefined): string => {
@@ -36,6 +37,7 @@ const formatTimestamp = (timestamp: string | undefined): string => {
 };
 
 function VitalsPageContent() {
+  const t = useTranslations();
   const params = useSearchParams();
   const patientId = params.get('id');
   const [patient, setPatient] = useState<PatientDetail | null>(null);
@@ -81,7 +83,7 @@ function VitalsPageContent() {
           <div className="flex items-center justify-center h-64">
             <div className="text-center">
               <div className="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-              <p className="text-gray-900 font-medium">Loading patient details...</p>
+              <p className="text-gray-900 font-medium">{t('common.loadingPatient')}</p>
             </div>
           </div>
         </main>
@@ -100,7 +102,7 @@ function VitalsPageContent() {
                 <span className="text-red-400 text-2xl">⚠️</span>
               </div>
               <div className="ml-3">
-                <h3 className="text-lg font-medium text-red-800">Error Loading Patient</h3>
+                <h3 className="text-lg font-medium text-red-800">{t('common.errorLoadingPatient')}</h3>
                 <div className="mt-2 text-sm text-red-700">
                   <p>{error}</p>
                 </div>
@@ -128,7 +130,8 @@ function VitalsPageContent() {
     gradientFrom: string,
     gradientTo: string,
     emptyMessage: string,
-    badgeVariant: "default" | "secondary" | "destructive" | "outline" = "outline"
+    badgeVariant: "default" | "secondary" | "destructive" | "outline" = "outline",
+    category: ObservationCategory
   ) => {
     const sectionId = title.toLowerCase().replace(/\s+/g, '_');
     const isExpanded = expandedSections.has(sectionId);
@@ -142,7 +145,7 @@ function VitalsPageContent() {
             {title}
             {hasData && (
               <Badge variant="secondary" className="ml-2 text-xs">
-                {Object.keys(data).length} {Object.keys(data).length === 1 ? 'entry' : 'entries'}
+                {Object.keys(data).length} {Object.keys(data).length === 1 ? t('vitalsPage.item') : t('vitalsPage.items')}
               </Badge>
             )}
           </h2>
@@ -155,7 +158,7 @@ function VitalsPageContent() {
                 className="flex items-center justify-between w-full px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors mb-4"
               >
                 <span className="text-sm font-medium text-gray-700">
-                  View {title} ({Object.keys(data).length} {Object.keys(data).length === 1 ? 'item' : 'items'})
+                  {t('vitalsPage.viewSection', { title, count: Object.keys(data).length, itemLabel: Object.keys(data).length === 1 ? t('vitalsPage.item') : t('vitalsPage.items') })}
                 </span>
                 {isExpanded ? (
                   <ChevronDown className="h-4 w-4 text-gray-500" />
@@ -167,12 +170,15 @@ function VitalsPageContent() {
               {isExpanded && (
                 <div className="space-y-3">
                   {Object.entries(data).map(([key, value]) => {
-                    const displayName = key.includes('-') ? getDisplayName(key, 'vital') : key;
-                    const formattedValue = title === 'Vital Signs' ? formatVitalValue(key, value) : 
-                                         title === 'Lab Results' ? formatLabValue(key, value) : 
-                                         formatNumericalValue(value);
+                    const displayKey = getDisplayKey(key, category);
+                    const displayName = displayKey.startsWith('codes.')
+                      ? t(displayKey as any)
+                      : displayKey;
+                    const formattedValue = category === 'vitals' ? formatVitalValue(key, value)
+                      : category === 'labs' ? formatLabValue(key, value)
+                      : formatNumericalValue(value);
                     const timestamp = formatTimestamp(timestampsData?.[key]);
-                    
+
                     return (
                       <div key={key} className="flex items-center justify-between py-3 px-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors min-h-[50px]">
                         <div className="flex flex-col flex-1">
@@ -180,7 +186,7 @@ function VitalsPageContent() {
                           {timestamp !== 'Unknown' && timestampsData && (
                             <div className="flex items-center text-xs text-gray-500 mt-1">
                               <Clock className="h-3 w-3 mr-1" />
-                              <span>Recorded: {timestamp}</span>
+                              <span>{t('vitalsPage.recorded', { timestamp })}</span>
                             </div>
                           )}
                         </div>
@@ -215,7 +221,7 @@ function VitalsPageContent() {
             <ol className="flex items-center space-x-4">
               <li>
                 <Link href="/patients" className="text-blue-600 hover:text-blue-800 font-medium">
-                  Patients
+                  {t('common.patients')}
                 </Link>
               </li>
               <li>
@@ -230,7 +236,7 @@ function VitalsPageContent() {
                 <span className="text-gray-400">/</span>
               </li>
               <li>
-                <span className="text-gray-900 font-medium">Clinical Data</span>
+                <span className="text-gray-900 font-medium">{t('vitalsPage.breadcrumb.clinicalData')}</span>
               </li>
             </ol>
           </nav>
@@ -246,14 +252,14 @@ function VitalsPageContent() {
                     </span>
                   </div>
                   <div className="ml-4">
-                    <h1 className="text-2xl font-bold text-gray-900">{patient?.name} - Clinical Data</h1>
-                    <p className="text-gray-700 font-medium">Patient ID: {patient?.id}</p>
+                    <h1 className="text-2xl font-bold text-gray-900">{patient?.name} - {t('vitalsPage.breadcrumb.clinicalData')}</h1>
+                    <p className="text-gray-700 font-medium">{t('common.patientId')}: {patient?.id}</p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-3">
                   <Link href={`/patients/${patientId}`}>
                     <button className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors">
-                      ← Back to Patient
+                      ← {t('back.toPatients')}
                     </button>
                   </Link>
                 </div>
@@ -264,15 +270,15 @@ function VitalsPageContent() {
             <div className="px-6 py-4 bg-gray-50">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                 <div>
-                  <span className="font-medium text-gray-700">Age:</span>
-                  <span className="ml-2 text-gray-900">{patient?.age} years</span>
+                  <span className="font-medium text-gray-700">{t('common.age')}:</span>
+                  <span className="ml-2 text-gray-900">{patient?.age} {t('common.years')}</span>
                 </div>
                 <div>
-                  <span className="font-medium text-gray-700">Sex:</span>
+                  <span className="font-medium text-gray-700">{t('common.sex')}:</span>
                   <span className="ml-2 text-gray-900">{patient?.sex}</span>
                 </div>
                 <div>
-                  <span className="font-medium text-gray-700">Unit:</span>
+                  <span className="font-medium text-gray-700">{t('common.unit')}:</span>
                   <span className="ml-2 text-gray-900">{patient?.care_unit}</span>
                 </div>
               </div>
@@ -285,21 +291,23 @@ function VitalsPageContent() {
               <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-sky-50">
                 <h2 className="text-lg font-bold text-gray-900 flex items-center">
                   <Calendar className="h-5 w-5 mr-2 text-blue-500" />
-                  Recent Encounters
+                  {t('vitalsPage.recentEncounters')}
                   <Badge variant="secondary" className="ml-2 text-xs">
-                    {Object.keys(patient.encounters).length} {Object.keys(patient.encounters).length === 1 ? 'encounter' : 'encounters'}
+                    {Object.keys(patient.encounters).length} {Object.keys(patient.encounters).length === 1 ? t('vitalsPage.item') : t('vitalsPage.items')}
                   </Badge>
                 </h2>
               </div>
               <div className="p-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {Object.entries(patient.encounters).slice(0, 6).map(([encounterId, encounterType]) => {
+                    const encounterKey = getDisplayKey(encounterType, 'encounters');
+                    const encounterDisplay = encounterKey.startsWith('codes.') ? t(encounterKey as any) : encounterKey;
                     const timestamp = formatTimestamp(patient.encounters_timestamps?.[encounterId]);
                     return (
                       <div key={encounterId} className="bg-blue-50 p-4 rounded-lg border border-blue-200">
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
-                            <h3 className="font-medium text-gray-900 text-sm">{encounterType}</h3>
+                            <h3 className="font-medium text-gray-900 text-sm">{encounterDisplay}</h3>
                             <p className="text-xs text-gray-600 mt-1">ID: {encounterId}</p>
                             {timestamp !== 'Unknown' && patient.encounters_timestamps && (
                               <div className="flex items-center text-xs text-gray-500 mt-2">
@@ -316,7 +324,7 @@ function VitalsPageContent() {
                 {Object.keys(patient.encounters).length > 6 && (
                   <div className="mt-4 text-center">
                     <p className="text-sm text-gray-500">
-                      And {Object.keys(patient.encounters).length - 6} more encounters...
+                    {t('vitalsPage.andMore', {count: Object.keys(patient.encounters).length - 6})}
                     </p>
                   </div>
                 )}
@@ -329,146 +337,171 @@ function VitalsPageContent() {
             
             {/* Vital Signs */}
             {renderObservationSection(
-              'Vital Signs',
+              t('vitalsPage.sections.vitals'),
               patient?.vitals || {},
               patient?.vitals_timestamps,
               <Heart className="h-5 w-5 mr-2 text-red-500" />,
               'from-red-50',
               'to-pink-50',
-              'No vital signs recorded for this patient'
+              t('vitalsPage.noData.vitals'),
+              undefined,
+              'vitals'
             )}
 
             {/* Lab Results */}
             {renderObservationSection(
-              'Lab Results',
+              t('vitalsPage.sections.labs'),
               patient?.labs || {},
               patient?.labs_timestamps,
               <Beaker className="h-5 w-5 mr-2 text-blue-500" />,
               'from-blue-50',
               'to-indigo-50',
-              'No laboratory results available for this patient'
+              t('vitalsPage.noData.labs'),
+              undefined,
+              'labs'
             )}
 
             {/* Imaging Studies */}
             {renderObservationSection(
-              'Imaging Studies',
+              t('vitalsPage.sections.imaging'),
               patient?.imaging || {},
               patient?.imaging_timestamps,
               <Camera className="h-5 w-5 mr-2 text-purple-500" />,
               'from-purple-50',
               'to-violet-50',
-              'No imaging studies recorded for this patient'
+              t('vitalsPage.noData.imaging'),
+              undefined,
+              'imaging'
             )}
 
             {/* Physical Exam */}
             {renderObservationSection(
-              'Physical Exam',
+              t('vitalsPage.sections.exam'),
               patient?.exam || {},
               patient?.exam_timestamps,
               <Stethoscope className="h-5 w-5 mr-2 text-green-500" />,
               'from-green-50',
               'to-emerald-50',
-              'No physical exam findings recorded for this patient'
+              t('vitalsPage.noData.exam'),
+              undefined,
+              'exam'
             )}
 
             {/* Procedures */}
             {renderObservationSection(
-              'Procedures',
+              t('vitalsPage.sections.procedures'),
               patient?.procedure || {},
               patient?.procedure_timestamps,
               <Scissors className="h-5 w-5 mr-2 text-orange-500" />,
               'from-orange-50',
               'to-amber-50',
-              'No procedures recorded for this patient'
+              t('vitalsPage.noData.procedures'),
+              undefined,
+              'procedures'
             )}
 
             {/* Social History */}
             {renderObservationSection(
-              'Social History',
+              t('vitalsPage.sections.social'),
               patient?.social_history || {},
               patient?.social_history_timestamps,
               <UserCheck className="h-5 w-5 mr-2 text-cyan-500" />,
               'from-cyan-50',
               'to-teal-50',
-              'No social history recorded for this patient'
+              t('vitalsPage.noData.social'),
+              undefined,
+              'social'
             )}
 
             {/* Medications */}
             {renderObservationSection(
-              'Medications',
+              t('vitalsPage.sections.medications'),
               patient?.medications || {},
               patient?.medications_timestamps,
               <Pill className="h-5 w-5 mr-2 text-indigo-500" />,
               'from-indigo-50',
               'to-blue-50',
-              'No medications recorded for this patient'
+              t('vitalsPage.noData.medications'),
+              undefined,
+              'medications'
             )}
 
             {/* Immunizations */}
             {renderObservationSection(
-              'Immunizations',
+              t('vitalsPage.sections.immunizations'),
               patient?.immunizations || {},
               patient?.immunizations_timestamps,
               <Shield className="h-5 w-5 mr-2 text-green-500" />,
               'from-green-50',
               'to-emerald-50',
-              'No immunizations recorded for this patient'
+              t('vitalsPage.noData.immunizations'),
+              undefined,
+              'immunizations'
             )}
 
             {/* Allergies */}
             {renderObservationSection(
-              'Allergies',
+              t('vitalsPage.sections.allergies'),
               patient?.allergies || {},
               patient?.allergies_timestamps,
               <AlertTriangle className="h-5 w-5 mr-2 text-red-500" />,
               'from-red-50',
               'to-rose-50',
-              'No known allergies recorded for this patient',
-              'destructive'
+              t('vitalsPage.noData.allergies'),
+              'destructive',
+              'allergies'
             )}
 
             {/* Diagnoses */}
             {renderObservationSection(
-              'Diagnoses',
+              t('vitalsPage.sections.diagnoses'),
               patient?.diagnoses || {},
               patient?.diagnoses_timestamps,
               <FileText className="h-5 w-5 mr-2 text-gray-500" />,
               'from-gray-50',
               'to-slate-50',
-              'No diagnoses recorded for this patient'
+              t('vitalsPage.noData.diagnoses'),
+              undefined,
+              'diagnoses'
             )}
 
             {/* Medication Statements */}
             {renderObservationSection(
-              'Medication Usage',
+              t('vitalsPage.sections.medicationStatement'),
               patient?.medication_statement || {},
               patient?.medication_statement_timestamps,
               <Pill className="h-5 w-5 mr-2 text-emerald-500" />,
               'from-emerald-50',
               'to-green-50',
-              'No medication usages recorded for this patient'
+              t('vitalsPage.noData.medicationStatement'),
+              undefined,
+              'medicationStatement'
             )}
 
             {/* Questionnaire Responses */}
             {renderObservationSection(
-              'Questionnaire Responses',
+              t('vitalsPage.sections.questionnaire'),
               patient?.questionnaire_response || {},
               patient?.questionnaire_response_timestamps,
               <ClipboardList className="h-5 w-5 mr-2 text-violet-500" />,
               'from-violet-50',
               'to-purple-50',
-              'No questionnaire responses recorded for this patient'
+              t('vitalsPage.noData.questionnaire'),
+              undefined,
+              'questionnaire'
             )}
 
             {/* Encounters */}
             {renderObservationSection(
-              'Encounters',
+              t('vitalsPage.sections.encounters'),
               patient?.encounters || {},
               patient?.encounters_timestamps,
               <Calendar className="h-5 w-5 mr-2 text-blue-500" />,
               'from-blue-50',
               'to-sky-50',
-              'No encounters recorded for this patient'
+              t('vitalsPage.noData.encounters'),
+              undefined,
+              'encounters'
             )}
 
           </div>
@@ -476,7 +509,7 @@ function VitalsPageContent() {
           {/* Summary Section */}
           <div className="bg-white shadow rounded-lg">
             <div className="px-6 py-4 border-b border-gray-200">
-              <h2 className="text-lg font-bold text-gray-900">Clinical Data Summary</h2>
+              <h2 className="text-lg font-bold text-gray-900">{t('vitalsPage.summary.title')}</h2>
             </div>
             <div className="p-6">
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 text-center">
@@ -484,43 +517,43 @@ function VitalsPageContent() {
                   <div className="text-2xl font-bold text-red-600">
                     {patient?.vitals ? Object.keys(patient.vitals).length : 0}
                   </div>
-                  <div className="text-sm text-red-700">Vital Signs</div>
+                  <div className="text-sm text-red-700">{t('vitalsPage.summary.vitals')}</div>
                 </div>
                 <div className="bg-blue-50 p-4 rounded-lg">
                   <div className="text-2xl font-bold text-blue-600">
                     {patient?.labs ? Object.keys(patient.labs).length : 0}
                   </div>
-                  <div className="text-sm text-blue-700">Lab Results</div>
+                  <div className="text-sm text-blue-700">{t('vitalsPage.summary.labs')}</div>
                 </div>
                 <div className="bg-purple-50 p-4 rounded-lg">
                   <div className="text-2xl font-bold text-purple-600">
                     {patient?.imaging ? Object.keys(patient.imaging).length : 0}
                   </div>
-                  <div className="text-sm text-purple-700">Imaging Studies</div>
+                  <div className="text-sm text-purple-700">{t('vitalsPage.summary.imaging')}</div>
                 </div>
                 <div className="bg-green-50 p-4 rounded-lg">
                   <div className="text-2xl font-bold text-green-600">
                     {patient?.exam ? Object.keys(patient.exam).length : 0}
                   </div>
-                  <div className="text-sm text-green-700">Exam Findings</div>
+                  <div className="text-sm text-green-700">{t('vitalsPage.summary.exam')}</div>
                 </div>
                 <div className="bg-orange-50 p-4 rounded-lg">
                   <div className="text-2xl font-bold text-orange-600">
                     {patient?.procedure ? Object.keys(patient.procedure).length : 0}
                   </div>
-                  <div className="text-sm text-orange-700">Procedures</div>
+                  <div className="text-sm text-orange-700">{t('vitalsPage.summary.procedures')}</div>
                 </div>
                 <div className="bg-emerald-50 p-4 rounded-lg">
                   <div className="text-2xl font-bold text-emerald-600">
                     {patient?.immunizations ? Object.keys(patient.immunizations).length : 0}
                   </div>
-                  <div className="text-sm text-emerald-700">Immunizations</div>
+                  <div className="text-sm text-emerald-700">{t('vitalsPage.summary.immunizations')}</div>
                 </div>
                 <div className="bg-sky-50 p-4 rounded-lg">
                   <div className="text-2xl font-bold text-sky-600">
                     {patient?.encounters ? Object.keys(patient.encounters).length : 0}
                   </div>
-                  <div className="text-sm text-sky-700">Encounters</div>
+                  <div className="text-sm text-sky-700">{t('vitalsPage.summary.encounters')}</div>
                 </div>
               </div>
             </div>

@@ -4,7 +4,7 @@ import json
 import datetime as dt
 from typing import Sequence, Any
 from dotenv import load_dotenv
-from optimed.embeddings.minilm import embed          # or whichever model
+from optimed.embeddings.minilm import embed          # multilingual e5 with kind prefixes
 from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
 
 load_dotenv()
@@ -27,8 +27,8 @@ async def embed_and_store(
     # Prepare content for embedding (always use string for embedding)
     embed_text = text if isinstance(text, str) else json.dumps(text)
     
-    # run embed model (sync or async)
-    vec: Sequence[float] = await embed(embed_text)
+    # run embed model (sync or async) — passages for stored content
+    vec: Sequence[float] = await embed(embed_text, "passage")
 
     key = f"{namespace}:{object_type}:{object_id}"
     

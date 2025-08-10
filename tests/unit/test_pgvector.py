@@ -157,14 +157,14 @@ class TestPGVectorAdapter:
         mock_pool.acquire.return_value = AsyncContextManagerMock(mock_connection)
         mock_get_pool.return_value = mock_pool
         mock_connection.fetch.return_value = [
-            {'id': 'id1', 'distance': 0.1, 'content': 'First document content'},
-            {'id': 'id2', 'distance': 0.2, 'content': 'Second document content'}
+            {'id': 'id1', 'distance': 0.1, 'similarity': 0.9, 'content': 'First document content'},
+            {'id': 'id2', 'distance': 0.2, 'similarity': 0.8, 'content': 'Second document content'}
         ]
         
         embedding = [0.1, 0.2, 0.3]
         result = await adapter.similarity_search(embedding, top_k=2)
         
-        assert result == [('id1', 0.1, 'First document content'), ('id2', 0.2, 'Second document content')]
+        assert result == [('id1', 0.9, 'First document content'), ('id2', 0.8, 'Second document content')]
         mock_connection.fetch.assert_called_once()
         call_args = mock_connection.fetch.call_args
         query = call_args[0][0]
@@ -176,14 +176,14 @@ class TestPGVectorAdapter:
         mock_pool = MagicMock()
         mock_pool.acquire.return_value = AsyncContextManagerMock(mock_connection)
         mock_get_pool.return_value = mock_pool
-        mock_connection.fetch.return_value = [{'id': 'id1', 'distance': 0.1, 'content': 'Medical document content'}]
+        mock_connection.fetch.return_value = [{'id': 'id1', 'distance': 0.1, 'similarity': 0.9, 'content': 'Medical document content'}]
         
         embedding = [0.1, 0.2, 0.3]
         filter_ = {"category": "medical"}
         
         result = await adapter.similarity_search(embedding, top_k=5, filter_=filter_)
         
-        assert result == [('id1', 0.1, 'Medical document content')]
+        assert result == [('id1', 0.9, 'Medical document content')]
         call_args = mock_connection.fetch.call_args
         query = call_args[0][0]
         assert "WHERE metadata ->> 'category' = $2" in query

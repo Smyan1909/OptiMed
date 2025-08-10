@@ -9,18 +9,20 @@ import { Badge } from '@/components/ui/badge';
 import { Stethoscope, Users, MessageSquare, Settings, Images} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useRouter } from 'next/navigation'; // Import useRouter for navigation
+import { useTranslations } from 'next-intl';
 
 const navigation = [
-  { name: 'Patients', href: '/patients', icon: Users },
-  { name: 'Chat', href: '/chat', icon: MessageSquare },
-  // { name: 'DICOM Viewer', href: '/dicom', icon: Images },
-  { name: 'Admin', href: '/admin', icon: Settings, adminOnly: true },
+  { nameKey: 'nav.patients', href: '/patients', icon: Users },
+  { nameKey: 'nav.chat', href: '/chat', icon: MessageSquare },
+  // { nameKey: 'nav.dicom', href: '/dicom', icon: Images },
+  { nameKey: 'nav.admin', href: '/admin', icon: Settings, adminOnly: true },
 ];
 
 export function Header() {
   const pathname = usePathname();
   const { user } = useUser();
   const router = useRouter(); // Nu fungerar detta
+  const t = useTranslations();
   
   const handleSettingsClick = () => {
     router.push('/settings');
@@ -47,7 +49,7 @@ export function Header() {
               const Icon = item.icon;
               
               return (
-                <Link key={item.name} href={item.href}>
+                <Link key={item.href} href={item.href}>
                   <Button 
                     variant={isActive ? "default" : "ghost"} 
                     size="sm"
@@ -57,7 +59,7 @@ export function Header() {
                     )}
                   >
                     <Icon className="h-4 w-4" />
-                    <span>{item.name}</span>
+                    <span>{t(item.nameKey)}</span>
                   </Button>
                 </Link>
               );

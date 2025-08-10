@@ -142,6 +142,7 @@ export interface JournalGenerationRequest {
   prompt: string;
   entry_type: string;
   patient_id?: string;
+  language?: string;
 }
 
 export interface JournalGenerationResponse {
@@ -330,6 +331,17 @@ function getSessionHeaders(excludeContentType = false): Record<string, string> {
     if (sessionId) {
       headers['X-Session-ID'] = sessionId;
     }
+
+    // Attach the current UI locale as Accept-Language for backend language handling
+    try {
+      const localeCookie = document.cookie
+        .split('; ')
+        .find(row => row.startsWith('NEXT_LOCALE='))
+        ?.split('=')[1];
+      if (localeCookie) {
+        headers['Accept-Language'] = localeCookie;
+      }
+    } catch {}
   }
   
   return headers;

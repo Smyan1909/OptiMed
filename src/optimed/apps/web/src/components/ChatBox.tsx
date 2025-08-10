@@ -11,6 +11,7 @@ import { ReasoningViewer } from "./ReasoningViewer";
 import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCards";
 import { useLayoutEffect } from "react";
 import ModeSelector from "./ModeSelector";
+import { useTranslations, useLocale } from 'next-intl';
 
 export interface GeneratedImageInfo {
   image_generated: boolean;
@@ -459,6 +460,8 @@ const formatTimestamp = (timestamp: string | number): string => {
 };
 
 export default function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
+  const t = useTranslations('chatBox');
+  const locale = useLocale();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [infoRetrievalMode, setInfoRetrievalMode] = useState("post_meet");
@@ -828,11 +831,11 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   };
 
   const getPlaceholderText = () => {
-    if (mode === "chat") return "Type your message...";
+    if (mode === "chat") return t('placeholder.chat');
     if (mode === "diagnose" && patientId) {
-      return "Ask about patient records, medications, history, or clinical notes";
+      return t('placeholder.diagnose');
     }
-    return "How can I help you access medical information?";
+    return t('placeholder.generic');
   };
 
   const getEmptyStateText = () => {
@@ -1066,7 +1069,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                 disabled={!input.trim() || isStreaming}
                 className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isStreaming ? 'Analyzing…' : (
+                {isStreaming ? t('buttons.analyzing') : (
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
                   </svg>
@@ -1078,7 +1081,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                   onClick={stopStream}
                   className="px-4 py-2 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors"
                 >
-                  Stop
+                  {t('buttons.stop')}
                 </button>
               )}
             </div>

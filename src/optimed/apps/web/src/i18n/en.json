@@ -1,0 +1,729 @@
+{
+  "app": {
+    "title": "CLARA"
+  },
+  "nav": {
+    "home": "Home",
+    "patients": "Patients",
+    "chat": "Chat",
+    "admin": "Admin",
+    "dicom": "DICOM Viewer"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Manage your application settings and preferences.",
+    "loading": "Loading settings...",
+    "tabs": {
+      "preferences": "Preferences",
+      "notifications": "Notifications",
+      "security": "Security"
+    },
+    "preferences": {
+      "title": "Application Preferences",
+      "darkMode": {
+        "label": "Dark Mode",
+        "description": "Toggle dark mode interface"
+      },
+      "language": {
+        "label": "Language"
+      }
+    },
+    "notifications": {
+      "title": "Notification Settings",
+      "email": {
+        "label": "Email Notifications",
+        "description": "Receive notifications via email"
+      }
+    },
+    "security": {
+      "title": "Security Settings",
+      "password": {
+        "title": "Password Management",
+        "description": "Password changes are managed through your organization's SSO system."
+      },
+      "session": {
+        "title": "Session Information",
+        "lastLogin": "Last login",
+        "expires": "Session expires",
+        "loginMethod": "Login method",
+        "sso": "SSO",
+        "inHours": "In {hours} hours"
+      }
+    }
+  }
+  ,
+  "common": {
+    "backToPatients": "Back to Patients",
+    "patients": "Patients",
+    "patientId": "Patient ID",
+    "age": "Age",
+    "years": "years",
+    "sex": "Sex",
+    "Sex": {
+      "male": "Male",
+      "female": "Female",
+      "other": "Other",
+      "unknown": "Unknown"
+    },
+    "unit": "Unit",
+    "loadingPatient": "Loading patient details...",
+    "errorLoadingPatient": "Error Loading Patient",
+    "consultingAs": "Consulting as",
+    "showAllPatients": "Show All Patients",
+    "viewDetails": "View Details",
+    "active": "Active",
+    "clickToViewDetails": "Click on any patient to view details",
+    "results": "results",
+    "search": "Search",
+    "searching": "Searching...",
+    "searchingPatients": "Searching patients...",
+    "pleaseWait": "Please wait while we find your patients",
+    "noPatientsFound": "No patients found",
+    "noPatientsMatch": "No patients match \"{query}\". Try a different search term or check your spelling.",
+    "noPatientsAvailable": "No patients are currently available in the system.",
+    "hideSessions": "Hide sessions panel",
+    "showSessions": "Show sessions panel",
+    "profile": "Profile",
+    "settings": "Settings",
+    "signOut": "Sign Out",
+    "signingOut": "Signing out...",
+    "doctor": "Doctor"
+  },
+  "login": {
+    "title": "CLARA",
+    "subtitle": "Choose your preferred sign-in method",
+    "tabs": {
+      "regular": "System Login",
+      "ehr": "EHR Login"
+    },
+    "regular": {
+      "title": "System Credentials",
+      "subtitle": "Use your OptiMed account credentials",
+      "username": "Username",
+      "usernamePlaceholder": "Enter your username",
+      "password": "Password",
+      "passwordPlaceholder": "Enter your password",
+      "signIn": "Sign in",
+      "signingIn": "Signing in...",
+      "demo": {
+        "title": "Demo Accounts:",
+        "doctor": "Doctor",
+        "nurse": "Nurse",
+        "admin": "Admin"
+      }
+    },
+    "ehr": {
+      "title": "EHR Authentication",
+      "subtitle": "Connect using your hospital's EHR system",
+      "fhirUrl": "FHIR Server URL",
+      "fhirPlaceholder": "https://your-fhir-server.com/fhir",
+      "clientId": "Client ID",
+      "scope": "Scope",
+      "connect": "Connect to EHR System",
+      "connecting": "Connecting to EHR...",
+      "secure": "🔒 Secure EHR Integration",
+      "secureBullets": [
+        "SMART on FHIR compliant",
+        "OAuth 2.0 authentication",
+        "Automatic user creation",
+        "No credentials stored locally"
+      ]
+    },
+    "errors": {
+      "ehrInitFailed": "Failed to initiate EHR login: {message}"
+    }
+  },
+  "patientsPage": {
+    "title": "Patient Directory",
+    "welcome": "Welcome back, {name}.",
+    "welcomeSuffix": "Search and manage your patients with ease.",
+    "quick": {
+      "chatTitle": "General Chat",
+      "chatSubtitle": "Talk with CLARA",
+      "lastUpdated": "Last Updated"
+    },
+    "search": {
+      "title": "Search Patients",
+      "subtitle": "Find patients by name, MRN, or ID",
+      "placeholder": "Search by name, MRN, or ID...",
+      "button": "Search",
+      "searching": "Searching..."
+    },
+    "error": {
+      "title": "Search Error",
+      "dismiss": "Dismiss"
+    },
+    "resultsHeader": "{count} Patients",
+    "loading": {
+      "title": "Searching patients...",
+      "subtitle": "Please wait while we find your patients"
+    },
+    "empty": {
+      "title": "No patients found",
+      "withQuery": "No patients match \"{query}\". Try a different search term or check your spelling.",
+      "withoutQuery": "No patients are currently available in the system.",
+      "showAll": "Show All Patients"
+    }
+  },
+  "patientDetail": {
+    "quickLinks": {
+      "clinicalData": "Clinical Data",
+      "medicalJournal": "Medical Journal"
+    }
+  },
+  "modeSelector": {
+    "header": "Mode",
+    "options": {
+      "postMeet": {
+        "name": "Post-Encounter",
+        "description": "Analyze clinical findings and create care plans",
+        "defaultPrompt": "Following a patient encounter, I need to analyze the clinical data and findings. Please help me review the patient information, examination findings, and any relevant background data to support clinical decision-making and documentation."
+      },
+      "preMeet": {
+        "name": "Pre-Encounter",
+        "description": "Prepare for upcoming patient visit",
+        "defaultPrompt": "I'm preparing for an upcoming patient encounter. Please help me review the patient's background information, including their medical history, current conditions, medications, and any recent test results or clinical notes that would be relevant for the encounter."
+      },
+      "research": {
+        "name": "Research",
+        "description": "Deep analysis and literature review",
+        "defaultPrompt": "I need to research clinical information related to this patient's case. Please help me gather relevant medical literature, treatment guidelines, and evidence-based information that could inform clinical decisions."
+      }
+    }
+  },
+  "journalPage": {
+    "breadcrumb": {
+      "journal": "Journal"
+    },
+    "header": {
+      "journalOf": "{name} - Journal"
+    }
+  },
+  "journal": {
+    "types": {
+      "note": "Progress Note",
+      "observation": "Clinical Observation",
+      "treatment": "Treatment Note",
+      "diagnosis": "Diagnostic Assessment",
+      "assessment": "Clinical Assessment",
+      "plan": "Care Plan"
+    },
+    "typeDescriptions": {
+      "note": "Patient progress and status updates",
+      "observation": "Clinical findings and observations",
+      "treatment": "Treatment interventions and procedures",
+      "diagnosis": "Diagnostic evaluations and findings",
+      "assessment": "Patient assessment and evaluation",
+      "plan": "Care planning and future interventions"
+    },
+    "actions": {
+      "tryAgain": "Try Again",
+      "newEntry": "New Entry",
+      "createFirst": "Create First Entry"
+    },
+    "list": {
+      "title": "Journal Entries",
+      "subtitle": "Patient care documentation and notes",
+      "updating": "Updating..."
+    },
+    "empty": {
+      "title": "No journal entries yet",
+      "subtitle": "Start documenting patient care by creating your first journal entry."
+    },
+    "detail": {
+      "title": "Journal Entry Details",
+      "created": "Created",
+      "content": "Entry Content",
+      "author": "Author",
+      "role": "Role",
+      "updated": "Last updated"
+    },
+    "create": {
+      "header": {
+        "title": "Create New Journal Entry",
+        "badgeAI": "AI Enhanced",
+        "description": "Document patient care with structured medical templates, AI-powered autocomplete, and automatic generation"
+      },
+      "selectTypeLabel": "Select Entry Type",
+      "selectedPrefix": "Selected: {label}",
+      "buttons": {
+        "generateAI": "Generate with AI",
+        "cancel": "Cancel",
+        "creating": "Creating...",
+        "create": "Create Entry"
+      },
+      "field": {
+        "title": "Entry Title",
+        "titlePlaceholder": "Enter a descriptive title for this entry...",
+        "content": "Entry Content",
+        "contentPlaceholder": "Enter detailed clinical information...",
+        "templateTip": "Template loaded automatically. AI suggestions available while typing."
+      },
+      "error": {
+        "required": "Title and content are required"
+      }
+    },
+    "templates": {
+      "note": {
+        "title": "Progress Note - [Date]",
+        "content": "SUBJECTIVE:\nPatient reports...\n\nOBJECTIVE:\nVital Signs: \nPhysical Exam:\n- General: \n- HEENT: \n- Cardiovascular: \n- Respiratory: \n- Abdomen: \n- Neurological: \n\nASSESSMENT:\n1. \n2. \n\nPLAN:\n1. \n2. \n3. \n\nFollow-up: "
+      },
+      "observation": {
+        "title": "Clinical Observation - [Date]",
+        "content": "OBSERVATION:\nDate/Time: \nLocation: \n\nFINDINGS:\n- \n- \n- \n\nCLINICAL SIGNIFICANCE:\n\n\nRECOMMENDATIONS:\n- \n- "
+      },
+      "treatment": {
+        "title": "Treatment Note - [Date]",
+        "content": "TREATMENT PROVIDED:\nDate/Time: \nProvider: \n\nINTERVENTION:\n- Procedure/Treatment: \n- Indication: \n- Technique: \n\nPATIENT RESPONSE:\n- Immediate: \n- Complications: None/[specify]\n\nPOST-TREATMENT ASSESSMENT:\n- \n- \n\nPLAN:\n- Follow-up: \n- Monitoring: \n- Next steps: "
+      },
+      "diagnosis": {
+        "title": "Diagnostic Assessment - [Date]",
+        "content": "PRESENTING COMPLAINT:\n\n\nHISTORY OF PRESENT ILLNESS:\n\n\nRELEVANT PAST MEDICAL HISTORY:\n\n\nEXAMINATION FINDINGS:\n\n\nDIAGNOSTIC WORKUP:\n- Laboratory: \n- Imaging: \n- Other studies: \n\nDIFFERENTIAL DIAGNOSIS:\n1. \n2. \n3. \n\nWORKING DIAGNOSIS:\n\n\nCONFIDENCE LEVEL: \n\nPLAN FOR FURTHER EVALUATION:\n- \n- "
+      },
+      "assessment": {
+        "title": "Clinical Assessment - [Date]",
+        "content": "PATIENT STATUS:\n- Current condition: \n- Changes since last assessment: \n\nREVIEW OF SYSTEMS:\n- Constitutional: \n- Cardiovascular: \n- Respiratory: \n- GI: \n- GU: \n- Musculoskeletal: \n- Neurological: \n- Psychiatric: \n\nCLINICAL IMPRESSION:\n1. \n2. \n\nRISK FACTORS:\n- \n- \n\nRECOMMENDATIONS:\n- \n- "
+      },
+      "plan": {
+        "title": "Care Plan - [Date]",
+        "content": "CARE GOALS:\n1. \n2. \n3. \n\nINTERVENTIONS:\n- Medications: \n- Procedures: \n- Therapies: \n- Lifestyle modifications: \n\nMONITORING PLAN:\n- Parameters to monitor: \n- Frequency: \n- Responsible provider: \n\nPATIENT EDUCATION:\n- Topics covered: \n- Resources provided: \n- Understanding confirmed: \n\nFOLLOW-UP:\n- Next appointment: \n- Emergency contact criteria: \n- Patient instructions: \n\nCOORDINATION OF CARE:\n- Other providers involved: \n- Communication plan: "
+      }
+    },
+    "generation": {
+      "header": {
+        "title": "Generate Journal Entry",
+        "badgeAI": "AI Powered",
+        "description": "Describe what you want to document and AI will generate a complete {type} for you"
+      },
+      "generating": "Generating: {type}",
+      "guidance": "The AI will create a structured {type} following medical documentation standards.",
+      "prompt": {
+        "label": "Describe what to document",
+        "placeholder": "Describe the clinical situation you want to document in this {type}...",
+        "helper": "Be as specific as possible. Include patient symptoms, findings, treatments, or observations."
+      },
+      "examples": {
+        "label": "Example prompts for {type}:",
+        "note": {
+          "e1": "Patient reports improved pain levels after starting new medication",
+          "e2": "Follow-up visit for diabetes management, blood sugars have been stable",
+          "e3": "Post-operative day 3 following appendectomy, patient recovering well"
+        },
+        "observation": {
+          "e1": "Patient appears anxious during examination",
+          "e2": "Notable improvement in mobility since last visit",
+          "e3": "Unusual heart sounds detected during routine examination"
+        },
+        "treatment": {
+          "e1": "Administered IV antibiotics for suspected infection",
+          "e2": "Physical therapy session focused on knee rehabilitation",
+          "e3": "Changed wound dressing and assessed healing progress"
+        },
+        "diagnosis": {
+          "e1": "Patient presents with chest pain and shortness of breath",
+          "e2": "Evaluate patient for possible urinary tract infection",
+          "e3": "Assessment of recurring headaches and visual disturbances"
+        },
+        "assessment": {
+          "e1": "Comprehensive evaluation of patient's overall health status",
+          "e2": "Review of multiple chronic conditions and medication effectiveness",
+          "e3": "Assessment of patient's mental health and coping strategies"
+        },
+        "plan": {
+          "e1": "Develop discharge plan for elderly patient with multiple comorbidities",
+          "e2": "Create long-term management plan for newly diagnosed diabetes",
+          "e3": "Coordinate care team for complex medical case"
+        }
+      },
+      "buttons": {
+        "cancel": "Cancel",
+        "generating": "Generating...",
+        "generate": "Generate Entry"
+      },
+      "error": {
+        "required": "Please enter a prompt to generate the journal entry"
+      }
+    }
+  },
+  "vitalsPage": {
+    "breadcrumb": {
+      "clinicalData": "Clinical Data"
+    },
+    "sections": {
+      "vitals": "Vital Signs",
+      "labs": "Lab Results",
+      "imaging": "Imaging Studies",
+      "exam": "Physical Exam",
+      "procedures": "Procedures",
+      "social": "Social History",
+      "medications": "Medications",
+      "immunizations": "Immunizations",
+      "allergies": "Allergies",
+      "diagnoses": "Diagnoses",
+      "medicationStatement": "Medication Usage",
+      "questionnaire": "Questionnaire Responses",
+      "encounters": "Encounters"
+    },
+    "noData": {
+      "vitals": "No vital signs recorded for this patient",
+      "labs": "No laboratory results available for this patient",
+      "imaging": "No imaging studies recorded for this patient",
+      "exam": "No physical exam findings recorded for this patient",
+      "procedures": "No procedures recorded for this patient",
+      "social": "No social history recorded for this patient",
+      "medications": "No medications recorded for this patient",
+      "immunizations": "No immunizations recorded for this patient",
+      "allergies": "No known allergies recorded for this patient",
+      "diagnoses": "No diagnoses recorded for this patient",
+      "medicationStatement": "No medication usages recorded for this patient",
+      "questionnaire": "No questionnaire responses recorded for this patient",
+      "encounters": "No encounters recorded for this patient"
+    },
+    "summary": {
+      "title": "Clinical Data Summary",
+      "vitals": "Vital Signs",
+      "labs": "Lab Results",
+      "imaging": "Imaging Studies",
+      "exam": "Exam Findings",
+      "procedures": "Procedures",
+      "immunizations": "Immunizations",
+      "encounters": "Encounters"
+    },
+    "viewSection": "View {title} ({count} {itemLabel})",
+    "item": "item",
+    "items": "items",
+    "recorded": "Recorded: {timestamp}",
+    "recentEncounters": "Recent Encounters",
+    "andMore": "And {count} more encounters..."
+  },
+  "unauthorized": {
+    "title": "Access Denied",
+    "description": "You don't have permission to access this page.",
+    "backToPatients": "Back to Patients"
+  },
+  "dicomPage": {
+    "back": "Back to Patients",
+    "title": "DICOM Viewer",
+    "subtitle": "Upload and view DICOM medical images with advanced viewing controls, windowing, and 3D volume navigation."
+  },
+  "chatPage": {
+    "generalChat": "General Chat",
+    "aiUser": "AI User"
+  },
+  "chatBox": {
+    "placeholder": {
+      "chat": "Type your message...",
+      "diagnose": "Ask about patient records, medications, history, or clinical notes",
+      "generic": "How can I help you access medical information?"
+    },
+    "buttons": {
+      "analyzing": "Analyzing…",
+      "stop": "Stop"
+    }
+  },
+  "diffDx": {
+    "title": "Differential Diagnoses",
+    "considerations": "{count} {count, plural, one {consideration} other {considerations}}",
+    "clinicalReasoning": "Clinical Reasoning:",
+    "supportingEvidence": "Supporting Evidence:",
+    "disclaimer": "These differential diagnoses are AI-generated suggestions based on available clinical data. Always correlate with clinical judgment and additional testing as appropriate."
+  },
+  "sessions": {
+    "headers": {
+      "chatSessions": "Chat Sessions",
+      "patientSessions": "Patient Sessions"
+    },
+    "actions": {
+      "new": "New",
+      "join": "Join"
+    },
+    "filters": {
+      "showAll": "Show all sessions"
+    },
+    "info": {
+      "generalNoPatient": "General chat sessions (no patient context)"
+    },
+    "loading": "Loading sessions...",
+    "empty": {
+      "title": "No sessions yet",
+      "subtitle": "Create a new session to get started"
+    },
+    "meta": {
+      "createdBy": "Created by {name}",
+      "last": "Last: {name}",
+      "messages": "{count} messages",
+      "participants": "{count} {count, plural, one {participant} other {participants}}"
+    },
+    "unknownUser": "Unknown User",
+    "you": "You",
+    "ehrUser": "EHR User",
+    "unknownTime": "Unknown time",
+    "titles": {
+      "patientChat": "Patient Chat - {date} {time}",
+      "generalChat": "General Chat - {date} {time}",
+      "patientSession": "Patient Session - {date} {time}"
+    },
+    "footer": {
+      "showingAll": "Showing all patient sessions",
+      "showingYours": "Showing your sessions only",
+      "general": "General chat sessions"
+    }
+  },
+  "codes": {
+    "vitals": {
+      "heartRate": "Heart Rate",
+      "respiratoryRate": "Respiratory Rate",
+      "systolicBP": "Systolic Blood Pressure",
+      "diastolicBP": "Diastolic Blood Pressure",
+      "temperature": "Body Temperature",
+      "oxygenSaturation": "Oxygen Saturation",
+      "headCircumference": "Head Circumference",
+      "weight": "Body Weight",
+      "height": "Body Height",
+      "bloodPressurePanel": "Blood Pressure Panel",
+      "bpSystolicDiastolic": "Blood Pressure (Systolic/Diastolic)"
+    },
+    "labs": {
+      "potassium": "Potassium",
+      "glucose": "Glucose",
+      "sodium": "Sodium",
+      "hba1c": "Hemoglobin A1c",
+      "hemoglobin": "Hemoglobin",
+      "hematocrit": "Hematocrit",
+      "wbc": "White Blood Cells",
+      "platelets": "Platelets",
+      "creatinine": "Creatinine",
+      "bun": "Blood Urea Nitrogen",
+      "albumin": "Albumin",
+      "bilirubin": "Bilirubin",
+      "cholesterol": "Cholesterol",
+      "ldl": "LDL Cholesterol",
+      "hdl": "HDL Cholesterol",
+      "triglycerides": "Triglycerides",
+      "calcium": "Calcium",
+      "chloride": "Chloride",
+      "co2": "Carbon Dioxide",
+      "anionGap": "Anion Gap",
+      "magnesium": "Magnesium",
+      "phosphorus": "Phosphorus",
+      "alt": "ALT",
+      "ast": "AST",
+      "alp": "Alkaline Phosphatase",
+      "ggt": "GGT",
+      "crp": "C-reactive Protein",
+      "esr": "Erythrocyte Sedimentation Rate",
+      "tsh": "TSH",
+      "freeT4": "Free T4",
+      "freeT3": "Free T3",
+      "inr": "INR",
+      "pt": "Prothrombin Time (PT)",
+      "aptt": "aPTT",
+      "bnp": "BNP",
+      "troponinI": "Troponin I",
+      "troponinT": "Troponin T",
+      "lactate": "Lactate",
+      "ferritin": "Ferritin",
+      "ddimer": "D-dimer"
+    },
+    "imaging": {
+      "radiologyReport": "Radiology report",
+      "diagnosticImaging": "Diagnostic imaging study",
+      "ctScan": "CT scan",
+      "ultrasound": "Ultrasound",
+      "xray": "X-ray",
+      "cardiacCatheterization": "Cardiac catheterization",
+      "colonoscopy": "Colonoscopy"
+    },
+    "exam": {
+      "physicalExam": "Physical examination",
+      "physicalFindings": "Physical findings",
+      "bmi": "Body mass index",
+      "generalAppearance": "General appearance"
+    },
+    "procedures": {
+      "historyOfProcedures": "History of procedures",
+      "surgicalProcedure": "Surgical procedure",
+      "treatmentPlan": "Treatment plan",
+      "procedurePerformed": "Procedure performed",
+      "procedureIndication": "Procedure indication",
+      "procedureOutcome": "Procedure outcome"
+    },
+    "social": {
+      "tobaccoSmokingStatus": "Tobacco smoking status",
+      "occupationalExposure": "History of occupational exposure",
+      "sexAssignedAtBirth": "Sex assigned at birth",
+      "socialHistory": "Social history",
+      "tobaccoUse": "Tobacco use",
+      "alcoholIntake": "Alcohol intake",
+      "reviewOfSystems": "Review of systems",
+      "bodyPiercing": "Body piercing",
+      "drugMisuseFinding": "Finding relating to drug misuse"
+    },
+    "medications": {
+      "historyOfMedicationUse": "History of medication use",
+      "medicationAdministration": "Medication administration",
+      "drugTherapy": "Drug therapy"
+    },
+    "allergies": {
+      "allergiesAndAdverseReactions": "Allergies and adverse reactions",
+      "historyOfAllergicReaction": "History of allergic reaction",
+      "propensityToAdverseReactions": "Propensity to adverse reactions"
+    },
+    "diagnoses": {
+      "historyOfPastIllness": "History of past illness",
+      "chiefComplaint": "Chief complaint",
+      "reasonForEncounter": "Reason for encounter",
+      "problemList": "Problem list"
+    },
+    "medicationStatement": {
+      "drugTreatment": "Drug treatment",
+      "reviewOfMedication": "Review of medication",
+      "administrationOfSubstance": "Administration of substance",
+      "drugTherapyDiscontinued": "Drug therapy discontinued",
+      "drugTreatmentStarted": "Drug treatment started",
+      "drugTreatmentStopped": "Drug treatment stopped"
+    },
+    "questionnaire": {
+      "patientQuestionnaire": "Patient questionnaire",
+      "generalExamination": "General examination of patient",
+      "suicideRiskAssessment": "Suicide risk assessment",
+      "qualityOfLifeAssessment": "Quality of life assessment",
+      "painAssessment": "Pain assessment",
+      "evaluationProcedure": "Evaluation procedure",
+      "assessmentOfAnxiety": "Assessment of anxiety"
+    },
+    "immunizations": {
+      "immunizationProcedure": "Immunization procedure",
+      "injectionOfVaccine": "Injection of vaccine product",
+      "administrationOfVaccine": "Administration of vaccine",
+      "covid19Vaccination": "Vaccination for COVID-19",
+      "influenzaVaccination": "Influenza vaccination",
+      "hepatitisBVaccination": "Hepatitis B vaccination",
+      "pneumococcalVaccination": "Pneumococcal vaccination",
+      "tetanusVaccination": "Tetanus vaccination",
+      "pertussisVaccination": "Pertussis vaccination",
+      "diphtheriaVaccination": "Diphtheria vaccination",
+      "polioVaccination": "Polio vaccination",
+      "mmrVaccination": "MMR vaccination",
+      "zosterVaccination": "Zoster vaccination"
+    },
+    "encounters": {
+      "patientEncounterProcedure": "Patient encounter procedure",
+      "encounterForCheckUp": "Encounter for check up",
+      "patientInitiatedEncounter": "Patient-initiated encounter",
+      "emergencyRoomVisit": "Emergency room visit",
+      "inpatientStay": "Inpatient stay",
+      "outpatientVisit": "Outpatient visit"
+    }
+  }
+  ,
+  "loinc": {
+    "Heart rate": "Heart rate",
+    "Respiratory rate": "Respiratory rate",
+    "Systolic BP": "Systolic BP",
+    "Diastolic BP": "Diastolic BP",
+    "Systolic blood pressure": "Systolic blood pressure",
+    "Diastolic blood pressure": "Diastolic blood pressure",
+    "Body temperature": "Body temperature",
+    "Oxygen saturation": "Oxygen saturation",
+    "Head circumference": "Head circumference",
+    "Body weight": "Body weight",
+    "Body height": "Body height",
+
+    "Potassium": "Potassium",
+    "Glucose": "Glucose",
+    "Sodium": "Sodium",
+    "Hemoglobin A1c": "Hemoglobin A1c",
+    "Hemoglobin": "Hemoglobin",
+    "Hematocrit": "Hematocrit",
+    "White blood cells": "White blood cells",
+    "Platelets": "Platelets",
+    "Creatinine": "Creatinine",
+    "BUN": "BUN",
+    "Albumin": "Albumin",
+    "Bilirubin": "Bilirubin",
+
+    "Radiology report": "Radiology report",
+    "Diagnostic imaging study": "Diagnostic imaging study",
+    "CT scan": "CT scan",
+    "Ultrasound": "Ultrasound",
+    "X-ray": "X-ray",
+    "Cardiac catheterization": "Cardiac catheterization",
+    "Colonoscopy": "Colonoscopy",
+
+    "Physical examination": "Physical examination",
+    "Physical findings": "Physical findings",
+    "Body mass index": "Body mass index",
+    "General appearance": "General appearance",
+
+    "History of procedures": "History of procedures",
+    "Surgical procedure": "Surgical procedure",
+    "Treatment plan": "Treatment plan",
+    "Procedure performed": "Procedure performed",
+    "Procedure indication": "Procedure indication",
+    "Procedure outcome": "Procedure outcome",
+
+    "Tobacco smoking status": "Tobacco smoking status",
+    "History of occupational exposure": "History of occupational exposure",
+    "Sex assigned at birth": "Sex assigned at birth",
+    "Social history": "Social history",
+    "Tobacco use": "Tobacco use",
+    "Alcohol intake": "Alcohol intake",
+    "Review of systems": "Review of systems",
+    "Body piercing": "Body piercing",
+    "Finding relating to drug misuse": "Finding relating to drug misuse",
+
+    "History of medication use": "History of medication use",
+    "Medication administration": "Medication administration",
+    "Drug therapy": "Drug therapy",
+
+    "Allergies and adverse reactions": "Allergies and adverse reactions",
+    "History of allergic reaction": "History of allergic reaction",
+    "Propensity to adverse reactions": "Propensity to adverse reactions",
+
+    "History of past illness": "History of past illness",
+    "Chief complaint": "Chief complaint",
+    "Reason for encounter": "Reason for encounter",
+    "Problem list": "Problem list",
+
+    "Drug treatment": "Drug treatment",
+    "Review of medication": "Review of medication",
+    "Administration of substance": "Administration of substance",
+    "Drug therapy discontinued": "Drug therapy discontinued",
+    "Drug treatment started": "Drug treatment started",
+    "Drug treatment stopped": "Drug treatment stopped",
+
+    "Patient questionnaire": "Patient questionnaire",
+    "General examination of patient": "General examination of patient",
+    "Suicide risk assessment": "Suicide risk assessment",
+    "Quality of life assessment": "Quality of life assessment",
+    "Pain assessment": "Pain assessment",
+    "Evaluation procedure": "Evaluation procedure",
+    "Assessment of anxiety": "Assessment of anxiety",
+
+    "Immunization procedure": "Immunization procedure",
+    "Injection of vaccine product": "Injection of vaccine product",
+    "Administration of vaccine": "Administration of vaccine",
+    "Vaccination for COVID-19": "Vaccination for COVID-19",
+    "Influenza vaccination": "Influenza vaccination",
+    "Hepatitis B vaccination": "Hepatitis B vaccination",
+    "Pneumococcal vaccination": "Pneumococcal vaccination",
+    "Tetanus vaccination": "Tetanus vaccination",
+    "Pertussis vaccination": "Pertussis vaccination",
+    "Diphtheria vaccination": "Diphtheria vaccination",
+    "Polio vaccination": "Polio vaccination",
+    "MMR vaccination": "MMR vaccination",
+
+    "Patient encounter procedure": "Patient encounter procedure",
+    "Encounter for check up": "Encounter for check up",
+    "Patient-initiated encounter": "Patient-initiated encounter",
+    "Emergency room visit": "Emergency room visit",
+    "Inpatient stay": "Inpatient stay",
+    "Outpatient visit": "Outpatient visit"
+  },
+  "back" : {
+    "toPatients": "Back to Patients"
+  } 
+}
+
+

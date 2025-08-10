@@ -1,0 +1,729 @@
+{
+  "app": {
+    "title": "CLARA"
+  },
+  "nav": {
+    "home": "Hem",
+    "patients": "Patienter",
+    "chat": "Chat",
+    "admin": "Admin",
+    "dicom": "DICOM-visare"
+  },
+  "settings": {
+    "title": "Inställningar",
+    "subtitle": "Hantera dina applikationsinställningar och preferenser.",
+    "loading": "Laddar inställningar...",
+    "tabs": {
+      "preferences": "Preferenser",
+      "notifications": "Aviseringar",
+      "security": "Säkerhet"
+    },
+    "preferences": {
+      "title": "Applikationsinställningar",
+      "darkMode": {
+        "label": "Mörkt läge",
+        "description": "Växla mörkt läge"
+      },
+      "language": {
+        "label": "Språk"
+      }
+    },
+    "notifications": {
+      "title": "Aviseringsinställningar",
+      "email": {
+        "label": "E-postaviseringar",
+        "description": "Ta emot aviseringar via e-post"
+      }
+    },
+    "security": {
+      "title": "Säkerhetsinställningar",
+      "password": {
+        "title": "Lösenordshantering",
+        "description": "Lösenordsändringar hanteras via din organisations SSO-system."
+      },
+      "session": {
+        "title": "Sessionsinformation",
+        "lastLogin": "Senaste inloggning",
+        "expires": "Sessionen upphör",
+        "loginMethod": "Inloggningsmetod",
+        "sso": "SSO",
+        "inHours": "Om {hours} timmar"
+      }
+    }
+  }
+  ,
+  "common": {
+    "backToPatients": "Tillbaka till patienter",
+    "patients": "Patienter",
+    "patientId": "Patient-ID",
+    "age": "Ålder",
+    "years": "år",
+    "sex": "Kön",
+    "Sex": {
+      "male": "Man",
+      "female": "Kvinna",
+      "other": "Annat",
+      "unknown": "Okänt"
+    },
+    "unit": "Enhet",
+    "loadingPatient": "Laddar patientinformation...",
+    "errorLoadingPatient": "Fel vid laddning av patient",
+    "consultingAs": "Konsulterar som",
+    "showAllPatients": "Visa alla patienter",
+    "viewDetails": "Visa detaljer",
+    "active": "Aktiv",
+    "clickToViewDetails": "Klicka på en patient för att visa detaljer",
+    "results": "resultat",
+    "search": "Sök",
+    "searching": "Söker...",
+    "searchingPatients": "Söker patienter...",
+    "pleaseWait": "Vänligen vänta medan vi hämtar dina patienter",
+    "noPatientsFound": "Inga patienter hittades",
+    "noPatientsMatch": "Inga patienter matchar \"{query}\". Prova en annan sökterm eller kontrollera stavningen.",
+    "noPatientsAvailable": "Inga patienter finns tillgängliga i systemet.",
+    "hideSessions": "Dölj sessionspanel",
+    "showSessions": "Visa sessionspanel",
+    "profile": "Profil",
+    "settings": "Inställningar",
+    "signOut": "Logga ut",
+    "signingOut": "Loggar ut...",
+    "doctor": "Läkare"
+  },
+  "login": {
+    "title": "CLARA",
+    "subtitle": "Välj önskad inloggningsmetod",
+    "tabs": {
+      "regular": "Systeminloggning",
+      "ehr": "EHR-inloggning"
+    },
+    "regular": {
+      "title": "Systemuppgifter",
+      "subtitle": "Använd ditt OptiMed-konto",
+      "username": "Användarnamn",
+      "usernamePlaceholder": "Ange ditt användarnamn",
+      "password": "Lösenord",
+      "passwordPlaceholder": "Ange ditt lösenord",
+      "signIn": "Logga in",
+      "signingIn": "Loggar in...",
+      "demo": {
+        "title": "Demokonton:",
+        "doctor": "Läkare",
+        "nurse": "Sjuksköterska",
+        "admin": "Admin"
+      }
+    },
+    "ehr": {
+      "title": "EHR-autentisering",
+      "subtitle": "Anslut via sjukhusets EHR-system",
+      "fhirUrl": "FHIR-server URL",
+      "fhirPlaceholder": "https://din-fhir-server.com/fhir",
+      "clientId": "Klient-ID",
+      "scope": "Scope",
+      "connect": "Anslut till EHR-systemet",
+      "connecting": "Ansluter till EHR...",
+      "secure": "🔒 Säker EHR-integration",
+      "secureBullets": [
+        "SMART on FHIR-kompatibel",
+        "OAuth 2.0-autentisering",
+        "Automatisk användarskapande",
+        "Inga uppgifter lagras lokalt"
+      ]
+    },
+    "errors": {
+      "ehrInitFailed": "Misslyckades att initiera EHR-inloggning: {message}"
+    }
+  },
+  "patientsPage": {
+    "title": "Patientkatalog",
+    "welcome": "Välkommen tillbaka, {name}.",
+    "welcomeSuffix": "Sök och hantera dina patienter enkelt.",
+    "quick": {
+      "chatTitle": "Allmän chat",
+      "chatSubtitle": "Prata med CLARA",
+      "lastUpdated": "Senast uppdaterad"
+    },
+    "search": {
+      "title": "Sök patienter",
+      "subtitle": "Hitta patienter via namn, MRN eller ID",
+      "placeholder": "Sök via namn, MRN eller ID...",
+      "button": "Sök",
+      "searching": "Söker..."
+    },
+    "error": {
+      "title": "Sökfel",
+      "dismiss": "Stäng"
+    },
+    "resultsHeader": "{count} patienter",
+    "loading": {
+      "title": "Söker patienter...",
+      "subtitle": "Vänligen vänta medan vi hämtar dina patienter"
+    },
+    "empty": {
+      "title": "Inga patienter hittades",
+      "withQuery": "Inga patienter matchar \"{query}\". Prova en annan sökterm eller kontrollera stavningen.",
+      "withoutQuery": "Inga patienter finns tillgängliga i systemet.",
+      "showAll": "Visa alla patienter"
+    }
+  },
+  "patientDetail": {
+    "quickLinks": {
+      "clinicalData": "Kliniska data",
+      "medicalJournal": "Journal"
+    }
+  },
+  "modeSelector": {
+    "header": "Läge",
+    "options": {
+      "postMeet": {
+        "name": "Efter möte",
+        "description": "Analysera fynd och skapa vårdplan",
+        "defaultPrompt": "Efter ett patientmöte behöver jag analysera kliniska data och fynd. Hjälp mig att gå igenom patientinformation, statusfynd och relevant bakgrund för att stödja beslut och dokumentation."
+      },
+      "preMeet": {
+        "name": "Inför möte",
+        "description": "Förbered inför kommande besök",
+        "defaultPrompt": "Jag förbereder ett kommande patientmöte. Hjälp mig att gå igenom patientens bakgrund, inklusive sjukdomshistoria, aktuella tillstånd, läkemedel samt senaste provsvar och anteckningar som är relevanta."
+      },
+      "research": {
+        "name": "Research",
+        "description": "Fördjupad analys och litteratur",
+        "defaultPrompt": "Jag behöver söka klinisk information kopplat till patientens fall. Hjälp mig att samla relevant medicinsk litteratur, riktlinjer och evidensbaserad information som kan vägleda beslut."
+      }
+    }
+  },
+  "journalPage": {
+    "breadcrumb": {
+      "journal": "Journal"
+    },
+    "header": {
+      "journalOf": "{name} - Journal"
+    }
+  },
+  "journal": {
+    "types": {
+      "note": "Läkaranteckning",
+      "observation": "Klinisk observation",
+      "treatment": "Behandlingsanteckning",
+      "diagnosis": "Diagnostisk bedömning",
+      "assessment": "Klinisk bedömning",
+      "plan": "Vårdplan"
+    },
+    "actions": {
+      "tryAgain": "Försök igen",
+      "newEntry": "Ny anteckning",
+      "createFirst": "Skapa första anteckningen"
+    },
+    "list": {
+      "title": "Journalanteckningar",
+      "subtitle": "Dokumentation och anteckningar för patienten",
+      "updating": "Uppdaterar..."
+    },
+    "empty": {
+      "title": "Inga journalanteckningar än",
+      "subtitle": "Börja dokumentera vården genom att skapa din första anteckning."
+    },
+    "detail": {
+      "title": "Detaljer för journalanteckning",
+      "created": "Skapad",
+      "content": "Anteckningens innehåll",
+      "author": "Författare",
+      "role": "Roll",
+      "updated": "Senast uppdaterad"
+    },
+    "typeDescriptions": {
+      "note": "Patientens utveckling och statusuppdateringar",
+      "observation": "Kliniska fynd och observationer",
+      "treatment": "Behandlingar och åtgärder",
+      "diagnosis": "Diagnostiska utvärderingar och fynd",
+      "assessment": "Patientbedömning och utvärdering",
+      "plan": "Planering av vård och framtida åtgärder"
+    },
+    "create": {
+      "header": {
+        "title": "Skapa ny journalanteckning",
+        "badgeAI": "AI-förbättrad",
+        "description": "Dokumentera vården med strukturerade medicinska mallar, AI-stödd autokomplettering och automatisk generering"
+      },
+      "selectTypeLabel": "Välj anteckningstyp",
+      "selectedPrefix": "Vald: {label}",
+      "buttons": {
+        "generateAI": "Generera med AI",
+        "cancel": "Avbryt",
+        "creating": "Skapar...",
+        "create": "Skapa anteckning"
+      },
+      "field": {
+        "title": "Titel",
+        "titlePlaceholder": "Ange en beskrivande titel...",
+        "content": "Innehåll",
+        "contentPlaceholder": "Ange detaljerad klinisk information...",
+        "templateTip": "Mallen laddas automatiskt. AI-förslag visas medan du skriver."
+      },
+      "error": {
+        "required": "Titel och innehåll är obligatoriska"
+      }
+    },
+    "templates": {
+      "note": {
+        "title": "Läkaranteckning - [Date]",
+        "content": "SUBJEKTIVT:\nPatienten uppger...\n\nOBJEKTIVT:\nVitalparametrar: \nStatus:\n- Allmänt: \n- Huvud/Hals: \n- Hjärta/Kärl: \n- Lungor: \n- Buk: \n- Neurologi: \n\nBEDÖMNING:\n1. \n2. \n\nPLAN:\n1. \n2. \n3. \n\nUppföljning: "
+      },
+      "observation": {
+        "title": "Klinisk observation - [Date]",
+        "content": "OBSERVATION:\nDatum/Tid: \nPlats: \n\nFYND:\n- \n- \n- \n\nKLINISK BETYDELSE:\n\n\nREKOMMENDATIONER:\n- \n- "
+      },
+      "treatment": {
+        "title": "Behandlingsanteckning - [Date]",
+        "content": "GENOMFÖRD BEHANDLING:\nDatum/Tid: \nVårdpersonal: \n\nÅTGÄRD:\n- Åtgärd/Behandling: \n- Indikation: \n- Teknik: \n\nPATIENTENS SVAR:\n- Omedelbart: \n- Komplikationer: Inga/[specificera]\n\nEFTERFÖLJANDE BEDÖMNING:\n- \n- \n\nPLAN:\n- Uppföljning: \n- Monitorering: \n- Nästa steg: "
+      },
+      "diagnosis": {
+        "title": "Diagnostisk bedömning - [Date]",
+        "content": "HUVUDSYMTOM:\n\n\nAKTUELLA SJUKDOMSHISTORIA:\n\n\nRELEVANT ANAMNES:\n\n\nSTATUSFYND:\n\n\nUTREDNING:\n- Laboratorieprover: \n- Bilddiagnostik: \n- Övriga undersökningar: \n\nDIFFERENTIALDIAGNOSER:\n1. \n2. \n3. \n\nARBETSdiagnos:\n\n\nSÄKERHETSBEDÖMNING: \n\nPLAN FÖR FORTSATT UTREDNING:\n- \n- "
+      },
+      "assessment": {
+        "title": "Klinisk bedömning - [Date]",
+        "content": "PATIENTENS STATUS:\n- Aktuellt tillstånd: \n- Förändringar sedan föregående bedömning: \n\nSYSTEMGENOMGÅNG:\n- Allmänt: \n- Hjärta/Kärl: \n- Lungor: \n- GI: \n- GU: \n- Muskuloskeletalt: \n- Neurologi: \n- Psykiatri: \n\nKLINISK SAMMANFATTNING:\n1. \n2. \n\nRISKFAKTORER:\n- \n- \n\nREKOMMENDATIONER:\n- \n- "
+      },
+      "plan": {
+        "title": "Vårdplan - [Date]",
+        "content": "MÅL FÖR VÅRDEN:\n1. \n2. \n3. \n\nÅTGÄRDER:\n- Läkemedel: \n- Åtgärder: \n- Terapier: \n- Livsstilsförändringar: \n\nUPPFÖLJNING/UPPFÖLJNING:\n- Vad som ska följas: \n- Frekvens: \n- Ansvarig vårdgivare: \n\nPATIENTINFORMATION:\n- Genomgångna ämnen: \n- Utlämnade resurser: \n- Förståelse säkerställd: \n\nUPPFÖLJNING:\n- Nästa besök: \n- När söka akut: \n- Patientinstruktioner: \n\nSAMORDNING AV VÅRD:\n- Involverade vårdgivare: \n- Kommunikationsplan: "
+      }
+    },
+    "generation": {
+      "header": {
+        "title": "Generera journalanteckning",
+        "badgeAI": "AI-driven",
+        "description": "Beskriv vad du vill dokumentera så genererar AI en komplett {type} åt dig"
+      },
+      "generating": "Genererar: {type}",
+      "guidance": "AI skapar en strukturerad {type} enligt medicinsk dokumentationsstandard.",
+      "prompt": {
+        "label": "Beskriv vad som ska dokumenteras",
+        "placeholder": "Beskriv den kliniska situationen du vill dokumentera i denna {type}...",
+        "helper": "Var så specifik som möjligt. Inkludera symtom, fynd, behandlingar eller observationer."
+      },
+      "examples": {
+        "label": "Exempel på uppmaningar för {type}:",
+        "note": {
+          "e1": "Patienten uppger minskad smärta efter insatt läkemedel",
+          "e2": "Återbesök för diabeteskontroll, blodsocker stabilt",
+          "e3": "Postoperativ dag 3 efter appendektomi, patienten återhämtar sig väl"
+        },
+        "observation": {
+          "e1": "Patienten upplevs orolig vid undersökning",
+          "e2": "Påtaglig förbättring av rörlighet sedan föregående besök",
+          "e3": "Ovanliga hjärtljud noterade vid rutinundersökning"
+        },
+        "treatment": {
+          "e1": "Givit intravenösa antibiotika vid misstänkt infektion",
+          "e2": "Sjukgymnastik med fokus på knäreabilitering",
+          "e3": "Bytte förband och bedömde sårläkning"
+        },
+        "diagnosis": {
+          "e1": "Bröstsmärta och andfåddhet – utredning för hjärtåkomma",
+          "e2": "Misstänkt urinvägsinfektion – utredning",
+          "e3": "Återkommande huvudvärk och synstörningar – bedömning"
+        },
+        "assessment": {
+          "e1": "Övergripande bedömning av patientens allmänna hälsa",
+          "e2": "Genomgång av kroniska tillstånd och läkemedelseffekt",
+          "e3": "Bedömning av psykisk hälsa och copingstrategier"
+        },
+        "plan": {
+          "e1": "Planera utskrivning för äldre patient med multisjuklighet",
+          "e2": "Upprätta långtidsplan för nydebuterad diabetes",
+          "e3": "Samordna vårdteam för komplext fall"
+        }
+      },
+      "buttons": {
+        "cancel": "Avbryt",
+        "generating": "Genererar...",
+        "generate": "Generera anteckning"
+      },
+      "error": {
+        "required": "Ange en uppmaning för att generera anteckningen"
+      }
+    }
+  },
+  "vitalsPage": {
+    "breadcrumb": {
+      "clinicalData": "Kliniska data"
+    },
+    "sections": {
+      "vitals": "Vitalparametrar",
+      "labs": "Laboratorieresultat",
+      "imaging": "Bilddiagnostik",
+      "exam": "Status",
+      "procedures": "Åtgärder",
+      "social": "Social anamnes",
+      "medications": "Läkemedel",
+      "immunizations": "Vaccinationer",
+      "allergies": "Allergier",
+      "diagnoses": "Diagnoser",
+      "medicationStatement": "Läkemedelsanvändning",
+      "questionnaire": "Formulärsvar",
+      "encounters": "Vårdkontakter"
+    },
+    "noData": {
+      "vitals": "Inga vitalparametrar registrerade för denna patient",
+      "labs": "Inga laboratorieresultat tillgängliga för denna patient",
+      "imaging": "Ingen bilddiagnostik registrerad för denna patient",
+      "exam": "Inga statusfynd registrerade för denna patient",
+      "procedures": "Inga åtgärder registrerade för denna patient",
+      "social": "Ingen social anamnes registrerad för denna patient",
+      "medications": "Inga läkemedel registrerade för denna patient",
+      "immunizations": "Inga vaccinationer registrerade för denna patient",
+      "allergies": "Inga kända allergier registrerade för denna patient",
+      "diagnoses": "Inga diagnoser registrerade för denna patient",
+      "medicationStatement": "Ingen läkemedelsanvändning registrerad för denna patient",
+      "questionnaire": "Inga formulärsvar registrerade för denna patient",
+      "encounters": "Inga vårdkontakter registrerade för denna patient"
+    },
+    "summary": {
+      "title": "Sammanfattning av kliniska data",
+      "vitals": "Vitalparametrar",
+      "labs": "Laboratorieresultat",
+      "imaging": "Bilddiagnostik",
+      "exam": "Statusfynd",
+      "procedures": "Åtgärder",
+      "immunizations": "Vaccinationer",
+      "encounters": "Vårdkontakter"
+    },
+    "viewSection": "Visa {title} ({count} {itemLabel})",
+    "item": "post",
+    "items": "poster",
+    "recorded": "Registrerat: {timestamp}",
+    "recentEncounters": "Senaste vårdkontakter",
+    "andMore": "Och {count} fler vårdkontakter..."
+  },
+  "unauthorized": {
+    "title": "Åtkomst nekad",
+    "description": "Du har inte behörighet att komma åt den här sidan.",
+    "backToPatients": "Tillbaka till patienter"
+  },
+  "dicomPage": {
+    "back": "Tillbaka till patienter",
+    "title": "DICOM-visare",
+    "subtitle": "Ladda upp och visa DICOM-bilder med avancerade visningskontroller, fönstersättning och 3D-volymnavigering."
+  },
+  "chatPage": {
+    "generalChat": "Allmän chat",
+    "aiUser": "AI-användare"
+  },
+  "chatBox": {
+    "placeholder": {
+      "chat": "Skriv ditt meddelande...",
+      "diagnose": "Fråga om patientjournal, läkemedel, historik eller anteckningar",
+      "generic": "Hur kan jag hjälpa dig att komma åt medicinsk information?"
+    },
+    "buttons": {
+      "analyzing": "Analyserar…",
+      "stop": "Stoppa"
+    }
+  },
+  "diffDx": {
+    "title": "Differentialdiagnoser",
+    "considerations": "{count} {count, plural, one {övervägande} other {överväganden}}",
+    "clinicalReasoning": "Kliniskt resonemang:",
+    "supportingEvidence": "Stödjande evidens:",
+    "disclaimer": "Dessa differentialdiagnoser är AI-genererade förslag baserade på tillgängliga kliniska data. Korrelera alltid med kliniskt omdöme och kompletterande undersökningar vid behov."
+  },
+  "sessions": {
+    "headers": {
+      "chatSessions": "Chatsessioner",
+      "patientSessions": "Patientsessioner"
+    },
+    "actions": {
+      "new": "Ny",
+      "join": "Gå med"
+    },
+    "filters": {
+      "showAll": "Visa alla sessioner"
+    },
+    "info": {
+      "generalNoPatient": "Allmänna chatsessioner (ingen patientkontekst)"
+    },
+    "loading": "Laddar sessioner...",
+    "empty": {
+      "title": "Inga sessioner ännu",
+      "subtitle": "Skapa en ny session för att komma igång"
+    },
+    "meta": {
+      "createdBy": "Skapad av {name}",
+      "last": "Senast: {name}",
+      "messages": "{count} meddelanden",
+      "participants": "{count} {count, plural, one {deltagare} other {deltagare}}"
+    },
+    "unknownUser": "Okänd användare",
+    "you": "Dig",
+    "ehrUser": "EHR-användare",
+    "unknownTime": "Okänd tid",
+    "titles": {
+      "patientChat": "Patientchatt - {date} {time}",
+      "generalChat": "Allmän chatt - {date} {time}",
+      "patientSession": "Patientsession - {date} {time}"
+    },
+    "footer": {
+      "showingAll": "Visar alla patientsessioner",
+      "showingYours": "Visar endast dina sessioner",
+      "general": "Allmänna chatsessioner"
+    }
+  },
+  "codes": {
+    "vitals": {
+      "heartRate": "Puls",
+      "respiratoryRate": "Andningsfrekvens",
+      "systolicBP": "Systoliskt blodtryck",
+      "diastolicBP": "Diastoliskt blodtryck",
+      "temperature": "Kroppstemperatur",
+      "oxygenSaturation": "Syrgasmättnad",
+      "headCircumference": "Huvudomfång",
+      "weight": "Kroppsvikt",
+      "height": "Kroppslängd",
+      "bloodPressurePanel": "Blodtryckspanel",
+      "bpSystolicDiastolic": "Blodtryck (systoliskt/diastoliskt)"
+    },
+    "labs": {
+      "potassium": "Kalium",
+      "glucose": "Glukos",
+      "sodium": "Natrium",
+      "hba1c": "HbA1c",
+      "hemoglobin": "Hemoglobin",
+      "hematocrit": "Hematokrit",
+      "wbc": "Leukocyter",
+      "platelets": "Trombocyter",
+      "creatinine": "Kreatinin",
+      "bun": "Urea (BUN)",
+      "albumin": "Albumin",
+      "bilirubin": "Bilirubin",
+      "cholesterol": "Kolesterol",
+      "ldl": "LDL-kolesterol",
+      "hdl": "HDL-kolesterol",
+      "triglycerides": "Triglycerider",
+      "calcium": "Kalcium",
+      "chloride": "Klorid",
+      "co2": "Koldioxid",
+      "anionGap": "Anjongap",
+      "magnesium": "Magnesium",
+      "phosphorus": "Fosfat",
+      "alt": "ALT",
+      "ast": "AST",
+      "alp": "Alkaliskt fosfatas",
+      "ggt": "GGT",
+      "crp": "CRP",
+      "esr": "SR",
+      "tsh": "TSH",
+      "freeT4": "Fritt T4",
+      "freeT3": "Fritt T3",
+      "inr": "INR",
+      "pt": "Protrombintid (PT)",
+      "aptt": "aPTT",
+      "bnp": "BNP",
+      "troponinI": "Troponin I",
+      "troponinT": "Troponin T",
+      "lactate": "Laktat",
+      "ferritin": "Ferritin",
+      "ddimer": "D-dimer"
+    },
+    "imaging": {
+      "radiologyReport": "Röntgenutlåtande",
+      "diagnosticImaging": "Diagnostisk bilddiagnostik",
+      "ctScan": "DT-undersökning",
+      "ultrasound": "Ultraljud",
+      "xray": "Röntgen",
+      "cardiacCatheterization": "Hjärtkateterisering",
+      "colonoscopy": "Koloskopi"
+    },
+    "exam": {
+      "physicalExam": "Status",
+      "physicalFindings": "Statusfynd",
+      "bmi": "Body mass index",
+      "generalAppearance": "Allmäntillstånd"
+    },
+    "procedures": {
+      "historyOfProcedures": "Tidigare åtgärder",
+      "surgicalProcedure": "Kirurgisk åtgärd",
+      "treatmentPlan": "Behandlingsplan",
+      "procedurePerformed": "Genomförd åtgärd",
+      "procedureIndication": "Indikation för åtgärd",
+      "procedureOutcome": "Åtgärdsutfall"
+    },
+    "social": {
+      "tobaccoSmokingStatus": "Tobaksrökning",
+      "occupationalExposure": "Yrkesexponering",
+      "sexAssignedAtBirth": "Kön tilldelat vid födelsen",
+      "socialHistory": "Social anamnes",
+      "tobaccoUse": "Tobaksanvändning",
+      "alcoholIntake": "Alkoholkonsumtion",
+      "reviewOfSystems": "Systemgenomgång",
+      "bodyPiercing": "Kroppspiercing",
+      "drugMisuseFinding": "Fynd relaterat till drogmissbruk"
+    },
+    "medications": {
+      "historyOfMedicationUse": "Läkemedelshistorik",
+      "medicationAdministration": "Läkemedelsadministration",
+      "drugTherapy": "Läkemedelsbehandling"
+    },
+    "allergies": {
+      "allergiesAndAdverseReactions": "Allergier och biverkningar",
+      "historyOfAllergicReaction": "Tidigare allergiska reaktioner",
+      "propensityToAdverseReactions": "Benägenhet för biverkningar"
+    },
+    "diagnoses": {
+      "historyOfPastIllness": "Tidigare sjukdomar",
+      "chiefComplaint": "Huvudsymtom",
+      "reasonForEncounter": "Orsak till vårdkontakt",
+      "problemList": "Problemlista"
+    },
+    "medicationStatement": {
+      "drugTreatment": "Läkemedelsbehandling",
+      "reviewOfMedication": "Genomgång av läkemedel",
+      "administrationOfSubstance": "Administrering av substans",
+      "drugTherapyDiscontinued": "Läkemedelsbehandling avslutad",
+      "drugTreatmentStarted": "Läkemedelsbehandling påbörjad",
+      "drugTreatmentStopped": "Läkemedelsbehandling stoppad"
+    },
+    "questionnaire": {
+      "patientQuestionnaire": "Patientformulär",
+      "generalExamination": "Allmän undersökning",
+      "suicideRiskAssessment": "Suicidriskbedömning",
+      "qualityOfLifeAssessment": "Livskvalitetsbedömning",
+      "painAssessment": "Smärtbedömning",
+      "evaluationProcedure": "Utvärderingsåtgärd",
+      "assessmentOfAnxiety": "Bedömning av ångest"
+    },
+    "immunizations": {
+      "immunizationProcedure": "Vaccinationsåtgärd",
+      "injectionOfVaccine": "Injektion av vaccinprodukt",
+      "administrationOfVaccine": "Administrering av vaccin",
+      "covid19Vaccination": "Vaccination mot covid-19",
+      "influenzaVaccination": "Influensavaccination",
+      "hepatitisBVaccination": "Hepatit B-vaccination",
+      "pneumococcalVaccination": "Pneumokockvaccination",
+      "tetanusVaccination": "Stelkrampvaccination",
+      "pertussisVaccination": "Kikhostevaccination",
+      "diphtheriaVaccination": "Difteri-vaccination",
+      "polioVaccination": "Poliovaccination",
+      "mmrVaccination": "MPR-vaccination",
+      "zosterVaccination": "Zostervaccination"
+    },
+    "encounters": {
+      "patientEncounterProcedure": "Vårdkontakt",
+      "encounterForCheckUp": "Kontrollbesök",
+      "patientInitiatedEncounter": "Patientinitierad vårdkontakt",
+      "emergencyRoomVisit": "Akutbesök",
+      "inpatientStay": "Slutenvård",
+      "outpatientVisit": "Öppenvårdsbesök"
+    }
+  }
+  ,
+  "loinc": {
+    "Heart rate": "Puls",
+    "Respiratory rate": "Andningsfrekvens",
+    "Systolic BP": "Systoliskt blodtryck",
+    "Diastolic BP": "Diastoliskt blodtryck",
+    "Systolic blood pressure": "Systoliskt blodtryck",
+    "Diastolic blood pressure": "Diastoliskt blodtryck",
+    "Body temperature": "Kroppstemperatur",
+    "Oxygen saturation": "Syrgasmättnad",
+    "Head circumference": "Huvudomfång",
+    "Body weight": "Kroppsvikt",
+    "Body height": "Kroppslängd",
+
+    "Potassium": "Kalium",
+    "Glucose": "Glukos",
+    "Sodium": "Natrium",
+    "Hemoglobin A1c": "HbA1c",
+    "Hemoglobin": "Hemoglobin",
+    "Hematocrit": "Hematokrit",
+    "White blood cells": "Leukocyter",
+    "Platelets": "Trombocyter",
+    "Creatinine": "Kreatinin",
+    "BUN": "Urea (BUN)",
+    "Albumin": "Albumin",
+    "Bilirubin": "Bilirubin",
+
+    "Radiology report": "Röntgenutlåtande",
+    "Diagnostic imaging study": "Diagnostisk bilddiagnostik",
+    "CT scan": "DT-undersökning",
+    "Ultrasound": "Ultraljud",
+    "X-ray": "Röntgen",
+    "Cardiac catheterization": "Hjärtkateterisering",
+    "Colonoscopy": "Koloskopi",
+
+    "Physical examination": "Status",
+    "Physical findings": "Statusfynd",
+    "Body mass index": "Body mass index",
+    "General appearance": "Allmäntillstånd",
+
+    "History of procedures": "Tidigare åtgärder",
+    "Surgical procedure": "Kirurgisk åtgärd",
+    "Treatment plan": "Behandlingsplan",
+    "Procedure performed": "Genomförd åtgärd",
+    "Procedure indication": "Indikation för åtgärd",
+    "Procedure outcome": "Åtgärdsutfall",
+
+    "Tobacco smoking status": "Tobaksrökning",
+    "History of occupational exposure": "Yrkesexponering",
+    "Sex assigned at birth": "Kön tilldelat vid födelsen",
+    "Social history": "Social anamnes",
+    "Tobacco use": "Tobaksanvändning",
+    "Alcohol intake": "Alkoholkonsumtion",
+    "Review of systems": "Systemgenomgång",
+    "Body piercing": "Kroppspiercing",
+    "Finding relating to drug misuse": "Fynd relaterat till drogmissbruk",
+
+    "History of medication use": "Läkemedelshistorik",
+    "Medication administration": "Läkemedelsadministration",
+    "Drug therapy": "Läkemedelsbehandling",
+
+    "Allergies and adverse reactions": "Allergier och biverkningar",
+    "History of allergic reaction": "Tidigare allergiska reaktioner",
+    "Propensity to adverse reactions": "Benägenhet för biverkningar",
+
+    "History of past illness": "Tidigare sjukdomar",
+    "Chief complaint": "Huvudsymtom",
+    "Reason for encounter": "Orsak till vårdkontakt",
+    "Problem list": "Problemlista",
+
+    "Drug treatment": "Läkemedelsbehandling",
+    "Review of medication": "Genomgång av läkemedel",
+    "Administration of substance": "Administrering av substans",
+    "Drug therapy discontinued": "Läkemedelsbehandling avslutad",
+    "Drug treatment started": "Läkemedelsbehandling påbörjad",
+    "Drug treatment stopped": "Läkemedelsbehandling stoppad",
+
+    "Patient questionnaire": "Patientformulär",
+    "General examination of patient": "Allmän undersökning",
+    "Suicide risk assessment": "Suicidriskbedömning",
+    "Quality of life assessment": "Livskvalitetsbedömning",
+    "Pain assessment": "Smärtbedömning",
+    "Evaluation procedure": "Utvärderingsåtgärd",
+    "Assessment of anxiety": "Bedömning av ångest",
+
+    "Immunization procedure": "Vaccinationsåtgärd",
+    "Injection of vaccine product": "Injektion av vaccinprodukt",
+    "Administration of vaccine": "Administrering av vaccin",
+    "Vaccination for COVID-19": "Vaccination mot covid-19",
+    "Influenza vaccination": "Influensavaccination",
+    "Hepatitis B vaccination": "Hepatit B-vaccination",
+    "Pneumococcal vaccination": "Pneumokockvaccination",
+    "Tetanus vaccination": "Stelkrampvaccination",
+    "Pertussis vaccination": "Kikhostevaccination",
+    "Diphtheria vaccination": "Difteri-vaccination",
+    "Polio vaccination": "Poliovaccination",
+    "MMR vaccination": "MPR-vaccination",
+
+    "Patient encounter procedure": "Vårdkontakt",
+    "Encounter for check up": "Kontrollbesök",
+    "Patient-initiated encounter": "Patientinitierad vårdkontakt",
+    "Emergency room visit": "Akutbesök",
+    "Inpatient stay": "Slutenvård",
+    "Outpatient visit": "Öppenvårdsbesök"
+  },
+  "back" : {
+    "toPatients": "Tillbaka till patientsida"
+  } 
+}
+
+

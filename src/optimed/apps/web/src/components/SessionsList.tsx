@@ -3,6 +3,8 @@ import { listSessions, createSession, joinSession, SessionListRequest } from '@/
 import { Session } from '@/lib/api';
 import { useUser } from '@/contexts/UserContext';
 import { formatDistanceToNow } from 'date-fns';
+import { useTranslations, useLocale } from 'next-intl';
+import { enUS, sv as svLocale } from 'date-fns/locale';
 
 interface SessionsListProps {
   patientId?: string;
@@ -19,6 +21,9 @@ export default function SessionsList({
   onNewSession,
   mode 
 }: SessionsListProps) {
+  const t = useTranslations('sessions');
+  const tc = useTranslations('common');
+  const locale = useLocale();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -118,16 +123,16 @@ export default function SessionsList({
 
   // Add a new function to get user info
   const getUserDisplay = (userId: string): string => {
-    if (!userId) return 'Unknown User';
+    if (!userId) return t('unknownUser');
     
     // If it's the current user
     if (userId === user?.user_id) {
-      return 'You';
+      return t('you');
     }
     
     // Extract a readable name from the user ID
     if (userId.startsWith('ehr_user_')) {
-      return 'EHR User';
+      return t('ehrUser');
     }
     
     // For other user IDs, show a shortened version
@@ -167,25 +172,47 @@ export default function SessionsList({
 
   const generateSessionTitle = (mode: 'chat' | 'diagnose', patientId?: string): string => {
     const now = new Date();
-    const timeStr = now.toLocaleTimeString('en-US', { 
+    const timeStr = now.toLocaleTimeString(locale, { 
       hour: '2-digit', 
       minute: '2-digit',
-      hour12: true 
+      hour12: locale === 'en' 
     });
-    const dateStr = now.toLocaleDateString('en-US', { 
+    const dateStr = now.toLocaleDateString(locale, { 
       month: 'short', 
       day: 'numeric' 
     });
 
     if (mode === 'chat') {
       if (patientId) {
-        return `Patient Chat - ${dateStr} ${timeStr}`;
+        return t('titles.patientChat', {date: dateStr, time: timeStr});
       } else {
-        return `General Chat - ${dateStr} ${timeStr}`;
+        return t('titles.generalChat', {date: dateStr, time: timeStr});
       }
     } else {
-      return `Patient Session - ${dateStr} ${timeStr}`;
+      return t('titles.patientSession', {date: dateStr, time: timeStr});
     }
+  };
+
+  // Localize title for display regardless of stored string
+  const getDisplayTitle = (session: Session): string => {
+    const created = new Date(session.created_at);
+    const timeStr = created.toLocaleTimeString(locale, {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: locale === 'en'
+    });
+    const dateStr = created.toLocaleDateString(locale, {
+      month: 'short',
+      day: 'numeric'
+    });
+
+    if (session.mode === 'chat') {
+      if (session.patient_id) {
+        return t('titles.patientChat', { date: dateStr, time: timeStr });
+      }
+      return t('titles.generalChat', { date: dateStr, time: timeStr });
+    }
+    return t('titles.patientSession', { date: dateStr, time: timeStr });
   };
 
   const handleJoinSession = async (sessionId: string) => {
@@ -202,9 +229,10 @@ export default function SessionsList({
 
   const formatSessionTime = (dateString: string) => {
     try {
-      return formatDistanceToNow(new Date(dateString), { addSuffix: true });
+      const dfnsLocale = locale === 'sv' ? svLocale : enUS;
+      return formatDistanceToNow(new Date(dateString), { addSuffix: true, locale: dfnsLocale });
     } catch {
-      return 'Unknown time';
+      return t('unknownTime');
     }
   };
 
@@ -217,15 +245,13 @@ export default function SessionsList({
       {/* Header */}
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-semibold text-gray-900">
-            {mode === 'chat' ? 'Chat Sessions' : 'Patient Sessions'}
-          </h3>
+          <h3 className="text-lg font-semibold text-gray-900">{mode === 'chat' ? t('headers.chatSessions') : t('headers.patientSessions')}</h3>
           <button
             onClick={handleCreateNewSession}
             className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
             disabled={loading}
           >
-            New
+            {t('actions.new')}
           </button>
         </div>
         
@@ -238,16 +264,14 @@ export default function SessionsList({
                 onChange={(e) => setShowAllSessions(e.target.checked)}
                 className="mr-2"
               />
-              Show all sessions
+              {t('filters.showAll')}
             </label>
           </div>
         )}
         
         {/* Add general chat indicator */}
         {!patientId && (
-          <div className="text-xs text-gray-500 mt-2">
-            💬 General chat sessions (no patient context)
-          </div>
+          <div className="text-xs text-gray-500 mt-2">💬 {t('info.generalNoPatient')}</div>
         )}
       </div>
 
@@ -263,13 +287,13 @@ export default function SessionsList({
         {loading ? (
           <div className="p-4 text-center">
             <div className="animate-spin h-6 w-6 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-2"></div>
-            <p className="text-sm text-gray-500">Loading sessions...</p>
+            <p className="text-sm text-gray-500">{t('loading')}</p>
           </div>
         ) : sessions.length === 0 ? (
           <div className="p-4 text-center">
             <div className="text-gray-400 text-2xl mb-2">💬</div>
-            <p className="text-sm text-gray-500">No sessions yet</p>
-            <p className="text-xs text-gray-400 mt-1">Create a new session to get started</p>
+            <p className="text-sm text-gray-500">{t('empty.title')}</p>
+            <p className="text-xs text-gray-400 mt-1">{t('empty.subtitle')}</p>
           </div>
         ) : (
           <div className="divide-y divide-gray-100">
@@ -294,19 +318,19 @@ export default function SessionsList({
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
                       <h4 className="text-sm font-medium text-gray-900 truncate">
-                        {session.session_title}
+                        {getDisplayTitle(session)}
                       </h4>
                       
                       {/* Add creator info */}
                       <div className="mt-1 text-xs text-gray-500">
-                        <span>Created by {getUserDisplay(session.created_by_user_id)}</span>
+                        <span>{t('meta.createdBy', {name: getUserDisplay(session.created_by_user_id)})}</span>
                         {session.last_participant_id && session.last_participant_id !== session.created_by_user_id && (
-                          <span> • Last: {getUserDisplay(session.last_participant_id)}</span>
+                          <span> • {t('meta.last', {name: getUserDisplay(session.last_participant_id)})}</span>
                         )}
                       </div>
                       
                       <div className="mt-1 flex items-center space-x-2 text-xs text-gray-500">
-                        <span>{sessionMessageCounts[session.session_id] ?? session.message_count} messages</span>
+                        <span>{t('meta.messages', {count: sessionMessageCounts[session.session_id] ?? session.message_count})}</span>
                         <span>•</span>
                         <span>{formatSessionTime(session.last_message_at)}</span>
                       </div>
@@ -314,12 +338,10 @@ export default function SessionsList({
                       {/* Participants info */}
                       <div className="mt-1 flex items-center space-x-1">
                         <span className="text-xs text-gray-400">
-                          {session.participants.length} participant{session.participants.length !== 1 ? 's' : ''}
+                          {t('meta.participants', {count: session.participants.length})}
                         </span>
                         {!isParticipant && (
-                          <span className="text-xs bg-yellow-100 text-yellow-800 px-1 py-0.5 rounded">
-                            Join
-                          </span>
+                          <span className="text-xs bg-yellow-100 text-yellow-800 px-1 py-0.5 rounded">{t('actions.join')}</span>
                         )}
                       </div>
                     </div>
@@ -339,12 +361,7 @@ export default function SessionsList({
 
       {/* Footer */}
       <div className="p-3 border-t border-gray-200">
-        <p className="text-xs text-gray-400">
-          {patientId 
-            ? (showAllSessions ? 'Showing all patient sessions' : 'Showing your sessions only')
-            : 'General chat sessions'
-          }
-        </p>
+        <p className="text-xs text-gray-400">{patientId ? (showAllSessions ? t('footer.showingAll') : t('footer.showingYours')) : t('footer.general')}</p>
       </div>
     </div>
   );

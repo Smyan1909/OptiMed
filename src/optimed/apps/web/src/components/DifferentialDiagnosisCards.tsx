@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { AlertCircle, CheckCircle, Info, Brain } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 
 // Function to format numbers to 2 decimal places in text
 const formatNumbersInText = (text: string): string => {
@@ -116,6 +117,7 @@ const getConfidenceBorderColor = (confidence: number) => {
 export const DifferentialDiagnosisCards: React.FC<DifferentialDiagnosisCardsProps> = ({ 
   diagnoses 
 }) => {
+  const t = useTranslations('diffDx');
   if (!diagnoses || diagnoses.length === 0) {
     return null;
   }
@@ -127,9 +129,9 @@ export const DifferentialDiagnosisCards: React.FC<DifferentialDiagnosisCardsProp
     <div className="mt-2 space-y-2">
       <div className="flex items-center gap-2 mb-2">
         <Brain className="h-4 w-4 text-blue-600" />
-        <h3 className="text-sm font-semibold text-gray-900">Differential Diagnoses</h3>
+        <h3 className="text-sm font-semibold text-gray-900">{t('title')}</h3>
         <Badge variant="secondary" className="text-xs">
-          {diagnoses.length} consideration{diagnoses.length !== 1 ? 's' : ''}
+          {t('considerations', { count: diagnoses.length })}
         </Badge>
       </div>
       
@@ -180,7 +182,7 @@ export const DifferentialDiagnosisCards: React.FC<DifferentialDiagnosisCardsProp
                         components={DiagnosisMarkdownComponents}
                         remarkPlugins={[remarkGfm]}
                       >
-                        {`Clinical Reasoning:`}
+                        {t('clinicalReasoning')}
                       </ReactMarkdown>
                     </span>
                   </h4>
@@ -204,7 +206,7 @@ export const DifferentialDiagnosisCards: React.FC<DifferentialDiagnosisCardsProp
                         components={DiagnosisMarkdownComponents}
                         remarkPlugins={[remarkGfm]}
                       >
-                        {`Supporting Evidence:`}
+                        {t('supportingEvidence')}
                       </ReactMarkdown>
                     </span>
                   </h4>
@@ -233,8 +235,7 @@ export const DifferentialDiagnosisCards: React.FC<DifferentialDiagnosisCardsProp
       <div className="mt-2 p-2 bg-blue-50 rounded-lg border border-blue-200">
         <p className="text-xs text-blue-700 flex items-center">
           <Info className="h-3 w-3 inline mr-2 flex-shrink-0" />
-          These differential diagnoses are AI-generated suggestions based on available clinical data. 
-          Always correlate with clinical judgment and additional testing as appropriate.
+          {t('disclaimer')}
         </p>
       </div>
     </div>

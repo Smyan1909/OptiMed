@@ -11,9 +11,11 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2, User, Lock, Stethoscope, Hospital, Shield } from 'lucide-react';
 import { initiateEHRLogin } from '@/lib/api';
+import { useTranslations } from 'next-intl';
 
 
 export default function LoginPage() {
+  const t = useTranslations('login');
   // Regular login state
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -115,10 +117,8 @@ export default function LoginPage() {
             </div>
           </div>
           <div>
-            <CardTitle className="text-2xl font-bold text-gray-900">CLARA</CardTitle>
-            <CardDescription className="text-gray-600">
-              Choose your preferred sign-in method
-            </CardDescription>
+            <CardTitle className="text-2xl font-bold text-gray-900">{t('title')}</CardTitle>
+            <CardDescription className="text-gray-600">{t('subtitle')}</CardDescription>
           </div>
           
           {/* Display EHR authentication errors */}
@@ -136,18 +136,18 @@ export default function LoginPage() {
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="regular" className="flex items-center gap-2">
                 <Shield className="h-4 w-4" />
-                System Login
+                {t('tabs.regular')}
               </TabsTrigger>
               <TabsTrigger value="ehr" className="flex items-center gap-2">
                 <Hospital className="h-4 w-4" />
-                EHR Login
+                {t('tabs.ehr')}
               </TabsTrigger>
             </TabsList>
             
             <TabsContent value="regular" className="space-y-4 mt-6">
               <div className="text-center mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">System Credentials</h3>
-                <p className="text-sm text-gray-600">Use your OptiMed account credentials</p>
+                <h3 className="text-lg font-semibold text-gray-900">{t('regular.title')}</h3>
+                <p className="text-sm text-gray-600">{t('regular.subtitle')}</p>
               </div>
               
               <form onSubmit={handleRegularLogin} className="space-y-4">
@@ -158,13 +158,13 @@ export default function LoginPage() {
                 )}
                 
                 <div className="space-y-2">
-                  <Label htmlFor="username">Username</Label>
+                  <Label htmlFor="username">{t('regular.username')}</Label>
                   <div className="relative">
                     <User className="absolute left-3 top-3 h-4 w-4 text-blue-400" />
                     <Input
                       id="username"
                       type="text"
-                      placeholder="Enter your username"
+                      placeholder={t('regular.usernamePlaceholder')}
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       className="pl-10"
@@ -174,13 +174,13 @@ export default function LoginPage() {
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
+                  <Label htmlFor="password">{t('regular.password')}</Label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-3 h-4 w-4 text-blue-400" />
                     <Input
                       id="password"
                       type="password"
-                      placeholder="Enter your password"
+                      placeholder={t('regular.passwordPlaceholder')}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       className="pl-10"
@@ -197,39 +197,39 @@ export default function LoginPage() {
                   {isSubmitting ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Signing in...
+                      {t('regular.signingIn')}
                     </>
                   ) : (
-                    'Sign in'
+                    t('regular.signIn')
                   )}
                 </Button>
               </form>
               
               <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-600 font-medium mb-2">Demo Accounts:</p>
+                <p className="text-sm text-gray-600 font-medium mb-2">{t('regular.demo.title')}</p>
                 <div className="space-y-1 text-xs text-gray-500">
-                  <div>👨‍⚕️ Doctor: <code>dr.smith</code></div>
-                  <div>👩‍⚕️ Nurse: <code>nurse.johnson</code></div>
-                  <div>🔧 Admin: <code>admin</code></div>
+                  <div>👨‍⚕️ {t('regular.demo.doctor')}: <code>dr.smith</code></div>
+                  <div>👩‍⚕️ {t('regular.demo.nurse')}: <code>nurse.johnson</code></div>
+                  <div>🔧 {t('regular.demo.admin')}: <code>admin</code></div>
                 </div>
               </div>
             </TabsContent>
             
             <TabsContent value="ehr" className="space-y-4 mt-6">
               <div className="text-center mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">EHR Authentication</h3>
-                <p className="text-sm text-gray-600">Connect using your hospital's EHR system</p>
+                <h3 className="text-lg font-semibold text-gray-900">{t('ehr.title')}</h3>
+                <p className="text-sm text-gray-600">{t('ehr.subtitle')}</p>
               </div>
               
               <form onSubmit={handleEhrLogin} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="ehrServerUrl">FHIR Server URL</Label>
+                  <Label htmlFor="ehrServerUrl">{t('ehr.fhirUrl')}</Label>
                   <div className="relative">
                     <Hospital className="absolute left-3 top-3 h-4 w-4 text-blue-400" />
                     <Input
                       id="ehrServerUrl"
                       type="url"
-                      placeholder="https://your-fhir-server.com/fhir"
+                      placeholder={t('ehr.fhirPlaceholder')}
                       value={ehrServerUrl}
                       onChange={(e) => setEhrServerUrl(e.target.value)}
                       className="pl-10"
@@ -239,11 +239,11 @@ export default function LoginPage() {
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="ehrClientId">Client ID</Label>
+                  <Label htmlFor="ehrClientId">{t('ehr.clientId')}</Label>
                   <Input
                     id="ehrClientId"
                     type="text"
-                    placeholder="Your SMART on FHIR client ID"
+                    placeholder=""
                     value={ehrClientId}
                     onChange={(e) => setEhrClientId(e.target.value)}
                     required
@@ -251,11 +251,11 @@ export default function LoginPage() {
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="ehrScope">Scope</Label>
+                  <Label htmlFor="ehrScope">{t('ehr.scope')}</Label>
                   <Input
                     id="ehrScope"
                     type="text"
-                    placeholder="user/*.cruds"
+                    placeholder=""
                     value={ehrScope}
                     onChange={(e) => setEhrScope(e.target.value)}
                     required
@@ -270,24 +270,23 @@ export default function LoginPage() {
                   {isEhrConnecting ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Connecting to EHR...
+                      {t('ehr.connecting')}
                     </>
                   ) : (
                     <>
                       <Hospital className="mr-2 h-4 w-4" />
-                      Connect to EHR System
+                      {t('ehr.connect')}
                     </>
                   )}
                 </Button>
               </form>
               
               <div className="mt-4 p-4 bg-green-50 rounded-lg">
-                <p className="text-sm text-green-700 font-medium mb-2">🔒 Secure EHR Integration</p>
+                <p className="text-sm text-green-700 font-medium mb-2">{t('ehr.secure')}</p>
                 <div className="space-y-1 text-xs text-green-600">
-                  <div>• SMART on FHIR compliant</div>
-                  <div>• OAuth 2.0 authentication</div>
-                  <div>• Automatic user creation</div>
-                  <div>• No credentials stored locally</div>
+                  {t.raw('ehr.secureBullets').map((line: string, idx: number) => (
+                    <div key={idx}>• {line}</div>
+                  ))}
                 </div>
               </div>
             </TabsContent>

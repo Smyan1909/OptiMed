@@ -1,12 +1,16 @@
+'use client';
+
 import Link from "next/link";
 import { ImageIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 export default function Navbar() {
+  const t = useTranslations();
   const links = [
-    { href: "/", label: "Home" },
-    { href: "/chat", label: "Chat" },
-    { href: "/patients", label: "Patients" },
-    { href: "/dicom", label: "DICOM Viewer", icon: ImageIcon },
+    { href: "/", label: t("nav.home", { default: "Home" }) },
+    { href: "/chat", label: t("nav.chat") },
+    { href: "/patients", label: t("nav.patients") },
+    { href: "/dicom", label: t("nav.dicom", { default: "DICOM Viewer" }), icon: ImageIcon },
   ];
 
   return (

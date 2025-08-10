@@ -8,9 +8,12 @@ import ChatBox from "@/components/ChatBox";
 import SessionsList from "@/components/SessionsList";
 import { useUser } from '@/contexts/UserContext';
 import { Badge } from '@/components/ui/badge';
+import { useTranslations } from 'next-intl';
 
 function ChatPageContent() {
   const { user } = useUser();
+  const t = useTranslations('chatPage');
+  const tc = useTranslations('common');
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
   const [chatKey, setChatKey] = useState(0); // Force ChatBox re-render
   const [sessionsKey, setSessionsKey] = useState(0); // Force SessionsList re-render
@@ -41,7 +44,7 @@ function ChatPageContent() {
                       rounded-full hover:bg-white transition-colors
                       flex items-center justify-center
                       h-8 w-8 hover:bg-white/70 transition-colors`}
-          title={showSessions ? 'Hide sessions panel' : 'Show sessions panel'}
+          title={showSessions ? tc('hideSessions') : tc('showSessions')}
         >
           <svg
             className="w-4 h-4 text-gray-600"
@@ -66,9 +69,9 @@ function ChatPageContent() {
                   {user?.display_name?.slice(0, 2) || "AI"}
                 </div>
                 <div className="flex-1">
-                  <h2 className="text-lg font-bold text-gray-900">{user?.display_name || "AI User"}</h2>
+                  <h2 className="text-lg font-bold text-gray-900">{user?.display_name || t('aiUser')}</h2>
                   <div className="mt-1 text-[10px] text-gray-500">
-                    General Chat
+                    {t('generalChat')}
                   </div>
                 </div>
               </div>
