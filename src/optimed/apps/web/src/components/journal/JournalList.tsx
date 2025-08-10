@@ -201,17 +201,7 @@ interface JournalEntryModalProps {
 
 function JournalEntryModal({ entry, open, onOpenChange }: JournalEntryModalProps) {
   const t = useTranslations('journal');
-  const getEntryTypeLabel = (type: JournalEntryType): string => {
-    const labels = {
-      [JournalEntryType.NOTE]: 'Progress Note',
-      [JournalEntryType.OBSERVATION]: 'Clinical Observation',
-      [JournalEntryType.TREATMENT]: 'Treatment Note',
-      [JournalEntryType.DIAGNOSIS]: 'Diagnostic Assessment',
-      [JournalEntryType.ASSESSMENT]: 'Clinical Assessment',
-      [JournalEntryType.PLAN]: 'Care Plan'
-    };
-    return labels[type] || type;
-  };
+  const getEntryTypeLabel = (type: JournalEntryType): string => t(`types.${type.toLowerCase()}` as any);
 
   const getEntryTypeColor = (type: JournalEntryType): string => {
     const colors = {

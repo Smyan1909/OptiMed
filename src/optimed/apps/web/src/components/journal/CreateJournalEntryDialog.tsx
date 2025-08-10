@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useTranslations, useLocale } from 'next-intl';
 import { JournalEntryType, JournalEntryCreate, createJournalEntry } from '@/lib/api';
 import {
   Dialog,
@@ -38,214 +39,82 @@ interface CreateJournalEntryDialogProps {
   onSuccess: () => void;
 }
 
-const ENTRY_TYPE_OPTIONS = [
-  { 
-    value: JournalEntryType.NOTE, 
-    label: 'Progress Note', 
-    description: 'Patient progress and status updates',
-    icon: FileText,
-    color: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' 
-  },
-  { 
-    value: JournalEntryType.OBSERVATION, 
-    label: 'Clinical Observation', 
-    description: 'Clinical findings and observations',
-    icon: Eye,
-    color: 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' 
-  },
-  { 
-    value: JournalEntryType.TREATMENT, 
-    label: 'Treatment Note', 
-    description: 'Treatment interventions and procedures',
-    icon: Activity,
-    color: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100' 
-  },
-  { 
-    value: JournalEntryType.DIAGNOSIS, 
-    label: 'Diagnostic Assessment', 
-    description: 'Diagnostic evaluations and findings',
-    icon: Stethoscope,
-    color: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100' 
-  },
-  { 
-    value: JournalEntryType.ASSESSMENT, 
-    label: 'Clinical Assessment', 
-    description: 'Patient assessment and evaluation',
-    icon: ClipboardList,
-    color: 'bg-yellow-50 text-yellow-700 border-yellow-200 hover:bg-yellow-100' 
-  },
-  { 
-    value: JournalEntryType.PLAN, 
-    label: 'Care Plan', 
-    description: 'Care planning and future interventions',
-    icon: Calendar,
-    color: 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' 
-  }
-];
+function useEntryTypeOptions() {
+  const t = useTranslations('journal');
+  return [
+    {
+      value: JournalEntryType.NOTE,
+      label: t('types.note'),
+      description: t('typeDescriptions.note'),
+      icon: FileText,
+      color: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+    },
+    {
+      value: JournalEntryType.OBSERVATION,
+      label: t('types.observation'),
+      description: t('typeDescriptions.observation'),
+      icon: Eye,
+      color: 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+    },
+    {
+      value: JournalEntryType.TREATMENT,
+      label: t('types.treatment'),
+      description: t('typeDescriptions.treatment'),
+      icon: Activity,
+      color: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+    },
+    {
+      value: JournalEntryType.DIAGNOSIS,
+      label: t('types.diagnosis'),
+      description: t('typeDescriptions.diagnosis'),
+      icon: Stethoscope,
+      color: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
+    },
+    {
+      value: JournalEntryType.ASSESSMENT,
+      label: t('types.assessment'),
+      description: t('typeDescriptions.assessment'),
+      icon: ClipboardList,
+      color: 'bg-yellow-50 text-yellow-700 border-yellow-200 hover:bg-yellow-100'
+    },
+    {
+      value: JournalEntryType.PLAN,
+      label: t('types.plan'),
+      description: t('typeDescriptions.plan'),
+      icon: Calendar,
+      color: 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+    }
+  ];
+}
 
-const TEMPLATES = {
-  [JournalEntryType.NOTE]: {
-    title: 'Progress Note - [Date]',
-    content: `SUBJECTIVE:
-Patient reports...
-
-OBJECTIVE:
-Vital Signs: 
-Physical Exam:
-- General: 
-- HEENT: 
-- Cardiovascular: 
-- Respiratory: 
-- Abdomen: 
-- Neurological: 
-
-ASSESSMENT:
-1. 
-2. 
-
-PLAN:
-1. 
-2. 
-3. 
-
-Follow-up: `
-  },
-  [JournalEntryType.OBSERVATION]: {
-    title: 'Clinical Observation - [Date]',
-    content: `OBSERVATION:
-Date/Time: 
-Location: 
-
-FINDINGS:
-- 
-- 
-- 
-
-CLINICAL SIGNIFICANCE:
-
-
-RECOMMENDATIONS:
-- 
-- `
-  },
-  [JournalEntryType.TREATMENT]: {
-    title: 'Treatment Note - [Date]',
-    content: `TREATMENT PROVIDED:
-Date/Time: 
-Provider: 
-
-INTERVENTION:
-- Procedure/Treatment: 
-- Indication: 
-- Technique: 
-
-PATIENT RESPONSE:
-- Immediate: 
-- Complications: None/[specify]
-
-POST-TREATMENT ASSESSMENT:
-- 
-- 
-
-PLAN:
-- Follow-up: 
-- Monitoring: 
-- Next steps: `
-  },
-  [JournalEntryType.DIAGNOSIS]: {
-    title: 'Diagnostic Assessment - [Date]',
-    content: `PRESENTING COMPLAINT:
-
-
-HISTORY OF PRESENT ILLNESS:
-
-
-RELEVANT PAST MEDICAL HISTORY:
-
-
-EXAMINATION FINDINGS:
-
-
-DIAGNOSTIC WORKUP:
-- Laboratory: 
-- Imaging: 
-- Other studies: 
-
-DIFFERENTIAL DIAGNOSIS:
-1. 
-2. 
-3. 
-
-WORKING DIAGNOSIS:
-
-
-CONFIDENCE LEVEL: 
-
-PLAN FOR FURTHER EVALUATION:
-- 
-- `
-  },
-  [JournalEntryType.ASSESSMENT]: {
-    title: 'Clinical Assessment - [Date]',
-    content: `PATIENT STATUS:
-- Current condition: 
-- Changes since last assessment: 
-
-REVIEW OF SYSTEMS:
-- Constitutional: 
-- Cardiovascular: 
-- Respiratory: 
-- GI: 
-- GU: 
-- Musculoskeletal: 
-- Neurological: 
-- Psychiatric: 
-
-CLINICAL IMPRESSION:
-1. 
-2. 
-
-RISK FACTORS:
-- 
-- 
-
-RECOMMENDATIONS:
-- 
-- `
-  },
-  [JournalEntryType.PLAN]: {
-    title: 'Care Plan - [Date]',
-    content: `CARE GOALS:
-1. 
-2. 
-3. 
-
-INTERVENTIONS:
-- Medications: 
-- Procedures: 
-- Therapies: 
-- Lifestyle modifications: 
-
-MONITORING PLAN:
-- Parameters to monitor: 
-- Frequency: 
-- Responsible provider: 
-
-PATIENT EDUCATION:
-- Topics covered: 
-- Resources provided: 
-- Understanding confirmed: 
-
-FOLLOW-UP:
-- Next appointment: 
-- Emergency contact criteria: 
-- Patient instructions: 
-
-COORDINATION OF CARE:
-- Other providers involved: 
-- Communication plan: `
-  }
-};
+function getTemplates(t: ReturnType<typeof useTranslations>) {
+  return {
+    [JournalEntryType.NOTE]: {
+      title: t('templates.note.title'),
+      content: t('templates.note.content')
+    },
+    [JournalEntryType.OBSERVATION]: {
+      title: t('templates.observation.title'),
+      content: t('templates.observation.content')
+    },
+    [JournalEntryType.TREATMENT]: {
+      title: t('templates.treatment.title'),
+      content: t('templates.treatment.content')
+    },
+    [JournalEntryType.DIAGNOSIS]: {
+      title: t('templates.diagnosis.title'),
+      content: t('templates.diagnosis.content')
+    },
+    [JournalEntryType.ASSESSMENT]: {
+      title: t('templates.assessment.title'),
+      content: t('templates.assessment.content')
+    },
+    [JournalEntryType.PLAN]: {
+      title: t('templates.plan.title'),
+      content: t('templates.plan.content')
+    }
+  } as const;
+}
 
 export default function CreateJournalEntryDialog({ 
   patientId, 
@@ -253,17 +122,21 @@ export default function CreateJournalEntryDialog({
   onClose, 
   onSuccess 
 }: CreateJournalEntryDialogProps) {
+  const t = useTranslations('journal');
+  const locale = useLocale();
   const [selectedType, setSelectedType] = useState<JournalEntryType>(JournalEntryType.NOTE);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showGenerationDialog, setShowGenerationDialog] = useState(false);
+  const ENTRY_TYPE_OPTIONS = useEntryTypeOptions();
+  const TEMPLATES = getTemplates(t);
 
   const handleTypeChange = (type: JournalEntryType) => {
     setSelectedType(type);
     const template = TEMPLATES[type];
-    const currentDate = new Date().toLocaleDateString('en-US');
+    const currentDate = new Date().toLocaleDateString(locale);
     setTitle(template.title.replace('[Date]', currentDate));
     setContent(template.content);
   };
@@ -272,7 +145,7 @@ export default function CreateJournalEntryDialog({
     e.preventDefault();
     
     if (!title.trim() || !content.trim()) {
-      setError('Title and content are required');
+      setError(t('create.error.required'));
       return;
     }
     
@@ -347,14 +220,14 @@ export default function CreateJournalEntryDialog({
           <DialogHeader className="border-b border-gray-200 pb-4">
             <DialogTitle className="text-xl font-semibold text-gray-900 flex items-center gap-2">
               <FileText className="h-5 w-5 text-blue-600" />
-              Create New Journal Entry
+              {t('create.header.title')}
               <Badge variant="secondary" className="ml-2 text-xs flex items-center gap-1">
                 <Sparkles className="h-3 w-3" />
-                AI Enhanced
+                {t('create.header.badgeAI')}
               </Badge>
             </DialogTitle>
             <DialogDescription className="text-gray-600">
-              Document patient care with structured medical templates, AI-powered autocomplete, and automatic generation
+              {t('create.header.description')}
             </DialogDescription>
           </DialogHeader>
 
@@ -371,7 +244,7 @@ export default function CreateJournalEntryDialog({
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <Label className="text-base font-medium text-gray-900">
-                    Select Entry Type
+                    {t('create.selectTypeLabel')}
                   </Label>
                   <Button
                     type="button"
@@ -382,7 +255,7 @@ export default function CreateJournalEntryDialog({
                     className="flex items-center gap-2 text-purple-600 border-purple-200 hover:bg-purple-50"
                   >
                     <Wand2 className="h-4 w-4" />
-                    Generate with AI
+                    {t('create.buttons.generateAI')}
                   </Button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -419,7 +292,7 @@ export default function CreateJournalEntryDialog({
                 {selectedOption && (
                   <div className="mt-3">
                     <Badge variant="secondary" className="text-xs">
-                      Selected: {selectedOption.label}
+                      {t('create.selectedPrefix', { label: selectedOption.label })}
                     </Badge>
                   </div>
                 )}
@@ -428,13 +301,13 @@ export default function CreateJournalEntryDialog({
               {/* Title */}
               <div className="space-y-2">
                 <Label htmlFor="title" className="text-sm font-medium text-gray-900">
-                  Entry Title
+                  {t('create.field.title')}
                 </Label>
                 <Input
                   id="title"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Enter a descriptive title for this entry..."
+                  placeholder={t('create.field.titlePlaceholder')}
                   disabled={isSubmitting}
                   required
                   className="font-medium"
@@ -444,7 +317,7 @@ export default function CreateJournalEntryDialog({
               {/* Content with Autocomplete */}
               <div className="space-y-2">
                 <Label htmlFor="content" className="text-sm font-medium text-gray-900">
-                  Entry Content
+                  {t('create.field.content')}
                 </Label>
                 <TextareaAutocomplete
                   id="content"
@@ -452,13 +325,13 @@ export default function CreateJournalEntryDialog({
                   onChange={setContent}
                   entryType={selectedType}
                   rows={16}
-                  placeholder="Enter detailed clinical information..."
+                  placeholder={t('create.field.contentPlaceholder')}
                   disabled={isSubmitting}
                   required
                 />
                 <p className="text-xs text-gray-500 flex items-center gap-1">
                   <FileText className="h-3 w-3" />
-                  Template loaded automatically. AI suggestions available while typing.
+                  {t('create.field.templateTip')}
                 </p>
               </div>
             </div>
@@ -473,7 +346,7 @@ export default function CreateJournalEntryDialog({
                   disabled={isSubmitting}
                 >
                   <X className="h-4 w-4 mr-2" />
-                  Cancel
+                  {t('create.buttons.cancel')}
                 </Button>
                 <Button
                   type="submit"
@@ -483,12 +356,12 @@ export default function CreateJournalEntryDialog({
                   {isSubmitting ? (
                     <>
                       <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
-                      Creating...
+                      {t('create.buttons.creating')}
                     </>
                   ) : (
                     <>
                       <Save className="h-4 w-4 mr-2" />
-                      Create Entry
+                      {t('create.buttons.create')}
                     </>
                   )}
                 </Button>

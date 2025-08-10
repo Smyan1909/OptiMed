@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations, useLocale } from 'next-intl';
 import { JournalEntryType, JournalEntryCreate, createJournalEntry } from '@/lib/api';
 
 interface CreateJournalEntryModalProps {
@@ -10,178 +11,28 @@ interface CreateJournalEntryModalProps {
   onSuccess: () => void;
 }
 
-const ENTRY_TYPE_OPTIONS = [
-  { value: JournalEntryType.NOTE, label: 'Progress Note', color: 'bg-blue-100 text-blue-800' },
-  { value: JournalEntryType.OBSERVATION, label: 'Clinical Observation', color: 'bg-green-100 text-green-800' },
-  { value: JournalEntryType.TREATMENT, label: 'Treatment Note', color: 'bg-purple-100 text-purple-800' },
-  { value: JournalEntryType.DIAGNOSIS, label: 'Diagnostic Assessment', color: 'bg-red-100 text-red-800' },
-  { value: JournalEntryType.ASSESSMENT, label: 'Clinical Assessment', color: 'bg-yellow-100 text-yellow-800' },
-  { value: JournalEntryType.PLAN, label: 'Care Plan', color: 'bg-indigo-100 text-indigo-800' }
-];
+function useEntryTypeOptions() {
+  const t = useTranslations('journal');
+  return [
+    { value: JournalEntryType.NOTE, label: t('types.note'), color: 'bg-blue-100 text-blue-800' },
+    { value: JournalEntryType.OBSERVATION, label: t('types.observation'), color: 'bg-green-100 text-green-800' },
+    { value: JournalEntryType.TREATMENT, label: t('types.treatment'), color: 'bg-purple-100 text-purple-800' },
+    { value: JournalEntryType.DIAGNOSIS, label: t('types.diagnosis'), color: 'bg-red-100 text-red-800' },
+    { value: JournalEntryType.ASSESSMENT, label: t('types.assessment'), color: 'bg-yellow-100 text-yellow-800' },
+    { value: JournalEntryType.PLAN, label: t('types.plan'), color: 'bg-indigo-100 text-indigo-800' }
+  ];
+}
 
-const TEMPLATES = {
-  [JournalEntryType.NOTE]: {
-    title: 'Progress Note - [Date]',
-    content: `SUBJECTIVE:
-Patient reports...
-
-OBJECTIVE:
-Vital Signs: 
-Physical Exam:
-- General: 
-- HEENT: 
-- Cardiovascular: 
-- Respiratory: 
-- Abdomen: 
-- Neurological: 
-
-ASSESSMENT:
-1. 
-2. 
-
-PLAN:
-1. 
-2. 
-3. 
-
-Follow-up: `
-  },
-  [JournalEntryType.OBSERVATION]: {
-    title: 'Clinical Observation - [Date]',
-    content: `OBSERVATION:
-Date/Time: 
-Location: 
-
-FINDINGS:
-- 
-- 
-- 
-
-CLINICAL SIGNIFICANCE:
-
-
-RECOMMENDATIONS:
-- 
-- `
-  },
-  [JournalEntryType.TREATMENT]: {
-    title: 'Treatment Note - [Date]',
-    content: `TREATMENT PROVIDED:
-Date/Time: 
-Provider: 
-
-INTERVENTION:
-- Procedure/Treatment: 
-- Indication: 
-- Technique: 
-
-PATIENT RESPONSE:
-- Immediate: 
-- Complications: None/[specify]
-
-POST-TREATMENT ASSESSMENT:
-- 
-- 
-
-PLAN:
-- Follow-up: 
-- Monitoring: 
-- Next steps: `
-  },
-  [JournalEntryType.DIAGNOSIS]: {
-    title: 'Diagnostic Assessment - [Date]',
-    content: `PRESENTING COMPLAINT:
-
-
-HISTORY OF PRESENT ILLNESS:
-
-
-RELEVANT PAST MEDICAL HISTORY:
-
-
-EXAMINATION FINDINGS:
-
-
-DIAGNOSTIC WORKUP:
-- Laboratory: 
-- Imaging: 
-- Other studies: 
-
-DIFFERENTIAL DIAGNOSIS:
-1. 
-2. 
-3. 
-
-WORKING DIAGNOSIS:
-
-
-CONFIDENCE LEVEL: 
-
-PLAN FOR FURTHER EVALUATION:
-- 
-- `
-  },
-  [JournalEntryType.ASSESSMENT]: {
-    title: 'Clinical Assessment - [Date]',
-    content: `PATIENT STATUS:
-- Current condition: 
-- Changes since last assessment: 
-
-REVIEW OF SYSTEMS:
-- Constitutional: 
-- Cardiovascular: 
-- Respiratory: 
-- GI: 
-- GU: 
-- Musculoskeletal: 
-- Neurological: 
-- Psychiatric: 
-
-CLINICAL IMPRESSION:
-1. 
-2. 
-
-RISK FACTORS:
-- 
-- 
-
-RECOMMENDATIONS:
-- 
-- `
-  },
-  [JournalEntryType.PLAN]: {
-    title: 'Care Plan - [Date]',
-    content: `CARE GOALS:
-1. 
-2. 
-3. 
-
-INTERVENTIONS:
-- Medications: 
-- Procedures: 
-- Therapies: 
-- Lifestyle modifications: 
-
-MONITORING PLAN:
-- Parameters to monitor: 
-- Frequency: 
-- Responsible provider: 
-
-PATIENT EDUCATION:
-- Topics covered: 
-- Resources provided: 
-- Understanding confirmed: 
-
-FOLLOW-UP:
-- Next appointment: 
-- Emergency contact criteria: 
-- Patient instructions: 
-
-COORDINATION OF CARE:
-- Other providers involved: 
-- Communication plan: `
-  }
-};
+function getTemplates(t: ReturnType<typeof useTranslations>) {
+  return {
+    [JournalEntryType.NOTE]: { title: t('templates.note.title'), content: t('templates.note.content') },
+    [JournalEntryType.OBSERVATION]: { title: t('templates.observation.title'), content: t('templates.observation.content') },
+    [JournalEntryType.TREATMENT]: { title: t('templates.treatment.title'), content: t('templates.treatment.content') },
+    [JournalEntryType.DIAGNOSIS]: { title: t('templates.diagnosis.title'), content: t('templates.diagnosis.content') },
+    [JournalEntryType.ASSESSMENT]: { title: t('templates.assessment.title'), content: t('templates.assessment.content') },
+    [JournalEntryType.PLAN]: { title: t('templates.plan.title'), content: t('templates.plan.content') }
+  } as const;
+}
 
 export default function CreateJournalEntryModal({ 
   patientId, 
@@ -189,6 +40,10 @@ export default function CreateJournalEntryModal({
   onClose, 
   onSuccess 
 }: CreateJournalEntryModalProps) {
+  const t = useTranslations('journal');
+  const locale = useLocale();
+  const ENTRY_TYPE_OPTIONS = useEntryTypeOptions();
+  const TEMPLATES = getTemplates(t);
   const [selectedType, setSelectedType] = useState<JournalEntryType>(JournalEntryType.NOTE);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -198,7 +53,7 @@ export default function CreateJournalEntryModal({
   const handleTypeChange = (type: JournalEntryType) => {
     setSelectedType(type);
     const template = TEMPLATES[type];
-    const currentDate = new Date().toLocaleDateString('en-US');
+    const currentDate = new Date().toLocaleDateString(locale);
     setTitle(template.title.replace('[Date]', currentDate));
     setContent(template.content);
   };
@@ -207,7 +62,7 @@ export default function CreateJournalEntryModal({
     e.preventDefault();
     
     if (!title.trim() || !content.trim()) {
-      setError('Title and content are required');
+      setError(t('create.error.required'));
       return;
     }
 
@@ -259,7 +114,7 @@ export default function CreateJournalEntryModal({
       <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-900">Create New Journal Entry</h2>
+          <h2 className="text-xl font-semibold text-gray-900">{t('create.header.title')}</h2>
           <button
             onClick={handleClose}
             disabled={isSubmitting}
@@ -287,7 +142,7 @@ export default function CreateJournalEntryModal({
             {/* Entry Type Selection */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-3">
-                Entry Type
+                {t('create.selectTypeLabel')}
               </label>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {ENTRY_TYPE_OPTIONS.map((option) => (
@@ -310,7 +165,7 @@ export default function CreateJournalEntryModal({
             {/* Title */}
             <div>
               <label htmlFor="title" className="block text-sm font-medium text-gray-700 mb-2">
-                Title
+                {t('create.field.title')}
               </label>
               <input
                 id="title"
@@ -318,7 +173,7 @@ export default function CreateJournalEntryModal({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Enter journal entry title..."
+                placeholder={t('create.field.titlePlaceholder')}
                 disabled={isSubmitting}
                 required
               />
@@ -327,7 +182,7 @@ export default function CreateJournalEntryModal({
             {/* Content */}
             <div>
               <label htmlFor="content" className="block text-sm font-medium text-gray-700 mb-2">
-                Content
+                {t('create.field.content')}
               </label>
               <textarea
                 id="content"
@@ -335,12 +190,12 @@ export default function CreateJournalEntryModal({
                 onChange={(e) => setContent(e.target.value)}
                 rows={16}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
-                placeholder="Enter journal entry content..."
+                placeholder={t('create.field.contentPlaceholder')}
                 disabled={isSubmitting}
                 required
               />
               <p className="mt-1 text-xs text-gray-500">
-                Tip: Use the entry type buttons above to load different templates
+                {t('create.field.templateTip')}
               </p>
             </div>
           </div>
@@ -353,7 +208,7 @@ export default function CreateJournalEntryModal({
               disabled={isSubmitting}
               className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
             >
-              Cancel
+              {t('create.buttons.cancel')}
             </button>
             <button
               type="submit"
@@ -363,7 +218,7 @@ export default function CreateJournalEntryModal({
               {isSubmitting && (
                 <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
               )}
-              <span>{isSubmitting ? 'Creating...' : 'Create Entry'}</span>
+              <span>{isSubmitting ? t('create.buttons.creating') : t('create.buttons.create')}</span>
             </button>
           </div>
         </form>

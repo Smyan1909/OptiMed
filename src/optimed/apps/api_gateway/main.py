@@ -1817,7 +1817,8 @@ async def delete_journal_entry(
 @app.post("/journal/generate")
 async def generate_journal_entry(
     request: dict,
-    user_ctx: dict = Depends(get_user_context)
+    user_ctx: dict = Depends(get_user_context),
+    accept_language: str | None = Header(default=None, alias="Accept-Language")
 ):
     """Generate a complete journal entry based on user prompt."""
     try:
@@ -1828,6 +1829,7 @@ async def generate_journal_entry(
         prompt = request.get("prompt", "")
         entry_type = request.get("entry_type", "note")
         patient_id = request.get("patient_id")
+        requested_language = request.get("language") or accept_language
         
         if not prompt.strip():
             raise HTTPException(status_code=400, detail="Prompt is required")
@@ -1909,7 +1911,18 @@ COORDINATION OF CARE: Team involvement"""
         entry_info = entry_type_info.get(entry_type, entry_type_info["note"])
         current_date = datetime.now().strftime("%B %d, %Y")
         
-        # Create comprehensive prompt for journal generation
+        # Determine active language code
+        try:
+            from optimed.core.lang import detect_language_code
+            raw_lang = (requested_language or detect_language_code(prompt or "") or "en")
+            # Normalize values like "sv-SE,sv;q=0.9" -> "sv"
+            primary = str(raw_lang).split(',')[0]
+            primary = primary.split(';')[0].strip().lower()
+            active_lang = primary.split('-')[0] if '-' in primary else primary
+        except Exception:
+            active_lang = "en"
+
+        # Create comprehensive prompt for journal generation with language policy
         generation_prompt = f"""You are an expert medical documentation assistant. Generate a complete {entry_info['name']} based on the following user request.
 
 {patient_context}
@@ -1936,11 +1949,14 @@ Please format your response as JSON with the following structure:
     "content": "Complete journal entry content with proper formatting and line breaks"
 }}
 
-Focus on creating realistic, clinically sound documentation that a healthcare provider would actually write."""
+Focus on creating realistic, clinically sound documentation that a healthcare provider would actually write.
+
+Important language policy: Write both the title and content in '{active_lang}'. Use clinically appropriate terminology in this language.
+"""
 
         # Generate using the journal LLM service
         response = await _journal_llm_service.chat([
-            ChatMessage(role=ChatRole.SYSTEM, content="You are an expert medical documentation assistant. Always respond with valid JSON format."),
+            ChatMessage(role=ChatRole.SYSTEM, content=f"You are an expert medical documentation assistant. Always respond with valid JSON format. Respond in '{active_lang}'."),
             ChatMessage(role=ChatRole.USER, content=generation_prompt)
         ])
         
@@ -1984,7 +2000,8 @@ Focus on creating realistic, clinically sound documentation that a healthcare pr
 @app.post("/journal/autocomplete")
 async def journal_autocomplete(
     request: dict,
-    user_ctx: dict = Depends(get_user_context)
+    user_ctx: dict = Depends(get_user_context),
+    accept_language: str | None = Header(default=None, alias="Accept-Language")
 ):
     """Provide LLM-guided autocomplete for journal entries."""
     try:
@@ -1996,6 +2013,7 @@ async def journal_autocomplete(
         entry_type = request.get("entry_type", "note")
         cursor_position = request.get("cursor_position", len(text))
         max_tokens = request.get("max_tokens", 50)
+        requested_language = request.get("language") or accept_language
         
         if not text.strip():
             return {"completion": "", "suggestions": []}
@@ -2014,6 +2032,16 @@ async def journal_autocomplete(
         }
         
         context = entry_type_context.get(entry_type, "medical documentation")
+
+        # Determine active language code for autocomplete
+        try:
+            from optimed.core.lang import detect_language_code
+            raw_lang = (requested_language or detect_language_code(text or "") or "en")
+            primary = str(raw_lang).split(',')[0]
+            primary = primary.split(';')[0].strip().lower()
+            active_lang = primary.split('-')[0] if '-' in primary else primary
+        except Exception:
+            active_lang = "en"
         
         completion_prompt = f"""You are assisting with medical documentation. Complete the following {context} text professionally and concisely.
 
@@ -2026,11 +2054,13 @@ Provide a natural continuation that:
 - Follows standard documentation practices
 - Is 1-3 words or a short phrase (max {max_tokens} characters)
 
+Important language policy: Respond in '{active_lang}'.
+
 Completion:"""
 
         
         response = await _journal_llm_service.chat([
-            ChatMessage(role=ChatRole.SYSTEM, content="You are a medical documentation assistant."),
+            ChatMessage(role=ChatRole.SYSTEM, content=f"You are a medical documentation assistant. Respond in '{active_lang}'."),
             ChatMessage(role=ChatRole.USER, content=completion_prompt)
         ])
         

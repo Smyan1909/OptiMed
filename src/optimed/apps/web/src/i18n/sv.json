@@ -204,6 +204,120 @@
       "author": "Författare",
       "role": "Roll",
       "updated": "Senast uppdaterad"
+    },
+    "typeDescriptions": {
+      "note": "Patientens utveckling och statusuppdateringar",
+      "observation": "Kliniska fynd och observationer",
+      "treatment": "Behandlingar och åtgärder",
+      "diagnosis": "Diagnostiska utvärderingar och fynd",
+      "assessment": "Patientbedömning och utvärdering",
+      "plan": "Planering av vård och framtida åtgärder"
+    },
+    "create": {
+      "header": {
+        "title": "Skapa ny journalanteckning",
+        "badgeAI": "AI-förbättrad",
+        "description": "Dokumentera vården med strukturerade medicinska mallar, AI-stödd autokomplettering och automatisk generering"
+      },
+      "selectTypeLabel": "Välj anteckningstyp",
+      "selectedPrefix": "Vald: {label}",
+      "buttons": {
+        "generateAI": "Generera med AI",
+        "cancel": "Avbryt",
+        "creating": "Skapar...",
+        "create": "Skapa anteckning"
+      },
+      "field": {
+        "title": "Titel",
+        "titlePlaceholder": "Ange en beskrivande titel...",
+        "content": "Innehåll",
+        "contentPlaceholder": "Ange detaljerad klinisk information...",
+        "templateTip": "Mallen laddas automatiskt. AI-förslag visas medan du skriver."
+      },
+      "error": {
+        "required": "Titel och innehåll är obligatoriska"
+      }
+    },
+    "templates": {
+      "note": {
+        "title": "Läkaranteckning - [Date]",
+        "content": "SUBJEKTIVT:\nPatienten uppger...\n\nOBJEKTIVT:\nVitalparametrar: \nStatus:\n- Allmänt: \n- Huvud/Hals: \n- Hjärta/Kärl: \n- Lungor: \n- Buk: \n- Neurologi: \n\nBEDÖMNING:\n1. \n2. \n\nPLAN:\n1. \n2. \n3. \n\nUppföljning: "
+      },
+      "observation": {
+        "title": "Klinisk observation - [Date]",
+        "content": "OBSERVATION:\nDatum/Tid: \nPlats: \n\nFYND:\n- \n- \n- \n\nKLINISK BETYDELSE:\n\n\nREKOMMENDATIONER:\n- \n- "
+      },
+      "treatment": {
+        "title": "Behandlingsanteckning - [Date]",
+        "content": "GENOMFÖRD BEHANDLING:\nDatum/Tid: \nVårdpersonal: \n\nÅTGÄRD:\n- Åtgärd/Behandling: \n- Indikation: \n- Teknik: \n\nPATIENTENS SVAR:\n- Omedelbart: \n- Komplikationer: Inga/[specificera]\n\nEFTERFÖLJANDE BEDÖMNING:\n- \n- \n\nPLAN:\n- Uppföljning: \n- Monitorering: \n- Nästa steg: "
+      },
+      "diagnosis": {
+        "title": "Diagnostisk bedömning - [Date]",
+        "content": "HUVUDSYMTOM:\n\n\nAKTUELLA SJUKDOMSHISTORIA:\n\n\nRELEVANT ANAMNES:\n\n\nSTATUSFYND:\n\n\nUTREDNING:\n- Laboratorieprover: \n- Bilddiagnostik: \n- Övriga undersökningar: \n\nDIFFERENTIALDIAGNOSER:\n1. \n2. \n3. \n\nARBETSdiagnos:\n\n\nSÄKERHETSBEDÖMNING: \n\nPLAN FÖR FORTSATT UTREDNING:\n- \n- "
+      },
+      "assessment": {
+        "title": "Klinisk bedömning - [Date]",
+        "content": "PATIENTENS STATUS:\n- Aktuellt tillstånd: \n- Förändringar sedan föregående bedömning: \n\nSYSTEMGENOMGÅNG:\n- Allmänt: \n- Hjärta/Kärl: \n- Lungor: \n- GI: \n- GU: \n- Muskuloskeletalt: \n- Neurologi: \n- Psykiatri: \n\nKLINISK SAMMANFATTNING:\n1. \n2. \n\nRISKFAKTORER:\n- \n- \n\nREKOMMENDATIONER:\n- \n- "
+      },
+      "plan": {
+        "title": "Vårdplan - [Date]",
+        "content": "MÅL FÖR VÅRDEN:\n1. \n2. \n3. \n\nÅTGÄRDER:\n- Läkemedel: \n- Åtgärder: \n- Terapier: \n- Livsstilsförändringar: \n\nUPPFÖLJNING/UPPFÖLJNING:\n- Vad som ska följas: \n- Frekvens: \n- Ansvarig vårdgivare: \n\nPATIENTINFORMATION:\n- Genomgångna ämnen: \n- Utlämnade resurser: \n- Förståelse säkerställd: \n\nUPPFÖLJNING:\n- Nästa besök: \n- När söka akut: \n- Patientinstruktioner: \n\nSAMORDNING AV VÅRD:\n- Involverade vårdgivare: \n- Kommunikationsplan: "
+      }
+    },
+    "generation": {
+      "header": {
+        "title": "Generera journalanteckning",
+        "badgeAI": "AI-driven",
+        "description": "Beskriv vad du vill dokumentera så genererar AI en komplett {type} åt dig"
+      },
+      "generating": "Genererar: {type}",
+      "guidance": "AI skapar en strukturerad {type} enligt medicinsk dokumentationsstandard.",
+      "prompt": {
+        "label": "Beskriv vad som ska dokumenteras",
+        "placeholder": "Beskriv den kliniska situationen du vill dokumentera i denna {type}...",
+        "helper": "Var så specifik som möjligt. Inkludera symtom, fynd, behandlingar eller observationer."
+      },
+      "examples": {
+        "label": "Exempel på uppmaningar för {type}:",
+        "note": {
+          "e1": "Patienten uppger minskad smärta efter insatt läkemedel",
+          "e2": "Återbesök för diabeteskontroll, blodsocker stabilt",
+          "e3": "Postoperativ dag 3 efter appendektomi, patienten återhämtar sig väl"
+        },
+        "observation": {
+          "e1": "Patienten upplevs orolig vid undersökning",
+          "e2": "Påtaglig förbättring av rörlighet sedan föregående besök",
+          "e3": "Ovanliga hjärtljud noterade vid rutinundersökning"
+        },
+        "treatment": {
+          "e1": "Givit intravenösa antibiotika vid misstänkt infektion",
+          "e2": "Sjukgymnastik med fokus på knäreabilitering",
+          "e3": "Bytte förband och bedömde sårläkning"
+        },
+        "diagnosis": {
+          "e1": "Bröstsmärta och andfåddhet – utredning för hjärtåkomma",
+          "e2": "Misstänkt urinvägsinfektion – utredning",
+          "e3": "Återkommande huvudvärk och synstörningar – bedömning"
+        },
+        "assessment": {
+          "e1": "Övergripande bedömning av patientens allmänna hälsa",
+          "e2": "Genomgång av kroniska tillstånd och läkemedelseffekt",
+          "e3": "Bedömning av psykisk hälsa och copingstrategier"
+        },
+        "plan": {
+          "e1": "Planera utskrivning för äldre patient med multisjuklighet",
+          "e2": "Upprätta långtidsplan för nydebuterad diabetes",
+          "e3": "Samordna vårdteam för komplext fall"
+        }
+      },
+      "buttons": {
+        "cancel": "Avbryt",
+        "generating": "Genererar...",
+        "generate": "Generera anteckning"
+      },
+      "error": {
+        "required": "Ange en uppmaning för att generera anteckningen"
+      }
     }
   },
   "vitalsPage": {

@@ -183,6 +183,14 @@
       "assessment": "Clinical Assessment",
       "plan": "Care Plan"
     },
+    "typeDescriptions": {
+      "note": "Patient progress and status updates",
+      "observation": "Clinical findings and observations",
+      "treatment": "Treatment interventions and procedures",
+      "diagnosis": "Diagnostic evaluations and findings",
+      "assessment": "Patient assessment and evaluation",
+      "plan": "Care planning and future interventions"
+    },
     "actions": {
       "tryAgain": "Try Again",
       "newEntry": "New Entry",
@@ -204,6 +212,112 @@
       "author": "Author",
       "role": "Role",
       "updated": "Last updated"
+    },
+    "create": {
+      "header": {
+        "title": "Create New Journal Entry",
+        "badgeAI": "AI Enhanced",
+        "description": "Document patient care with structured medical templates, AI-powered autocomplete, and automatic generation"
+      },
+      "selectTypeLabel": "Select Entry Type",
+      "selectedPrefix": "Selected: {label}",
+      "buttons": {
+        "generateAI": "Generate with AI",
+        "cancel": "Cancel",
+        "creating": "Creating...",
+        "create": "Create Entry"
+      },
+      "field": {
+        "title": "Entry Title",
+        "titlePlaceholder": "Enter a descriptive title for this entry...",
+        "content": "Entry Content",
+        "contentPlaceholder": "Enter detailed clinical information...",
+        "templateTip": "Template loaded automatically. AI suggestions available while typing."
+      },
+      "error": {
+        "required": "Title and content are required"
+      }
+    },
+    "templates": {
+      "note": {
+        "title": "Progress Note - [Date]",
+        "content": "SUBJECTIVE:\nPatient reports...\n\nOBJECTIVE:\nVital Signs: \nPhysical Exam:\n- General: \n- HEENT: \n- Cardiovascular: \n- Respiratory: \n- Abdomen: \n- Neurological: \n\nASSESSMENT:\n1. \n2. \n\nPLAN:\n1. \n2. \n3. \n\nFollow-up: "
+      },
+      "observation": {
+        "title": "Clinical Observation - [Date]",
+        "content": "OBSERVATION:\nDate/Time: \nLocation: \n\nFINDINGS:\n- \n- \n- \n\nCLINICAL SIGNIFICANCE:\n\n\nRECOMMENDATIONS:\n- \n- "
+      },
+      "treatment": {
+        "title": "Treatment Note - [Date]",
+        "content": "TREATMENT PROVIDED:\nDate/Time: \nProvider: \n\nINTERVENTION:\n- Procedure/Treatment: \n- Indication: \n- Technique: \n\nPATIENT RESPONSE:\n- Immediate: \n- Complications: None/[specify]\n\nPOST-TREATMENT ASSESSMENT:\n- \n- \n\nPLAN:\n- Follow-up: \n- Monitoring: \n- Next steps: "
+      },
+      "diagnosis": {
+        "title": "Diagnostic Assessment - [Date]",
+        "content": "PRESENTING COMPLAINT:\n\n\nHISTORY OF PRESENT ILLNESS:\n\n\nRELEVANT PAST MEDICAL HISTORY:\n\n\nEXAMINATION FINDINGS:\n\n\nDIAGNOSTIC WORKUP:\n- Laboratory: \n- Imaging: \n- Other studies: \n\nDIFFERENTIAL DIAGNOSIS:\n1. \n2. \n3. \n\nWORKING DIAGNOSIS:\n\n\nCONFIDENCE LEVEL: \n\nPLAN FOR FURTHER EVALUATION:\n- \n- "
+      },
+      "assessment": {
+        "title": "Clinical Assessment - [Date]",
+        "content": "PATIENT STATUS:\n- Current condition: \n- Changes since last assessment: \n\nREVIEW OF SYSTEMS:\n- Constitutional: \n- Cardiovascular: \n- Respiratory: \n- GI: \n- GU: \n- Musculoskeletal: \n- Neurological: \n- Psychiatric: \n\nCLINICAL IMPRESSION:\n1. \n2. \n\nRISK FACTORS:\n- \n- \n\nRECOMMENDATIONS:\n- \n- "
+      },
+      "plan": {
+        "title": "Care Plan - [Date]",
+        "content": "CARE GOALS:\n1. \n2. \n3. \n\nINTERVENTIONS:\n- Medications: \n- Procedures: \n- Therapies: \n- Lifestyle modifications: \n\nMONITORING PLAN:\n- Parameters to monitor: \n- Frequency: \n- Responsible provider: \n\nPATIENT EDUCATION:\n- Topics covered: \n- Resources provided: \n- Understanding confirmed: \n\nFOLLOW-UP:\n- Next appointment: \n- Emergency contact criteria: \n- Patient instructions: \n\nCOORDINATION OF CARE:\n- Other providers involved: \n- Communication plan: "
+      }
+    },
+    "generation": {
+      "header": {
+        "title": "Generate Journal Entry",
+        "badgeAI": "AI Powered",
+        "description": "Describe what you want to document and AI will generate a complete {type} for you"
+      },
+      "generating": "Generating: {type}",
+      "guidance": "The AI will create a structured {type} following medical documentation standards.",
+      "prompt": {
+        "label": "Describe what to document",
+        "placeholder": "Describe the clinical situation you want to document in this {type}...",
+        "helper": "Be as specific as possible. Include patient symptoms, findings, treatments, or observations."
+      },
+      "examples": {
+        "label": "Example prompts for {type}:",
+        "note": {
+          "e1": "Patient reports improved pain levels after starting new medication",
+          "e2": "Follow-up visit for diabetes management, blood sugars have been stable",
+          "e3": "Post-operative day 3 following appendectomy, patient recovering well"
+        },
+        "observation": {
+          "e1": "Patient appears anxious during examination",
+          "e2": "Notable improvement in mobility since last visit",
+          "e3": "Unusual heart sounds detected during routine examination"
+        },
+        "treatment": {
+          "e1": "Administered IV antibiotics for suspected infection",
+          "e2": "Physical therapy session focused on knee rehabilitation",
+          "e3": "Changed wound dressing and assessed healing progress"
+        },
+        "diagnosis": {
+          "e1": "Patient presents with chest pain and shortness of breath",
+          "e2": "Evaluate patient for possible urinary tract infection",
+          "e3": "Assessment of recurring headaches and visual disturbances"
+        },
+        "assessment": {
+          "e1": "Comprehensive evaluation of patient's overall health status",
+          "e2": "Review of multiple chronic conditions and medication effectiveness",
+          "e3": "Assessment of patient's mental health and coping strategies"
+        },
+        "plan": {
+          "e1": "Develop discharge plan for elderly patient with multiple comorbidities",
+          "e2": "Create long-term management plan for newly diagnosed diabetes",
+          "e3": "Coordinate care team for complex medical case"
+        }
+      },
+      "buttons": {
+        "cancel": "Cancel",
+        "generating": "Generating...",
+        "generate": "Generate Entry"
+      },
+      "error": {
+        "required": "Please enter a prompt to generate the journal entry"
+      }
     }
   },
   "vitalsPage": {

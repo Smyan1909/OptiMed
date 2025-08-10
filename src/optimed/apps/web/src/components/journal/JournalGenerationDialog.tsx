@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useLocale, useTranslations, useMessages } from 'next-intl';
 import { JournalEntryType, generateJournalEntry } from '@/lib/api';
 import {
   Dialog,
@@ -41,58 +42,28 @@ export default function JournalGenerationDialog({
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const locale = useLocale();
+  const t = useTranslations('journal');
+  const messages = useMessages() as any;
 
-  const getEntryTypeLabel = (type: JournalEntryType): string => {
-    const labels = {
-      [JournalEntryType.NOTE]: 'Progress Note',
-      [JournalEntryType.OBSERVATION]: 'Clinical Observation',
-      [JournalEntryType.TREATMENT]: 'Treatment Note',
-      [JournalEntryType.DIAGNOSIS]: 'Diagnostic Assessment',
-      [JournalEntryType.ASSESSMENT]: 'Clinical Assessment',
-      [JournalEntryType.PLAN]: 'Care Plan'
-    };
-    return labels[type] || type;
-  };
+  const getEntryTypeLabel = (type: JournalEntryType): string => t(`types.${type.toLowerCase()}` as any);
 
   const getPromptExamples = (type: JournalEntryType): string[] => {
-    const examples = {
-      [JournalEntryType.NOTE]: [
-        "Patient reports improved pain levels after starting new medication",
-        "Follow-up visit for diabetes management, blood sugars have been stable",
-        "Post-operative day 3 following appendectomy, patient recovering well"
-      ],
-      [JournalEntryType.OBSERVATION]: [
-        "Patient appears anxious during examination",
-        "Notable improvement in mobility since last visit",
-        "Unusual heart sounds detected during routine examination"
-      ],
-      [JournalEntryType.TREATMENT]: [
-        "Administered IV antibiotics for suspected infection",
-        "Physical therapy session focused on knee rehabilitation",
-        "Changed wound dressing and assessed healing progress"
-      ],
-      [JournalEntryType.DIAGNOSIS]: [
-        "Patient presents with chest pain and shortness of breath",
-        "Evaluate patient for possible urinary tract infection",
-        "Assessment of recurring headaches and visual disturbances"
-      ],
-      [JournalEntryType.ASSESSMENT]: [
-        "Comprehensive evaluation of patient's overall health status",
-        "Review of multiple chronic conditions and medication effectiveness",
-        "Assessment of patient's mental health and coping strategies"
-      ],
-      [JournalEntryType.PLAN]: [
-        "Develop discharge plan for elderly patient with multiple comorbidities",
-        "Create long-term management plan for newly diagnosed diabetes",
-        "Coordinate care team for complex medical case"
-      ]
-    };
-    return examples[type] || [];
+    const root = messages?.journal?.generation?.examples?.[type.toLowerCase()];
+    if (!root || typeof root !== 'object') return [];
+    return Object.keys(root)
+      .sort((a, b) => {
+        const na = parseInt(a.replace(/\D/g, '')) || 0;
+        const nb = parseInt(b.replace(/\D/g, '')) || 0;
+        return na - nb;
+      })
+      .map((k) => String(root[k]))
+      .filter(Boolean);
   };
 
   const handleGenerate = async () => {
     if (!prompt.trim()) {
-      setError('Please enter a prompt to generate the journal entry');
+      setError(t('generation.error.required'));
       return;
     }
 
@@ -103,7 +74,8 @@ export default function JournalGenerationDialog({
       const response = await generateJournalEntry({
         prompt: prompt.trim(),
         entry_type: entryType,
-        patient_id: patientId
+        patient_id: patientId,
+        language: locale
       });
 
       onGenerate(response.title, response.content);
@@ -137,14 +109,14 @@ export default function JournalGenerationDialog({
         <DialogHeader className="border-b border-gray-200 pb-4">
           <DialogTitle className="text-xl font-semibold text-gray-900 flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-purple-600" />
-            Generate Journal Entry
+            {t('generation.header.title')}
             <Badge variant="secondary" className="ml-2 text-xs">
-              AI Powered
+              {t('generation.header.badgeAI')}
             </Badge>
           </DialogTitle>
-          <DialogDescription className="text-gray-600">
-            Describe what you want to document and AI will generate a complete {getEntryTypeLabel(entryType).toLowerCase()} for you
-          </DialogDescription>
+            <DialogDescription className="text-gray-600">
+              {t('generation.header.description', { type: getEntryTypeLabel(entryType).toLowerCase() })}
+            </DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -159,29 +131,29 @@ export default function JournalGenerationDialog({
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <div className="flex items-center gap-2 mb-2">
               <FileText className="h-4 w-4 text-blue-600" />
-              <span className="font-medium text-blue-900">Generating: {getEntryTypeLabel(entryType)}</span>
+              <span className="font-medium text-blue-900">{t('generation.generating', { type: getEntryTypeLabel(entryType) })}</span>
             </div>
             <p className="text-sm text-blue-700">
-              The AI will create a structured {getEntryTypeLabel(entryType).toLowerCase()} following medical documentation standards.
+              {t('generation.guidance', { type: getEntryTypeLabel(entryType).toLowerCase() })}
             </p>
           </div>
 
           {/* Prompt Input */}
           <div className="space-y-2">
             <Label htmlFor="prompt" className="text-sm font-medium text-gray-900">
-              Describe what to document
+              {t('generation.prompt.label')}
             </Label>
             <Textarea
               id="prompt"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder={`Describe the clinical situation you want to document in this ${getEntryTypeLabel(entryType).toLowerCase()}...`}
+              placeholder={t('generation.prompt.placeholder', { type: getEntryTypeLabel(entryType).toLowerCase() })}
               rows={6}
               disabled={isGenerating}
               className="resize-none"
             />
             <p className="text-xs text-gray-500">
-              Be as specific as possible. Include patient symptoms, findings, treatments, or observations.
+              {t('generation.prompt.helper')}
             </p>
           </div>
 
@@ -189,7 +161,7 @@ export default function JournalGenerationDialog({
           {examples.length > 0 && (
             <div className="space-y-3">
               <Label className="text-sm font-medium text-gray-900">
-                Example prompts for {getEntryTypeLabel(entryType)}:
+                {t('generation.examples.label', { type: getEntryTypeLabel(entryType) })}
               </Label>
               <div className="space-y-2">
                 {examples.map((example, index) => (
@@ -217,7 +189,7 @@ export default function JournalGenerationDialog({
               disabled={isGenerating}
             >
               <X className="h-4 w-4 mr-2" />
-              Cancel
+              {t('generation.buttons.cancel')}
             </Button>
             <Button
               onClick={handleGenerate}
@@ -227,12 +199,12 @@ export default function JournalGenerationDialog({
               {isGenerating ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Generating...
+                  {t('generation.buttons.generating')}
                 </>
               ) : (
                 <>
                   <Send className="h-4 w-4 mr-2" />
-                  Generate Entry
+                  {t('generation.buttons.generate')}
                 </>
               )}
             </Button>

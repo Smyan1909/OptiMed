@@ -15,6 +15,15 @@ export async function POST(request: NextRequest) {
       headers['X-Session-ID'] = sessionId;
     }
 
+    // Forward locale to backend for multilingual support
+    try {
+      const localeCookie = request.cookies.get('NEXT_LOCALE')?.value;
+      const acceptLang = request.headers.get('accept-language') || localeCookie || undefined;
+      if (acceptLang) {
+        headers['Accept-Language'] = acceptLang;
+      }
+    } catch {}
+
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
     const response = await fetch(
       `${baseUrl}/journal/generate`,
