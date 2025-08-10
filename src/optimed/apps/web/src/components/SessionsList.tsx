@@ -3,7 +3,8 @@ import { listSessions, createSession, joinSession, SessionListRequest } from '@/
 import { Session } from '@/lib/api';
 import { useUser } from '@/contexts/UserContext';
 import { formatDistanceToNow } from 'date-fns';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
+import { enUS, sv as svLocale } from 'date-fns/locale';
 
 interface SessionsListProps {
   patientId?: string;
@@ -22,6 +23,7 @@ export default function SessionsList({
 }: SessionsListProps) {
   const t = useTranslations('sessions');
   const tc = useTranslations('common');
+  const locale = useLocale();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -170,12 +172,12 @@ export default function SessionsList({
 
   const generateSessionTitle = (mode: 'chat' | 'diagnose', patientId?: string): string => {
     const now = new Date();
-    const timeStr = now.toLocaleTimeString(undefined, { 
+    const timeStr = now.toLocaleTimeString(locale, { 
       hour: '2-digit', 
       minute: '2-digit',
-      hour12: true 
+      hour12: locale === 'en' 
     });
-    const dateStr = now.toLocaleDateString(undefined, { 
+    const dateStr = now.toLocaleDateString(locale, { 
       month: 'short', 
       day: 'numeric' 
     });
@@ -189,6 +191,28 @@ export default function SessionsList({
     } else {
       return t('titles.patientSession', {date: dateStr, time: timeStr});
     }
+  };
+
+  // Localize title for display regardless of stored string
+  const getDisplayTitle = (session: Session): string => {
+    const created = new Date(session.created_at);
+    const timeStr = created.toLocaleTimeString(locale, {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: locale === 'en'
+    });
+    const dateStr = created.toLocaleDateString(locale, {
+      month: 'short',
+      day: 'numeric'
+    });
+
+    if (session.mode === 'chat') {
+      if (session.patient_id) {
+        return t('titles.patientChat', { date: dateStr, time: timeStr });
+      }
+      return t('titles.generalChat', { date: dateStr, time: timeStr });
+    }
+    return t('titles.patientSession', { date: dateStr, time: timeStr });
   };
 
   const handleJoinSession = async (sessionId: string) => {
@@ -205,7 +229,8 @@ export default function SessionsList({
 
   const formatSessionTime = (dateString: string) => {
     try {
-      return formatDistanceToNow(new Date(dateString), { addSuffix: true });
+      const dfnsLocale = locale === 'sv' ? svLocale : enUS;
+      return formatDistanceToNow(new Date(dateString), { addSuffix: true, locale: dfnsLocale });
     } catch {
       return t('unknownTime');
     }
@@ -293,7 +318,7 @@ export default function SessionsList({
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
                       <h4 className="text-sm font-medium text-gray-900 truncate">
-                        {session.session_title}
+                        {getDisplayTitle(session)}
                       </h4>
                       
                       {/* Add creator info */}

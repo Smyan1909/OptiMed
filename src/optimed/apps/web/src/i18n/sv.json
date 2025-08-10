@@ -82,7 +82,12 @@
     "noPatientsMatch": "Inga patienter matchar \"{query}\". Prova en annan sökterm eller kontrollera stavningen.",
     "noPatientsAvailable": "Inga patienter finns tillgängliga i systemet.",
     "hideSessions": "Dölj sessionspanel",
-    "showSessions": "Visa sessionspanel"
+    "showSessions": "Visa sessionspanel",
+    "profile": "Profil",
+    "settings": "Inställningar",
+    "signOut": "Logga ut",
+    "signingOut": "Loggar ut...",
+    "doctor": "Läkare"
   },
   "login": {
     "title": "CLARA",
@@ -164,6 +169,26 @@
     "quickLinks": {
       "clinicalData": "Kliniska data",
       "medicalJournal": "Journal"
+    }
+  },
+  "modeSelector": {
+    "header": "Läge",
+    "options": {
+      "postMeet": {
+        "name": "Efter möte",
+        "description": "Analysera fynd och skapa vårdplan",
+        "defaultPrompt": "Efter ett patientmöte behöver jag analysera kliniska data och fynd. Hjälp mig att gå igenom patientinformation, statusfynd och relevant bakgrund för att stödja beslut och dokumentation."
+      },
+      "preMeet": {
+        "name": "Inför möte",
+        "description": "Förbered inför kommande besök",
+        "defaultPrompt": "Jag förbereder ett kommande patientmöte. Hjälp mig att gå igenom patientens bakgrund, inklusive sjukdomshistoria, aktuella tillstånd, läkemedel samt senaste provsvar och anteckningar som är relevanta."
+      },
+      "research": {
+        "name": "Research",
+        "description": "Fördjupad analys och litteratur",
+        "defaultPrompt": "Jag behöver söka klinisk information kopplat till patientens fall. Hjälp mig att samla relevant medicinsk litteratur, riktlinjer och evidensbaserad information som kan vägleda beslut."
+      }
     }
   },
   "journalPage": {
@@ -384,6 +409,24 @@
   "chatPage": {
     "generalChat": "Allmän chat",
     "aiUser": "AI-användare"
+  },
+  "chatBox": {
+    "placeholder": {
+      "chat": "Skriv ditt meddelande...",
+      "diagnose": "Fråga om patientjournal, läkemedel, historik eller anteckningar",
+      "generic": "Hur kan jag hjälpa dig att komma åt medicinsk information?"
+    },
+    "buttons": {
+      "analyzing": "Analyserar…",
+      "stop": "Stoppa"
+    }
+  },
+  "diffDx": {
+    "title": "Differentialdiagnoser",
+    "considerations": "{count} {count, plural, one {övervägande} other {överväganden}}",
+    "clinicalReasoning": "Kliniskt resonemang:",
+    "supportingEvidence": "Stödjande evidens:",
+    "disclaimer": "Dessa differentialdiagnoser är AI-genererade förslag baserade på tillgängliga kliniska data. Korrelera alltid med kliniskt omdöme och kompletterande undersökningar vid behov."
   },
   "sessions": {
     "headers": {

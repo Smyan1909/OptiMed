@@ -82,7 +82,12 @@
     "noPatientsMatch": "No patients match \"{query}\". Try a different search term or check your spelling.",
     "noPatientsAvailable": "No patients are currently available in the system.",
     "hideSessions": "Hide sessions panel",
-    "showSessions": "Show sessions panel"
+    "showSessions": "Show sessions panel",
+    "profile": "Profile",
+    "settings": "Settings",
+    "signOut": "Sign Out",
+    "signingOut": "Signing out...",
+    "doctor": "Doctor"
   },
   "login": {
     "title": "CLARA",
@@ -164,6 +169,26 @@
     "quickLinks": {
       "clinicalData": "Clinical Data",
       "medicalJournal": "Medical Journal"
+    }
+  },
+  "modeSelector": {
+    "header": "Mode",
+    "options": {
+      "postMeet": {
+        "name": "Post-Encounter",
+        "description": "Analyze clinical findings and create care plans",
+        "defaultPrompt": "Following a patient encounter, I need to analyze the clinical data and findings. Please help me review the patient information, examination findings, and any relevant background data to support clinical decision-making and documentation."
+      },
+      "preMeet": {
+        "name": "Pre-Encounter",
+        "description": "Prepare for upcoming patient visit",
+        "defaultPrompt": "I'm preparing for an upcoming patient encounter. Please help me review the patient's background information, including their medical history, current conditions, medications, and any recent test results or clinical notes that would be relevant for the encounter."
+      },
+      "research": {
+        "name": "Research",
+        "description": "Deep analysis and literature review",
+        "defaultPrompt": "I need to research clinical information related to this patient's case. Please help me gather relevant medical literature, treatment guidelines, and evidence-based information that could inform clinical decisions."
+      }
     }
   },
   "journalPage": {
@@ -384,6 +409,24 @@
   "chatPage": {
     "generalChat": "General Chat",
     "aiUser": "AI User"
+  },
+  "chatBox": {
+    "placeholder": {
+      "chat": "Type your message...",
+      "diagnose": "Ask about patient records, medications, history, or clinical notes",
+      "generic": "How can I help you access medical information?"
+    },
+    "buttons": {
+      "analyzing": "Analyzing…",
+      "stop": "Stop"
+    }
+  },
+  "diffDx": {
+    "title": "Differential Diagnoses",
+    "considerations": "{count} {count, plural, one {consideration} other {considerations}}",
+    "clinicalReasoning": "Clinical Reasoning:",
+    "supportingEvidence": "Supporting Evidence:",
+    "disclaimer": "These differential diagnoses are AI-generated suggestions based on available clinical data. Always correlate with clinical judgment and additional testing as appropriate."
   },
   "sessions": {
     "headers": {

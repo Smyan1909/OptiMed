@@ -23,6 +23,7 @@ import {
   Heart,
   Users
 } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 
 const getRoleIcon = (role: string) => {
   switch (role.toLowerCase()) {
@@ -51,6 +52,7 @@ const getRoleBadgeVariant = (role: string) => {
 };
 
 export function UserProfile() {
+  const t = useTranslations();
   const router = useRouter();
   const { user, logout } = useUser();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -133,7 +135,7 @@ export function UserProfile() {
           onClick={handleProfileClick}
         >
           <UserIcon className="mr-2 h-4 w-4" />
-          <span>Profile</span>
+          <span>{t('common.profile')}</span>
         </DropdownMenuItem>
         
         <DropdownMenuItem 
@@ -141,7 +143,7 @@ export function UserProfile() {
           onClick={handleSettingsClick}
         >
           <Settings className="mr-2 h-4 w-4" />
-          <span>Settings</span>
+          <span>{t('common.settings')}</span>
         </DropdownMenuItem>
         
         <DropdownMenuSeparator />
@@ -152,7 +154,7 @@ export function UserProfile() {
           disabled={isLoggingOut}
         >
           <LogOut className="mr-2 h-4 w-4" />
-          <span>{isLoggingOut ? 'Signing out...' : 'Sign out'}</span>
+          <span>{isLoggingOut ? t('common.signingOut') : t('common.signOut')}</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { cn } from '@/lib/utils';
+import { useTranslations } from 'next-intl';
 
 interface ModeOption {
   id: string;
@@ -18,34 +19,39 @@ interface ModeSelectorProps {
   layout?: 'horizontal' | 'vertical';
 }
 
-const MODE_OPTIONS: ModeOption[] = [
-  {
-    id: 'post_meet',
-    name: 'Post-Encounter',
-    description: 'Analyze clinical findings and create care plans',
-    icon: '🔍',
-    defaultPrompt: 'Following a patient encounter, I need to analyze the clinical data and findings. Please help me review the patient information, examination findings, and any relevant background data to support clinical decision-making and documentation.'
-  },
-  {
-    id: 'pre_meet',
-    name: 'Pre-Encounter',
-    description: 'Prepare for upcoming patient visit',
-    icon: '📚',
-    defaultPrompt: 'I\'m preparing for an upcoming patient encounter. Please help me review the patient\'s background information, including their medical history, current conditions, medications, and any recent test results or clinical notes that would be relevant for the encounter.'
-  },
-  {
-    id: 'research',
-    name: 'Research',
-    description: 'Deep analysis and literature review',
-    icon: '🔬',
-    defaultPrompt: 'I need to research clinical information related to this patient\'s case. Please help me gather relevant medical literature, treatment guidelines, and evidence-based information that could inform clinical decisions.'
-  }
-];
+function useModeOptions(): ModeOption[] {
+  const t = useTranslations('modeSelector.options');
+  return [
+    {
+      id: 'post_meet',
+      name: t('postMeet.name'),
+      description: t('postMeet.description'),
+      icon: '🔍',
+      defaultPrompt: t('postMeet.defaultPrompt')
+    },
+    {
+      id: 'pre_meet',
+      name: t('preMeet.name'),
+      description: t('preMeet.description'),
+      icon: '📚',
+      defaultPrompt: t('preMeet.defaultPrompt')
+    },
+    {
+      id: 'research',
+      name: t('research.name'),
+      description: t('research.description'),
+      icon: '🔬',
+      defaultPrompt: t('research.defaultPrompt')
+    }
+  ];
+}
 
 export default function ModeSelector({ selectedMode, onModeChange, disabled = false, layout = 'horizontal' }: ModeSelectorProps) {
+  const t = useTranslations('modeSelector');
+  const MODE_OPTIONS = useModeOptions();
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-xs font-medium text-gray-600 text-center">Mode</div>
+      <div className="text-xs font-medium text-gray-600 text-center">{t('header')}</div>
       <div className="flex flex-col gap-1">
         {MODE_OPTIONS.map((mode) => (
           <button
@@ -71,5 +77,5 @@ export default function ModeSelector({ selectedMode, onModeChange, disabled = fa
   );
 }
 
-export { MODE_OPTIONS };
+export { };
 export type { ModeOption };
