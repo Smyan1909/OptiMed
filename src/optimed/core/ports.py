@@ -143,6 +143,18 @@ class LLMClient(Protocol):
         """Send a chat message sequence to the LLM and get a response."""
         ...
 
+            # --- runtime definitions ---
+    async def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        json_mode: bool = False,
+        *,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+    ) -> ChatMessage:
+        """Send a chat message sequence to the LLM and get a response."""
+        ...
+
     # --- chat_stream ---
     @overload
     async def chat_stream(
@@ -165,18 +177,6 @@ class LLMClient(Protocol):
         max_tokens: int | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream chat responses from the LLM."""
-        ...
-    
-    # --- runtime definitions ---
-    async def chat(
-        self,
-        messages: Sequence[ChatMessage],
-        json_mode: bool = False,
-        *,
-        temperature: float = 0.7,
-        max_tokens: int | None = None,
-    ) -> ChatMessage:
-        """Send a chat message sequence to the LLM and get a response."""
         ...
     
     async def chat_stream(
