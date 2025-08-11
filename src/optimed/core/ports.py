@@ -559,7 +559,8 @@ class WebSearchService(Protocol):
         query: str, 
         max_results: int = 10,
         patient_context: Optional[str] = None,
-        search_intent: Optional[str] = None
+        search_intent: Optional[str] = None,
+        target_language: Optional[str] = None
     ) -> WebSearchResponse:
         """Perform a web search and return structured results."""
         ...

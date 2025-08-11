@@ -36,7 +36,9 @@ SYSTEM_MSG_PRE_MEET = ChatMessage(role=ChatRole.SYSTEM,
                                       • Put a blank line before and after each header.
                                       • Do not simulate headers with numbers or bold; do not place headers inside list items.
                                       • Prefer bullet lists for checklists and action items; use tables for compact comparisons.
-                                    - Link policy: use inline markdown links [Label](URL) for EHR/web sources. If no label is obvious for EHR, use [EHR record](URL).
+                                    - Link policy (STRICT for EHR): For every EHR-derived item you mention (vital, lab value, medication, allergy, diagnosis, imaging finding, date, encounter, note), include a clickable markdown link immediately after that specific item, within the same sentence, e.g., "HbA1c 8.1% (2024‑04‑02) [EHR](URL)" or "lisinopril 10 mg daily [Meds](URL)". Do this for each individual item you list. Do not group EHR links in a separate Sources section.
+                                      • If multiple EHR items appear in one sentence, each item must have its own adjacent link.
+                                      • If no URL is available, write "(from EHR, no link available)" immediately after the item.
                                     - Match the user's language. Avoid boilerplate and preambles.
 
                                     Pre‑visit focus (use any subset that fits):
@@ -56,7 +58,9 @@ SYSTEM_MSG_POST_MEET = ChatMessage(role=ChatRole.SYSTEM,
                                       • Put a blank line before and after each header.
                                       • Do not simulate headers with numbers or bold; do not place headers inside list items.
                                       • Use bullets/tables for clarity.
-                                    - Link policy: inline markdown links [Label](URL) for EHR/web; default EHR label [EHR record](URL) if none.
+                                    - Link policy (STRICT for EHR): For every EHR-derived item you mention (vital, lab value, medication, allergy, diagnosis, imaging finding, date, encounter, note), include a clickable markdown link immediately after that specific item, within the same sentence, e.g., "HbA1c 8.1% (2024‑04‑02) [EHR](URL)" or "lisinopril 10 mg daily [Meds](URL)". Do this for each individual item you list. Do not group EHR links in a separate Sources section.
+                                      • If multiple EHR items appear in one sentence, each item must have its own adjacent link.
+                                      • If no URL is available, write "(from EHR, no link available)" immediately after the item.
                                     - Use all available information (EHR, exams, history). Match the user's language.
 
                                     Suggested sections (use any subset that fits):
@@ -75,7 +79,7 @@ SYSTEM_MSG_RESEARCH = ChatMessage(role=ChatRole.SYSTEM,
                                     - Always answer in standard Markdown.
                                       • If you create sections, use '## ' headers and '### ' subheaders with blank lines around them.
                                       • Prefer bullets/tables for comparisons and evidence summaries.
-                                    - Link policy: cite web sources inline as [Title](URL); include EHR links as [Label](URL) when available.
+                                    - Link policy: cite web sources inline as [Title](URL). For EHR-derived items, include a clickable markdown link immediately after each specific item, e.g., "CT chest (2024‑03‑12) [Imaging](URL)"; if no URL is available, add "(from EHR, no link available)". Do not group EHR links only at the end; each item must be linked inline.
 
                                     Suggested sections (choose as needed):
                                     - Clinical Question / Context
@@ -93,7 +97,8 @@ SYSTEM_MSG_CHAT = ChatMessage(role=ChatRole.SYSTEM,
                                     - Always answer in standard Markdown.
                                       • If you create sections, use '## ' headers and '### ' subheaders with blank lines around them.
                                       • Prefer bullets for enumerations.
-                                    - Reference prior chat context when relevant. Link web/EHR sources inline as [Label](URL).
+                                    - Reference prior chat context when relevant.
+                                    - Link policy (STRICT for EHR): For every EHR-derived item you mention, add a clickable markdown link immediately after that item, within the same sentence, e.g., "allergy: penicillin [Allergies](URL)". If no URL is available, add "(from EHR, no link available)". Do not group EHR links only at the end.
                                     - Match the user's language and tone.
                                     """)
                                     
@@ -152,7 +157,7 @@ class FlowState(BaseModel):
     step_status: str = ""
     step_details: str = ""
     progress_percentage: float = 0.0
-    total_steps: int = 12
+    total_steps: int = 10
     completed_steps: int = 0
     streaming_updates: List[dict] = Field(default_factory=list)
 
@@ -281,12 +286,17 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                         f"Age: {state.patient_ctx.age}, Sex: {state.patient_ctx.sex}"
                     )
                 
-                # Perform search
+                # Perform search with target language based on user's prompt
+                try:
+                    active_lang = detect_language_code(search_query or "")
+                except Exception:
+                    active_lang = "en"
                 search_response = await self._web_search.search(
                     query=search_query,
                     max_results=8,
                     patient_context=patient_context_str,
-                    search_intent="clinical_information"
+                    search_intent="clinical_information",
+                    target_language=(active_lang if active_lang and active_lang != "en" else None)
                 )
                 
                 state.web_search_response = search_response
@@ -311,106 +321,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             """Conditional function to determine if web search should be performed."""
             return state.web_search_performed
 
-        @streaming_step("evaluate_image_generation_need")
-        async def evaluate_image_generation_need(state: FlowState) -> FlowState:
-            """Evaluate if image generation would be helpful for this query."""
-            if not self._image_generation:
-                state.image_generation_needed = False
-                return state
-            
-            try:
-                # Check if service is available
-                if not await self._image_generation.is_available():
-                    print("[image_generation] Service not available")
-                    state.image_generation_needed = False
-                    return state
-                
-                # Convert chat history from ChatMessage objects to dictionaries
-                chat_history_dicts = []
-                if state.chat_history:
-                    for chat_msg in state.chat_history:
-                        if hasattr(chat_msg, 'role') and hasattr(chat_msg, 'content'):
-                            # It's a ChatMessage object, convert to dict
-                            chat_dict = {
-                                "role": chat_msg.role.value if hasattr(chat_msg.role, 'value') else str(chat_msg.role),
-                                "content": chat_msg.content,
-                                "timestamp": chat_msg.timestamp.isoformat() if hasattr(chat_msg, 'timestamp') and chat_msg.timestamp else None,
-                                "user_id": getattr(chat_msg, 'user_id', None),
-                                "metadata": getattr(chat_msg, 'metadata', {})
-                            }
-                            chat_history_dicts.append(chat_dict)
-                        elif isinstance(chat_msg, dict):
-                            # It's already a dict, use as-is
-                            chat_history_dicts.append(chat_msg)
-                
-                # Create context for evaluation
-                context = ImageGenerationContext(
-                    user_query=state.user_prompt,
-                    patient_context=state.patient_ctx,
-                    chat_history=chat_history_dicts,
-                    medical_context=state.retrieved_chunks[0] if state.retrieved_chunks else None,
-                    generation_purpose=GeneratedImagePurpose.EDUCATIONAL  # Default purpose, can be changed later
-                )
-                
-                state.image_generation_context = context
-                
-                # Evaluate need
-                should_generate, image_prompt = await self._image_generation.evaluate_generation_need(context)
-                
-                state.image_generation_needed = should_generate
-                state.image_generation_prompt = image_prompt or ""
-                
-                print(f"[image_generation] Generation needed: {should_generate}")
-                if should_generate:
-                    print(f"[image_generation] Prompt: {image_prompt}")
-                
-            except Exception as e:
-                print(f"[image_generation] Error evaluating generation need: {e}")
-                import traceback
-                traceback.print_exc()
-                state.image_generation_needed = False
-            
-            return state
-        
-        @streaming_step("generate_image",  is_long_running=True, estimated_time="30-60 seconds")
-        async def generate_image(state: FlowState) -> FlowState:
-            """Generate an image if needed."""
-            if not state.image_generation_needed or not state.image_generation_prompt:
-                return state
-            
-            try:
-                # Create generation request
-                request = ImageGenerationRequest(
-                    prompt=state.image_generation_prompt,
-                    width=1024,  # Higher resolution for Stability AI
-                    height=1024,
-                    guidance_scale=7.5,
-                    num_inference_steps=30,  # Good balance of quality vs speed
-                    user_id=state.user_id,
-                    patient_id=state.patient_id,
-                    session_id=state.session_id
-                )
-                
-                # Generate image
-                generated_image = await self._image_generation.generate_image(request) if self._image_generation else None
-                state.generated_image = generated_image
-                
-                # Store image if repository is available
-                if self._generated_image_repo and generated_image:
-                    await self._generated_image_repo.store_generated_image(generated_image)
-
-                print(f"[image_generation] Successfully generated image: {generated_image.generation_id}") if generated_image else print("[image_generation] No image generated")
-
-            except Exception as e:
-                print(f"[image_generation] Error generating image: {e}")
-                # Don't fail the entire flow for image generation errors
-                state.generated_image = None
-            
-            return state
-
-        def needs_image_generation(state: FlowState) -> bool:
-            """Conditional function to determine if image generation should be performed."""
-            return state.image_generation_needed
+        # Image generation disabled in this flow to reduce compute time
 
         @streaming_step("load_current_session_history")
         async def load_current_session_history(state: FlowState) -> FlowState:
@@ -1179,7 +1090,10 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
             if not getattr(state, 'requires_full_processing', True):
                 simple_system_msg = ChatMessage(
                     role=ChatRole.SYSTEM, 
-                    content="""You are CLARA, a helpful medical AI assistant. Provide clear, accurate medical information and advice. For general medical questions, draw on your medical knowledge. Keep responses concise and helpful."""
+                    content="""You are CLARA, a helpful medical AI assistant. Provide clear, accurate medical information and advice. For general medical questions, draw on your medical knowledge. Keep responses concise and helpful.
+
+Link policy (STRICT for EHR): For every EHR-derived item you mention (vital, lab value, medication, allergy, diagnosis, imaging finding, date, encounter, note), include a clickable markdown link immediately after that specific item, within the same sentence, e.g., "HbA1c 8.1% (2024‑04‑02) [EHR](URL)" or "lisinopril 10 mg daily [Meds](URL)". Do this for each individual item you list. Do not group EHR links in a separate Sources section. If no URL is available, write "(from EHR, no link available)" immediately after the item.
+"""
                 )
                 messages = [simple_system_msg]
 
@@ -2231,11 +2145,16 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 print(f"[batch_priors] Combined search query: {combined_search_query}")
                 
                 # Perform single web search for all diagnoses
+                try:
+                    active_lang = detect_language_code(combined_search_query or "")
+                except Exception:
+                    active_lang = "en"
                 web_response = await self._web_search.search(
                     query=combined_search_query,
                     max_results=8,  # Get more results since we're searching for multiple conditions
                     patient_context=demographic_context,
-                    search_intent="epidemiological_data"
+                    search_intent="epidemiological_data",
+                    target_language=(active_lang if active_lang and active_lang != "en" else None)
                 )
                 
                 # Prepare web context for LLM analysis
@@ -2488,8 +2407,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
         _builder.add_node("intelligent_retrieve_chunks", intelligent_retrieve_chunks)
         _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
         _builder.add_node("perform_web_search", perform_web_search)
-        _builder.add_node("evaluate_image_generation_need", evaluate_image_generation_need)
-        _builder.add_node("generate_image", generate_image)
+        # Image generation nodes removed
         _builder.add_node("diagnose", diagnose)
         _builder.add_node("store_assistant_response", store_assistant_response)
         _builder.add_node("evaluate_icd_parsing_need", evaluate_icd_parsing_need)
@@ -2536,19 +2454,10 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
         )
 
         _builder.add_edge("search_cross_session_history", "intelligent_retrieve_chunks")
-        _builder.add_edge("intelligent_retrieve_chunks", "evaluate_image_generation_need")
+        _builder.add_edge("intelligent_retrieve_chunks", "evaluate_web_search_need")
 
 
-        _builder.add_conditional_edges(
-            "evaluate_image_generation_need",
-            needs_image_generation,
-            {
-                True: "generate_image",
-                False: "evaluate_web_search_need"
-            }
-        )
-
-        _builder.add_edge("generate_image", "evaluate_web_search_need")
+        # Image generation path removed; proceed directly to web search evaluation
 
         _builder.add_conditional_edges(
             "evaluate_web_search_need",

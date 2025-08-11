@@ -88,6 +88,8 @@ function LookupPanel({ term, onClose, patientId, sessionId }: { term: string; on
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<LookupResponse | null>(null);
+  const t = useTranslations('chatBox');
+  const tCommon = useTranslations('common');
 
   useEffect(() => {
     let canceled = false;
@@ -110,12 +112,12 @@ function LookupPanel({ term, onClose, patientId, sessionId }: { term: string; on
   return (
     <div className="fixed bottom-6 right-6 z-50 w-full max-w-md shadow-2xl border border-gray-200 bg-white rounded-xl overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-gray-50">
-        <div className="font-semibold text-gray-800">Lookup: <span className="text-blue-700">{term}</span></div>
+        <div className="font-semibold text-gray-800">{t('lookup.title')}: <span className="text-blue-700">{term}</span></div>
         <button onClick={onClose} className="text-gray-500 hover:text-gray-800">✕</button>
       </div>
       <div className="p-4 max-h-96 overflow-y-auto text-sm text-gray-900">
-        {loading && (<div className="text-gray-600">Loading…</div>)}
-        {error && (<div className="text-red-600">{error}</div>)}
+        {loading && (<div className="text-gray-600">{tCommon('searching')}</div>)}
+        {error && (<div className="text-red-600">{t('lookup.error')}</div>)}
         {!loading && !error && result && (
           <div className="space-y-3">
             <div className="prose prose-sm max-w-none">
@@ -165,7 +167,7 @@ function LookupPanel({ term, onClose, patientId, sessionId }: { term: string; on
             </div>
             {result.sources?.length ? (
               <div>
-                <div className="text-xs font-semibold text-gray-700 mb-1">Sources</div>
+                <div className="text-xs font-semibold text-gray-700 mb-1">{t('lookup.sources')}</div>
                 <ul className="list-disc list-inside space-y-1">
                   {result.sources.map((s, i) => (
                     <li key={i}>
@@ -357,6 +359,7 @@ const MessageContent = ({ text, isUser, patientId, sessionId }: MessageContentPr
   const [selection, setSelection] = useState<string>("");
   const [lookupTerm, setLookupTerm] = useState<string>("");
   const [showLookup, setShowLookup] = useState<boolean>(false);
+  const tChatBox = useTranslations('chatBox');
 
   // Scope selection to this message content only
   const contentRef = useRef<HTMLDivElement>(null);
@@ -395,7 +398,7 @@ const MessageContent = ({ text, isUser, patientId, sessionId }: MessageContentPr
             onClick={() => { setLookupTerm(selection); setShowLookup(true); }}
             className="px-2 py-1 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700"
           >
-            Lookup “{selection}”
+            {tChatBox('lookup.action', { term: selection, default: `Lookup “${selection}”` })}
           </button>
         </div>
       )}

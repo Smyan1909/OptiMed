@@ -419,6 +419,12 @@
     "buttons": {
       "analyzing": "Analyzing…",
       "stop": "Stop"
+    },
+    "lookup": {
+      "title": "Lookup",
+      "sources": "Sources",
+      "error": "Lookup failed",
+      "action": "Lookup “{term}”"
     }
   },
   "diffDx": {

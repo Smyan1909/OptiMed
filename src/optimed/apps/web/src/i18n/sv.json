@@ -419,6 +419,12 @@
     "buttons": {
       "analyzing": "Analyserar…",
       "stop": "Stoppa"
+    },
+    "lookup": {
+      "title": "Uppslag",
+      "sources": "Källor",
+      "error": "Uppslag misslyckades",
+      "action": "Slå upp ”{term}”"
     }
   },
   "diffDx": {

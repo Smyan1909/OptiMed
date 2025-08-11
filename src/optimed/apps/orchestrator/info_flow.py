@@ -38,7 +38,9 @@ SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                                       • Use bullet lists and tables where they help readability; avoid filler.
                                     - Use previous conversation history (between === lines) when relevant.
                                     - If web search results are used, cite with markdown links like [Source Title](URL); otherwise omit citations.
-                                    - When referencing EHR data and a URL is available, include a clickable markdown link like ([Data Name](URL)); otherwise reference the EHR system.
+                                    - Link policy (STRICT for EHR): For every EHR-derived item you mention (vital, lab value, medication, allergy, diagnosis, imaging finding, date, encounter, note), include a clickable markdown link immediately after that specific item, within the same sentence, e.g., "BP 128/76 (2024‑05‑01) [Vitals](URL)" or "metformin 500 mg BID [Meds](URL)". Do this for each individual item you list. Do not group EHR links in a separate Sources section.
+                                      • If multiple EHR items appear in one sentence, each item must have its own adjacent link.
+                                      • If no URL is available, write "(from EHR, no link available)" immediately after the item.
                                     - Format any raw URLs as markdown hyperlinks.
 
                                     Restrictions:
@@ -221,12 +223,17 @@ class LangGraphInformationEngine(DiagnosticEngine):
                         f"Age: {state.patient_ctx.age}, Sex: {state.patient_ctx.sex}"
                     )
                 
-                # Perform search
+                # Perform search with target language based on user's prompt
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
                 search_response = await self._web_search.search(
                     query=search_query,
                     max_results=8,
                     patient_context=patient_context_str,
-                    search_intent="clinical_information"
+                    search_intent="clinical_information",
+                    target_language=(active_lang if active_lang and active_lang != "en" else None)
                 )
                 
                 state.web_search_response = search_response
@@ -1153,7 +1160,10 @@ class LangGraphInformationEngine(DiagnosticEngine):
             if not getattr(state, 'requires_full_processing', True):
                 simple_system_msg = ChatMessage(
                     role=ChatRole.SYSTEM, 
-                    content="""You are CLARA, a helpful medical information assistant. Provide clear, accurate medical information. For general medical questions, draw on your medical knowledge. Keep responses concise and helpful."""
+                    content="""You are CLARA, a helpful medical information assistant. Provide clear, accurate medical information. For general medical questions, draw on your medical knowledge. Keep responses concise and helpful.
+
+Link policy (STRICT for EHR): For every EHR-derived item you mention (vital, lab value, medication, allergy, diagnosis, imaging finding, date, encounter, note), include a clickable markdown link immediately after that specific item, within the same sentence, e.g., "BP 128/76 (2024‑05‑01) [Vitals](URL)" or "metformin 500 mg BID [Meds](URL)". Do this for each individual item you list. Do not group EHR links in a separate Sources section. If no URL is available, write "(from EHR, no link available)" immediately after the item.
+"""
                 )
                 messages = [simple_system_msg]
 
