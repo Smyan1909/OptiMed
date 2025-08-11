@@ -57,7 +57,7 @@ class OpenAIGPT5MiniClient(LLMClient):
                 openai_msgs.append({"role": "system", "content": json_instruction})
 
         # Use Chat Completions for compatibility with existing flow
-        response = await self._client.chat.completions.create(
+        response = await self._client.chat.completions.create(  # type: ignore
             model=self._model,
             messages=openai_msgs,
             max_completion_tokens=max_tokens or 32000,
@@ -101,7 +101,7 @@ class OpenAIGPT5MiniClient(LLMClient):
             else:
                 openai_msgs.append({"role": "system", "content": json_instruction})
 
-        stream = await self._client.chat.completions.create(
+        stream = await self._client.chat.completions.create(  # type: ignore
             model=self._model,
             messages=openai_msgs,
             max_completion_tokens=max_tokens or 32000,
