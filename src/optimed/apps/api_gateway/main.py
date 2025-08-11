@@ -22,7 +22,7 @@ from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalE
 
 from pydantic import BaseModel
 
-_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service = create_app_dependencies()
+_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service = create_app_dependencies()
 
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
@@ -194,6 +194,19 @@ class DICOMUploadResponse(BaseModel):
     image_id: str
     message: str
     image: DICOMImageResponse
+
+
+class LookupRequest(BaseModel):
+    term: str
+    term_type: Optional[str] = None  # medication, diagnosis, vital, lab, general
+    patient_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+class LookupResponse(BaseModel):
+    term: str
+    summary: str
+    sources: List[Dict[str, str]]  # [{ title, url }]
+    raw_results: Optional[List[Dict[str, Any]]] = None
 
 
 class SessionListRequest(BaseModel):
@@ -2240,3 +2253,52 @@ async def get_image_generation_status(
             "available": False,
             "message": f"Error checking service: {str(e)}"
         }
+
+
+@app.post("/lookup", response_model=LookupResponse)
+async def lookup_term(
+    request: LookupRequest,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Lookup a medical term using web search (favoring medical sources, including FASS for medications) and summarize."""
+    term = request.term.strip()
+    if not term:
+        raise HTTPException(status_code=400, detail="Term is required")
+
+    # Build a source-biased query
+    query_parts = [term]
+    term_type = (request.term_type or "").lower()
+    if term_type in ("medication", "medicine", "drug"):
+        query_parts.append("site:fass.se OR site:drugs.com OR site:fda.gov")
+    elif term_type in ("diagnosis", "condition"):
+        query_parts.append("clinical guidelines site:who.int OR site:cdc.gov OR site:mayoclinic.org")
+    elif term_type in ("vital", "lab"):
+        query_parts.append("reference ranges site:who.int OR site:cdc.gov")
+    else:
+        query_parts.append("medical information")
+
+    query = " ".join(query_parts)
+
+    try:
+        web_response = await _web_search_service.search(query=query, max_results=8)
+
+        sources = [
+            {"title": r.title, "url": r.url}
+            for r in web_response.results[:5]
+        ]
+
+        # If FASS link exists, place it first
+        sources.sort(key=lambda s: ("fass.se" not in s["url"],))
+
+        return LookupResponse(
+            term=term,
+            summary=web_response.summary,
+            sources=sources,
+            raw_results=[
+                {"title": r.title, "url": r.url, "snippet": r.snippet, "score": r.relevance_score}
+                for r in web_response.results
+            ]
+        )
+    except Exception as e:
+        print(f"[Lookup] Error: {e}")
+        raise HTTPException(status_code=500, detail="Lookup failed")

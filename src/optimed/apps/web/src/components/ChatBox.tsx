@@ -3,7 +3,7 @@
 import { useState, useEffect, FormEvent, useRef } from "react";
 import { useUser } from '@/contexts/UserContext';
 import { Download, Image as ImageIcon, ExternalLink } from 'lucide-react';
-import { getGeneratedImageUrl, downloadGeneratedImage } from '@/lib/api';
+import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
 import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
@@ -83,6 +83,107 @@ function useAutosizeTextArea(textAreaRef: React.RefObject<HTMLTextAreaElement | 
   }, [textAreaRef, value, maxPx]);
 }
 
+// Small fixed overlay panel to show lookup results
+function LookupPanel({ term, onClose, patientId, sessionId }: { term: string; onClose: () => void; patientId?: string; sessionId?: string | null }) {
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<LookupResponse | null>(null);
+
+  useEffect(() => {
+    let canceled = false;
+    const run = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const data = await lookupTerm({ term, patient_id: patientId, session_id: sessionId || undefined });
+        if (!canceled) setResult(data);
+      } catch (e: any) {
+        if (!canceled) setError(e?.message || 'Lookup failed');
+      } finally {
+        if (!canceled) setLoading(false);
+      }
+    };
+    run();
+    return () => { canceled = true; };
+  }, [term, patientId, sessionId]);
+
+  return (
+    <div className="fixed bottom-6 right-6 z-50 w-full max-w-md shadow-2xl border border-gray-200 bg-white rounded-xl overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-gray-50">
+        <div className="font-semibold text-gray-800">Lookup: <span className="text-blue-700">{term}</span></div>
+        <button onClick={onClose} className="text-gray-500 hover:text-gray-800">✕</button>
+      </div>
+      <div className="p-4 max-h-96 overflow-y-auto text-sm text-gray-900">
+        {loading && (<div className="text-gray-600">Loading…</div>)}
+        {error && (<div className="text-red-600">{error}</div>)}
+        {!loading && !error && result && (
+          <div className="space-y-3">
+            <div className="prose prose-sm max-w-none">
+              <ReactMarkdown
+                components={{
+                  a: ({ href, children }: any) => (
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:text-blue-800 underline"
+                    >
+                      {children}
+                    </a>
+                  ),
+                  h1: ({ children }: any) => (
+                    <h1 className="text-base font-bold mb-2 text-gray-900">{children}</h1>
+                  ),
+                  h2: ({ children }: any) => (
+                    <h2 className="text-sm font-semibold mb-1 text-gray-900">{children}</h2>
+                  ),
+                  h3: ({ children }: any) => (
+                    <h3 className="text-sm font-medium mb-1 text-gray-900">{children}</h3>
+                  ),
+                  p: ({ children }: any) => (
+                    <p className="mb-2 text-gray-900">{children}</p>
+                  ),
+                  ul: ({ children }: any) => (
+                    <ul className="list-disc list-inside space-y-1 mb-2">{children}</ul>
+                  ),
+                  ol: ({ children }: any) => (
+                    <ol className="list-decimal list-inside space-y-1 mb-2">{children}</ol>
+                  ),
+                  code: ({ inline, children }: any) => (
+                    inline ? (
+                      <code className="bg-gray-100 text-gray-800 px-1 py-0.5 rounded text-xs font-mono">{children}</code>
+                    ) : (
+                      <pre className="bg-gray-100 text-gray-800 p-2 rounded text-xs font-mono overflow-x-auto mb-2">
+                        <code>{children}</code>
+                      </pre>
+                    )
+                  )
+                }}
+              >
+                {result.summary}
+              </ReactMarkdown>
+            </div>
+            {result.sources?.length ? (
+              <div>
+                <div className="text-xs font-semibold text-gray-700 mb-1">Sources</div>
+                <ul className="list-disc list-inside space-y-1">
+                  {result.sources.map((s, i) => (
+                    <li key={i}>
+                      <a href={s.url} target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800 underline">
+                        {s.title || s.url}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const parseLinksInText = (text: string, isUser: boolean = false) => {
   // Escape HTML first to prevent XSS
   const escapeHtml = (unsafe: string) => {
@@ -141,9 +242,11 @@ const parseLinksInText = (text: string, isUser: boolean = false) => {
 interface MessageContentProps {
   text: string;
   isUser: boolean;
+  patientId?: string;
+  sessionId?: string | null;
 }
 
-const MessageContent = ({ text, isUser }: MessageContentProps) => {
+const MessageContent = ({ text, isUser, patientId, sessionId }: MessageContentProps) => {
   // Custom components for markdown rendering
   const markdownComponents = {
     // Links
@@ -250,11 +353,55 @@ const MessageContent = ({ text, isUser }: MessageContentProps) => {
     ),
   };
   
+  // Selection-based lookup UI
+  const [selection, setSelection] = useState<string>("");
+  const [lookupTerm, setLookupTerm] = useState<string>("");
+  const [showLookup, setShowLookup] = useState<boolean>(false);
+
+  // Scope selection to this message content only
+  const contentRef = useRef<HTMLDivElement>(null);
+  const updateSelection = () => {
+    const container = contentRef.current;
+    if (!container) {
+      setSelection("");
+      return;
+    }
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) {
+      setSelection("");
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    const inContainer = container.contains(range.startContainer) && container.contains(range.endContainer);
+    setSelection(inContainer ? sel.toString().trim() : "");
+  };
+
   return (
-    <div className={`font-medium text-gray-900`}>
+    <div
+      ref={contentRef}
+      className={`font-medium text-gray-900 select-text`}
+      onMouseUp={updateSelection}
+      onKeyUp={updateSelection}
+    >
       <ReactMarkdown components={markdownComponents}>
         {text}
       </ReactMarkdown>
+      {selection && selection.length >= 2 && !isUser && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onMouseDown={(e) => { e.stopPropagation(); }}
+            onMouseUp={(e) => { e.stopPropagation(); }}
+            onClick={() => { setLookupTerm(selection); setShowLookup(true); }}
+            className="px-2 py-1 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700"
+          >
+            Lookup “{selection}”
+          </button>
+        </div>
+      )}
+      {showLookup && lookupTerm && (
+        <LookupPanel term={lookupTerm} onClose={() => setShowLookup(false)} patientId={patientId} sessionId={sessionId} />
+      )}
     </div>
   );
 };
@@ -963,11 +1110,11 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
               <div className={msg.sender === 'user' ? "max-w-[80%]" : "max-w-4xl w-full"}>
                 {msg.sender === 'user' ? (
                   <div className="px-3 py-2 text-sm rounded-xl bg-gray-200 text-gray-900 mb-1">
-                    <MessageContent text={msg.text} isUser={true} />
+                    <MessageContent text={msg.text} isUser={true} patientId={patientId} sessionId={currentSessionId} />
                   </div>
                 ) : (
                   <div className="text-sm text-gray-900 mb-1">
-                    <MessageContent text={msg.text} isUser={false}/>
+                    <MessageContent text={msg.text} isUser={false} patientId={patientId} sessionId={currentSessionId} />
                   </div>
                 )}
 

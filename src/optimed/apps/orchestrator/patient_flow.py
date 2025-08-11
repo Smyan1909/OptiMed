@@ -22,156 +22,80 @@ from optimed.apps.orchestrator.connection_service import UserEHRConnectionServic
 
 from optimed.embeddings.minilm import embed
 from optimed.embeddings.service import embed_and_store
+import re
 
 
 
 SYSTEM_MSG_PRE_MEET = ChatMessage(role=ChatRole.SYSTEM, 
-                         content="""You are CLARA, a clinical pre-consultation assistant helping doctors prepare for patient encounters.
+                         content="""You are CLARA, a clinical pre‑visit preparation assistant.
 
-                                    MODE: PRE-MEET PREPARATION
-                                    
-                                    IMPORTANT INSTRUCTIONS:
-                                    1. Analyze the patient's EHR data and previous conversations to provide a comprehensive preparation summary
-                                    2. Focus on information gathering and clinical preparation, NOT diagnosis
-                                    3. If web search results are provided, cite sources using format: "According to [Source Title](URL)"
-                                    4. Reference previous conversation history when available
-                                    5. When referencing patient data from the EHR, ALWAYS include clickable links when available using the format: "According to the EHR record ([Data Name](URL)), the patient shows..."
-                                    6. For EHR data without specific URLs, reference "EHR system records" or "electronic health record".
-                                    7. When you see DATA SOURCE TRACEABILITY information, use those URLs to create clickable links to the original EHR records.
-                                    8. Make EHR source links prominent and easily identifiable in your response.
-                                    9. YOU MUST provide the source for every piece of information you present, whether from the EHR, web search, or previous conversations.
-                                    
-                                    YOUR ROLE:
-                                    - Summarize key patient information from EHR and chat history
-                                    - Identify gaps in patient data that need clarification
-                                    - Suggest specific questions the doctor should ask during the encounter
-                                    - Recommend physical examinations or tests to perform
-                                    - Highlight concerning findings that require immediate attention
-                                    - Provide context from similar cases or medical literature when relevant
-                                    
-                                    RESPONSE FORMAT:
-                                    ## Patient Summary
-                                    [Brief overview of patient and key concerns]
-                                    
-                                    ## Key Information from Records
-                                    [Relevant EHR data and previous conversations]
-                                    
-                                    ## Questions to Ask Patient
-                                    [Specific questions to gather missing information]
-                                    
-                                    ## Recommended Examinations/Tests
-                                    [Physical exams and diagnostic tests to consider]
-                                    
-                                    ## Areas of Concern
-                                    [Items requiring immediate attention]""")
+                                    General response guideline (apply only when helpful for the current question):
+                                    - Keep responses concise yet complete (aim for 3–5 short sections or 8–15 bullets; expand only if complexity requires).
+                                    - Always answer in standard Markdown.
+                                      • If you create sections, start lines with '## ' for section headers and '### ' for subheaders.
+                                      • Put a blank line before and after each header.
+                                      • Do not simulate headers with numbers or bold; do not place headers inside list items.
+                                      • Prefer bullet lists for checklists and action items; use tables for compact comparisons.
+                                    - Link policy: use inline markdown links [Label](URL) for EHR/web sources. If no label is obvious for EHR, use [EHR record](URL).
+                                    - Match the user's language. Avoid boilerplate and preambles.
+
+                                    Pre‑visit focus (use any subset that fits):
+                                    - Key Facts (recent vitals, meds, allergies, notable history) with EHR links.
+                                    - Issues To Address Today (prioritized list).
+                                    - Questions/Checklist for the visit.
+                                    - Next Steps / Coordination.
+                                    """)
 
 SYSTEM_MSG_POST_MEET = ChatMessage(role=ChatRole.SYSTEM, 
-                         content="""You are CLARA, a clinical diagnostic assistant helping with post-encounter analysis and care planning.
+                         content="""You are CLARA, a post‑encounter clinical analysis assistant.
 
-                                    MODE: POST-MEET ANALYSIS
-                                    
-                                    IMPORTANT INSTRUCTIONS:
-                                    1. Use ALL available information (EHR, conversation history, examination findings) for comprehensive analysis
-                                    2. Generate differential diagnoses with evidence-based reasoning
-                                    3. Suggest treatment plans when diagnosis is established
-                                    4. If web search results are provided, cite sources using format: "According to [Source Title](URL)"
-                                    5. Reference previous conversation history and examination findings
-                                    6. When referencing patient data from the EHR, ALWAYS include clickable links when available using the format: "According to the EHR record ([Data Name](URL)), the patient shows..."
-                                    7. For EHR data without specific URLs, reference "EHR system records" or "electronic health record".
-                                    8. When you see DATA SOURCE TRACEABILITY information, use those URLs to create clickable links to the original EHR records.
-                                    9. Make EHR source links prominent and easily identifiable in your response.
-                                    10. YOU MUST provide the source for every piece of information you present, whether from the EHR, web search, or previous conversations.
-                                    
-                                    YOUR ROLE:
-                                    - Analyze all patient data to generate differential diagnoses
-                                    - Provide evidence-based reasoning for each diagnosis
-                                    - Suggest treatment plans for established diagnoses
-                                    - Recommend additional tests or specialist referrals
-                                    - Consider patient-specific factors (age, comorbidities, medications)
-                                    - Provide follow-up care recommendations
-                                    
-                                    RESPONSE FORMAT:
-                                    ## Clinical Assessment
-                                    [Summary of findings and clinical picture]
-                                    
-                                    ## Differential Diagnoses
-                                    [List of possible diagnoses with likelihood and evidence]
-                                    
-                                    ## Recommended Treatment Plan
-                                    [Specific treatments if diagnosis is established]
-                                    
-                                    ## Additional Testing
-                                    [Further tests or investigations needed]
-                                    
-                                    ## Follow-up Care
-                                    [Monitoring, referrals, and next steps]""")
+                                    General response guideline (apply only when helpful for the current question):
+                                    - Aim for 3–6 compact sections or 8–15 bullets; be clear and avoid verbosity.
+                                    - Always answer in standard Markdown.
+                                      • If you create sections, start lines with '## ' for section headers and '### ' for subheaders.
+                                      • Put a blank line before and after each header.
+                                      • Do not simulate headers with numbers or bold; do not place headers inside list items.
+                                      • Use bullets/tables for clarity.
+                                    - Link policy: inline markdown links [Label](URL) for EHR/web; default EHR label [EHR record](URL) if none.
+                                    - Use all available information (EHR, exams, history). Match the user's language.
+
+                                    Suggested sections (use any subset that fits):
+                                    - Clinical Assessment
+                                    - Differential Diagnoses (≤5, brief evidence)
+                                    - Plan / Orders
+                                    - Follow‑up
+                                    - Sources
+                                    """)
 
 SYSTEM_MSG_RESEARCH = ChatMessage(role=ChatRole.SYSTEM, 
-                         content="""You are CLARA, a clinical research assistant for complex case analysis using all available medical resources.
+                         content="""You are CLARA, a clinical research assistant for complex or atypical cases.
 
-                                    MODE: RESEARCH & DEEP ANALYSIS
-                                    
-                                    IMPORTANT INSTRUCTIONS:
-                                    1. Conduct comprehensive analysis using ALL resources (EHR, literature, web search, previous cases)
-                                    2. Focus on complex, rare, or challenging cases requiring deep investigation
-                                    3. MUST cite all sources using format: "According to [Source Title](URL)" for web sources
-                                    4. Provide evidence-based analysis with current medical literature
-                                    5. Consider multiple perspectives and treatment approaches
-                                    6. When referencing patient data from the EHR, ALWAYS include clickable links when available using the format: "According to the EHR record ([Data Name](URL)), the patient shows..."
-                                    7. For EHR data without specific URLs, reference "EHR system records" or "electronic health record".
-                                    8. When you see DATA SOURCE TRACEABILITY information, use those URLs to create clickable links to the original EHR records.
-                                    9. Make EHR source links prominent and easily identifiable in your response.
-                                    10. YOU MUST provide the source for every piece of information you present, whether from the EHR, web search, or previous conversations.
-                                    
-                                    YOUR ROLE:
-                                    - Conduct deep research into complex medical cases
-                                    - Analyze rare conditions and atypical presentations
-                                    - Review current medical literature and guidelines
-                                    - Compare treatment approaches and outcomes
-                                    - Identify cutting-edge therapies or clinical trials
-                                    - Provide comprehensive differential analysis
-                                    - Suggest expert consultations when appropriate
-                                    
-                                    RESPONSE FORMAT:
-                                    ## Case Complexity Analysis
-                                    [Why this case requires research mode]
-                                    
-                                    ## Literature Review
-                                    [Current evidence and guidelines with citations]
-                                    
-                                    ## Comprehensive Differential
-                                    [All possible diagnoses including rare conditions]
-                                    
-                                    ## Treatment Options Analysis
-                                    [Comparison of available treatments with evidence]
-                                    
-                                    ## Expert Recommendations
-                                    [Specialist consultations and advanced testing]
-                                    
-                                    ## Clinical Pearls
-                                    [Key insights and learning points from research]""")
+                                    General response guideline (apply only when helpful for the current question):
+                                    - Provide rich, well‑supported but focused analysis (3–6 sections); avoid unnecessary length.
+                                    - Always answer in standard Markdown.
+                                      • If you create sections, use '## ' headers and '### ' subheaders with blank lines around them.
+                                      • Prefer bullets/tables for comparisons and evidence summaries.
+                                    - Link policy: cite web sources inline as [Title](URL); include EHR links as [Label](URL) when available.
+
+                                    Suggested sections (choose as needed):
+                                    - Clinical Question / Context
+                                    - Evidence Summary (with key citations)
+                                    - Differential / Options
+                                    - Recommendations / Considerations
+                                    - Sources
+                                    """)
 
 SYSTEM_MSG_CHAT = ChatMessage(role=ChatRole.SYSTEM, 
-                         content="""You are CLARA, a clinical reasoning assistant and medical chat companion.
+                         content="""You are CLARA, a clinical chat companion.
                          
-                                    IMPORTANT INSTRUCTIONS:
-                                    1. If you see previous conversation history marked between === lines, YOU MUST acknowledge and reference it in your response.
-                                    2. If web search results are provided, YOU MUST cite the specific sources by including the titles and URLs in your response.
-                                    3. When citing web sources, use this format: "According to [Source Title](URL)" or "As reported in [Source Title](URL)"
-                                    4. Always include at least 2-3 source citations when web search results are available.
-                                    5. DO NOT add source citations when web search results are not used.
-                                    6. When referencing patient data from the EHR, ALWAYS include clickable links when available using the format: "According to the EHR record ([Data Name](URL)), the patient shows..."
-                                    7. For EHR data without specific URLs, reference "EHR system records" or "electronic health record".
-                                    8. When you see DATA SOURCE TRACEABILITY information, use those URLs to create clickable links to the original EHR records.
-                                    9. Make EHR source links prominent and easily identifiable in your response.
-                                    10. YOU MUST provide the source for every piece of information you present, whether from the EHR, web search, or previous conversations.
-                                    
-                                    - Engage in friendly conversation
-                                    - Provide general health advice and wellness tips
-                                    - Focus on being helpful and informative
-                                    - Reference previous conversation history to maintain context
-                                    - Continue conversations naturally based on chat history
-                                    - Always cite your sources when providing medical information""")
+                                    General response guideline (apply only when helpful for the current question):
+                                    - Provide a helpful, medium‑length reply (more than a short paragraph, less than an essay).
+                                    - Always answer in standard Markdown.
+                                      • If you create sections, use '## ' headers and '### ' subheaders with blank lines around them.
+                                      • Prefer bullets for enumerations.
+                                    - Reference prior chat context when relevant. Link web/EHR sources inline as [Label](URL).
+                                    - Match the user's language and tone.
+                                    """)
                                     
 
 class FlowState(BaseModel):
@@ -1441,7 +1365,9 @@ Please reference this generated image in your response when relevant and explain
                 
                 async for update in self._streaming_llm.chat_with_reasoning_stream(messages=messages, state=state, reasoning_prompt=reasoning_prompt):
                     if update["type"] == "content":
-                        state.streaming_response = update.get("accumulated_content", "")
+                        # Ensure any raw URLs for EHR are formatted as markdown links on the fly
+                        accumulated = update.get("accumulated_content", "")
+                        state.streaming_response = self._format_ehr_links(accumulated)
 
                         chunk_update = {
                             "type": "response_chunk",
@@ -1459,9 +1385,12 @@ Please reference this generated image in your response when relevant and explain
                             await state.stream_callback(chunk_update)
 
                     elif update["type"] == "completion":
+                        # Finalize with hyperlink formatting and normalize markdown headings
                         state.llm_response = ChatMessage(
                             role = ChatRole.ASSISTANT,
-                            content=update.get("full_content", state.streaming_response),
+                            content=self._normalize_markdown(
+                                self._format_ehr_links(update.get("full_content", state.streaming_response))
+                            ),
                             metadata={
                                 "reasoning": update.get("reasoning", ""),
                                 "reasoning_steps": update.get("reasoning_steps", []),
@@ -1469,7 +1398,13 @@ Please reference this generated image in your response when relevant and explain
                         )
                         break
             else:
-                state.llm_response = await self._streaming_llm.chat_with_reasoning(messages=messages, state=state, reasoning_prompt=reasoning_prompt)
+                llm_resp = await self._streaming_llm.chat_with_reasoning(messages=messages, state=state, reasoning_prompt=reasoning_prompt)
+                # Post-process to ensure EHR URLs are hyperlinks and normalize markdown headings
+                state.llm_response = ChatMessage(
+                    role=llm_resp.role,
+                    content=self._normalize_markdown(self._format_ehr_links(llm_resp.content)),
+                    metadata=llm_resp.metadata
+                )
 
             # Log user action (same as before)
             if state.user_id and state.user_context:
@@ -2640,6 +2575,83 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
 
         return _builder.compile()
 
+    def _format_ehr_links(self, text: str) -> str:
+        """Convert bare EHR URLs in parentheses to markdown links if preceded by a label.
+
+        Examples converted:
+        - Allergy (mould): https://... -> Allergy (mould): [EHR record](https://...)
+        - According to the EHR record (Allergy Intolerance): https://... -> According to the EHR record ([Allergy Intolerance](https://...))
+        - If already in [title](url) form, leave as-is.
+        """
+        if not text:
+            return text
+
+        # Already formatted [title](url) should be preserved
+        # Pattern to find bare URLs
+        url_pattern = r"(?P<url>https?://[\w\-\.\:/%#\?=&]+)"
+
+        def repl(match: re.Match[str]) -> str:
+            url = match.group("url")
+            # If the url is already part of a markdown link, don't change
+            # Look behind in a small window
+            start = max(match.start() - 60, 0)
+            context = text[start:match.start()]
+            if "](" in context:  # naive safeguard
+                return url
+            # Try to capture a preceding label inside parentheses like (Label): URL or ([Label]): URL
+            # We will replace just the URL with [EHR record](URL) if no better label
+            return f"[EHR record]({url})"
+
+        # Replace bare URLs not already markdown-formatted
+        return re.sub(url_pattern, repl, text)
+
+    def _normalize_markdown(self, text: str) -> str:
+        """Normalize common markdown issues that can break rendering.
+
+        - Ensure a blank line before headers (##, ###) if missing.
+        - Promote common label lines that precede a list into real headers.
+        - Remove trailing/duplicate spaces after header markers.
+        """
+        if not text:
+            return text
+
+        # Ensure blank line before headers and infer headers for standalone label lines
+        lines = text.split('\n')
+        normalized: list[str] = []
+        for i, raw_line in enumerate(lines):
+            line = raw_line
+            is_header = line.startswith('## ') or line.startswith('### ')
+            if is_header and normalized and normalized[-1].strip() != '':
+                normalized.append('')  # insert blank line
+            # Strip extra spaces/tabs after header markers
+            if line.startswith('##'):
+                line = line.replace('##\t', '## ').replace('##  ', '## ')
+            if line.startswith('###'):
+                line = line.replace('###\t', '### ').replace('###  ', '### ')
+
+            # Heuristic: if this line looks like a section label and next line is a list, promote to header
+            if not is_header:
+                next_line = lines[i + 1] if i + 1 < len(lines) else ''
+                looks_like_list = (
+                    next_line.lstrip().startswith(('-', '*')) or
+                    next_line.lstrip().startswith(tuple(str(d) + '.' for d in range(1, 10)))
+                )
+                looks_like_label = (
+                    len(line.strip()) > 0 and
+                    not line.lstrip().startswith(('#', '-', '*', '>', '`')) and
+                    ':' not in line and
+                    len(line.strip()) <= 80
+                )
+                if looks_like_list and looks_like_label:
+                    if normalized and normalized[-1].strip() != '':
+                        normalized.append('')
+                    normalized.append(f"## {line.strip()}")
+                    continue
+
+            normalized.append(line)
+
+        return '\n'.join(normalized)
+
 
     def _create_reasoning_prompt(self, state: FlowState) -> str:
         """Create a reasoning prompt based on the current context."""
@@ -3009,7 +3021,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
             primary_icd=data["primary_icd"], 
             differential=data["differential"],
             confidence=data["confidence"],
-            explanation=data["llm_response"].content if data["llm_response"] else "",
+            explanation=self._format_ehr_links(data["llm_response"].content) if data["llm_response"] else "",
             created_by_user_id=data.get("user_id"),
             is_ai_generated=True,
             session_id=data.get("session_id"),
@@ -3085,7 +3097,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
             }
 
         return {
-            "explanation": data["llm_response"].content if data["llm_response"] else "",
+            "explanation": self._format_ehr_links(data["llm_response"].content) if data["llm_response"] else "",
             "created_by_user_id": data.get("user_id"),
             "is_ai_generated": True,
             "web_search_info": web_search_info,

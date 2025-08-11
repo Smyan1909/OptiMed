@@ -21,45 +21,30 @@ from optimed.apps.orchestrator.connection_service import UserEHRConnectionServic
 
 from optimed.embeddings.minilm import embed
 from optimed.embeddings.service import embed_and_store
+import re
 
 
 
 # Single system message for information relay only
 SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM, 
-                         content="""You are CLARA, a clinical information assistant that helps healthcare professionals access and understand patient information and medical knowledge.
+                         content="""You are CLARA, a clinical information assistant.
 
-                                    IMPORTANT INSTRUCTIONS:
-                                    1. If you see previous conversation history marked between === lines, YOU MUST use it when generating your response. ONLY reference it if it makes sense contextually.
-                                    2. If web search results are provided, YOU MUST cite the specific sources by including the titles and URLs in your response.
-                                    3. When citing web sources, use this format: "According to [Source Title](URL)" or "As reported in [Source Title](URL)"
-                                    4. Always include at least 2-3 source citations when web search results are available.
-                                    5. DO NOT add source citations from web sources when web search results are not used.
-                                    6. When referencing patient data from the EHR, ALWAYS include clickable links when available using the format: "According to the EHR record ([Data Name](URL)), the patient shows..."
-                                    7. For EHR data without specific URLs, reference "EHR system records" or "electronic health record".
-                                    8. When you see DATA SOURCE TRACEABILITY information, use those URLs to create clickable links to the original EHR records.
-                                    9. Make EHR source links prominent and easily identifiable in your response.
-                                    10. YOU MUST provide the source for every piece of information you present, whether from the EHR, web search, or previous conversations.
-                                    11. NEVER provide diagnostic conclusions, treatment recommendations, or medical advice. You are not a medical device or diagnostic tool.
-                                    12. All answers should be formulated so that the information is straight to the point without excessive elaboration or unnecessary details.
-                                    13. If there is an obvious follow-up question that would help clarify the user's intent, you can suggest it at the end of your response.
+                                    General response guideline (apply only when helpful for the current question):
+                                    - Provide a thorough, well‑developed answer while remaining concise (aim for 3–5 short sections or 8–15 bullets).
+                                    - Always answer in standard Markdown.
+                                      • If you create sections, start lines with '## ' for section headers and '### ' for subheaders.
+                                      • Put a blank line before and after each header.
+                                      • Do not simulate headers with numbers or bold; do not place headers inside list items.
+                                      • Use bullet lists and tables where they help readability; avoid filler.
+                                    - Use previous conversation history (between === lines) when relevant.
+                                    - If web search results are used, cite with markdown links like [Source Title](URL); otherwise omit citations.
+                                    - When referencing EHR data and a URL is available, include a clickable markdown link like ([Data Name](URL)); otherwise reference the EHR system.
+                                    - Format any raw URLs as markdown hyperlinks.
 
-                                    YOUR ROLE:
-                                    - Answer questions about patient demographics, medical history, and records
-                                    - Provide information about medications, dosages, and interactions
-                                    - Explain medical procedures and terminology
-                                    - Share factual medical information from reliable sources
-                                    - Help locate and understand information in patient records
-                                    - Engage in helpful medical conversations and provide general health guidance
-                                    - Reference previous conversation history to maintain context
-                                    - Provide clear attribution to data sources when available with clickable links
-                                    
-                                    IMPORTANT RESTRICTIONS:
-                                    - You provide information and educational content, not diagnostic conclusions
-                                    - You do not generate differential diagnoses or treatment recommendations
-                                    - You do not interpret symptoms for diagnostic purposes
-                                    - Always refer clinical decision-making to qualified healthcare providers
-                                    
-                                    Keep responses helpful, informative, and factual while emphasizing that clinical decisions should be made by qualified healthcare providers.""")
+                                    Restrictions:
+                                    - Provide information/education, not diagnostic conclusions or treatment recommendations.
+                                    - Refer clinical decision-making to qualified healthcare providers.
+                                    """)
 
 
 class FlowState(BaseModel):
@@ -1345,7 +1330,10 @@ Please reference this generated image in your response when relevant and explain
                 
                 async for update in self._streaming_llm.chat_with_reasoning_stream(messages=messages, state=state, reasoning_prompt=reasoning_prompt):
                     if update["type"] == "content":
-                        state.streaming_response = update.get("accumulated_content", "")
+                        # Format EHR links during streaming accumulation
+                        state.streaming_response = self._normalize_markdown(
+                            self._format_ehr_links(update.get("accumulated_content", ""))
+                        )
 
                         chunk_update = {
                             "type": "response_chunk",
@@ -1363,9 +1351,12 @@ Please reference this generated image in your response when relevant and explain
                             await state.stream_callback(chunk_update)
 
                     elif update["type"] == "completion":
+                        # Finalize with hyperlink formatting and normalized markdown
                         state.llm_response = ChatMessage(
                             role = ChatRole.ASSISTANT,
-                            content=update.get("full_content", state.streaming_response),
+                            content=self._normalize_markdown(
+                                self._format_ehr_links(update.get("full_content", state.streaming_response))
+                            ),
                             metadata={
                                 "reasoning": update.get("reasoning", ""),
                                 "reasoning_steps": update.get("reasoning_steps", []),
@@ -1373,7 +1364,12 @@ Please reference this generated image in your response when relevant and explain
                         )
                         break
             else:
-                state.llm_response = await self._streaming_llm.chat_with_reasoning(messages=messages, state=state, reasoning_prompt=reasoning_prompt)
+                llm_resp = await self._streaming_llm.chat_with_reasoning(messages=messages, state=state, reasoning_prompt=reasoning_prompt)
+                state.llm_response = ChatMessage(
+                    role=llm_resp.role,
+                    content=self._normalize_markdown(self._format_ehr_links(llm_resp.content)),
+                    metadata=llm_resp.metadata
+                )
 
             # Log user action (same as before)
             if state.user_id and state.user_context:
@@ -1547,6 +1543,70 @@ Please reference this generated image in your response when relevant and explain
         _builder.add_edge("store_assistant_response", END)
 
         return _builder.compile()
+
+    def _format_ehr_links(self, text: str) -> str:
+        """Convert bare URLs to markdown hyperlinks to ensure clickability.
+
+        If a URL is already embedded in [title](url) format, it is not modified.
+        """
+        if not text:
+            return text
+
+        url_pattern = r"(?P<url>https?://[\w\-\.\:/%#\?=&]+)"
+
+        def repl(match: re.Match[str]) -> str:
+            url = match.group("url")
+            # Avoid altering existing markdown links by checking preceding context
+            start = max(match.start() - 60, 0)
+            context = text[start:match.start()]
+            if "](" in context:
+                return url
+            return f"[EHR record]({url})"
+
+        return re.sub(url_pattern, repl, text)
+
+    def _normalize_markdown(self, text: str) -> str:
+        """Normalize common markdown issues that can break rendering.
+
+        - Ensure a blank line before headers (##, ###) if missing.
+        - Promote common label lines that precede a list into real headers.
+        - Trim extra spaces after header markers.
+        """
+        if not text:
+            return text
+
+        lines = text.split('\n')
+        normalized: list[str] = []
+        for i, raw_line in enumerate(lines):
+            line = raw_line
+            is_header = line.startswith('## ') or line.startswith('### ')
+            if is_header and normalized and normalized[-1].strip() != '':
+                normalized.append('')
+            if line.startswith('##'):
+                line = line.replace('##\t', '## ').replace('##  ', '## ')
+            if line.startswith('###'):
+                line = line.replace('###\t', '### ').replace('###  ', '### ')
+            # Heuristic: promote standalone label preceding a list to a header
+            if not is_header:
+                next_line = lines[i + 1] if i + 1 < len(lines) else ''
+                looks_like_list = (
+                    next_line.lstrip().startswith(('-', '*')) or
+                    next_line.lstrip().startswith(tuple(str(d) + '.' for d in range(1, 10)))
+                )
+                looks_like_label = (
+                    len(line.strip()) > 0 and
+                    not line.lstrip().startswith(('#', '-', '*', '>', '`')) and
+                    ':' not in line and
+                    len(line.strip()) <= 80
+                )
+                if looks_like_list and looks_like_label:
+                    if normalized and normalized[-1].strip() != '':
+                        normalized.append('')
+                    normalized.append(f"## {line.strip()}")
+                    continue
+            normalized.append(line)
+
+        return '\n'.join(normalized)
 
 
     def _create_reasoning_prompt(self, state: FlowState) -> str:
