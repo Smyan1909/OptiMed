@@ -6,8 +6,7 @@ from optimed.apps.orchestrator.connection_service import UserEHRConnectionServic
 from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
 from optimed.adapters.smart_fhir.repository import SMARTFHIRRepository
 from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
-from optimed.adapters.anthropic_claude.journal_client import AnthropicClaudeJournalClient
-from optimed.adapters.openai_gpt.client import OpenAIGPT4oClient # type: ignore
+from optimed.adapters.openai_gpt.gpt5_mini_client import OpenAIGPT5MiniClient # type: ignore
 from optimed.adapters.user_repository.pg_user_repository import PGUserRepository
 from optimed.adapters.user_repository.pg_ehr_connection_repository import PGUserEHRConnectionRepository
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine, ImageGenerationService, GeneratedImageRepository, LLMClient
@@ -63,7 +62,8 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
                                                       ImageAnalysisEngine,
                                                       Optional[ImageGenerationService],
                                                       Optional[GeneratedImageRepository],
-                                                      LLMClient]:
+                                                      LLMClient,
+                                                      TavilyWebSearchService]:
     """Factory function to wire up all application dependencies."""
 
     # Load environment variables from .env file
@@ -71,8 +71,9 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
     # Create repositories
     fhir_repo: FHIRRepository = HAPIFHIRRepository() if not use_smart else create_smart_fhir_repository()
     vector_store: VectorStore = PGVectorAdapter(dsn=str(os.getenv("PGVECTOR_DSN")))
-    llm_client = OpenAIGPT4oClient()
-    journal_client = AnthropicClaudeJournalClient()
+    # Use fast GPT-5 mini for general LLM (minimal reasoning effort)
+    llm_client = OpenAIGPT5MiniClient()
+    journal_client = OpenAIGPT5MiniClient()
     user_repo: UserRepository = PGUserRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
     
     # Initialize image generation service if configured
@@ -148,4 +149,4 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
         generated_image_repo=generated_image_repo,  
     )
     
-    return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine, image_generation_service, generated_image_repo, journal_client
+    return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine, image_generation_service, generated_image_repo, journal_client, web_search_service

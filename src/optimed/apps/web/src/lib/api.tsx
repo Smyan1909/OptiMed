@@ -211,6 +211,20 @@ export interface GeneratedImageResponse {
   model_info: Record<string, any>;
 }
 
+export interface LookupRequest {
+  term: string;
+  term_type?: 'medication' | 'diagnosis' | 'vital' | 'lab' | 'general' | string;
+  patient_id?: string;
+  session_id?: string;
+}
+
+export interface LookupResponse {
+  term: string;
+  summary: string;
+  sources: { title: string; url: string }[];
+  raw_results?: { title: string; url: string; snippet?: string; score?: number }[];
+}
+
 
 
 // Session management functions
@@ -657,5 +671,20 @@ export async function checkImageGenerationStatus(): Promise<{ enabled: boolean; 
     return { enabled: false, available: false, message: 'Service check failed' };
   }
   
+  return res.json();
+}
+
+export async function lookupTerm(request: LookupRequest): Promise<LookupResponse> {
+  const res = await fetch('/api/lookup', {
+    method: 'POST',
+    headers: getSessionHeaders(),
+    body: JSON.stringify(request)
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Lookup failed: ${res.status} - ${errorText}`);
+  }
+
   return res.json();
 }

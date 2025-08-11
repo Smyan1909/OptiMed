@@ -72,7 +72,8 @@ class TavilyWebSearchService(WebSearchService):
         query: str, 
         max_results: int = 10,
         patient_context: Optional[str] = None,
-        search_intent: Optional[str] = None
+        search_intent: Optional[str] = None,
+        target_language: Optional[str] = None
     ) -> WebSearchResponse:
         """Perform web search using Tavily API."""
         
@@ -85,51 +86,72 @@ class TavilyWebSearchService(WebSearchService):
         
         try:
             # Enhance query for medical context
-           
             enhanced_query = await self._enhance_medical_query(query, patient_context)
-            
-            # Make Tavily API call
-            payload = {
-                "api_key": self.api_key,
-                "query": enhanced_query,
-                "search_depth": "advanced",
-                "include_domains": [
-                    "pubmed.ncbi.nlm.nih.gov",
-                    "uptodate.com", 
-                    "medscape.com",
-                    "drugs.com",
-                    "mayoclinic.org",
-                    "who.int",
-                    "cdc.gov",
-                    "fda.gov"
-                ],
-                "max_results": max_results
-            }
-            
-            
-            response = await self.client.post(f"{self.base_url}/search", json=payload, timeout=60.0)
-            
-            response.raise_for_status()
-            data = response.json()
-            
-            # Parse results
-            results = []
-            sources_used = []
-            
-            for item in data.get("results", []):
-                result = WebSearchResult(
-                    url=item.get("url", ""),
-                    title=item.get("title", ""),
-                    snippet=item.get("content", ""),
-                    relevance_score=item.get("score", 0.0),
-                    source_type=self._classify_source(item.get("url", ""))
-                )
-                results.append(result)
-                sources_used.append(item.get("url", ""))
-            
-            
-            # Generate summary using LLM
-            summary = await self._generate_summary(query, results, patient_context)
+
+            # Domain preferences based on language
+            prefer_sv = (target_language or "").lower().startswith("sv")
+            swedish_domains = [
+                "fass.se",
+                "lakemedelsverket.se",
+                "janusinfo.se",
+                "socialstyrelsen.se",
+                "1177.se",
+                "vardhandboken.se",
+            ]
+            english_domains = [
+                "pubmed.ncbi.nlm.nih.gov",
+                "uptodate.com",
+                "medscape.com",
+                "drugs.com",
+                "fda.gov",
+                "mayoclinic.org",
+                "who.int",
+                "cdc.gov",
+                "nhs.uk",
+            ]
+
+            async def tavily(domain_list: list[str]) -> dict:
+                payload = {
+                    "api_key": self.api_key,
+                    "query": enhanced_query,
+                    "search_depth": "advanced",
+                    "include_domains": domain_list,
+                    "max_results": max_results,
+                }
+                resp = await self.client.post(f"{self.base_url}/search", json=payload, timeout=60.0)
+                resp.raise_for_status()
+                return resp.json()
+
+            # First pass: language-preferred domains if Swedish requested, else English
+            primary_domains = swedish_domains if prefer_sv else english_domains
+            data = await tavily(primary_domains)
+
+            def parse_results(raw: dict) -> tuple[list[WebSearchResult], list[str]]:
+                parsed_results: list[WebSearchResult] = []
+                used: list[str] = []
+                for item in raw.get("results", []):
+                    result = WebSearchResult(
+                        url=item.get("url", ""),
+                        title=item.get("title", ""),
+                        snippet=item.get("content", ""),
+                        relevance_score=item.get("score", 0.0),
+                        source_type=self._classify_source(item.get("url", ""))
+                    )
+                    parsed_results.append(result)
+                    used.append(item.get("url", ""))
+                return parsed_results, used
+
+            results, sources_used = parse_results(data)
+
+            # If Swedish requested but no Swedish domains are present, fallback to English domains
+            if prefer_sv:
+                has_sv = any(any(dom in (r.url or "") for dom in swedish_domains) for r in results)
+                if not has_sv:
+                    fallback_data = await tavily(english_domains)
+                    results, sources_used = parse_results(fallback_data)
+
+            # Generate summary using LLM (still in requested target language)
+            summary = await self._generate_summary(query, results, patient_context, target_language)
             
             
 
@@ -179,7 +201,8 @@ class TavilyWebSearchService(WebSearchService):
         self, 
         query: str, 
         results: List[WebSearchResult], 
-        patient_context: Optional[str]
+        patient_context: Optional[str],
+        target_language: Optional[str] = None
     ) -> str:
         """Generate AI summary of search results."""
         
@@ -210,6 +233,7 @@ class TavilyWebSearchService(WebSearchService):
         4. Is appropriate for healthcare professionals
         
         Keep the summary under 200 words and focus on actionable medical information.
+        {f"\nImportant language policy: Respond in '{target_language}'." if target_language else ''}
         """
         
         try:

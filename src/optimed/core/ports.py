@@ -119,26 +119,32 @@ class VisionLLMClient(Protocol):
 
 class LLMClient(Protocol):
 
+            # --- runtime definitions ---
     async def chat(
         self,
         messages: Sequence[ChatMessage],
         json_mode: bool = False,
+        *,
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> ChatMessage:
         """Send a chat message sequence to the LLM and get a response."""
         ...
+
+    # --- chat_stream ---
     
     async def chat_stream(
         self,
         messages: Sequence[ChatMessage],
         json_mode: bool = False,
+        *,
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream chat responses from the LLM."""
         ...
-
+    
+    
 class VectorStore(Protocol):
 
     """pgvector / Pinecone / FAISS – whatever backs similarity search."""
@@ -559,7 +565,8 @@ class WebSearchService(Protocol):
         query: str, 
         max_results: int = 10,
         patient_context: Optional[str] = None,
-        search_intent: Optional[str] = None
+        search_intent: Optional[str] = None,
+        target_language: Optional[str] = None
     ) -> WebSearchResponse:
         """Perform a web search and return structured results."""
         ...

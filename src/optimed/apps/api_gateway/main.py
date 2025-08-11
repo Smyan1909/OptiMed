@@ -22,7 +22,7 @@ from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalE
 
 from pydantic import BaseModel
 
-_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service = create_app_dependencies()
+_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service = create_app_dependencies()
 
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
@@ -194,6 +194,19 @@ class DICOMUploadResponse(BaseModel):
     image_id: str
     message: str
     image: DICOMImageResponse
+
+
+class LookupRequest(BaseModel):
+    term: str
+    term_type: Optional[str] = None  # medication, diagnosis, vital, lab, general
+    patient_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+class LookupResponse(BaseModel):
+    term: str
+    summary: str
+    sources: List[Dict[str, str]]  # [{ title, url }]
+    raw_results: Optional[List[Dict[str, Any]]] = None
 
 
 class SessionListRequest(BaseModel):
@@ -2240,3 +2253,135 @@ async def get_image_generation_status(
             "available": False,
             "message": f"Error checking service: {str(e)}"
         }
+
+
+@app.post("/lookup", response_model=LookupResponse)
+async def lookup_term(
+    request: LookupRequest,
+    user_ctx: dict = Depends(get_user_context),
+    accept_language: str | None = Header(default=None, alias="Accept-Language")
+):
+    """Lookup a medical term using web search (favoring medical sources, including FASS for medications) and summarize."""
+    term = request.term.strip()
+    if not term:
+        raise HTTPException(status_code=400, detail="Term is required")
+
+    # Build a source-biased query
+    query_parts = [term]
+    term_type = (request.term_type or "").lower()
+    if term_type in ("medication", "medicine", "drug"):
+        query_parts.append("site:fass.se OR site:drugs.com OR site:fda.gov")
+    elif term_type in ("diagnosis", "condition"):
+        query_parts.append("clinical guidelines site:who.int OR site:cdc.gov OR site:mayoclinic.org")
+    elif term_type in ("vital", "lab"):
+        query_parts.append("reference ranges site:who.int OR site:cdc.gov")
+    else:
+        query_parts.append("medical information")
+
+    query = " ".join(query_parts)
+
+    try:
+        # Determine language preference from Accept-Language header
+        active_lang = "en"
+        try:
+            if accept_language:
+                primary = str(accept_language).split(',')[0]
+                primary = primary.split(';')[0].strip().lower()
+                active_lang = primary or "en"
+            else:
+                active_lang = "en"
+        except Exception:
+            active_lang = "en"
+
+
+        web_response = await _web_search_service.search(
+            query=query,
+            max_results=8,
+            target_language=(active_lang if active_lang != "en" else None)
+        )
+
+        sources = [
+            {"title": r.title, "url": r.url}
+            for r in web_response.results[:5]
+        ]
+
+        # If FASS link exists, place it first
+        sources.sort(key=lambda s: ("fass.se" not in s["url"],))
+
+        # Build a structured, type-aware summary using LLM
+        summary_text = web_response.summary or ""
+        try:
+            # Prepare compact sources content to keep token usage under control
+            def truncate(text: str, limit: int = 600) -> str:
+                if not text:
+                    return ""
+                return text if len(text) <= limit else text[:limit] + "…"
+
+            combined_content = "\n\n".join([
+                f"Title: {r.title}\nURL: {r.url}\nSnippet: {truncate(r.snippet or '')}"
+                for r in web_response.results[:5]
+            ]) if web_response and web_response.results else ""
+
+            detected_type = (request.term_type or "").lower()
+            if detected_type in ("medication", "medicine", "drug"):
+                type_instructions = (
+                    "Provide a concise, clinically useful medication summary with bullet-point sections: "
+                    "1) Indications/Uses, 2) Mechanism of Action, 3) Typical Adult Dosing (only if clearly available from sources), "
+                    "4) Contraindications, 5) Common Side Effects and Serious Adverse Effects, "
+                    "6) Important Interactions, 7) Monitoring, 8) Pregnancy/Lactation considerations."
+                )
+            elif detected_type in ("diagnosis", "condition", "disease"):
+                type_instructions = (
+                    "Provide a concise, clinically useful diagnosis summary with bullet-point sections: "
+                    "1) Definition and Epidemiology, 2) Typical Presentation (key symptoms/signs), 3) Differential Diagnosis (commonly confused conditions), "
+                    "4) Initial Workup (key labs/imaging), 5) First-line Management and Alternatives, 6) Red Flags/When to escalate, 7) Common Complications/Causes."
+                )
+            elif detected_type in ("vital", "lab", "laboratory"):
+                type_instructions = (
+                    "Provide a concise summary for a vital sign or laboratory value with bullet-point sections: "
+                    "1) Typical Reference Range(s) (if known), 2) Clinical Interpretation, 3) Common Causes of High/Low, 4) Next Steps/Follow-up."
+                )
+            else:
+                type_instructions = (
+                    "Provide a concise clinical overview. If this relates to a medication, focus on safety and indications; "
+                    "if it relates to a condition, focus on presentation and management. Use bullet points where appropriate."
+                )
+
+            summary_prompt = f"""
+            Summarize the medical query "{term}" using the provided web findings.
+
+            {type_instructions}
+
+            Rules:
+            - Respond in '{active_lang}'.
+            - Be precise and evidence-oriented. Prefer information supported by the sources below.
+            - Keep the overall summary under 220 words unless essential details are needed.
+            - Do not fabricate dosing or numbers; include them only if clearly present in the sources.
+            - If sources disagree, note the uncertainty briefly.
+
+            Sources:
+            {combined_content if combined_content else 'No specific web sources available.'}
+            """
+
+            llm_resp = await _journal_llm_service.chat([
+                ChatMessage(role=ChatRole.SYSTEM, content="You are a senior clinical assistant who writes structured, succinct, and accurate medical summaries."),
+                ChatMessage(role=ChatRole.USER, content=summary_prompt)
+            ])
+
+            if llm_resp and llm_resp.content and len(llm_resp.content.strip()) > 0:
+                summary_text = llm_resp.content.strip()
+        except Exception as e:
+            print(f"[Lookup] Structured summary generation failed, using default summary. Error: {e}")
+
+        return LookupResponse(
+            term=term,
+            summary=summary_text,
+            sources=sources,
+            raw_results=[
+                {"title": r.title, "url": r.url, "snippet": r.snippet, "score": r.relevance_score}
+                for r in web_response.results
+            ]
+        )
+    except Exception as e:
+        print(f"[Lookup] Error: {e}")
+        raise HTTPException(status_code=500, detail="Lookup failed")

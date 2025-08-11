@@ -31,7 +31,7 @@ class OpenAIGPT4oClient(LLMClient, VisionLLMClient):
     def __init__(
             self,
             *,
-            model: str = "gpt-4.1",
+            model: str = "gpt-4.1-mini",
             api_key: str | None = None,
             timeout: float | None = None,
     ) -> None:
