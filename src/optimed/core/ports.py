@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import AsyncGenerator, Protocol, Sequence, Any, Union, Optional
+from typing import AsyncGenerator, Protocol, Sequence, Any, Union, Optional, overload
 
 from optimed.core.domain import (
     PatientContext,
@@ -119,10 +119,60 @@ class VisionLLMClient(Protocol):
 
 class LLMClient(Protocol):
 
+    # --- chat ---
+    @overload
     async def chat(
         self,
         messages: Sequence[ChatMessage],
         json_mode: bool = False,
+        *,
+        max_tokens: int | None = None,
+    ) -> ChatMessage:
+        """Send a chat message sequence to the LLM and get a response."""
+        ...
+    
+    @overload
+    async def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        json_mode: bool = False,
+        *,
+        temperature: float,
+        max_tokens: int | None = None,
+    ) -> ChatMessage:
+        """Send a chat message sequence to the LLM and get a response."""
+        ...
+
+    # --- chat_stream ---
+    @overload
+    async def chat_stream(
+        self,
+        messages: Sequence[ChatMessage],
+        json_mode: bool = False,
+        *,
+        max_tokens: int | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """Stream chat responses from the LLM."""
+        ...
+    
+    @overload
+    async def chat_stream(
+        self,
+        messages: Sequence[ChatMessage],
+        json_mode: bool = False,
+        *,
+        temperature: float,
+        max_tokens: int | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """Stream chat responses from the LLM."""
+        ...
+    
+    # --- runtime definitions ---
+    async def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        json_mode: bool = False,
+        *,
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> ChatMessage:
@@ -133,12 +183,14 @@ class LLMClient(Protocol):
         self,
         messages: Sequence[ChatMessage],
         json_mode: bool = False,
+        *,
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream chat responses from the LLM."""
         ...
-
+    
+    
 class VectorStore(Protocol):
 
     """pgvector / Pinecone / FAISS – whatever backs similarity search."""
