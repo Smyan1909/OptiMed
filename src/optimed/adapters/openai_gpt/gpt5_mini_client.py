@@ -34,7 +34,7 @@ class OpenAIGPT5MiniClient(LLMClient):
         self._model = model
         self._minimal_reasoning = minimal_reasoning
 
-    async def chat(
+    async def chat(  # type: ignore
         self,
         messages: Sequence[ChatMessage],
         json_mode: bool = False,
@@ -80,7 +80,7 @@ class OpenAIGPT5MiniClient(LLMClient):
             },
         )
 
-    async def chat_stream(
+    async def chat_stream(  # type: ignore
         self,
         messages: Sequence[ChatMessage],
         json_mode: bool = False,
