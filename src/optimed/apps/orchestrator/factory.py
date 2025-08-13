@@ -6,7 +6,6 @@ from optimed.apps.orchestrator.connection_service import UserEHRConnectionServic
 from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
 from optimed.adapters.smart_fhir.repository import SMARTFHIRRepository
 from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
-from optimed.adapters.openai_gpt.gpt5_mini_client import OpenAIGPT5MiniClient # type: ignore
 from optimed.adapters.openai_gpt.client import OpenAIGPT4oClient
 from optimed.adapters.user_repository.pg_user_repository import PGUserRepository
 from optimed.adapters.user_repository.pg_ehr_connection_repository import PGUserEHRConnectionRepository

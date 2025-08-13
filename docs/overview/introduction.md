@@ -7,7 +7,7 @@ audiences: ["Stakeholders", "Developers"]
 ---
 
 ## Executive Summary
-CLARA (OptiMed AI) is a clinical information assistant for healthcare teams. It connects to EHR systems via FHIR/SMART, retrieves patient context, orchestrates reasoning with LLMs, assists with diagnostic workflows, generates clinical notes, supports DICOM imaging analysis, and offers a modern web UI. This document set provides a concise, version-controlled blueprint for understanding, deploying, and operating CLARA in EU regions with GDPR-first design.
+CLARA (OptiMed AI) is a clinical information assistant focused on fast, safe information retrieval. It connects to EHR systems via FHIR/SMART, retrieves and normalizes patient context, enriches answers with trusted web sources when appropriate, and presents concise, multilingual summaries via a modern web UI. This document set provides a concise, version-controlled blueprint for understanding, deploying, and operating CLARA in EU regions with GDPR-first design.
 
 ### How to read this doc set
 - Start with Architecture to understand system boundaries and data flows.
@@ -23,9 +23,7 @@ CLARA (OptiMed AI) is a clinical information assistant for healthcare teams. It 
 
 ## Value Proposition
 - Faster clinical information retrieval and summarization.
-- Assisted diagnostic reasoning with auditable steps and differential tracking.
 - Streamlined documentation (journals/notes) with language-aware generation.
-- Imaging support for DICOM analysis and similarity search.
 
 ## Target Users
 - Clinicians (primary), care teams, and clinical documentation staff.
@@ -34,11 +32,10 @@ CLARA (OptiMed AI) is a clinical information assistant for healthcare teams. It 
 
 ## High-level Capabilities
 - EHR integration via HAPI FHIR and SMART-on-FHIR repositories.
-- Diagnostic and information engines backed by OpenAI GPT-4o.
+- Information retrieval and summarization backed by OpenAI GPT-4 family.
 - Vector store using PostgreSQL/pgvector for chat history and embeddings.
-- DICOM processing, storage, analysis, and similarity search.
 - Journal generation and autocomplete.
-- Optional image generation (Stability AI) and web search (Tavily).
+- Web search (Tavily) for external-source enrichment.
 
 ## Non-Goals
 - Replace clinical decision-making; CLARA is an assistant, not a medical device.
