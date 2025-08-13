@@ -14,32 +14,35 @@ Context: High-level interactions among users, external dependencies, and core se
 
 ```mermaid
 flowchart LR
-  Clinician((Clinician))
-  EHR[(EHR System)]
-  Auth[(OIDC Provider)]
+  clinician((Clinician))
+  ehr[(EHR System)]
+  auth[(OIDC Provider)]
+  ws[(Web Search)]
   subgraph CLARA Platform
-    API[API Gateway (FastAPI)]
-    ORCH[Orchestrator]
-    DB[(PostgreSQL + pgvector)]
-    LOG[(AuditLog)]
-    IMG[(DICOM Services)]
-    LLM[(OpenAI GPT-4o)]
-    WEB[(Web App - Next.js)]
+    api[API Gateway]
+    orch[Orchestrator]
+    db[(PostgreSQL + pgvector)]
+    log[(AuditLog)]
+    img[(DICOM Services)]
+    llm[(OpenAI GPT-4/5 family)]
+    web[(Web App - Next.js)]
   end
-  Clinician -->|Query| WEB --> API
-  API --> Auth
-  API --> ORCH
-  ORCH --> EHR
-  ORCH --> DB
-  ORCH --> LLM
-  ORCH --> IMG
-  API --> LOG
+  clinician -->|Query| web
+  web --> api
+  api --> auth
+  api --> orch
+  orch --> ehr
+  orch --> db
+  orch --> llm
+  orch --> img
+  orch --> ws
+  api --> log
 ```
 
 Assumptions
 - EHR connectivity via HAPI FHIR by default; SMART-on-FHIR per-user when authenticated.
 - Vector store uses PostgreSQL DSN and pgvector extension.
-- GPT-4o as default LLM; configurable via env.
+- GPT-4 family models used (default configured in env).
 
 Update instructions
 - Edit the Mermaid code block and re-render via MkDocs/Material preview.

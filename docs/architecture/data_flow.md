@@ -17,12 +17,18 @@ sequenceDiagram
   participant API as API Gateway
   participant ORCH as Orchestrator
   participant FHIR as FHIR Repo
+  participant WS as Web Search
   participant LLM as LLM
   U->>WEB: Request summary
   WEB->>API: POST /diagnose {patient_id, user_prompt}
   API->>FHIR: get_patient(patient_id)
   FHIR-->>API: PatientContext
   API->>ORCH: run(patient, prompt)
+  ORCH->>ORCH: evaluate_web_search_need(user_query, patient_context [, chat_history])
+  alt needs web search
+    ORCH->>WS: search(query, max_results, patient_context, intent, lang)
+    WS-->>ORCH: results+summary
+  end
   ORCH->>LLM: chat(messages)
   LLM-->>ORCH: response
   ORCH-->>API: result
@@ -43,6 +49,7 @@ sequenceDiagram
   participant API
   participant FHIR
   participant ORCH
+  participant WS as Web Search
   participant LLM
   WEB->>API: POST /chat {patient_id?, user_prompt}
   alt patient provided
@@ -50,6 +57,11 @@ sequenceDiagram
     FHIR-->>API: PatientContext
   end
   API->>ORCH: run(patient?, prompt, chat_mode=true)
+  ORCH->>ORCH: evaluate_web_search_need(user_query, patient_context [, chat_history])
+  alt needs web search
+    ORCH->>WS: search(query, max_results, patient_context, intent, lang)
+    WS-->>ORCH: results+summary
+  end
   ORCH->>LLM: chat
   LLM-->>ORCH: response
   ORCH-->>API: result
@@ -91,9 +103,47 @@ sequenceDiagram
   API-->>WEB: 200 OK
 ```
 
+## Flow E: Web Search Decision and Integration (Patient and Info Flows)
+```mermaid
+sequenceDiagram
+  participant ORCH as Orchestrator
+  participant WS as Web Search
+  participant LLM as LLM
+  ORCH->>ORCH: evaluate_web_search_need(user_query, patient_ctx [, chat_history])
+  alt result = true
+    ORCH->>WS: search(query, max_results=8, patient_context, intent, target_language)
+    WS-->>ORCH: WebSearchResponse{results[title,url,snippet], summary}
+    ORCH->>LLM: chat(messages + web sources summary)
+  else result = false
+    ORCH->>LLM: chat(messages)
+  end
+  LLM-->>ORCH: response (may cite sources)
+```
+
+Pseudocode (diagnostic flow)
+```
+# patient_flow
+needs = web_search.evaluate_search_need(user_query, patient_context)
+if needs or diagnostic_mode == "research":
+    resp = web_search.search(query, max_results=8, patient_context, search_intent="diagnostic_support", target_language=detect_language(user_query))
+    state.web_search_response = resp
+# proceed to diagnosis with sources included in messages
+```
+
+Pseudocode (information flow)
+```
+# info_flow
+needs = web_search.evaluate_search_need(user_query, patient_context, chat_history=last_messages)
+if needs:
+    resp = web_search.search(query, max_results=8, patient_context, search_intent="clinical_information", target_language=detect_language(user_query))
+    state.web_search_response = resp
+# LLM crafts answer and may cite URLs from resp.results
+```
+
 Stakeholder Notes
 - Data minimization: only required fields are retrieved and cached.
 - Journal content is user-driven and should be reviewed before storing in EHR.
+ - Web results are advisory; clinicians should validate sources. Non-authoritative links should be de-emphasized.
 
 Update instructions
 - Update diagrams if endpoints or steps change; keep pseudocode in sync with orchestrator.

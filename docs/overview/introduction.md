@@ -11,6 +11,7 @@ CLARA (OptiMed AI) is a clinical information assistant for healthcare teams. It 
 
 ### How to read this doc set
 - Start with Architecture to understand system boundaries and data flows.
+- See Hexagonal Architecture for domain, ports, adapters, and wiring details.
 - Review Specifications for APIs, data schema, and components.
 - Use Operations for setup, deployment, and monitoring.
 - See Maintenance for troubleshooting, known issues, and changelog.

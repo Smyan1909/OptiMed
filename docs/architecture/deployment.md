@@ -22,9 +22,9 @@ flowchart TB
     ORCH[Orchestrator]
     WEB[Next.js]
     OTEL[OpenTelemetry Collector]
+    DB[(PostgreSQL + pgvector)]
+    OBJ[(Object Storage for DICOM)]
   end
-  DB[(PostgreSQL + pgvector)]
-  OBJ[(Object Storage for DICOM)]
   AUTH[(OIDC Provider)]
   EHR[(EHR/FHIR)]
   GW-->DB

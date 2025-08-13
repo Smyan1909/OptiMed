@@ -20,6 +20,7 @@ nav:
   - Architecture:
     - System Architecture: docs/architecture/system_architecture.md
     - Data Flows: docs/architecture/data_flow.md
+    - Hexagonal Architecture: docs/architecture/hexagonal_architecture.md
     - Deployment: docs/architecture/deployment.md
   - Specifications:
     - API: docs/specs/api_specification.md
