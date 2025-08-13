@@ -1,0 +1,72 @@
+openapi: 3.0.3
+info:
+  title: OptiMed API
+  version: 0.1.0
+servers:
+  - url: http://localhost:8000
+paths:
+  /health:
+    post:
+      summary: Health Check
+      responses:
+        '200':
+          description: OK
+  /patients:
+    get:
+      summary: Search patients
+      parameters:
+        - in: query
+          name: q
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+  /patients/{patient_id}:
+    get:
+      summary: Get patient by ID
+      parameters:
+        - in: path
+          name: patient_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+  /chat:
+    post:
+      summary: General chat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                patient_id:
+                  type: string
+                  nullable: true
+                user_prompt:
+                  type: string
+      responses:
+        '200':
+          description: OK
+  /diagnose:
+    post:
+      summary: Diagnostic reasoning
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                patient_id:
+                  type: string
+                user_prompt:
+                  type: string
+      responses:
+        '200':
+          description: OK
+

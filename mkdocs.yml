@@ -1,0 +1,45 @@
+site_name: CLARA (OptiMed AI) Docs
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.sections
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.tabbed
+  - pymdownx.highlight
+plugins:
+  - search
+nav:
+  - Overview:
+    - Introduction: docs/overview/introduction.md
+    - Glossary: docs/overview/glossary.md
+  - Architecture:
+    - System Architecture: docs/architecture/system_architecture.md
+    - Data Flows: docs/architecture/data_flow.md
+    - Hexagonal Architecture: docs/architecture/hexagonal_architecture.md
+    - Deployment: docs/architecture/deployment.md
+  - Algorithms:
+    - Patient Flow (LangGraph): docs/algorithms/patient_flow_langgraph.md
+    - Information Flow (LangGraph): docs/algorithms/info_flow_langgraph.md
+    - Differential Diagnosis (Bayesian): docs/algorithms/differential_diagnosis_bayesian.md
+    - intelligent_retrieve_chunks: docs/algorithms/intelligent_retrieve_chunks.md
+  - Specifications:
+    - API: docs/specs/api_specification.md
+    - Database: docs/specs/database_schema.md
+    - Components: docs/specs/component_details.md
+  - Operations:
+    - Setup Guide: docs/operations/setup_guide.md
+    - Deployment Process: docs/operations/deployment_process.md
+    - Monitoring: docs/operations/monitoring.md
+  - Maintenance:
+    - Troubleshooting: docs/maintenance/troubleshooting.md
+    - Known Issues: docs/maintenance/known_issues.md
+    - Changelog: docs/maintenance/changelog.md
+  - Export & Spec:
+    - Export Instructions: docs/_export_instructions.md
+    - OpenAPI (stub): openapi/openapi.yaml
+
