@@ -26,6 +26,7 @@ nav:
     - Patient Flow (LangGraph): docs/algorithms/patient_flow_langgraph.md
     - Information Flow (LangGraph): docs/algorithms/info_flow_langgraph.md
     - Differential Diagnosis (Bayesian): docs/algorithms/differential_diagnosis_bayesian.md
+    - intelligent_retrieve_chunks: docs/algorithms/intelligent_retrieve_chunks.md
   - Specifications:
     - API: docs/specs/api_specification.md
     - Database: docs/specs/database_schema.md
