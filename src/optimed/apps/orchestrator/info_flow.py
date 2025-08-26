@@ -766,9 +766,31 @@ class LangGraphInformationEngine(DiagnosticEngine):
                     
                     if journal_entries:
                         print(f"[store_chunks] Found {len(journal_entries)} journal entries for patient {patient_id}")
-                        
-                        # Store each journal entry as a separate chunk
+
+                        # Prepare a reusable embedding for existence checks to avoid duplicates
+                        existence_query_vec = await embed("journal entry existence check", "query")
+                        count = 0
+                        # Store only new journal entries as separate chunks
                         for entry in journal_entries:
+                            # Skip if this journal entry is already stored (avoid duplicates)
+                            try:
+                                existing_entry = await self._vec.similarity_search(
+                                    existence_query_vec,
+                                    top_k=1,
+                                    filter_={
+                                        "namespace": "clinical",
+                                        "patient_id": patient_id,
+                                        "entry_id": entry.entry_id,
+                                    },
+                                )
+                                if existing_entry:
+                                    print(f"[store_chunks] Skipping already stored journal entry {entry.entry_id}")
+                                    continue
+                                count += 1
+                            except Exception as e:
+                                print(f"[store_chunks] Existence check failed for journal entry {entry.entry_id}: {e}")
+                                # Fall through and attempt to store
+                                pass
                             journal_text = f"""
                             Journal Entry: {entry.title}
                             Type: {entry.entry_type.value}
@@ -797,7 +819,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                                 }
                             )
                         
-                        print(f"[store_chunks] Successfully stored {len(journal_entries)} journal entries")
+                        print(f"[store_chunks] Successfully stored {count} journal entries")
                     else:
                         print(f"[store_chunks] No journal entries found for patient {patient_id}")
                         

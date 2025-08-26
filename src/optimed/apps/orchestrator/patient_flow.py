@@ -632,9 +632,30 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     
                     if journal_entries:
                         print(f"[store_chunks] Found {len(journal_entries)} journal entries for patient {patient_id}")
-                        
-                        # Store each journal entry as a separate chunk
+
+                        # Prepare a reusable embedding for existence checks to avoid duplicates
+                        existence_query_vec = await embed("journal entry existence check", "query")
+
+                        # Store only new journal entries as separate chunks
                         for entry in journal_entries:
+                            # Skip if this journal entry is already stored (avoid duplicates)
+                            try:
+                                existing_entry = await self._vec.similarity_search(
+                                    existence_query_vec,
+                                    top_k=1,
+                                    filter_={
+                                        "namespace": "clinical",
+                                        "patient_id": patient_id,
+                                        "entry_id": entry.entry_id,
+                                    },
+                                )
+                                if existing_entry:
+                                    print(f"[store_chunks] Skipping already stored journal entry {entry.entry_id}")
+                                    continue
+                            except Exception as e:
+                                print(f"[store_chunks] Existence check failed for journal entry {entry.entry_id}: {e}")
+                                # Fall through and attempt to store
+                                pass
                             journal_text = f"""
                             Journal Entry: {entry.title}
                             Type: {entry.entry_type.value}
@@ -688,7 +709,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     q_vec = await embed(state.user_prompt, "query")
                     rows = await self._vec.similarity_search(
                         q_vec,
-                        top_k=20,  # Increased to accommodate recency filtering
+                        top_k=50,  # Increased to accommodate recency filtering
                         filter_={
                             "namespace": "clinical", 
                             "patient_id": str(state.patient_id)
