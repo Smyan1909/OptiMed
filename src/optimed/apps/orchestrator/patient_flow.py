@@ -2688,13 +2688,10 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
         if session_id and user_id:
             await self._vec.update_session_activity(session_id=session_id, user_id=user_id)
         
-        if patient is not None:
-            if hasattr(data, "model_dump"):
-                return self._to_output(data.model_dump())
-            else:
-                return self._to_output(data)
-        else:
-            return self.chat_output(data)
+        # Always return the same completion-shaped output as run_stream's final chunk
+        if hasattr(data, "model_dump"):
+            return self._to_output(data.model_dump())
+        return self._to_output(data)
 
     def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Return an async generator that yields chunks as they stream from the graph."""
@@ -2891,76 +2888,55 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
 
         return _stream_generator()
 
-    def _to_output(self, data: dict[str, Any]) -> DiagnosisResult:
-        """Convert raw dict emitted by compiled_graph to DiagnosisResult."""
-        
-        # Handle web search info
-        web_search_info = WebSearchInfo()
-        if data.get("web_search_response"):
-            web_response = data["web_search_response"]
-            
-            # Check if the response actually contains citations
-            response_content = data["llm_response"].content if data["llm_response"] else ""
-            citations_found = []
-            
-            for result in web_response.results[:5]:
-                if result.url in response_content or result.title in response_content:
-                    citations_found.append(result.url)
-            
-            web_search_info = WebSearchInfo(
-                web_search_performed=True,
-                sources_consulted=[result.url for result in web_response.results[:5]],
-                sources_cited_in_response=citations_found,
-                search_summary=web_response.summary,
-                source_count=len(web_response.results),
-                citations_included=len(citations_found) > 0
-            )
-        
-        # Handle cross-session history info
-        cross_session_info = CrossSessionHistoryInfo()
-        if data.get("relevant_cross_session_history"):
-            cross_session_info = CrossSessionHistoryInfo(
-                cross_session_search_performed=True,
-                historical_sessions_consulted=len(set(item.get("session_id") for item in data["relevant_cross_session_history"] if item.get("session_id"))),
-                historical_messages_found=len(data["relevant_cross_session_history"]),
-                oldest_reference=min((item.get("timestamp") for item in data["relevant_cross_session_history"] if item.get("timestamp")), default=None)
-            )
-        else:
-            cross_session_info = CrossSessionHistoryInfo(
-                cross_session_search_performed=data.get("needs_cross_session_search", False),
-                historical_sessions_consulted=0,
-                historical_messages_found=0,
-                oldest_reference=None
-            )
-        
-        # Handle generated image info
-        generated_image_info = GeneratedImageInfo()
+    def _to_output(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Build the same completion-shaped dict that run_stream emits at the end."""
+        final_response_content = ""
+        if data.get("llm_response"):
+            try:
+                final_response_content = self._format_ehr_links(data["llm_response"].content)
+            except Exception:
+                final_response_content = str(data.get("llm_response", ""))
+
+        completion_update: dict[str, Any] = {
+            "type": "completion",
+            "status": "completed",
+            "details": "Analysis complete",
+            "progress": 100.0,
+            "timestamp": data.get("timestamp", datetime.now().isoformat()),
+            "final_response": final_response_content
+        }
+
+        # Include reasoning in completion
+        if data.get("llm_reasoning"):
+            completion_update["reasoning"] = data.get("llm_reasoning")
+        if data.get("reasoning_steps"):
+            completion_update["reasoning_steps"] = data.get("reasoning_steps", [])
+
+        # Include structured differential diagnoses if available
+        if data.get("parsed_response") and hasattr(data["parsed_response"], 'differential'):
+            completion_update["differential_diagnoses"] = [
+                {
+                    "icd_code": diff.icd_code,
+                    "diagnosis_name": diff.diagnosis_name,
+                    "confidence": diff.confidence,
+                    "reasoning": diff.reasoning,
+                    "supporting_evidence": diff.supporting_evidence
+                }
+                for diff in data["parsed_response"].differential
+            ]
+            completion_update["diagnosis_result"] = data["parsed_response"]
+
+        # Include image information in completion if available
         if data.get("generated_image"):
             generated_image = data["generated_image"]
-            generated_image_info = GeneratedImageInfo(
-                image_generated=True,
-                image_id=generated_image.generation_id,
-                image_prompt=generated_image.prompt,
-                generation_metadata=generated_image.metadata,
-                model_info=generated_image.model_info
-            )
-        
-        return DiagnosisResult(
-            patient_id=data["patient_id"],
-            primary_icd=data["primary_icd"], 
-            differential=data["differential"],
-            confidence=data["confidence"],
-            explanation=self._format_ehr_links(data["llm_response"].content) if data["llm_response"] else "",
-            created_by_user_id=data.get("user_id"),
-            is_ai_generated=True,
-            session_id=data.get("session_id"),
-            web_search_info=web_search_info,
-            cross_session_history_info=cross_session_info,
-            generated_image=generated_image_info,
-            retrieved_chunks=data.get("retrieved_chunks", []),
-            retrieval_reasoning=data.get("retrieval_reasoning"),
-            timestamp=data.get("timestamp", datetime.now().isoformat())
-        )
+            completion_update["generated_image"] = {
+                "image_id": getattr(generated_image, "generation_id", None),
+                "prompt": getattr(generated_image, "prompt", None),
+                "created_at": getattr(generated_image, "created_at", None).isoformat() if getattr(generated_image, "created_at", None) else None,
+                "metadata": getattr(generated_image, "metadata", {})
+            }
+
+        return completion_update
 
     def chat_output(self, data: dict[str, Any]) -> dict[str, Any]:
         """Convert raw dict emitted by compiled_graph to a chat output format."""
