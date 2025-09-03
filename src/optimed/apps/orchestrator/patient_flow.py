@@ -598,7 +598,205 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                             }
                         )
                     
-                    # 4. Complete patient context as a single chunk for fallback
+                    # 4. Medications chunk (if available)
+                    if patient_data.medications:
+                        medications_text = f"""
+                        Medications for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.medications.items()])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Medications",
+                            object_id=f"{patient_id}_medications",
+                            text={"content": medications_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "medications",
+                                "timestamp": str(int(time.time() * 1000))
+                            }
+                        )
+
+                    # 5. Allergies chunk (if available)
+                    if patient_data.allergies:
+                        allergies_text = f"""
+                        Allergies for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.allergies.items()])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Allergies",
+                            object_id=f"{patient_id}_allergies",
+                            text={"content": allergies_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "allergies",
+                                "timestamp": str(int(time.time() * 1000))
+                            }
+                        )
+
+                    # 6. Diagnoses chunk (if available)
+                    if patient_data.diagnoses:
+                        diagnoses_text = f"""
+                        Diagnoses for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.diagnoses.items()])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Diagnoses",
+                            object_id=f"{patient_id}_diagnoses",
+                            text={"content": diagnoses_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "diagnoses",
+                                "timestamp": str(int(time.time() * 1000))
+                            }
+                        )
+
+                    # 7. Immunizations chunk (if available)
+                    if patient_data.immunizations:
+                        immunizations_text = f"""
+                        Immunizations for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.immunizations.items()])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Immunizations",
+                            object_id=f"{patient_id}_immunizations",
+                            text={"content": immunizations_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "immunizations",
+                                "timestamp": str(int(time.time() * 1000))
+                            }
+                        )
+
+                    # 8. Medication Statements chunk (if available)
+                    if patient_data.medication_statement:
+                        med_stmt_text = f"""
+                        Medication Statements for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.medication_statement.items()])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="MedicationStatement",
+                            object_id=f"{patient_id}_medication_statement",
+                            text={"content": med_stmt_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "medication_statement",
+                                "timestamp": str(int(time.time() * 1000))
+                            }
+                        )
+
+                    # 9. Questionnaire Responses chunk (if available)
+                    if patient_data.questionnaire_response:
+                        qnr_text = f"""
+                        Questionnaire Responses for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.questionnaire_response.items()])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="QuestionnaireResponse",
+                            object_id=f"{patient_id}_questionnaire_response",
+                            text={"content": qnr_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "questionnaire_response",
+                                "timestamp": str(int(time.time() * 1000))
+                            }
+                        )
+
+                    # 10. Encounters chunk (if available)
+                    if patient_data.encounters:
+                        encounters_text = f"""
+                        Encounters for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.encounters.items()])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Encounters",
+                            object_id=f"{patient_id}_encounters",
+                            text={"content": encounters_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "encounters",
+                                "timestamp": str(int(time.time() * 1000))
+                            }
+                        )
+
+                    # 11. Exams chunk (if available)
+                    if patient_data.exam:
+                        exam_text = f"""
+                        Physical Exams for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.exam.items()])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Exams",
+                            object_id=f"{patient_id}_exams",
+                            text={"content": exam_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "exam",
+                                "timestamp": str(int(time.time() * 1000))
+                            }
+                        )
+
+                    # 12. Procedures chunk (if available)
+                    if patient_data.procedure:
+                        procedure_text = f"""
+                        Procedures for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.procedure.items()])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Procedures",
+                            object_id=f"{patient_id}_procedures",
+                            text={"content": procedure_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "procedure",
+                                "timestamp": str(int(time.time() * 1000))
+                            }
+                        )
+
+                    # 13. Social History chunk (if available)
+                    if patient_data.social_history:
+                        social_text = f"""
+                        Social History for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.social_history.items()])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="SocialHistory",
+                            object_id=f"{patient_id}_social_history",
+                            text={"content": social_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "social_history",
+                                "timestamp": str(int(time.time() * 1000))
+                            }
+                        )
+
+                    # 14. Imaging chunk (if available)
+                    if patient_data.imaging:
+                        imaging_text = f"""
+                        Imaging for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.imaging.items()])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Imaging",
+                            object_id=f"{patient_id}_imaging",
+                            text={"content": imaging_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "imaging",
+                                "timestamp": str(int(time.time() * 1000))
+                            }
+                        )
+
+                    # 15. Complete patient context as a single chunk for fallback
                     complete_context = patient_data.model_dump_json(indent=2)
                     await embed_and_store(
                         namespace="clinical",
