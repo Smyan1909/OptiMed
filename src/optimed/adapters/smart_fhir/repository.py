@@ -524,6 +524,7 @@ def _to_patient_ctx(
         immunizations: list[Observation] | None = None,
         medication_statement: list[Observation] | None = None,
         questionnaire_response: list[Observation] | None = None,
+        care_plan: list[Observation] | None = None,
         encounters: list[Any] | None = None,
         base_url: str = "http://example.com/fhir"  # Default base URL, can be overridden
 ) -> PatientContext:
@@ -544,6 +545,7 @@ def _to_patient_ctx(
     immunizations_data, immunizations_timestamps, immunizations_sources = _obs_bundle_to_dict_with_timestamps(immunizations or [], base_url, "immunization")
     medication_statement_data, medication_statement_timestamps, medication_statement_sources = _obs_bundle_to_dict_with_timestamps(medication_statement or [], base_url, "medication-statement")
     questionnaire_response_data, questionnaire_response_timestamps, questionnaire_response_sources = _obs_bundle_to_dict_with_timestamps(questionnaire_response or [], base_url, "questionnaire")
+    care_plan_data, care_plan_timestamps, care_plan_sources = _obs_bundle_to_dict_with_timestamps(care_plan or [], base_url, "care-plan")
     
     # Process encounters and extract care unit information
     encounters_data = {}
@@ -631,6 +633,7 @@ def _to_patient_ctx(
         immunizations=immunizations_data,
         medication_statement=medication_statement_data,
         questionnaire_response=questionnaire_response_data,
+        care_plan=care_plan_data,
         encounters=encounters_data,
         
         # Timestamp fields
@@ -646,6 +649,7 @@ def _to_patient_ctx(
         immunizations_timestamps=immunizations_timestamps,
         medication_statement_timestamps=medication_statement_timestamps,
         questionnaire_response_timestamps=questionnaire_response_timestamps,
+        care_plan_timestamps=care_plan_timestamps,
         encounters_timestamps=encounters_timestamps,
         
         # Source tracking fields
@@ -661,6 +665,7 @@ def _to_patient_ctx(
         immunizations_sources=immunizations_sources,
         medication_statement_sources=medication_statement_sources,
         questionnaire_response_sources=questionnaire_response_sources,
+        care_plan_sources=care_plan_sources,
         encounters_sources=encounters_sources,
     )
 
@@ -818,10 +823,11 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
         
         medication_statement = await self._get_medication_statements(patient_id)
         questionnaire_response = await self._get_questionnaire_responses(patient_id)
+        care_plan = await self._get_care_plans(patient_id)
         return _to_patient_ctx(
             patient, vitals, labs, imaging, exam, procedure, 
             social_history, medications, allergies, diagnoses, immunizations,
-            medication_statement, questionnaire_response, encounters, self._base
+            medication_statement, questionnaire_response, care_plan, encounters, self._base
         )
         
     async def search_patients(self, query: Any) -> Sequence[PatientContext]:
@@ -1162,6 +1168,56 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
             return encounters
         except Exception as e:
             print(f"Failed to fetch encounters: {e}")
+            return []
+
+    async def _get_care_plans(self, patient_id: str) -> list[Observation]:
+        """Fetch CarePlan resources and map to simple dict-like observations."""
+        await self._ensure_token_valid()
+        try:
+            r = await self._client.get("/CarePlan", params={
+                "subject": f"Patient/{patient_id}",
+                "_count": 100,
+                "_sort": "-date"
+            })
+            r.raise_for_status()
+            bundle = r.json()
+
+            care_plans: list[dict] = []
+            for entry in bundle.get("entry", []):
+                resource = entry.get("resource", {})
+                plan_id = resource.get("id", "unknown")
+                status = resource.get("status", "unknown")
+                intent = resource.get("intent", "plan")
+                title = resource.get("title") or "Care Plan"
+                period = resource.get("period", {})
+                start = period.get("start", "")
+                # Summarize activities if present
+                activity_summaries: list[str] = []
+                for act in resource.get("activity", []) or []:
+                    detail = act.get("detail", {})
+                    code = detail.get("code", {}) or {}
+                    code_text = code.get("text")
+                    if code_text:
+                        activity_summaries.append(code_text)
+                activities = "; ".join(activity_summaries)
+
+                value_parts = [status.title(), intent]
+                if activities:
+                    value_parts.append(activities)
+                value_str = " - ".join([p for p in value_parts if p])
+
+                care_plans.append({
+                    "id": plan_id,
+                    "status": status,
+                    "code": {"coding": [{"code": "care-plan", "display": title}]},
+                    "valueString": value_str,
+                    "effectiveDateTime": start,
+                    "resource_type": "CarePlan",
+                })
+
+            return care_plans
+        except Exception as e:
+            print(f"Failed to fetch care plans: {e}")
             return []
 
 
