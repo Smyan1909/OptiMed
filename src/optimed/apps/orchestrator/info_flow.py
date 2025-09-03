@@ -29,23 +29,39 @@ import re
 SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM, 
                          content="""You are CLARA, a clinical information assistant.
 
+                                    You are not a doctor or a medical device, so always state that the user should make their decisions independently and review the sources for further information.
+
+                                    Your goal is to provide information to the user so that they can make decisions based upon the information you provide.
+
+                                    The primary users of this service are doctors and nurses.
+
                                     General response guideline (apply only when helpful for the current question):
-                                    - Provide a thorough, well‑developed answer while remaining concise (aim for 3–5 short sections or 8–15 bullets).
-                                    - Always answer in standard Markdown.
-                                      • If you create sections, start lines with '## ' for section headers and '### ' for subheaders.
-                                      • Put a blank line before and after each header.
-                                      • Do not simulate headers with numbers or bold; do not place headers inside list items.
-                                      • Use bullet lists and tables where they help readability; avoid filler.
+                                    - Provide a thorough, well-developed answer while remaining concise (aim for 3–5 short sections).
                                     - Use previous conversation history (between === lines) when relevant.
-                                    - If web search results are used, cite with markdown links like [Source Title](URL); otherwise omit citations.
-                                    - Link policy (STRICT for EHR): For every EHR-derived item you mention (vital, lab value, medication, allergy, diagnosis, imaging finding, date, encounter, note), include a clickable markdown link immediately after that specific item, within the same sentence, e.g., "BP 128/76 (2024‑05‑01) [Vitals](URL)" or "metformin 500 mg BID [Meds](URL)". Do this for each individual item you list. Do not group EHR links in a separate Sources section.
-                                      • If multiple EHR items appear in one sentence, each item must have its own adjacent link.
-                                      • If no URL is available, write "(from EHR, no link available)" immediately after the item.
-                                    - Format any raw URLs as markdown hyperlinks.
+                                    - **Always output in valid GitHub-flavored Markdown** to ensure clean rendering in the application.
+                                    - Organize responses using appropriate Markdown structure:
+                                        - Use `#` for the main title, `##` for section titles, and `###` for subsections when needed.
+                                        - Use bullet points (`-`) or numbered lists (`1.`, `2.`) where appropriate.
+                                        - Use proper Markdown tables for structured data.
+                                        - Format all URLs as **clickable Markdown links** instead of showing raw URLs.
+                                    - If web search results are used, cite with inline Markdown links like:  
+                                        `[Source Title](URL)`  
+                                        Otherwise, omit citations.
+                                    - Link policy (**STRICT for EHR**):  
+                                        For every EHR-derived item you mention (vital, lab value, medication, allergy, diagnosis, imaging finding, date, encounter, note), include a **clickable Markdown link** immediately after that specific item, within the same sentence.  
+                                        Examples:
+                                        - Correct: `BP 128/76 (2024-05-01) [Vitals](URL)`
+                                        - Correct: `metformin 500 mg BID [Meds](URL)`
+                                        - Incorrect: Grouping links at the end of the answer.
+                                        Additional rules:
+                                        - If multiple EHR items appear in one sentence, **each must have its own adjacent link**.
+                                        - If no URL is available, write `(from EHR, no link available)` immediately after the item.
+                                    - Do not escape Markdown unnecessarily; the final response must always render cleanly.
 
                                     Restrictions:
-                                    - Provide information/education, not diagnostic conclusions or treatment recommendations.
-                                    - Refer clinical decision-making to qualified healthcare providers.
+                                    - Provide information and education, **not** diagnostic conclusions or treatment recommendations.
+                                    - Do not provide any treatment recommendations or diagnostic conclusions.
+                                    - Refer all clinical decision-making to qualified healthcare providers.
                                     """)
 
 
@@ -750,9 +766,31 @@ class LangGraphInformationEngine(DiagnosticEngine):
                     
                     if journal_entries:
                         print(f"[store_chunks] Found {len(journal_entries)} journal entries for patient {patient_id}")
-                        
-                        # Store each journal entry as a separate chunk
+
+                        # Prepare a reusable embedding for existence checks to avoid duplicates
+                        existence_query_vec = await embed("journal entry existence check", "query")
+                        count = 0
+                        # Store only new journal entries as separate chunks
                         for entry in journal_entries:
+                            # Skip if this journal entry is already stored (avoid duplicates)
+                            try:
+                                existing_entry = await self._vec.similarity_search(
+                                    existence_query_vec,
+                                    top_k=1,
+                                    filter_={
+                                        "namespace": "clinical",
+                                        "patient_id": patient_id,
+                                        "entry_id": entry.entry_id,
+                                    },
+                                )
+                                if existing_entry:
+                                    print(f"[store_chunks] Skipping already stored journal entry {entry.entry_id}")
+                                    continue
+                                count += 1
+                            except Exception as e:
+                                print(f"[store_chunks] Existence check failed for journal entry {entry.entry_id}: {e}")
+                                # Fall through and attempt to store
+                                pass
                             journal_text = f"""
                             Journal Entry: {entry.title}
                             Type: {entry.entry_type.value}
@@ -781,7 +819,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                                 }
                             )
                         
-                        print(f"[store_chunks] Successfully stored {len(journal_entries)} journal entries")
+                        print(f"[store_chunks] Successfully stored {count} journal entries")
                     else:
                         print(f"[store_chunks] No journal entries found for patient {patient_id}")
                         

@@ -768,7 +768,7 @@ async def complete_ehr_login(
         await _user_repo.create_session(session)
         
         # Redirect to frontend with success and session info
-        frontend_url = f"http://localhost:3000/auth/ehr-success?session_id={session.session_id}&user_id={final_user.user_id}"
+        frontend_url = f"{frontend_base}/auth/ehr-success?session_id={session.session_id}&user_id={final_user.user_id}"
         return RedirectResponse(url=frontend_url)
         
     except Exception as e:

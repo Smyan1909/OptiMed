@@ -17,10 +17,13 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const locale = url.searchParams.get('locale') || undefined;
-  const redirectTo = url.searchParams.get('redirect') || '/';
+
+  const base = process.env.FRONTEND_URL || url.origin;
+  const redirectTo = new URL('/settings', base).toString();
+
   const target = (locales as readonly string[]).includes(locale || '') ? (locale as string) : defaultLocale;
 
-  const res = NextResponse.redirect(new URL(redirectTo, url.origin));
+  const res = NextResponse.redirect(redirectTo);
   res.cookies.set(LOCALE_COOKIE, target, { path: '/', httpOnly: false, sameSite: 'lax' });
   return res;
 }
