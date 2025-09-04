@@ -74,7 +74,7 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
     vector_store: VectorStore = PGVectorAdapter(dsn=str(os.getenv("PGVECTOR_DSN")))
     # Use fast GPT-5 mini for general LLM (minimal reasoning effort)
     llm_client = OpenAIGPT5MiniClient()
-    journal_client = OpenAIGPT4oClient()
+    journal_client = OpenAIGPT5MiniClient()
     user_repo: UserRepository = PGUserRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
     
     # Initialize image generation service if configured
