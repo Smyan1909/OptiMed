@@ -35,7 +35,7 @@ def build_index_map():
     return m
 
 # ---------- Baseline bundle builder (R4) ----------
-def build_baseline_bundle(patient_name="patnam_0"):
+def build_baseline_bundle(patient_name="patname_0"):
     org_id, prac_id, pat_id = "org-1", "prac-1", "pat-0"
     enc_emer, enc_inp, enc_amb = "enc-emer", "enc-inp", "enc-amb"
     # Medication and MedicationStatement ids
@@ -437,15 +437,15 @@ def to_transaction(collection_bundle):
 def write_bundles(out_dir):
     os.makedirs(out_dir, exist_ok=True)
     index_map = build_index_map()
-    base = build_baseline_bundle("patnam_0")
+    base = build_baseline_bundle("patname_0")
     for i in range(193):
         b = base if i==0 else apply_masks(base, index_map[i])
         # set patient name
         for e in b["entry"]:
             if e["resource"]["resourceType"] == "Patient":
-                e["resource"]["name"] = [{"family":"StudyCase","given":[f"patnam_{i}"]}]
+                e["resource"]["name"] = [{"family":"StudyCase","given":[f"patname_{i}"]}]
                 break
-        path = os.path.join(out_dir, f"fhir_bundle_patnam_{i}.json")
+        path = os.path.join(out_dir, f"fhir_bundle_patname_{i}.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(b, f, indent=2, ensure_ascii=False)
     # mask maps
@@ -455,7 +455,7 @@ def write_bundles(out_dir):
         w = csv.writer(f); w.writerow(["index","masked_types"])
         for i in range(193): w.writerow([i, ";".join(index_map[i])])
 
-def upload_bundles(out_dir, fhir_url, glob_prefix="fhir_bundle_patnam_", session=None):
+def upload_bundles(out_dir, fhir_url, glob_prefix="fhir_bundle_patname_", session=None):
     sess = session or requests.Session()
     for i in range(193):
         p = os.path.join(out_dir, f"{glob_prefix}{i}.json")

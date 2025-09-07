@@ -380,6 +380,19 @@ function VitalsPageContent() {
               'imaging'
             )}
 
+            {/* Diagnostic Reports */}
+            {renderObservationSection(
+              t('vitalsPage.sections.diagnosticReports'),
+              patient?.diagnostic_reports || {},
+              patient?.diagnostic_reports_timestamps,
+              <FileText className="h-5 w-5 mr-2 text-fuchsia-600" />,
+              'from-fuchsia-50',
+              'to-pink-50',
+              t('vitalsPage.noData.diagnosticReports'),
+              undefined,
+              'imaging'
+            )}
+
             {/* Physical Exam */}
             {renderObservationSection(
               t('vitalsPage.sections.exam'),
@@ -402,6 +415,32 @@ function VitalsPageContent() {
               'from-orange-50',
               'to-amber-50',
               t('vitalsPage.noData.procedures'),
+              undefined,
+              'procedures'
+            )}
+
+            {/* Imaging Observations (legacy Observation-based) */}
+            {renderObservationSection(
+              t('vitalsPage.sections.imagingObservations'),
+              patient?.imaging_observations || {},
+              patient?.imaging_observations_timestamps,
+              <Camera className="h-5 w-5 mr-2 text-purple-400" />,
+              'from-purple-50',
+              'to-indigo-50',
+              t('vitalsPage.noData.imagingObservations'),
+              undefined,
+              'imaging'
+            )}
+
+            {/* Procedure Observations (legacy Observation-based) */}
+            {renderObservationSection(
+              t('vitalsPage.sections.procedureObservations'),
+              patient?.procedure_observations || {},
+              patient?.procedure_observations_timestamps,
+              <Scissors className="h-5 w-5 mr-2 text-orange-400" />,
+              'from-amber-50',
+              'to-orange-50',
+              t('vitalsPage.noData.procedureObservations'),
               undefined,
               'procedures'
             )}

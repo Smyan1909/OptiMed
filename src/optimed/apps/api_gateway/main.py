@@ -111,11 +111,14 @@ class PatientOut(BaseModel):
     imaging: Dict[str, str]
     exam: Dict[str, str]
     procedure: Dict[str, str]
+    imaging_observations: Dict[str, str]
+    procedure_observations: Dict[str, str]
     social_history: Dict[str, str]
     medications: Dict[str, str]
     allergies: Dict[str, str]
     diagnoses: Dict[str, str]
     immunizations: Dict[str, str]
+    diagnostic_reports: Dict[str, str]
     medication_statement: Dict[str, str]
     questionnaire_response: Dict[str, str]
     # Timestamp fields
@@ -124,11 +127,14 @@ class PatientOut(BaseModel):
     imaging_timestamps: Dict[str, str]
     exam_timestamps: Dict[str, str]
     procedure_timestamps: Dict[str, str]
+    imaging_observations_timestamps: Dict[str, str]
+    procedure_observations_timestamps: Dict[str, str]
     social_history_timestamps: Dict[str, str]
     medications_timestamps: Dict[str, str]
     allergies_timestamps: Dict[str, str]
     diagnoses_timestamps: Dict[str, str]
     immunizations_timestamps: Dict[str, str]
+    diagnostic_reports_timestamps: Dict[str, str]
     medication_statement_timestamps: Dict[str, str]
     questionnaire_response_timestamps: Dict[str, str]
     # Encounters
@@ -140,11 +146,14 @@ class PatientOut(BaseModel):
     imaging_sources: Dict[str, DataSource] = {}
     exam_sources: Dict[str, DataSource] = {}
     procedure_sources: Dict[str, DataSource] = {}
+    imaging_observations_sources: Dict[str, DataSource] = {}
+    procedure_observations_sources: Dict[str, DataSource] = {}
     social_history_sources: Dict[str, DataSource] = {}
     medications_sources: Dict[str, DataSource] = {}
     allergies_sources: Dict[str, DataSource] = {}
     diagnoses_sources: Dict[str, DataSource] = {}
     immunizations_sources: Dict[str, DataSource] = {}
+    diagnostic_reports_sources: Dict[str, DataSource] = {}
     medication_statement_sources: Dict[str, DataSource] = {}
     questionnaire_response_sources: Dict[str, DataSource] = {}
     encounters_sources: Dict[str, DataSource] = {}
@@ -619,11 +628,14 @@ async def search_patients(
                 imaging=p.imaging,
                 exam=p.exam,
                 procedure=p.procedure,
+                imaging_observations=p.imaging_observations,
+                procedure_observations=p.procedure_observations,
                 social_history=p.social_history,
                 medications=p.medications,
                 allergies=p.allergies,
                 diagnoses=p.diagnoses,
                 immunizations=p.immunizations,
+                diagnostic_reports=p.diagnostic_reports,
                 medication_statement=p.medication_statement,
                 questionnaire_response=p.questionnaire_response,
                 # Timestamp fields
@@ -632,11 +644,14 @@ async def search_patients(
                 imaging_timestamps=p.imaging_timestamps,
                 exam_timestamps=p.exam_timestamps,
                 procedure_timestamps=p.procedure_timestamps,
+                imaging_observations_timestamps=p.imaging_observations_timestamps,
+                procedure_observations_timestamps=p.procedure_observations_timestamps,
                 social_history_timestamps=p.social_history_timestamps,
                 medications_timestamps=p.medications_timestamps,
                 allergies_timestamps=p.allergies_timestamps,
                 diagnoses_timestamps=p.diagnoses_timestamps,
                 immunizations_timestamps=p.immunizations_timestamps,
+                diagnostic_reports_timestamps=p.diagnostic_reports_timestamps,
                 medication_statement_timestamps=p.medication_statement_timestamps,
                 questionnaire_response_timestamps=p.questionnaire_response_timestamps,
                 # Encounters
@@ -648,11 +663,14 @@ async def search_patients(
                 imaging_sources = p.imaging_sources,
                 exam_sources = p.exam_sources,
                 procedure_sources = p.procedure_sources,
+                imaging_observations_sources = p.imaging_observations_sources,
+                procedure_observations_sources = p.procedure_observations_sources,
                 social_history_sources = p.social_history_sources,
                 medications_sources = p.medications_sources,
                 allergies_sources = p.allergies_sources,
                 diagnoses_sources = p.diagnoses_sources,
                 immunizations_sources = p.immunizations_sources,
+                diagnostic_reports_sources = p.diagnostic_reports_sources,
                 medication_statement_sources = p.medication_statement_sources,
                 questionnaire_response_sources = p.questionnaire_response_sources,
                 encounters_sources = p.encounters_sources
@@ -983,11 +1001,14 @@ async def get_patient(
                 imaging=pctx.imaging,
                 exam=pctx.exam,
                 procedure=pctx.procedure,
+                imaging_observations=pctx.imaging_observations,
+                procedure_observations=pctx.procedure_observations,
                 social_history=pctx.social_history,
                 medications=pctx.medications,
                 allergies=pctx.allergies,
                 diagnoses=pctx.diagnoses,
                 immunizations=pctx.immunizations,
+                diagnostic_reports=pctx.diagnostic_reports,
                 medication_statement=pctx.medication_statement,
                 questionnaire_response=pctx.questionnaire_response,
                 # Timestamp fields
@@ -996,11 +1017,14 @@ async def get_patient(
                 imaging_timestamps=pctx.imaging_timestamps,
                 exam_timestamps=pctx.exam_timestamps,
                 procedure_timestamps=pctx.procedure_timestamps,
+                imaging_observations_timestamps=pctx.imaging_observations_timestamps,
+                procedure_observations_timestamps=pctx.procedure_observations_timestamps,
                 social_history_timestamps=pctx.social_history_timestamps,
                 medications_timestamps=pctx.medications_timestamps,
                 allergies_timestamps=pctx.allergies_timestamps,
                 diagnoses_timestamps=pctx.diagnoses_timestamps,
                 immunizations_timestamps=pctx.immunizations_timestamps,
+                diagnostic_reports_timestamps=pctx.diagnostic_reports_timestamps,
                 medication_statement_timestamps=pctx.medication_statement_timestamps,
                 questionnaire_response_timestamps=pctx.questionnaire_response_timestamps,
                 # Encounters
@@ -1012,11 +1036,14 @@ async def get_patient(
                 imaging_sources=pctx.imaging_sources,
                 exam_sources=pctx.exam_sources,
                 procedure_sources=pctx.procedure_sources,
+                imaging_observations_sources=pctx.imaging_observations_sources,
+                procedure_observations_sources=pctx.procedure_observations_sources,
                 social_history_sources=pctx.social_history_sources,
                 medications_sources=pctx.medications_sources,
                 allergies_sources=pctx.allergies_sources,
                 diagnoses_sources=pctx.diagnoses_sources,
                 immunizations_sources=pctx.immunizations_sources,
+                diagnostic_reports_sources=pctx.diagnostic_reports_sources,
                 medication_statement_sources=pctx.medication_statement_sources,
                 questionnaire_response_sources=pctx.questionnaire_response_sources,
                 encounters_sources=pctx.encounters_sources

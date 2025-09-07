@@ -189,6 +189,15 @@ COMPONENT_OBSERVATIONS = {
 # Helper functions
 # --------------------------------------------------------------------------- #
 
+def _unique_key(base: str, container: dict[str, Any]) -> str:
+    """Ensure a unique display name key by appending (n) if needed."""
+    if base not in container:
+        return base
+    idx = 2
+    while f"{base} ({idx})" in container:
+        idx += 1
+    return f"{base} ({idx})"
+
 def _create_data_source(
     resource_id: str,
     resource_type: str,
@@ -340,7 +349,8 @@ def _obs_bundle_to_dict_with_timestamps(entries: list[Observation], base_url:str
             # Handle dict-based observations (from medications, allergies, diagnoses)
             if obs.get("code") and obs["code"].get("coding"):
                 coding = obs["code"]["coding"][0]
-                display_name = coding.get("display", "Unknown")
+                display_name = coding.get("display") or coding.get("code") or "Unknown"
+                display_name = _unique_key(display_name, result)
                 value_str = obs.get("valueString", "N/A")
                 result[display_name] = value_str
                 
@@ -419,6 +429,7 @@ def _obs_bundle_to_dict_with_timestamps(entries: list[Observation], base_url:str
                     else:
                         # Fallback to the display name from FHIR or the code itself
                         display_name = obs.code.coding[0].display or loinc_code
+                    display_name = _unique_key(display_name, result)
                     
                     # Get the value
                     value_str = "N/A"
@@ -476,9 +487,9 @@ def _to_patient_ctx(
         patient: Patient,
         vitals: list[Observation] | None = None,
         labs: list[Observation] | None = None,
-        imaging: list[Observation] | None = None,
+        imaging_observations: list[Observation] | None = None,
         exam: list[Observation] | None = None,
-        procedure: list[Observation] | None = None,
+        procedure_observations: list[Observation] | None = None,
         social_history: list[Observation] | None = None,
         medications: list[Observation] | None = None,
         allergies: list[Observation] | None = None,
@@ -488,6 +499,9 @@ def _to_patient_ctx(
         questionnaire_response: list[Observation] | None = None,
         care_plan: list[Observation] | None = None,
         encounters: list[Any] | None = None,
+        imaging_studies: list[Any] | None = None,
+        procedures_fhir: list[Any] | None = None,
+        diagnostic_reports: list[Any] | None = None,
         base_url: str = "http://example.com/fhir"  # Default base URL, can be overridden
 ) -> PatientContext:
     """Convert FHIR Patient + observations to PatientContext domain model."""
@@ -497,9 +511,9 @@ def _to_patient_ctx(
     # Process observations with timestamps
     vitals_data, vitals_timestamps, vitals_sources = _obs_bundle_to_dict_with_timestamps(vitals or [], base_url, "vital-signs")
     labs_data, labs_timestamps, labs_sources = _obs_bundle_to_dict_with_timestamps(labs or [], base_url, "laboratory")
-    imaging_data, imaging_timestamps, imaging_sources = _obs_bundle_to_dict_with_timestamps(imaging or [], base_url, "imaging")
+    imaging_observations_data, imaging_observations_timestamps, imaging_observations_sources = _obs_bundle_to_dict_with_timestamps(imaging_observations or [], base_url, "imaging")
     exam_data, exam_timestamps, exam_sources = _obs_bundle_to_dict_with_timestamps(exam or [], base_url, "exam")
-    procedure_data, procedure_timestamps, procedure_sources = _obs_bundle_to_dict_with_timestamps(procedure or [], base_url, "procedure")
+    procedure_observations_data, procedure_observations_timestamps, procedure_observations_sources = _obs_bundle_to_dict_with_timestamps(procedure_observations or [], base_url, "procedure")
     social_history_data, social_history_timestamps, social_history_sources = _obs_bundle_to_dict_with_timestamps(social_history or [], base_url, "social-history")
     medications_data, medications_timestamps, medications_sources = _obs_bundle_to_dict_with_timestamps(medications or [], base_url, "medication")
     allergies_data, allergies_timestamps, allergies_sources = _obs_bundle_to_dict_with_timestamps(allergies or [], base_url, "allergy")
@@ -508,6 +522,11 @@ def _to_patient_ctx(
     medication_statement_data, medication_statement_timestamps, medication_statement_sources = _obs_bundle_to_dict_with_timestamps(medication_statement or [], base_url, "medication-statement")
     questionnaire_response_data, questionnaire_response_timestamps, questionnaire_response_sources = _obs_bundle_to_dict_with_timestamps(questionnaire_response or [], base_url, "questionnaire")
     care_plan_data, care_plan_timestamps, care_plan_sources = _obs_bundle_to_dict_with_timestamps(care_plan or [], base_url, "care-plan")
+
+    # Process FHIR /ImagingStudy and /Procedure resources (converted to dict-like entries upstream)
+    imaging_data, imaging_timestamps, imaging_sources = _obs_bundle_to_dict_with_timestamps(imaging_studies or [], base_url, "imaging")
+    procedure_data, procedure_timestamps, procedure_sources = _obs_bundle_to_dict_with_timestamps(procedures_fhir or [], base_url, "procedure")
+    diagnostic_reports_data, diagnostic_reports_timestamps, diagnostic_reports_sources = _obs_bundle_to_dict_with_timestamps(diagnostic_reports or [], base_url, "diagnostic-report")
     
     # Process encounters and extract care unit information
     encounters_data = {}
@@ -588,6 +607,9 @@ def _to_patient_ctx(
         imaging=imaging_data,
         exam=exam_data,
         procedure=procedure_data,
+        diagnostic_reports=diagnostic_reports_data,
+        imaging_observations=imaging_observations_data,
+        procedure_observations=procedure_observations_data,
         social_history=social_history_data,
         medications=medications_data,
         allergies=allergies_data,
@@ -609,6 +631,9 @@ def _to_patient_ctx(
         allergies_timestamps=allergies_timestamps,
         diagnoses_timestamps=diagnoses_timestamps,
         immunizations_timestamps=immunizations_timestamps,
+        diagnostic_reports_timestamps=diagnostic_reports_timestamps,
+        imaging_observations_timestamps=imaging_observations_timestamps,
+        procedure_observations_timestamps=procedure_observations_timestamps,
         medication_statement_timestamps=medication_statement_timestamps,
         questionnaire_response_timestamps=questionnaire_response_timestamps,
         care_plan_timestamps=care_plan_timestamps,
@@ -625,6 +650,9 @@ def _to_patient_ctx(
         allergies_sources=allergies_sources,
         diagnoses_sources=diagnoses_sources,
         immunizations_sources=immunizations_sources,
+        diagnostic_reports_sources=diagnostic_reports_sources,
+        imaging_observations_sources=imaging_observations_sources,
+        procedure_observations_sources=procedure_observations_sources,
         medication_statement_sources=medication_statement_sources,
         questionnaire_response_sources=questionnaire_response_sources,
         care_plan_sources=care_plan_sources,
@@ -735,9 +763,9 @@ class HAPIFHIRRepository(FHIRRepository):
         # Fetch all observation categories
         vitals = await self._get_observations(patient_id, category="vital-signs")
         labs = await self._get_observations(patient_id, category="laboratory")
-        imaging = await self._get_observations(patient_id, category="imaging")
+        imaging_observations = await self._get_observations(patient_id, category="imaging")
         exam = await self._get_observations(patient_id, category="exam")
-        procedure = await self._get_observations(patient_id, category="procedure")
+        procedure_observations = await self._get_observations(patient_id, category="procedure")
         social_history = await self._get_observations(patient_id, category="social-history")
         
         # For medications, allergies, and diagnoses, use different FHIR resources
@@ -750,11 +778,14 @@ class HAPIFHIRRepository(FHIRRepository):
         medication_statement = await self._get_medication_statements(patient_id)
         questionnaire_response = await self._get_questionnaire_responses(patient_id)
         encounters = await self._get_encounters(patient_id)
+        imaging_studies = await self._get_imaging_studies(patient_id)
+        procedures_fhir = await self._get_procedures(patient_id)
+        diagnostic_reports = await self._get_diagnostic_reports(patient_id)
         
         return _to_patient_ctx(
-            patient, vitals, labs, imaging, exam, procedure,
+            patient, vitals, labs, imaging_observations, exam, procedure_observations,
             social_history, medications, allergies, diagnoses, immunizations,
-            medication_statement, questionnaire_response, care_plan, encounters, self._base
+            medication_statement, questionnaire_response, care_plan, encounters, imaging_studies, procedures_fhir, diagnostic_reports, self._base
         )
     
     async def search_patients(self, query: Any) -> Sequence[PatientContext]:
@@ -780,7 +811,26 @@ class HAPIFHIRRepository(FHIRRepository):
             except ValidationError:
                 # skip any resource that still fails validation
                 continue
-            results.append(_to_patient_ctx(p, [], []))
+            results.append(_to_patient_ctx(
+                p,
+                vitals=[],
+                labs=[],
+                imaging_observations=[],
+                exam=[],
+                procedure_observations=[],
+                social_history=[],
+                medications=[],
+                allergies=[],
+                diagnoses=[],
+                immunizations=[],
+                medication_statement=[],
+                questionnaire_response=[],
+                care_plan=[],
+                encounters=[],
+                imaging_studies=[],
+                procedures_fhir=[],
+                base_url=self._base
+            ))
 
         return results
     
@@ -1134,6 +1184,142 @@ class HAPIFHIRRepository(FHIRRepository):
             return care_plans
         except Exception as e:
             print(f"Failed to fetch care plans: {e}")
+            return []
+
+    async def _get_imaging_studies(self, patient_id: str) -> list[dict]:
+        """Fetch ImagingStudy resources and map to simple dict-like observations."""
+        try:
+            r = await self._client.get("/ImagingStudy", params={
+                "patient": patient_id,
+                "_count": 100,
+                "_sort": "-date"
+            })
+            r.raise_for_status()
+            bundle = r.json()
+
+            studies: list[dict] = []
+            for entry in bundle.get("entry", []):
+                resource = entry.get("resource", {})
+                study_id = resource.get("id", "unknown")
+                status = resource.get("status", "unknown")
+                started = resource.get("started", "")
+                description = resource.get("description") or "Imaging Study"
+
+                modalities: list[str] = []
+                for series in resource.get("series", []) or []:
+                    for mod in (series.get("modality", {}) or {}).get("coding", []) or []:
+                        disp = mod.get("display") or mod.get("code")
+                        if disp:
+                            modalities.append(disp)
+                modality_str = ", ".join(sorted(set(modalities)))
+
+                value_parts = [status.title()]
+                if modality_str:
+                    value_parts.append(modality_str)
+                value_str = " - ".join([p for p in value_parts if p])
+
+                studies.append({
+                    "id": study_id,
+                    "status": status,
+                    "code": {"coding": [{"code": "imaging-study", "display": description}]},
+                    "valueString": value_str,
+                    "effectiveDateTime": started,
+                    "resource_type": "ImagingStudy",
+                })
+
+            return studies
+        except Exception as e:
+            print(f"Failed to fetch imaging studies: {e}")
+            return []
+
+    async def _get_procedures(self, patient_id: str) -> list[dict]:
+        """Fetch Procedure resources and map to simple dict-like observations."""
+        try:
+            r = await self._client.get("/Procedure", params={
+                "patient": patient_id,
+                "_count": 100,
+                "_sort": "-date"
+            })
+            r.raise_for_status()
+            bundle = r.json()
+
+            procedures: list[dict] = []
+            for entry in bundle.get("entry", []):
+                resource = entry.get("resource", {})
+                proc_id = resource.get("id", "unknown")
+                status = resource.get("status", "unknown")
+                code = resource.get("code", {}) or {}
+                code_text = code.get("text")
+                if not code_text and code.get("coding"):
+                    code_text = code["coding"][0].get("display") or code["coding"][0].get("code")
+
+                # Determine performed time
+                performed = resource.get("performedDateTime")
+                if not performed:
+                    period = resource.get("performedPeriod", {})
+                    performed = period.get("start")
+
+                outcome = resource.get("outcome", {})
+                outcome_text = outcome.get("text") if isinstance(outcome, dict) else None
+                value_parts = [status.title()]
+                if outcome_text:
+                    value_parts.append(outcome_text)
+                value_str = " - ".join([p for p in value_parts if p])
+
+                procedures.append({
+                    "id": proc_id,
+                    "status": status,
+                    "code": {"coding": [{"code": "procedure", "display": code_text or "Procedure"}]},
+                    "valueString": value_str,
+                    "effectiveDateTime": performed or "",
+                    "resource_type": "Procedure",
+                })
+
+            return procedures
+        except Exception as e:
+            print(f"Failed to fetch procedures: {e}")
+            return []
+
+    async def _get_diagnostic_reports(self, patient_id: str) -> list[dict]:
+        """Fetch DiagnosticReport resources and map to dict-like entries."""
+        try:
+            r = await self._client.get("/DiagnosticReport", params={
+                "patient": patient_id,
+                "_count": 100,
+                "_sort": "-issued"
+            })
+            r.raise_for_status()
+            bundle = r.json()
+
+            reports: list[dict] = []
+            for entry in bundle.get("entry", []):
+                resource = entry.get("resource", {})
+                rep_id = resource.get("id", "unknown")
+                code = resource.get("code", {}) or {}
+                code_text = code.get("text")
+                if not code_text and code.get("coding"):
+                    code_text = code["coding"][0].get("display") or code["coding"][0].get("code")
+                conclusion = resource.get("conclusion") or ""
+                status = resource.get("status", "unknown")
+                issued = resource.get("issued") or resource.get("effectiveDateTime") or ""
+
+                value_parts = [status.title()]
+                if conclusion:
+                    value_parts.append(conclusion)
+                value_str = " - ".join([p for p in value_parts if p])
+
+                reports.append({
+                    "id": rep_id,
+                    "status": status,
+                    "code": {"coding": [{"code": "diagnostic-report", "display": code_text or "Diagnostic Report"}]},
+                    "valueString": value_str,
+                    "effectiveDateTime": issued,
+                    "resource_type": "DiagnosticReport",
+                })
+
+            return reports
+        except Exception as e:
+            print(f"Failed to fetch diagnostic reports: {e}")
             return []
 
     async def __aenter__(self):
