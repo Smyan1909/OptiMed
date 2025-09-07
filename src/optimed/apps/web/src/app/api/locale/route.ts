@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { LOCALE_COOKIE, locales, defaultLocale } from "@/i18n/config";
 
 export async function POST(request: Request) {
   try {
     const { locale } = await request.json();
     const target = (locales as readonly string[]).includes(locale) ? locale : defaultLocale;
-    cookies().set(LOCALE_COOKIE, target, { path: "/", httpOnly: false, sameSite: "lax" });
-    return NextResponse.json({ ok: true, locale: target });
+    const res = NextResponse.json({ ok: true, locale: target });
+    res.cookies.set(LOCALE_COOKIE, target, { path: "/", httpOnly: false, sameSite: "lax" });
+    return res;
   } catch (e) {
     return NextResponse.json({ ok: false }, { status: 400 });
   }

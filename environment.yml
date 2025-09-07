@@ -28,6 +28,6 @@ dependencies:
       - aiofiles
       - pillow
       - types-aiofiles 
-      - torch
       - transformers
       - langdetect
+      - python-multipart

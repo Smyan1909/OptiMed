@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     
-    const sessionId = request.headers.get('x-session-id') || 
-                     request.cookies.get('session_id')?.value;
+    const sessionCookieStore = await cookies();
+    const sessionId = request.headers.get('x-session-id') || sessionCookieStore.get('session_id')?.value;
     
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
@@ -17,7 +18,8 @@ export async function POST(request: NextRequest) {
 
     // Forward locale to backend for multilingual support
     try {
-      const localeCookie = request.cookies.get('NEXT_LOCALE')?.value;
+      const cookieStore = await cookies();
+      const localeCookie = cookieStore.get('NEXT_LOCALE')?.value;
       const acceptLang = request.headers.get('accept-language') || localeCookie || undefined;
       if (acceptLang) {
         headers['Accept-Language'] = acceptLang;

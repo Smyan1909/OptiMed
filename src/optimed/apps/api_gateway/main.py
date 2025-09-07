@@ -22,7 +22,20 @@ from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalE
 
 from pydantic import BaseModel
 
-_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service = create_app_dependencies()
+# Defer heavy dependency wiring to startup to avoid crashing on import
+# if env vars (e.g., PGVECTOR_DSN) are missing at container boot.
+_engine = None
+_fhir = None
+_vector_store = None
+_user_repo = None
+_connection_repo = None
+_connection_service = None
+_create_image_service = None
+_image_analysis_engine = None
+_image_generation_service = None
+_generated_image_repo = None
+_journal_llm_service = None
+_web_search_service = None
 
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
@@ -34,6 +47,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def init_dependencies() -> None:
+    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service
+    try:
+        (_engine,
+         _fhir,
+         _vector_store,
+         _user_repo,
+         _connection_repo,
+         _connection_service,
+         _create_image_service,
+         _image_analysis_engine,
+         _image_generation_service,
+         _generated_image_repo,
+         _journal_llm_service,
+         _web_search_service) = create_app_dependencies()
+        print("[startup] Dependencies initialized")
+    except Exception as e:
+        import traceback
+        print(f"[startup] Dependency init failed: {e}")
+        traceback.print_exc()
 class JournalEntryRequest(BaseModel):
     patient_id: str
     title: str
@@ -226,7 +261,6 @@ class SessionOut(BaseModel):
     mode: str
     is_active: bool
     last_participant_id: str | None
-    user_can_join: bool = True
 
 class SessionCreateRequest(BaseModel):
     patient_id: str | None = None
@@ -238,6 +272,18 @@ class ImageGenerationRequestModel(BaseModel):
     width: int = 1024
     height: int = 1024
     patient_id: Optional[str] = None
+
+def get_health_status():
+    return {"status": "ok"}
+
+@app.get("/health", summary="Health Check (GET)")
+async def health_get():
+    return get_health_status()
+
+@app.post("/health", summary="Health Check")
+async def health():
+    """Simple health check endpoint."""
+    return get_health_status()
 
 async def get_current_user(
     x_session_id: str = Header(None, alias="X-Session-ID")

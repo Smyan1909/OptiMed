@@ -1,4 +1,4 @@
-export type Patient = { id: string; name: string; dob?: string; age?: number };
+export type Patient = { id: string; name: string; dob?: string; age?: number; sex?: string };
 export type PatientDetail = {
   id: string;
   name: string;

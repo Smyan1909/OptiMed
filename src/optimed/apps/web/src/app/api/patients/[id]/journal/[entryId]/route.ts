@@ -1,20 +1,23 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: { patientId: string; entryId: string } }
+  request: Request,
+  context: any
 ) {
   try {
-    const { patientId, entryId } = params;
-    
+    const { id, entryId } = context.params;
+
+    const cookieStore = await cookies();
+    const sessionId = request.headers.get('x-session-id') || cookieStore.get('session_id')?.value;
+
+    const headers: Record<string, string> = {};
+    if (sessionId) headers['X-Session-ID'] = sessionId;
+
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
     const response = await fetch(
-      `${baseUrl}/patients/${patientId}/journal/${entryId}`,
-      {
-        headers: {
-          'X-Session-ID': request.cookies.get('session-id')?.value || '',
-        },
-      }
+      `${baseUrl}/patients/${id}/journal/${entryId}`,
+      { headers }
     );
 
     if (!response.ok) {

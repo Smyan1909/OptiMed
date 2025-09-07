@@ -1,8 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: { userId: string } }
+  request: Request,
+  context: any
 ) {
   try {
     const { searchParams } = new URL(request.url);
@@ -19,7 +19,7 @@ export async function GET(
     }
     
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
-    const response = await fetch(`${baseUrl}/images/user/${params.userId}?limit=${limit}`, {
+    const response = await fetch(`${baseUrl}/images/user/${context.params.userId}?limit=${limit}`, {
       headers
     });
     

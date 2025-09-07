@@ -1,8 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: { sessionId: string } }
+  request: Request,
+  context: any
 ) {
   try {
     // Get session ID from incoming request headers
@@ -18,7 +18,7 @@ export async function POST(
     }
     
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
-    const response = await fetch(`${baseUrl}/sessions/${params.sessionId}/join`, {
+    const response = await fetch(`${baseUrl}/sessions/${context.params.sessionId}/join`, {
       method: 'POST',
       headers
     });

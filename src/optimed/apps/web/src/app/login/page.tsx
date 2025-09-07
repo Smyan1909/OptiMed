@@ -77,7 +77,11 @@ export default function LoginPage() {
       // Store EHR parameters in localStorage for the launch page
       localStorage.setItem('ehr_client_id', ehrClientId);
       localStorage.setItem('ehr_scope', ehrScope);
-      localStorage.setItem('ehr_redirect_uri', 'http://localhost:8000/auth/ehr-callback');
+      const backendBase = (process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_BACKEND_URL || '').replace(/\/$/, '');
+      const redirectUri = backendBase ? `${backendBase}/auth/ehr-callback` : '';
+      if (redirectUri) {
+        localStorage.setItem('ehr_redirect_uri', redirectUri);
+      }
       
       const result = await initiateEHRLogin(
         ehrServerUrl,
