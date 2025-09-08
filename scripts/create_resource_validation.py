@@ -165,7 +165,7 @@ def build_baseline_bundle(patient_name="patname_0"):
                           "encounter": {"reference": ref("Encounter", enc_emer)}, "valueQuantity": {"value": 25, "unit": "pack-years"}}},
 
             # ImagingStudy & DiagnosticReports
-            {"resource": {"resourceType": "ImagingStudy", "id": "img-cxr", "subject": {"reference": ref("Patient", pat_id)},
+            {"resource": {"resourceType": "ImagingStudy", "id": "img-cxr", "status": "available", "subject": {"reference": ref("Patient", pat_id)},
                           "started": "2025-08-18T15:00:00+02:00", "description": "Portable AP chest radiograph"}},
             {"resource": {"resourceType": "DiagnosticReport", "id": "dr-cxr", "status": "final",
                           "category": [{"coding": [{"system": "http://loinc.org", "code": "LP29684-5", "display": "Radiology"}]}],
@@ -431,6 +431,9 @@ def to_transaction(collection_bundle):
         fullUrl = idmap[(rt, rid_)]
         res.pop("id", None)
         rewrite(res)
+        # Ensure required fields for server acceptance
+        if rt == "ImagingStudy" and "status" not in res:
+            res["status"] = "available"
         tx["entry"].append({"fullUrl":fullUrl,"resource":res,"request":{"method":"POST","url":rt}})
     return tx
 
