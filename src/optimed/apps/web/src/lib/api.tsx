@@ -7,7 +7,6 @@ export type PatientDetail = {
   care_unit: string;
   vitals: Record<string,string>;
   labs:   Record<string,string>;
-  imaging: Record<string,string>;
   exam: Record<string,string>;
   procedure: Record<string,string>;
   imaging_observations: Record<string,string>;
@@ -23,7 +22,6 @@ export type PatientDetail = {
   // Timestamp fields
   vitals_timestamps: Record<string,string>;
   labs_timestamps: Record<string,string>;
-  imaging_timestamps: Record<string,string>;
   exam_timestamps: Record<string,string>;
   procedure_timestamps: Record<string,string>;
   imaging_observations_timestamps: Record<string,string>;

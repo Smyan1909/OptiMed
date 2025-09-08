@@ -367,18 +367,7 @@ function VitalsPageContent() {
               'labs'
             )}
 
-            {/* Imaging Studies */}
-            {renderObservationSection(
-              t('vitalsPage.sections.imaging'),
-              patient?.imaging || {},
-              patient?.imaging_timestamps,
-              <Camera className="h-5 w-5 mr-2 text-purple-500" />,
-              'from-purple-50',
-              'to-violet-50',
-              t('vitalsPage.noData.imaging'),
-              undefined,
-              'imaging'
-            )}
+            {/* Imaging Studies removed in current version */}
 
             {/* Diagnostic Reports */}
             {renderObservationSection(
@@ -570,12 +559,7 @@ function VitalsPageContent() {
                   </div>
                   <div className="text-sm text-blue-700">{t('vitalsPage.summary.labs')}</div>
                 </div>
-                <div className="bg-purple-50 p-4 rounded-lg">
-                  <div className="text-2xl font-bold text-purple-600">
-                    {patient?.imaging ? Object.keys(patient.imaging).length : 0}
-                  </div>
-                  <div className="text-sm text-purple-700">{t('vitalsPage.summary.imaging')}</div>
-                </div>
+                {/* Imaging summary removed in current version */}
                 <div className="bg-green-50 p-4 rounded-lg">
                   <div className="text-2xl font-bold text-green-600">
                     {patient?.exam ? Object.keys(patient.exam).length : 0}

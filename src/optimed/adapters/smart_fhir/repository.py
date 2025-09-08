@@ -537,7 +537,6 @@ def _to_patient_ctx(
         questionnaire_response: list[Observation] | None = None,
         care_plan: list[Observation] | None = None,
         encounters: list[Any] | None = None,
-        imaging_studies: list[Any] | None = None,
         procedures_fhir: list[Any] | None = None,
         diagnostic_reports: list[Any] | None = None,
         base_url: str = "http://example.com/fhir"  # Default base URL, can be overridden
@@ -561,8 +560,7 @@ def _to_patient_ctx(
     questionnaire_response_data, questionnaire_response_timestamps, questionnaire_response_sources = _obs_bundle_to_dict_with_timestamps(questionnaire_response or [], base_url, "questionnaire")
     care_plan_data, care_plan_timestamps, care_plan_sources = _obs_bundle_to_dict_with_timestamps(care_plan or [], base_url, "care-plan")
 
-    # Map /ImagingStudy and /Procedure as dict-like entries
-    imaging_data, imaging_timestamps, imaging_sources = _obs_bundle_to_dict_with_timestamps(imaging_studies or [], base_url, "imaging")
+    # Map /Procedure as dict-like entries
     procedure_data, procedure_timestamps, procedure_sources = _obs_bundle_to_dict_with_timestamps(procedures_fhir or [], base_url, "procedure")
     diagnostic_reports_data, diagnostic_reports_timestamps, diagnostic_reports_sources = _obs_bundle_to_dict_with_timestamps(diagnostic_reports or [], base_url, "diagnostic-report")
     
@@ -642,7 +640,6 @@ def _to_patient_ctx(
         # Data fields
         vitals=vitals_data,
         labs=labs_data,
-        imaging=imaging_data,
         exam=exam_data,
         procedure=procedure_data,
         diagnostic_reports=diagnostic_reports_data,
@@ -661,7 +658,6 @@ def _to_patient_ctx(
         # Timestamp fields
         vitals_timestamps=vitals_timestamps,
         labs_timestamps=labs_timestamps,
-        imaging_timestamps=imaging_timestamps,
         exam_timestamps=exam_timestamps,
         procedure_timestamps=procedure_timestamps,
         social_history_timestamps=social_history_timestamps,
@@ -680,7 +676,6 @@ def _to_patient_ctx(
         # Source tracking fields
         vitals_sources=vitals_sources,
         labs_sources=labs_sources,
-        imaging_sources=imaging_sources,
         exam_sources=exam_sources,
         procedure_sources=procedure_sources,
         social_history_sources=social_history_sources,
@@ -852,13 +847,12 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
         medication_statement = await self._get_medication_statements(patient_id)
         questionnaire_response = await self._get_questionnaire_responses(patient_id)
         care_plan = await self._get_care_plans(patient_id)
-        imaging_studies = await self._get_imaging_studies(patient_id)
         procedures_fhir = await self._get_procedures(patient_id)
         diagnostic_reports = await self._get_diagnostic_reports(patient_id)
         return _to_patient_ctx(
             patient, vitals, labs, imaging_observations, exam, procedure_observations, 
             social_history, medications, allergies, diagnoses, immunizations,
-            medication_statement, questionnaire_response, care_plan, encounters, imaging_studies, procedures_fhir, diagnostic_reports, self._base
+            medication_statement, questionnaire_response, care_plan, encounters, procedures_fhir, diagnostic_reports, self._base
         )
         
     async def search_patients(self, query: Any) -> Sequence[PatientContext]:
@@ -901,7 +895,6 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                 questionnaire_response=[],
                 care_plan=[],
                 encounters=[],
-                imaging_studies=[],
                 procedures_fhir=[],
                 base_url=self._base
             ))
@@ -1313,52 +1306,7 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
             print(f"Failed to fetch diagnostic reports: {e}")
             return []
 
-    async def _get_imaging_studies(self, patient_id: str) -> list[dict]:
-        """Fetch ImagingStudy resources and map to simple dict-like observations."""
-        await self._ensure_token_valid()
-        try:
-            r = await self._client.get("/ImagingStudy", params={
-                "patient": patient_id,
-                "_count": 100,
-                "_sort": "-date"
-            })
-            r.raise_for_status()
-            bundle = r.json()
-
-            studies: list[dict] = []
-            for entry in bundle.get("entry", []):
-                resource = entry.get("resource", {})
-                study_id = resource.get("id", "unknown")
-                status = resource.get("status", "unknown")
-                started = resource.get("started", "")
-                description = resource.get("description") or "Imaging Study"
-
-                modalities: list[str] = []
-                for series in resource.get("series", []) or []:
-                    for mod in (series.get("modality", {}) or {}).get("coding", []) or []:
-                        disp = mod.get("display") or mod.get("code")
-                        if disp:
-                            modalities.append(disp)
-                modality_str = ", ".join(sorted(set(modalities)))
-
-                value_parts = [status.title()]
-                if modality_str:
-                    value_parts.append(modality_str)
-                value_str = " - ".join([p for p in value_parts if p])
-
-                studies.append({
-                    "id": study_id,
-                    "status": status,
-                    "code": {"coding": [{"code": "imaging-study", "display": description}]},
-                    "valueString": value_str,
-                    "effectiveDateTime": started,
-                    "resource_type": "ImagingStudy",
-                })
-
-            return studies
-        except Exception as e:
-            print(f"Failed to fetch imaging studies: {e}")
-            return []
+    # ImagingStudy retrieval is disabled to avoid errors in current version
 
     async def _get_procedures(self, patient_id: str) -> list[dict]:
         """Fetch Procedure resources and map to simple dict-like observations."""

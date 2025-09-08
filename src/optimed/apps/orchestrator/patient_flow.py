@@ -778,23 +778,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                             }
                         )
 
-                    # 14. Imaging chunk (if available)
-                    if patient_data.imaging:
-                        imaging_text = f"""
-                        Imaging for {patient_data.name} (ID: {patient_id}):
-                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.imaging.items()])}
-                        """
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="Imaging",
-                            object_id=f"{patient_id}_imaging",
-                            text={"content": imaging_text.strip()},
-                            metadata={
-                                "patient_id": patient_id,
-                                "data_type": "imaging",
-                                "timestamp": str(int(time.time() * 1000))
-                            }
-                        )
+                    # Imaging chunk removed in current version
 
                     # 15. Complete patient context as a single chunk for fallback
                     complete_context = patient_data.model_dump_json(indent=2)
@@ -3240,8 +3224,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
             ("Encounters", patient_ctx.encounters, patient_ctx.encounters_sources),
             ("Exams", patient_ctx.exam, patient_ctx.exam_sources),
             ("Procedures", patient_ctx.procedure, patient_ctx.procedure_sources),
-            ("Social History", patient_ctx.social_history, patient_ctx.social_history_sources),
-            ("Imaging", patient_ctx.imaging, patient_ctx.imaging_sources)
+            ("Social History", patient_ctx.social_history, patient_ctx.social_history_sources)
         ]
         
         for data_type_name, data_dict, sources_dict in data_types:

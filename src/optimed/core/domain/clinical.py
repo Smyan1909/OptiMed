@@ -29,7 +29,6 @@ class PatientContext(FrozenModel):
     vitals: Dict[str, str] = {}
     labs: Dict[str, str] = {}
 
-    imaging: Dict[str, str] = {}  # Imaging from /ImagingStudy
     exam: Dict[str, str] = {}  # e.g. {"Abdomen": "Normal"}
     procedure: Dict[str, str] = {}  # Procedures from /Procedure
     social_history: Dict[str, str] = {}  # e.g. {"Smoking": "None", "Alcohol": "Occasional"}
@@ -49,7 +48,6 @@ class PatientContext(FrozenModel):
 
     vitals_timestamps: Dict[str, str] = {}
     labs_timestamps: Dict[str, str] = {}
-    imaging_timestamps: Dict[str, str] = {}  # From /ImagingStudy
     exam_timestamps: Dict[str, str] = {}
     procedure_timestamps: Dict[str, str] = {}  # From /Procedure
     social_history_timestamps: Dict[str, str] = {}
@@ -69,7 +67,6 @@ class PatientContext(FrozenModel):
     # NEW: Data source tracking
     vitals_sources: Dict[str, DataSource] = {}
     labs_sources: Dict[str, DataSource] = {}
-    imaging_sources: Dict[str, DataSource] = {}  # From /ImagingStudy
     exam_sources: Dict[str, DataSource] = {}
     procedure_sources: Dict[str, DataSource] = {}  # From /Procedure
     social_history_sources: Dict[str, DataSource] = {}

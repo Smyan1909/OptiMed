@@ -108,7 +108,6 @@ class PatientOut(BaseModel):
     care_unit: str
     vitals: Dict[str, str]
     labs: Dict[str, str]
-    imaging: Dict[str, str]
     exam: Dict[str, str]
     procedure: Dict[str, str]
     imaging_observations: Dict[str, str]
@@ -124,7 +123,6 @@ class PatientOut(BaseModel):
     # Timestamp fields
     vitals_timestamps: Dict[str, str]
     labs_timestamps: Dict[str, str]
-    imaging_timestamps: Dict[str, str]
     exam_timestamps: Dict[str, str]
     procedure_timestamps: Dict[str, str]
     imaging_observations_timestamps: Dict[str, str]
@@ -143,7 +141,6 @@ class PatientOut(BaseModel):
 
     vitals_sources: Dict[str, DataSource] = {}
     labs_sources: Dict[str, DataSource] = {}
-    imaging_sources: Dict[str, DataSource] = {}
     exam_sources: Dict[str, DataSource] = {}
     procedure_sources: Dict[str, DataSource] = {}
     imaging_observations_sources: Dict[str, DataSource] = {}
@@ -625,7 +622,6 @@ async def search_patients(
                 care_unit=p.care_unit,
                 vitals=p.vitals,
                 labs=p.labs,
-                imaging=p.imaging,
                 exam=p.exam,
                 procedure=p.procedure,
                 imaging_observations=p.imaging_observations,
@@ -641,7 +637,6 @@ async def search_patients(
                 # Timestamp fields
                 vitals_timestamps=p.vitals_timestamps,
                 labs_timestamps=p.labs_timestamps,
-                imaging_timestamps=p.imaging_timestamps,
                 exam_timestamps=p.exam_timestamps,
                 procedure_timestamps=p.procedure_timestamps,
                 imaging_observations_timestamps=p.imaging_observations_timestamps,
@@ -660,7 +655,6 @@ async def search_patients(
                 # Data sources
                 vitals_sources = p.vitals_sources,
                 labs_sources = p.labs_sources,
-                imaging_sources = p.imaging_sources,
                 exam_sources = p.exam_sources,
                 procedure_sources = p.procedure_sources,
                 imaging_observations_sources = p.imaging_observations_sources,
@@ -998,7 +992,6 @@ async def get_patient(
                 care_unit=pctx.care_unit,
                 vitals=pctx.vitals,
                 labs=pctx.labs,
-                imaging=pctx.imaging,
                 exam=pctx.exam,
                 procedure=pctx.procedure,
                 imaging_observations=pctx.imaging_observations,
@@ -1014,7 +1007,6 @@ async def get_patient(
                 # Timestamp fields
                 vitals_timestamps=pctx.vitals_timestamps,
                 labs_timestamps=pctx.labs_timestamps,
-                imaging_timestamps=pctx.imaging_timestamps,
                 exam_timestamps=pctx.exam_timestamps,
                 procedure_timestamps=pctx.procedure_timestamps,
                 imaging_observations_timestamps=pctx.imaging_observations_timestamps,
@@ -1033,7 +1025,6 @@ async def get_patient(
                 # Data sources
                 vitals_sources=pctx.vitals_sources,
                 labs_sources=pctx.labs_sources,
-                imaging_sources=pctx.imaging_sources,
                 exam_sources=pctx.exam_sources,
                 procedure_sources=pctx.procedure_sources,
                 imaging_observations_sources=pctx.imaging_observations_sources,

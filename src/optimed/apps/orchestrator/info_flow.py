@@ -949,35 +949,11 @@ class LangGraphInformationEngine(DiagnosticEngine):
                             }
                         )
 
-                    # 14. Imaging chunk with sources
-                    if patient_data.imaging:
-                        imaging_sources = extract_sources_for_data_type(
-                            patient_data.imaging,
-                            patient_data.imaging_sources
-                        )
-                        imaging_text = f"""
-                        Imaging for {patient_data.name} (ID: {patient_id}):
-                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.imaging.items()])}
-                        
-                        Data Sources:
-                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in imaging_sources])}
-                        """
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="Imaging",
-                            object_id=f"{patient_id}_imaging",
-                            text={"content": imaging_text.strip()},
-                            metadata={
-                                "patient_id": patient_id,
-                                "data_type": "imaging",
-                                "timestamp": str(int(time.time() * 1000)),
-                                "sources": imaging_sources
-                            }
-                        )
+                    # Imaging chunk removed in current version
                     
                     # 5. Complete patient context with all sources
                     all_sources = []
-                    for data_type in ['vitals', 'labs', 'medications', 'allergies', 'diagnoses', 'immunizations', 'medication_statement', 'questionnaire_response', 'encounters', 'exam', 'procedure', 'social_history', 'imaging']:
+                    for data_type in ['vitals', 'labs', 'medications', 'allergies', 'diagnoses', 'immunizations', 'medication_statement', 'questionnaire_response', 'encounters', 'exam', 'procedure', 'social_history']:
                         data_dict = getattr(patient_data, data_type, {})
                         sources_dict = getattr(patient_data, f"{data_type}_sources", {})
                         all_sources.extend(extract_sources_for_data_type(data_dict, sources_dict))
@@ -2321,8 +2297,7 @@ Please reference this generated image in your response when relevant and explain
             ("Encounters", patient_ctx.encounters, patient_ctx.encounters_sources),
             ("Exams", patient_ctx.exam, patient_ctx.exam_sources),
             ("Procedures", patient_ctx.procedure, patient_ctx.procedure_sources),
-            ("Social History", patient_ctx.social_history, patient_ctx.social_history_sources),
-            ("Imaging", patient_ctx.imaging, patient_ctx.imaging_sources)
+            ("Social History", patient_ctx.social_history, patient_ctx.social_history_sources)
         ]
         
         for data_type_name, data_dict, sources_dict in data_types:
