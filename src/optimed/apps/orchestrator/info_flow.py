@@ -12,7 +12,7 @@ from datetime import datetime
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
-from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, ImageGenerationRequest, GeneratedImage, ImageGenerationContext, WebSearchInfo, CrossSessionHistoryInfo, GeneratedImageInfo, GeneratedImagePurpose
+from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, ImageGenerationRequest, GeneratedImage, ImageGenerationContext, GeneratedImagePurpose
 from optimed.core.lang import detect_language_code
 
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, ImageGenerationService, GeneratedImageRepository

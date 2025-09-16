@@ -243,7 +243,7 @@ async def intelligent_retrieve_chunks(patient_ctx: PatientContext, user_prompt: 
 
                 retrieved_chunks = selected_chunks
 
-            except Exception as e:
+            except Exception:
                 # Fallback to top similarity scores, but prioritize journal entries and recent data
                 journal_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") == "journal_entry"]
                 recent_time_sensitive = [chunk for chunk in candidate_chunks if chunk.get("data_type") in ["vitals", "labs", "medications"] and chunk.get("is_recent", True)]

@@ -347,10 +347,7 @@ async def get_user_fhir_repository(user_ctx: dict = Depends(get_user_context)) -
     print("[API] Using default HAPI FHIR repository")
     return _fhir
 
-@app.post("/health", summary="Health Check")
-async def health():
-    """Simple health check endpoint."""
-    return {"status": "ok"}
+# Removed duplicate /health endpoint (was redefining the same route)
 
 @app.post("/sessions/list", response_model=List[SessionOut])
 async def list_user_sessions(

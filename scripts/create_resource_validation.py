@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 # create_resource_validation.py
-import json, uuid, argparse, requests, copy, re, itertools, base64, datetime, os, csv
+import json
+import uuid
+import argparse
+import requests
+import copy
+import re
+import itertools
+import base64
+import datetime
+import os
+import csv
 
 # ---------- Helpers ----------
 def rid(): return str(uuid.uuid4())
@@ -26,11 +36,14 @@ def build_index_map():
     m = {0: []}
     idx = 1
     for f in FACTORS:
-        m[idx] = [f]; idx += 1
+        m[idx] = [f]
+        idx += 1
     for a,b in itertools.combinations(FACTORS, 2):
-        m[idx] = [a,b]; idx += 1
+        m[idx] = [a,b]
+        idx += 1
     for a,b,c in itertools.combinations(TOP8, 3):
-        m[idx] = [a,b,c]; idx += 1
+        m[idx] = [a,b,c]
+        idx += 1
     assert idx == 193, f"Got {idx} indices, expected 193"
     return m
 
@@ -424,7 +437,8 @@ def to_transaction(collection_bundle):
                 else:
                     rewrite(v)
         elif isinstance(o, list):
-            for it in o: rewrite(it)
+            for it in o:
+                rewrite(it)
     for ent in collection_bundle.get("entry", []):
         res = copy.deepcopy(ent["resource"])
         rt, rid_ = res["resourceType"], res.get("id")
@@ -455,8 +469,10 @@ def write_bundles(out_dir):
     with open(os.path.join(out_dir, "mask_map.json"), "w", encoding="utf-8") as f:
         json.dump(index_map, f, indent=2, ensure_ascii=False)
     with open(os.path.join(out_dir, "mask_map.csv"), "w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f); w.writerow(["index","masked_types"])
-        for i in range(193): w.writerow([i, ";".join(index_map[i])])
+        w = csv.writer(f)
+        w.writerow(["index","masked_types"])
+        for i in range(193):
+            w.writerow([i, ";".join(index_map[i])])
 
 def upload_bundles(out_dir, fhir_url, glob_prefix="fhir_bundle_patname_", session=None):
     sess = session or requests.Session()
