@@ -11,6 +11,7 @@ from PIL import Image
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode
 from typing import AsyncGenerator, Dict, Optional, Any, List
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, Header, Depends, File, Form, Body, Response # type: ignore
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,27 +49,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.on_event("startup")
-async def init_dependencies() -> None:
+_dependencies_ready: asyncio.Event = asyncio.Event()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service
     try:
-        (_engine,
-         _fhir,
-         _vector_store,
-         _user_repo,
-         _connection_repo,
-         _connection_service,
-         _create_image_service,
-         _image_analysis_engine,
-         _image_generation_service,
-         _generated_image_repo,
-         _journal_llm_service,
-         _web_search_service) = create_app_dependencies()
+        (
+            _engine,
+            _fhir,
+            _vector_store,
+            _user_repo,
+            _connection_repo,
+            _connection_service,
+            _create_image_service,
+            _image_analysis_engine,
+            _image_generation_service,
+            _generated_image_repo,
+            _journal_llm_service,
+            _web_search_service,
+        ) = create_app_dependencies()
+        _dependencies_ready.set()
         print("[startup] Dependencies initialized")
+        yield
     except Exception as e:
         import traceback
         print(f"[startup] Dependency init failed: {e}")
         traceback.print_exc()
+        # Fail fast: prevent the app from serving if dependencies cannot initialize
+        raise
+    finally:
+        # Optional: add shutdown/cleanup here if needed
+        pass
+
+# Ensure the application only starts serving after dependencies are ready
+app.router.lifespan_context = lifespan
 class JournalEntryRequest(BaseModel):
     patient_id: str
     title: str
@@ -267,6 +282,7 @@ class SessionOut(BaseModel):
     mode: str
     is_active: bool
     last_participant_id: str | None
+    user_can_join: bool
 
 class SessionCreateRequest(BaseModel):
     patient_id: str | None = None
@@ -345,6 +361,9 @@ async def get_user_fhir_repository(user_ctx: dict = Depends(get_user_context)) -
     
     # Fallback to default HAPI repository
     print("[API] Using default HAPI FHIR repository")
+    if _fhir is None:
+        # Service not initialized yet
+        raise HTTPException(status_code=503, detail="Service initializing, please try again shortly")
     return _fhir
 
 # Removed duplicate /health endpoint (was redefining the same route)
