@@ -1702,7 +1702,14 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                 recs = res.get("recommendation", []) or []
                 if recs:
                     rec = recs[0]
-                    vac = (rec.get("vaccineCode", [{}])[0].get("text") if isinstance(rec.get("vaccineCode"), list) else None) or "Vaccine Recommendation"
+                    vaccine_code_field = rec.get("vaccineCode")
+                    vaccine_display = None
+                    if isinstance(vaccine_code_field, list) and len(vaccine_code_field) > 0:
+                        first_vaccine = vaccine_code_field[0] or {}
+                        vaccine_display = first_vaccine.get("text") or (((first_vaccine.get("coding") or [{}])[0] or {}).get("display") if first_vaccine.get("coding") else None)
+                    elif isinstance(vaccine_code_field, dict):
+                        vaccine_display = vaccine_code_field.get("text") or (((vaccine_code_field.get("coding") or [{}])[0] or {}).get("display") if vaccine_code_field.get("coding") else None)
+                    vac = vaccine_display or "Vaccine Recommendation"
                     date = rec.get("date") or ""
                     status = (rec.get("forecastStatus", {}) or {}).get("text") or "recommended"
                 else:
@@ -1758,7 +1765,14 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
             for entry in r.json().get("entry", []):
                 res = entry.get("resource", {})
                 status = res.get("status", "unknown")
-                typ = (res.get("type", [{}])[0].get("text") if isinstance(res.get("type"), list) else None) or "Episode Of Care"
+                type_field = res.get("type")
+                episode_type_display = None
+                if isinstance(type_field, list) and len(type_field) > 0:
+                    first_type = type_field[0] or {}
+                    episode_type_display = first_type.get("text") or (((first_type.get("coding") or [{}])[0] or {}).get("display") if first_type.get("coding") else None)
+                elif isinstance(type_field, dict):
+                    episode_type_display = type_field.get("text") or (((type_field.get("coding") or [{}])[0] or {}).get("display") if type_field.get("coding") else None)
+                typ = episode_type_display or "Episode Of Care"
                 start = (res.get("period", {}) or {}).get("start", "")
                 items.append({
                     "id": res.get("id", "unknown"),
