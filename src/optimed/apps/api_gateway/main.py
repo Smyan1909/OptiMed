@@ -25,29 +25,22 @@ from pydantic import BaseModel
 
 # Defer heavy dependency wiring to startup to avoid crashing on import
 # if env vars (e.g., PGVECTOR_DSN) are missing at container boot.
-_engine = None
-_fhir = None
-_vector_store = None
-_user_repo = None
-_connection_repo = None
-_connection_service = None
-_create_image_service = None
-_image_analysis_engine = None
-_image_generation_service = None
-_generated_image_repo = None
-_journal_llm_service = None
-_web_search_service = None
+from typing import Any as _Any  # local alias to annotate dynamic singletons
 
+_engine: _Any = None
+_fhir: _Any = None
+_vector_store: _Any = None
+_user_repo: _Any = None
+_connection_repo: _Any = None
+_connection_service: _Any = None
+_create_image_service: _Any = None
+_image_analysis_engine: _Any = None
+_image_generation_service: _Any = None
+_generated_image_repo: _Any = None
+_journal_llm_service: _Any = None
+_web_search_service: _Any = None
 
-app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+ 
 
 _dependencies_ready: asyncio.Event = asyncio.Event()
 
@@ -82,8 +75,15 @@ async def lifespan(app: FastAPI):
         # Optional: add shutdown/cleanup here if needed
         pass
 
-# Ensure the application only starts serving after dependencies are ready
-app.router.lifespan_context = lifespan
+app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True, lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 class JournalEntryRequest(BaseModel):
     patient_id: str
     title: str

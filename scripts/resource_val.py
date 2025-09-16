@@ -36,9 +36,12 @@ PATIENT_SUMMARY_QUESTIONS: List[str] = [
 ]
 
 
-async def resolve_patients(engine_deps, base_patient_name: str, count: int) -> List[object]:
+from typing import cast
+from optimed.core.domain import PatientContext as _PatientContext
+
+async def resolve_patients(engine_deps, base_patient_name: str, count: int) -> List[_PatientContext]:
     engine, fhir_repo, *_ = engine_deps
-    patients: List[object] = []
+    patients: List[_PatientContext] = []
     for i in range(count):
         name = f"{base_patient_name}_{i} StudyCase"
         try:
@@ -47,7 +50,7 @@ async def resolve_patients(engine_deps, base_patient_name: str, count: int) -> L
                 print(f"No patient found for name: {name}")
                 continue
             patient_id = search[0].patient_id
-            ptcx = await fhir_repo.get_patient(patient_id)
+            ptcx = cast(_PatientContext, await fhir_repo.get_patient(patient_id))
             patients.append(ptcx)
             print(f"Added patient: {ptcx.name}")
         except Exception as e:
@@ -259,7 +262,7 @@ async def intelligent_retrieve_chunks(patient_ctx: PatientContext, user_prompt: 
 
             return retrieved_chunks
 
-async def run_evaluation(engine_deps, vector_store, client, questions: List[str], patients: List[object], out_dir: Path) -> Tuple[Path, Path]:
+async def run_evaluation(engine_deps, vector_store, client, questions: List[str], patients: List[_PatientContext], out_dir: Path) -> Tuple[Path, Path]:
     engine, *_ = engine_deps
 
     responses_path = out_dir / "responses.txt"
@@ -297,7 +300,7 @@ async def run_evaluation(engine_deps, vector_store, client, questions: List[str]
     print(f"Responses saved to {responses_path}")
     print(f"Skipped details saved to {skipped_path}")
     print(f"Retrieved context saved to {retrieved_context_path}")
-    return responses_path, skipped_path, retrieved_context_path
+    return responses_path, skipped_path
 
 
 async def main() -> None:

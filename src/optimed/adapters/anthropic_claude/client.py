@@ -350,9 +350,10 @@ Focus on being accurate, detailed, and clinically relevant. If you cannot make d
             if diagnosis_strs:
                 parts.append(f"Active Diagnoses: {', '.join(diagnosis_strs)}")
         
-        # Imaging studies
-        if context.imaging:
-            imaging_items = list(context.imaging.items())[:3]  # Show top 3
+        # Imaging studies (PatientContext may not define 'imaging' in all variants)
+        imaging_data = getattr(context, "imaging", None)
+        if imaging_data:
+            imaging_items = list(imaging_data.items())[:3]  # Show top 3
             imaging_strs = [f"{k}: {v}" for k, v in imaging_items]
             if imaging_strs:
                 parts.append(f"Recent Imaging: {', '.join(imaging_strs)}")

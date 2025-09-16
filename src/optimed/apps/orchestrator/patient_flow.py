@@ -861,7 +861,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                                     "entry_id": entry.entry_id,
                                     "author_name": entry.author_name,
                                     "author_role": entry.author_role,
-                                    "created_at": entry.created_at.isoformat(),
+                                    "created_at": entry.created_at.isoformat() if getattr(entry, "created_at", None) else "",
                                     "timestamp": str(int(entry.created_at.timestamp() * 1000))
                                 }
                             )

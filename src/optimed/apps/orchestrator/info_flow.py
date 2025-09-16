@@ -602,7 +602,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                                 "source_type": source.source_type,
                                 "resource_id": source.resource_id,
                                 "resource_url": source.resource_url,
-                                "timestamp": source.timestamp.isoformat(),
+                                "timestamp": source.timestamp.isoformat() if getattr(source, "timestamp", None) else "",
                                 "category": source.category,
                                 "display_name": source.display_name
                             })
@@ -1050,7 +1050,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                                     "entry_id": entry.entry_id,
                                     "author_name": entry.author_name,
                                     "author_role": entry.author_role,
-                                    "created_at": entry.created_at.isoformat(),
+                                    "created_at": entry.created_at.isoformat() if getattr(entry, "created_at", None) else "",
                                     "timestamp": str(int(entry.created_at.timestamp() * 1000))
                                 }
                             )
