@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 from statistics import mean
-from typing import Any
 
 from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY, POLICY_PRESETS
 from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator

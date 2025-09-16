@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
-from typing import Any, Dict, Iterable, List, Sequence
+from typing import Any, Iterable, Sequence
 
-from optimed.core.domain import Chunk, Record, PolicySet, ChunkPolicy, PatientContext
+from optimed.core.domain import Chunk, Record, PolicySet, PatientContext
 from optimed.core.ports import ChunkingOrchestrator as ChunkingOrchestratorPort
 from optimed.core.ports import TokenizerPort, PhiRedactorPort
 from optimed.adapters.chunking.strategies import STRATEGY_IMPLEMENTATIONS

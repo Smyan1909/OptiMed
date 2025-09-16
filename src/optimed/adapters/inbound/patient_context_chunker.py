@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from optimed.core.domain import PatientContext, Record, PolicySet
 from optimed.core.ports import ChunkerPort, PhiRedactorPort
