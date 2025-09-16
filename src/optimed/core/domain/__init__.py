@@ -1,4 +1,5 @@
 from .clinical import PatientContext, BedState, Encounter, JournalEntry, JournalEntryCreate, JournalEntryUpdate, DataSource
+from .chunking import Chunk, Record, ChunkPolicy, PolicySet
 from .diagnosis import DiagnosisResult, WebSearchInfo, CrossSessionHistoryInfo, GeneratedImageInfo, DifferentialDiagnosis
 from .info import InfoEvent, Notification, CommThread, ChatMessage, WebSearchQuery, WebSearchResult, WebSearchResponse, ChatSession, SessionParticipant
 from .kpi import KPIEvent, Alert
@@ -85,4 +86,9 @@ __all__ = [
     "WebSearchQuery",
     "WebSearchResult",
     "WebSearchResponse",
+    # chunking
+    "Chunk",
+    "Record",
+    "ChunkPolicy",
+    "PolicySet",
 ]

@@ -1,0 +1,27 @@
+{
+  "patient_id": "12345",
+  "name": "John Doe",
+  "age": 54,
+  "sex": "M",
+  "care_unit": "ICU",
+  "vitals": {"HR": "98", "BP": "120/80"},
+  "vitals_timestamps": {"HR": "2025-09-15T10:00:00+00:00", "BP": "2025-09-15T10:05:00+00:00"},
+  "labs": {"K+": "4.3", "Na+": "139"},
+  "labs_timestamps": {"K+": "2025-09-15T09:00:00+00:00", "Na+": "2025-09-15T09:00:00+00:00"},
+  "medications": {"Aspirin": "81 mg daily"},
+  "medications_timestamps": {"Aspirin": "2025-09-14T08:00:00+00:00"},
+  "allergies": {"Penicillin": "Rash"},
+  "allergies_timestamps": {"Penicillin": "2020-01-01T00:00:00+00:00"},
+  "diagnoses": {"Hypertension": "Controlled"},
+  "diagnoses_timestamps": {"Hypertension": "2021-06-01T00:00:00+00:00"},
+  "immunizations": {"COVID-19 Vaccine": "2023-10-15"},
+  "immunizations_timestamps": {"COVID-19 Vaccine": "2023-10-15T00:00:00+00:00"},
+  "diagnostic_reports": {"CT Head": "Findings: No acute intracranial hemorrhage. Impression: Normal study for John Doe."},
+  "diagnostic_reports_timestamps": {"CT Head": "2025-09-15T11:00:00+00:00"},
+  "clinical_impressions": {"ER Note": "The patient John Doe presents with headache; likely tension-type."},
+  "clinical_impressions_timestamps": {"ER Note": "2025-09-15T12:00:00+00:00"},
+  "questionnaire_response": {"Intake": "Email john.doe@example.com, Phone +1 555-012-3456."},
+  "questionnaire_response_timestamps": {"Intake": "2025-09-15T08:30:00+00:00"}
+}
+
+
