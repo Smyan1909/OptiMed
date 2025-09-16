@@ -66,7 +66,7 @@ class ChunkingOrchestrator(ChunkingOrchestratorPort):
             if not strategy_name:
                 continue
             strategy_cls = STRATEGY_IMPLEMENTATIONS[strategy_name]
-            strategy = strategy_cls()
+            strategy = strategy_cls()  # type: ignore[misc]
             # map resource_type to policy preset
             preset_name = self._policy_for_resource(resource_type)
             policy = policy_set.get(preset_name)
@@ -78,7 +78,7 @@ class ChunkingOrchestrator(ChunkingOrchestratorPort):
         bundle_strategy_name = self._strategy_registry.get("bundle")
         if bundle_strategy_name:
             bundle_cls = STRATEGY_IMPLEMENTATIONS[bundle_strategy_name]
-            bundle = bundle_cls()
+            bundle = bundle_cls()  # type: ignore[misc]
             bundle_policy = policy_set.get("bundle_default")
             # Convert existing chunks back into Records for bundling
             bundle_records = [
