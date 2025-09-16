@@ -3,7 +3,7 @@
 import json
 import uuid
 import argparse
-import requests
+import requests # type: ignore
 import copy
 import re
 import itertools

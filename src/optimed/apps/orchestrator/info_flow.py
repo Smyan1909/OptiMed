@@ -2187,7 +2187,7 @@ Please reference this generated image in your response when relevant and explain
             completion_update["generated_image"] = {
                 "image_id": getattr(generated_image, "generation_id", None),
                 "prompt": getattr(generated_image, "prompt", None),
-                "created_at": getattr(generated_image, "created_at", None).isoformat() if getattr(generated_image, "created_at", None) else None,
+                "created_at": getattr(generated_image, "created_at", None).isoformat() if getattr(generated_image, "created_at", None) else None, # type: ignore
                 "metadata": getattr(generated_image, "metadata", {})
             }
 
