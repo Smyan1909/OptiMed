@@ -10,6 +10,8 @@ from optimed.apps.orchestrator.factory import create_app_dependencies
 from optimed.core.domain import ChatMessage, ChatRole, PatientContext
 from optimed.core.ports import VectorStore, LLMClient
 from optimed.embeddings.minilm import embed
+from typing import cast
+from optimed.core.domain import PatientContext as _PatientContext
 
 
 # Default questions copied from the notebook
@@ -35,9 +37,6 @@ PATIENT_SUMMARY_QUESTIONS: List[str] = [
     "Is there any documented allergy to sulfonamide (‘sulfa’) medications?",
 ]
 
-
-from typing import cast
-from optimed.core.domain import PatientContext as _PatientContext
 
 async def resolve_patients(engine_deps, base_patient_name: str, count: int) -> List[_PatientContext]:
     engine, fhir_repo, *_ = engine_deps
