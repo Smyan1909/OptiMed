@@ -45,6 +45,24 @@ class PatientContext(FrozenModel):
     medication_statement: Dict[str, str] = {}
     questionnaire_response: Dict[str, str] = {}
     care_plan: Dict[str, str] = {}
+    
+    # Additional FHIR resources to make model more holistic
+    family_history: Dict[str, str] = {}
+    care_team: Dict[str, str] = {}
+    goals: Dict[str, str] = {}
+    clinical_impressions: Dict[str, str] = {}
+    risk_assessments: Dict[str, str] = {}
+    service_requests: Dict[str, str] = {}
+    medication_administrations: Dict[str, str] = {}
+    medication_dispenses: Dict[str, str] = {}
+    immunization_recommendations: Dict[str, str] = {}
+    appointments: Dict[str, str] = {}
+    episodes_of_care: Dict[str, str] = {}
+    imaging_studies: Dict[str, str] = {}
+    devices: Dict[str, str] = {}
+    device_use: Dict[str, str] = {}
+    nutrition_orders: Dict[str, str] = {}
+    adverse_events: Dict[str, str] = {}
 
     vitals_timestamps: Dict[str, str] = {}
     labs_timestamps: Dict[str, str] = {}
@@ -63,6 +81,24 @@ class PatientContext(FrozenModel):
     care_plan_timestamps: Dict[str, str] = {}
     encounters: Dict[str, str] = {}
     encounters_timestamps: Dict[str, str] = {}
+    
+    # Timestamps for additional resources
+    family_history_timestamps: Dict[str, str] = {}
+    care_team_timestamps: Dict[str, str] = {}
+    goals_timestamps: Dict[str, str] = {}
+    clinical_impressions_timestamps: Dict[str, str] = {}
+    risk_assessments_timestamps: Dict[str, str] = {}
+    service_requests_timestamps: Dict[str, str] = {}
+    medication_administrations_timestamps: Dict[str, str] = {}
+    medication_dispenses_timestamps: Dict[str, str] = {}
+    immunization_recommendations_timestamps: Dict[str, str] = {}
+    appointments_timestamps: Dict[str, str] = {}
+    episodes_of_care_timestamps: Dict[str, str] = {}
+    imaging_studies_timestamps: Dict[str, str] = {}
+    devices_timestamps: Dict[str, str] = {}
+    device_use_timestamps: Dict[str, str] = {}
+    nutrition_orders_timestamps: Dict[str, str] = {}
+    adverse_events_timestamps: Dict[str, str] = {}
 
     # NEW: Data source tracking
     vitals_sources: Dict[str, DataSource] = {}
@@ -81,6 +117,24 @@ class PatientContext(FrozenModel):
     questionnaire_response_sources: Dict[str, DataSource] = {}
     care_plan_sources: Dict[str, DataSource] = {}
     encounters_sources: Dict[str, DataSource] = {}
+    
+    # Source tracking for additional resources
+    family_history_sources: Dict[str, DataSource] = {}
+    care_team_sources: Dict[str, DataSource] = {}
+    goals_sources: Dict[str, DataSource] = {}
+    clinical_impressions_sources: Dict[str, DataSource] = {}
+    risk_assessments_sources: Dict[str, DataSource] = {}
+    service_requests_sources: Dict[str, DataSource] = {}
+    medication_administrations_sources: Dict[str, DataSource] = {}
+    medication_dispenses_sources: Dict[str, DataSource] = {}
+    immunization_recommendations_sources: Dict[str, DataSource] = {}
+    appointments_sources: Dict[str, DataSource] = {}
+    episodes_of_care_sources: Dict[str, DataSource] = {}
+    imaging_studies_sources: Dict[str, DataSource] = {}
+    devices_sources: Dict[str, DataSource] = {}
+    device_use_sources: Dict[str, DataSource] = {}
+    nutrition_orders_sources: Dict[str, DataSource] = {}
+    adverse_events_sources: Dict[str, DataSource] = {}
     
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

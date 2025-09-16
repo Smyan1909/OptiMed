@@ -135,6 +135,22 @@ class PatientOut(BaseModel):
     diagnostic_reports: Dict[str, str]
     medication_statement: Dict[str, str]
     questionnaire_response: Dict[str, str]
+    family_history: Dict[str, str]
+    care_team: Dict[str, str]
+    goals: Dict[str, str]
+    clinical_impressions: Dict[str, str]
+    risk_assessments: Dict[str, str]
+    service_requests: Dict[str, str]
+    medication_administrations: Dict[str, str]
+    medication_dispenses: Dict[str, str]
+    immunization_recommendations: Dict[str, str]
+    appointments: Dict[str, str]
+    episodes_of_care: Dict[str, str]
+    imaging_studies: Dict[str, str]
+    devices: Dict[str, str]
+    device_use: Dict[str, str]
+    nutrition_orders: Dict[str, str]
+    adverse_events: Dict[str, str]
     # Timestamp fields
     vitals_timestamps: Dict[str, str]
     labs_timestamps: Dict[str, str]
@@ -150,6 +166,22 @@ class PatientOut(BaseModel):
     diagnostic_reports_timestamps: Dict[str, str]
     medication_statement_timestamps: Dict[str, str]
     questionnaire_response_timestamps: Dict[str, str]
+    family_history_timestamps: Dict[str, str]
+    care_team_timestamps: Dict[str, str]
+    goals_timestamps: Dict[str, str]
+    clinical_impressions_timestamps: Dict[str, str]
+    risk_assessments_timestamps: Dict[str, str]
+    service_requests_timestamps: Dict[str, str]
+    medication_administrations_timestamps: Dict[str, str]
+    medication_dispenses_timestamps: Dict[str, str]
+    immunization_recommendations_timestamps: Dict[str, str]
+    appointments_timestamps: Dict[str, str]
+    episodes_of_care_timestamps: Dict[str, str]
+    imaging_studies_timestamps: Dict[str, str]
+    devices_timestamps: Dict[str, str]
+    device_use_timestamps: Dict[str, str]
+    nutrition_orders_timestamps: Dict[str, str]
+    adverse_events_timestamps: Dict[str, str]
     # Encounters
     encounters: Dict[str, str]
     encounters_timestamps: Dict[str, str]
@@ -169,6 +201,22 @@ class PatientOut(BaseModel):
     medication_statement_sources: Dict[str, DataSource] = {}
     questionnaire_response_sources: Dict[str, DataSource] = {}
     encounters_sources: Dict[str, DataSource] = {}
+    family_history_sources: Dict[str, DataSource] = {}
+    care_team_sources: Dict[str, DataSource] = {}
+    goals_sources: Dict[str, DataSource] = {}
+    clinical_impressions_sources: Dict[str, DataSource] = {}
+    risk_assessments_sources: Dict[str, DataSource] = {}
+    service_requests_sources: Dict[str, DataSource] = {}
+    medication_administrations_sources: Dict[str, DataSource] = {}
+    medication_dispenses_sources: Dict[str, DataSource] = {}
+    immunization_recommendations_sources: Dict[str, DataSource] = {}
+    appointments_sources: Dict[str, DataSource] = {}
+    episodes_of_care_sources: Dict[str, DataSource] = {}
+    imaging_studies_sources: Dict[str, DataSource] = {}
+    devices_sources: Dict[str, DataSource] = {}
+    device_use_sources: Dict[str, DataSource] = {}
+    nutrition_orders_sources: Dict[str, DataSource] = {}
+    adverse_events_sources: Dict[str, DataSource] = {}
 
 class UserOut(BaseModel):
     user_id: str 
@@ -650,6 +698,22 @@ async def search_patients(
                 diagnostic_reports=p.diagnostic_reports,
                 medication_statement=p.medication_statement,
                 questionnaire_response=p.questionnaire_response,
+                family_history=p.family_history,
+                care_team=p.care_team,
+                goals=p.goals,
+                clinical_impressions=p.clinical_impressions,
+                risk_assessments=p.risk_assessments,
+                service_requests=p.service_requests,
+                medication_administrations=p.medication_administrations,
+                medication_dispenses=p.medication_dispenses,
+                immunization_recommendations=p.immunization_recommendations,
+                appointments=p.appointments,
+                episodes_of_care=p.episodes_of_care,
+                imaging_studies=p.imaging_studies,
+                devices=p.devices,
+                device_use=p.device_use,
+                nutrition_orders=p.nutrition_orders,
+                adverse_events=p.adverse_events,
                 # Timestamp fields
                 vitals_timestamps=p.vitals_timestamps,
                 labs_timestamps=p.labs_timestamps,
@@ -665,6 +729,22 @@ async def search_patients(
                 diagnostic_reports_timestamps=p.diagnostic_reports_timestamps,
                 medication_statement_timestamps=p.medication_statement_timestamps,
                 questionnaire_response_timestamps=p.questionnaire_response_timestamps,
+                family_history_timestamps=p.family_history_timestamps,
+                care_team_timestamps=p.care_team_timestamps,
+                goals_timestamps=p.goals_timestamps,
+                clinical_impressions_timestamps=p.clinical_impressions_timestamps,
+                risk_assessments_timestamps=p.risk_assessments_timestamps,
+                service_requests_timestamps=p.service_requests_timestamps,
+                medication_administrations_timestamps=p.medication_administrations_timestamps,
+                medication_dispenses_timestamps=p.medication_dispenses_timestamps,
+                immunization_recommendations_timestamps=p.immunization_recommendations_timestamps,
+                appointments_timestamps=p.appointments_timestamps,
+                episodes_of_care_timestamps=p.episodes_of_care_timestamps,
+                imaging_studies_timestamps=p.imaging_studies_timestamps,
+                devices_timestamps=p.devices_timestamps,
+                device_use_timestamps=p.device_use_timestamps,
+                nutrition_orders_timestamps=p.nutrition_orders_timestamps,
+                adverse_events_timestamps=p.adverse_events_timestamps,
                 # Encounters
                 encounters=p.encounters,
                 encounters_timestamps=p.encounters_timestamps,
@@ -683,7 +763,23 @@ async def search_patients(
                 diagnostic_reports_sources = p.diagnostic_reports_sources,
                 medication_statement_sources = p.medication_statement_sources,
                 questionnaire_response_sources = p.questionnaire_response_sources,
-                encounters_sources = p.encounters_sources
+                encounters_sources = p.encounters_sources,
+                family_history_sources=p.family_history_sources,
+                care_team_sources=p.care_team_sources,
+                goals_sources=p.goals_sources,
+                clinical_impressions_sources=p.clinical_impressions_sources,
+                risk_assessments_sources=p.risk_assessments_sources,
+                service_requests_sources=p.service_requests_sources,
+                medication_administrations_sources=p.medication_administrations_sources,
+                medication_dispenses_sources=p.medication_dispenses_sources,
+                immunization_recommendations_sources=p.immunization_recommendations_sources,
+                appointments_sources=p.appointments_sources,
+                episodes_of_care_sources=p.episodes_of_care_sources,
+                imaging_studies_sources=p.imaging_studies_sources,
+                devices_sources=p.devices_sources,
+                device_use_sources=p.device_use_sources,
+                nutrition_orders_sources=p.nutrition_orders_sources,
+                adverse_events_sources=p.adverse_events_sources
 
             )
             for p in domain_objs
@@ -1020,6 +1116,22 @@ async def get_patient(
                 diagnostic_reports=pctx.diagnostic_reports,
                 medication_statement=pctx.medication_statement,
                 questionnaire_response=pctx.questionnaire_response,
+                family_history=pctx.family_history,
+                care_team=pctx.care_team,
+                goals=pctx.goals,
+                clinical_impressions=pctx.clinical_impressions,
+                risk_assessments=pctx.risk_assessments,
+                service_requests=pctx.service_requests,
+                medication_administrations=pctx.medication_administrations,
+                medication_dispenses=pctx.medication_dispenses,
+                immunization_recommendations=pctx.immunization_recommendations,
+                appointments=pctx.appointments,
+                episodes_of_care=pctx.episodes_of_care,
+                imaging_studies=pctx.imaging_studies,
+                devices=pctx.devices,
+                device_use=pctx.device_use,
+                nutrition_orders=pctx.nutrition_orders,
+                adverse_events=pctx.adverse_events,
                 # Timestamp fields
                 vitals_timestamps=pctx.vitals_timestamps,
                 labs_timestamps=pctx.labs_timestamps,
@@ -1035,6 +1147,22 @@ async def get_patient(
                 diagnostic_reports_timestamps=pctx.diagnostic_reports_timestamps,
                 medication_statement_timestamps=pctx.medication_statement_timestamps,
                 questionnaire_response_timestamps=pctx.questionnaire_response_timestamps,
+                family_history_timestamps=pctx.family_history_timestamps,
+                care_team_timestamps=pctx.care_team_timestamps,
+                goals_timestamps=pctx.goals_timestamps,
+                clinical_impressions_timestamps=pctx.clinical_impressions_timestamps,
+                risk_assessments_timestamps=pctx.risk_assessments_timestamps,
+                service_requests_timestamps=pctx.service_requests_timestamps,
+                medication_administrations_timestamps=pctx.medication_administrations_timestamps,
+                medication_dispenses_timestamps=pctx.medication_dispenses_timestamps,
+                immunization_recommendations_timestamps=pctx.immunization_recommendations_timestamps,
+                appointments_timestamps=pctx.appointments_timestamps,
+                episodes_of_care_timestamps=pctx.episodes_of_care_timestamps,
+                imaging_studies_timestamps=pctx.imaging_studies_timestamps,
+                devices_timestamps=pctx.devices_timestamps,
+                device_use_timestamps=pctx.device_use_timestamps,
+                nutrition_orders_timestamps=pctx.nutrition_orders_timestamps,
+                adverse_events_timestamps=pctx.adverse_events_timestamps,
                 # Encounters
                 encounters=pctx.encounters,
                 encounters_timestamps=pctx.encounters_timestamps,
@@ -1053,7 +1181,23 @@ async def get_patient(
                 diagnostic_reports_sources=pctx.diagnostic_reports_sources,
                 medication_statement_sources=pctx.medication_statement_sources,
                 questionnaire_response_sources=pctx.questionnaire_response_sources,
-                encounters_sources=pctx.encounters_sources
+                encounters_sources=pctx.encounters_sources,
+                family_history_sources=pctx.family_history_sources,
+                care_team_sources=pctx.care_team_sources,
+                goals_sources=pctx.goals_sources,
+                clinical_impressions_sources=pctx.clinical_impressions_sources,
+                risk_assessments_sources=pctx.risk_assessments_sources,
+                service_requests_sources=pctx.service_requests_sources,
+                medication_administrations_sources=pctx.medication_administrations_sources,
+                medication_dispenses_sources=pctx.medication_dispenses_sources,
+                immunization_recommendations_sources=pctx.immunization_recommendations_sources,
+                appointments_sources=pctx.appointments_sources,
+                episodes_of_care_sources=pctx.episodes_of_care_sources,
+                imaging_studies_sources=pctx.imaging_studies_sources,
+                devices_sources=pctx.devices_sources,
+                device_use_sources=pctx.device_use_sources,
+                nutrition_orders_sources=pctx.nutrition_orders_sources,
+                adverse_events_sources=pctx.adverse_events_sources
     )
 
 @app.delete("/patients/{patient_id}/chat-history", summary="Delete patient by ID")

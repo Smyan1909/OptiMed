@@ -4,6 +4,7 @@ from typing import AsyncGenerator, Protocol, Sequence, Any, Union, Optional
 
 from optimed.core.domain import (
     PatientContext,
+    Chunk, Record, ChunkPolicy, PolicySet,
     KPIEvent, 
     ChatMessage, 
     DiagnosisResult, 
@@ -624,5 +625,59 @@ class GeneratedImageRepository(Protocol):
         limit: int = 10
     ) -> list[GeneratedImage]:
         """Search generated images by prompt text using full-text search."""
+        ...
+
+
+# --- Chunking Ports ---
+
+class TokenizerPort(Protocol):
+    """Tokenizer abstraction to count tokens and split text."""
+
+    def token_count(self, text: str) -> int:
+        ...
+
+    def split_sentences(self, text: str) -> list[str]:
+        ...
+
+
+class PhiRedactorPort(Protocol):
+    """Redact PHI/PII from text; conservative by default."""
+
+    def redact(self, text: str) -> str:
+        ...
+
+
+class ChunkingStrategy(Protocol):
+    """Strategy interface for producing chunks from normalized records."""
+
+    @property
+    def strategy_id(self) -> str:
+        ...
+
+    @property
+    def strategy_version(self) -> str:
+        ...
+
+    def apply(self, records: Sequence[Record], policy: ChunkPolicy, tokenizer: TokenizerPort) -> list[Chunk]:
+        ...
+
+
+class ChunkerPort(Protocol):
+    """Inbound port to chunk either patient contexts or documents."""
+
+    def chunk_from_patient(self, patient_context: PatientContext, policy_set: PolicySet) -> list[Chunk]:
+        ...
+
+    def chunk_from_document(self, document_ref: dict[str, Any], policy_set: PolicySet) -> list[Chunk]:
+        ...
+
+
+class ChunkingOrchestrator(Protocol):
+    """Service coordinating record creation, strategy application and privacy checks."""
+
+    def chunk_patient(self, patient_context: PatientContext, policy_set: PolicySet) -> list[Chunk]:
+        ...
+
+    def chunk_document(self, document_ref: dict[str, Any], policy_set: PolicySet) -> list[Chunk]:
         ...
 

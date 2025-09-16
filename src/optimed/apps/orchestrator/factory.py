@@ -150,3 +150,18 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
     )
     
     return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine, image_generation_service, generated_image_repo, journal_client, web_search_service
+
+
+# Chunking orchestrator factory (for CLI or future wiring)
+def create_chunking_orchestrator():
+    from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator
+    from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY, POLICY_PRESETS
+    from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
+    from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
+
+    return ChunkingOrchestrator(
+        tokenizer=WhitespaceTokenizer(),
+        redactor=SimplePhiRedactor(),
+        strategy_registry=STRATEGY_REGISTRY,
+        policies=POLICY_PRESETS,
+    )
