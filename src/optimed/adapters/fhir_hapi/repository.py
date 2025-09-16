@@ -501,6 +501,23 @@ def _to_patient_ctx(
         encounters: list[Any] | None = None,
         procedures_fhir: list[Any] | None = None,
         diagnostic_reports: list[Any] | None = None,
+        # Newly added holistic resources
+        family_history: list[Any] | None = None,
+        care_team: list[Any] | None = None,
+        goals: list[Any] | None = None,
+        clinical_impressions: list[Any] | None = None,
+        risk_assessments: list[Any] | None = None,
+        service_requests: list[Any] | None = None,
+        medication_administrations: list[Any] | None = None,
+        medication_dispenses: list[Any] | None = None,
+        immunization_recommendations: list[Any] | None = None,
+        appointments: list[Any] | None = None,
+        episodes_of_care: list[Any] | None = None,
+        imaging_studies: list[Any] | None = None,
+        devices: list[Any] | None = None,
+        device_use: list[Any] | None = None,
+        nutrition_orders: list[Any] | None = None,
+        adverse_events: list[Any] | None = None,
         base_url: str = "http://example.com/fhir"  # Default base URL, can be overridden
 ) -> PatientContext:
     """Convert FHIR Patient + observations to PatientContext domain model."""
@@ -525,6 +542,24 @@ def _to_patient_ctx(
     # Process FHIR /Procedure resources (converted to dict-like entries upstream)
     procedure_data, procedure_timestamps, procedure_sources = _obs_bundle_to_dict_with_timestamps(procedures_fhir or [], base_url, "procedure")
     diagnostic_reports_data, diagnostic_reports_timestamps, diagnostic_reports_sources = _obs_bundle_to_dict_with_timestamps(diagnostic_reports or [], base_url, "diagnostic-report")
+    
+    # Newly added holistic resources
+    family_history_data, family_history_timestamps, family_history_sources = _obs_bundle_to_dict_with_timestamps(family_history or [], base_url, "family-member-history")
+    care_team_data, care_team_timestamps, care_team_sources = _obs_bundle_to_dict_with_timestamps(care_team or [], base_url, "care-team")
+    goals_data, goals_timestamps, goals_sources = _obs_bundle_to_dict_with_timestamps(goals or [], base_url, "goal")
+    clinical_impressions_data, clinical_impressions_timestamps, clinical_impressions_sources = _obs_bundle_to_dict_with_timestamps(clinical_impressions or [], base_url, "clinical-impression")
+    risk_assessments_data, risk_assessments_timestamps, risk_assessments_sources = _obs_bundle_to_dict_with_timestamps(risk_assessments or [], base_url, "risk-assessment")
+    service_requests_data, service_requests_timestamps, service_requests_sources = _obs_bundle_to_dict_with_timestamps(service_requests or [], base_url, "service-request")
+    medication_administrations_data, medication_administrations_timestamps, medication_administrations_sources = _obs_bundle_to_dict_with_timestamps(medication_administrations or [], base_url, "medication-administration")
+    medication_dispenses_data, medication_dispenses_timestamps, medication_dispenses_sources = _obs_bundle_to_dict_with_timestamps(medication_dispenses or [], base_url, "medication-dispense")
+    immunization_recommendations_data, immunization_recommendations_timestamps, immunization_recommendations_sources = _obs_bundle_to_dict_with_timestamps(immunization_recommendations or [], base_url, "immunization-recommendation")
+    appointments_data, appointments_timestamps, appointments_sources = _obs_bundle_to_dict_with_timestamps(appointments or [], base_url, "appointment")
+    episodes_of_care_data, episodes_of_care_timestamps, episodes_of_care_sources = _obs_bundle_to_dict_with_timestamps(episodes_of_care or [], base_url, "episode-of-care")
+    imaging_studies_data, imaging_studies_timestamps, imaging_studies_sources = _obs_bundle_to_dict_with_timestamps(imaging_studies or [], base_url, "imaging-study")
+    devices_data, devices_timestamps, devices_sources = _obs_bundle_to_dict_with_timestamps(devices or [], base_url, "device")
+    device_use_data, device_use_timestamps, device_use_sources = _obs_bundle_to_dict_with_timestamps(device_use or [], base_url, "device-use")
+    nutrition_orders_data, nutrition_orders_timestamps, nutrition_orders_sources = _obs_bundle_to_dict_with_timestamps(nutrition_orders or [], base_url, "nutrition-order")
+    adverse_events_data, adverse_events_timestamps, adverse_events_sources = _obs_bundle_to_dict_with_timestamps(adverse_events or [], base_url, "adverse-event")
     
     # Process encounters and extract care unit information
     encounters_data = {}
@@ -615,6 +650,22 @@ def _to_patient_ctx(
         medication_statement=medication_statement_data,
         questionnaire_response=questionnaire_response_data,
         care_plan=care_plan_data,
+        family_history=family_history_data,
+        care_team=care_team_data,
+        goals=goals_data,
+        clinical_impressions=clinical_impressions_data,
+        risk_assessments=risk_assessments_data,
+        service_requests=service_requests_data,
+        medication_administrations=medication_administrations_data,
+        medication_dispenses=medication_dispenses_data,
+        immunization_recommendations=immunization_recommendations_data,
+        appointments=appointments_data,
+        episodes_of_care=episodes_of_care_data,
+        imaging_studies=imaging_studies_data,
+        devices=devices_data,
+        device_use=device_use_data,
+        nutrition_orders=nutrition_orders_data,
+        adverse_events=adverse_events_data,
         encounters=encounters_data,
         
         # Timestamp fields
@@ -634,6 +685,22 @@ def _to_patient_ctx(
         questionnaire_response_timestamps=questionnaire_response_timestamps,
         care_plan_timestamps=care_plan_timestamps,
         encounters_timestamps=encounters_timestamps,
+        family_history_timestamps=family_history_timestamps,
+        care_team_timestamps=care_team_timestamps,
+        goals_timestamps=goals_timestamps,
+        clinical_impressions_timestamps=clinical_impressions_timestamps,
+        risk_assessments_timestamps=risk_assessments_timestamps,
+        service_requests_timestamps=service_requests_timestamps,
+        medication_administrations_timestamps=medication_administrations_timestamps,
+        medication_dispenses_timestamps=medication_dispenses_timestamps,
+        immunization_recommendations_timestamps=immunization_recommendations_timestamps,
+        appointments_timestamps=appointments_timestamps,
+        episodes_of_care_timestamps=episodes_of_care_timestamps,
+        imaging_studies_timestamps=imaging_studies_timestamps,
+        devices_timestamps=devices_timestamps,
+        device_use_timestamps=device_use_timestamps,
+        nutrition_orders_timestamps=nutrition_orders_timestamps,
+        adverse_events_timestamps=adverse_events_timestamps,
         
         # Source tracking fields
         vitals_sources=vitals_sources,
@@ -652,6 +719,22 @@ def _to_patient_ctx(
         questionnaire_response_sources=questionnaire_response_sources,
         care_plan_sources=care_plan_sources,
         encounters_sources=encounters_sources,
+        family_history_sources=family_history_sources,
+        care_team_sources=care_team_sources,
+        goals_sources=goals_sources,
+        clinical_impressions_sources=clinical_impressions_sources,
+        risk_assessments_sources=risk_assessments_sources,
+        service_requests_sources=service_requests_sources,
+        medication_administrations_sources=medication_administrations_sources,
+        medication_dispenses_sources=medication_dispenses_sources,
+        immunization_recommendations_sources=immunization_recommendations_sources,
+        appointments_sources=appointments_sources,
+        episodes_of_care_sources=episodes_of_care_sources,
+        imaging_studies_sources=imaging_studies_sources,
+        devices_sources=devices_sources,
+        device_use_sources=device_use_sources,
+        nutrition_orders_sources=nutrition_orders_sources,
+        adverse_events_sources=adverse_events_sources,
     )
 
 def _map_entry_type_to_fhir_type(entry_type: JournalEntryType) -> str:
@@ -775,11 +858,32 @@ class HAPIFHIRRepository(FHIRRepository):
         encounters = await self._get_encounters(patient_id)
         procedures_fhir = await self._get_procedures(patient_id)
         diagnostic_reports = await self._get_diagnostic_reports(patient_id)
+        # Newly added holistic resources
+        family_history = await self._get_family_history(patient_id)
+        care_team = await self._get_care_team(patient_id)
+        goals = await self._get_goals(patient_id)
+        clinical_impressions = await self._get_clinical_impressions(patient_id)
+        risk_assessments = await self._get_risk_assessments(patient_id)
+        service_requests = await self._get_service_requests(patient_id)
+        medication_administrations = await self._get_medication_administrations(patient_id)
+        medication_dispenses = await self._get_medication_dispenses(patient_id)
+        immunization_recommendations = await self._get_immunization_recommendations(patient_id)
+        appointments = await self._get_appointments(patient_id)
+        episodes_of_care = await self._get_episodes_of_care(patient_id)
+        imaging_studies = await self._get_imaging_studies(patient_id)
+        devices = await self._get_devices(patient_id)
+        device_use = await self._get_device_use_statements(patient_id)
+        nutrition_orders = await self._get_nutrition_orders(patient_id)
+        adverse_events = await self._get_adverse_events(patient_id)
         
         return _to_patient_ctx(
             patient, vitals, labs, imaging_observations, exam, procedure_observations,
             social_history, medications, allergies, diagnoses, immunizations,
-            medication_statement, questionnaire_response, care_plan, encounters, procedures_fhir, diagnostic_reports, self._base
+            medication_statement, questionnaire_response, care_plan, encounters, procedures_fhir, diagnostic_reports,
+            family_history, care_team, goals, clinical_impressions, risk_assessments, service_requests,
+            medication_administrations, medication_dispenses, immunization_recommendations, appointments, episodes_of_care,
+            imaging_studies, devices, device_use, nutrition_orders, adverse_events,
+            self._base
         )
     
     async def search_patients(self, query: Any) -> Sequence[PatientContext]:
@@ -1269,6 +1373,389 @@ class HAPIFHIRRepository(FHIRRepository):
             return reports
         except Exception as e:
             print(f"Failed to fetch diagnostic reports: {e}")
+            return []
+
+    async def _get_family_history(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/FamilyMemberHistory", params={"patient": patient_id, "_count": 100})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                rel = res.get("relationship", {}).get("text") or "Family Member"
+                conds = []
+                for c in res.get("condition", []) or []:
+                    txt = (c.get("code", {}) or {}).get("text")
+                    if txt:
+                        conds.append(txt)
+                value = ", ".join(conds) if conds else (res.get("note", [{}])[0].get("text", ""))
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": res.get("status", "unknown"),
+                    "code": {"coding": [{"code": "family-history", "display": rel}]},
+                    "valueString": value or "Recorded",
+                    "effectiveDateTime": res.get("date", ""),
+                    "resource_type": "FamilyMemberHistory",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_care_team(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/CareTeam", params={"patient": patient_id, "_count": 100})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                name = res.get("name") or "Care Team"
+                status = res.get("status", "unknown")
+                start = (res.get("period", {}) or {}).get("start", "")
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": status,
+                    "code": {"coding": [{"code": "care-team", "display": name}]},
+                    "valueString": status.title(),
+                    "effectiveDateTime": start,
+                    "resource_type": "CareTeam",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_goals(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/Goal", params={"patient": patient_id, "_count": 100})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                desc = (res.get("description", {}) or {}).get("text") or "Goal"
+                status = res.get("status", "unknown")
+                target = (res.get("target", []) or [{}])[0]
+                measure = (target.get("measure", {}) or {}).get("text")
+                val_str = status.title()
+                if measure:
+                    val_str += f" - {measure}"
+                start = res.get("startDate", "") or res.get("statusDate", "")
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": status,
+                    "code": {"coding": [{"code": "goal", "display": desc}]},
+                    "valueString": val_str,
+                    "effectiveDateTime": start,
+                    "resource_type": "Goal",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_clinical_impressions(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/ClinicalImpression", params={"patient": patient_id, "_count": 100})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                status = res.get("status", "unknown")
+                summary = res.get("summary") or res.get("description") or "Clinical Impression"
+                eff = res.get("effectiveDateTime") or (res.get("effectivePeriod", {}) or {}).get("start", "")
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": status,
+                    "code": {"coding": [{"code": "clinical-impression", "display": "Clinical Impression"}]},
+                    "valueString": f"{status.title()} - {summary}",
+                    "effectiveDateTime": eff,
+                    "resource_type": "ClinicalImpression",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_risk_assessments(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/RiskAssessment", params={"subject": f"Patient/{patient_id}", "_count": 100})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                occ = res.get("occurrenceDateTime") or ""
+                preds = res.get("prediction", []) or []
+                prob = None
+                if preds:
+                    p = preds[0]
+                    prob = p.get("probabilityDecimal") or p.get("probabilityPercentage") or p.get("qualitativeRisk", {}).get("text")
+                summary = res.get("condition", {}).get("text") or res.get("reasonCode", [{}])[0].get("text", "Risk Assessment")
+                vs = f"{prob}%" if isinstance(prob, (int, float)) else str(prob or "Assessed")
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": res.get("status", "final"),
+                    "code": {"coding": [{"code": "risk-assessment", "display": summary}]},
+                    "valueString": vs,
+                    "effectiveDateTime": occ,
+                    "resource_type": "RiskAssessment",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_service_requests(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/ServiceRequest", params={"subject": f"Patient/{patient_id}", "_count": 100})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                code_text = (res.get("code", {}) or {}).get("text") or "Service Request"
+                status = res.get("status", "unknown")
+                authored = res.get("authoredOn", "")
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": status,
+                    "code": {"coding": [{"code": "service-request", "display": code_text}]},
+                    "valueString": status.title(),
+                    "effectiveDateTime": authored,
+                    "resource_type": "ServiceRequest",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_medication_administrations(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/MedicationAdministration", params={"subject": f"Patient/{patient_id}", "_count": 100})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                med = (res.get("medicationCodeableConcept", {}) or {}).get("text") or (res.get("medicationReference", {}) or {}).get("display", "Medication")
+                status = res.get("status", "unknown")
+                eff = res.get("effectiveDateTime") or (res.get("effectivePeriod", {}) or {}).get("start", "")
+                dose = (res.get("dosage", {}) or {}).get("text") or ""
+                vs = status.title() + (f" - {dose}" if dose else "")
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": status,
+                    "code": {"coding": [{"code": "medication-administration", "display": med}]},
+                    "valueString": vs,
+                    "effectiveDateTime": eff,
+                    "resource_type": "MedicationAdministration",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_medication_dispenses(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/MedicationDispense", params={"patient": patient_id, "_count": 100})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                med = (res.get("medicationCodeableConcept", {}) or {}).get("text") or "Medication Dispense"
+                status = res.get("status", "unknown")
+                when = res.get("whenHandedOver") or res.get("whenPrepared") or ""
+                qty = (res.get("quantity", {}) or {}).get("value")
+                unit = (res.get("quantity", {}) or {}).get("unit")
+                qty_str = f" - {qty} {unit}" if qty else ""
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": status,
+                    "code": {"coding": [{"code": "medication-dispense", "display": med}]},
+                    "valueString": status.title() + qty_str,
+                    "effectiveDateTime": when,
+                    "resource_type": "MedicationDispense",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_immunization_recommendations(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/ImmunizationRecommendation", params={"patient": patient_id, "_count": 100})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                recs = res.get("recommendation", []) or []
+                if recs:
+                    rec = recs[0]
+                    vac = (rec.get("vaccineCode", [{}])[0].get("text") if isinstance(rec.get("vaccineCode"), list) else None) or "Vaccine Recommendation"
+                    date = rec.get("date") or ""
+                    status = (rec.get("forecastStatus", {}) or {}).get("text") or "recommended"
+                else:
+                    vac, date, status = "Vaccine Recommendation", "", "recommended"
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": status,
+                    "code": {"coding": [{"code": "immunization-recommendation", "display": vac}]},
+                    "valueString": status.title(),
+                    "effectiveDateTime": date,
+                    "resource_type": "ImmunizationRecommendation",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_appointments(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/Appointment", params={"patient": patient_id, "_count": 100, "_sort": "-date"})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                status = res.get("status", "unknown")
+                desc = res.get("description") or "Appointment"
+                start = res.get("start", "")
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": status,
+                    "code": {"coding": [{"code": "appointment", "display": desc}]},
+                    "valueString": status.title(),
+                    "effectiveDateTime": start,
+                    "resource_type": "Appointment",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_episodes_of_care(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/EpisodeOfCare", params={"patient": patient_id, "_count": 100})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                status = res.get("status", "unknown")
+                typ = (res.get("type", [{}])[0].get("text") if isinstance(res.get("type"), list) else None) or "Episode Of Care"
+                start = (res.get("period", {}) or {}).get("start", "")
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": status,
+                    "code": {"coding": [{"code": "episode-of-care", "display": typ}]},
+                    "valueString": status.title(),
+                    "effectiveDateTime": start,
+                    "resource_type": "EpisodeOfCare",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_imaging_studies(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/ImagingStudy", params={"patient": patient_id, "_count": 50, "_sort": "-date"})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                started = res.get("started", "")
+                modality = None
+                series = res.get("series", []) or []
+                if series and series[0].get("modality"):
+                    modality = series[0]["modality"].get("code") or series[0]["modality"].get("display")
+                disp = modality or "Imaging Study"
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": res.get("status", "available"),
+                    "code": {"coding": [{"code": "imaging-study", "display": disp}]},
+                    "valueString": disp,
+                    "effectiveDateTime": started,
+                    "resource_type": "ImagingStudy",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_devices(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/Device", params={"patient": patient_id, "_count": 100})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                name = None
+                if res.get("deviceName"):
+                    name = res["deviceName"][0].get("name")
+                typ = (res.get("type", {}) or {}).get("text") or name or "Device"
+                status = res.get("status", "unknown")
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": status,
+                    "code": {"coding": [{"code": "device", "display": typ}]},
+                    "valueString": status.title(),
+                    "effectiveDateTime": res.get("manufactureDate", ""),
+                    "resource_type": "Device",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_device_use_statements(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/DeviceUseStatement", params={"subject": f"Patient/{patient_id}", "_count": 100})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                dev = (res.get("device", {}) or {}).get("display") or "Device Use"
+                status = res.get("status", "unknown")
+                when = (res.get("timingPeriod", {}) or {}).get("start") or res.get("timingDateTime", "")
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": status,
+                    "code": {"coding": [{"code": "device-use", "display": dev}]},
+                    "valueString": status.title(),
+                    "effectiveDateTime": when,
+                    "resource_type": "DeviceUseStatement",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_nutrition_orders(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/NutritionOrder", params={"patient": patient_id, "_count": 100})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                status = res.get("status", "unknown")
+                dt = res.get("dateTime", "")
+                text = (res.get("oralDiet", {}) or {}).get("text") or "Nutrition Order"
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": status,
+                    "code": {"coding": [{"code": "nutrition-order", "display": text}]},
+                    "valueString": status.title(),
+                    "effectiveDateTime": dt,
+                    "resource_type": "NutritionOrder",
+                })
+            return items
+        except Exception:
+            return []
+
+    async def _get_adverse_events(self, patient_id: str) -> list[dict]:
+        try:
+            r = await self._client.get("/AdverseEvent", params={"subject": f"Patient/{patient_id}", "_count": 100})
+            r.raise_for_status()
+            items: list[dict] = []
+            for entry in r.json().get("entry", []):
+                res = entry.get("resource", {})
+                ev = (res.get("event", {}) or {}).get("text") or "Adverse Event"
+                outcome = (res.get("outcome", {}) or {}).get("text") or ""
+                sev = (res.get("severity", {}) or {}).get("text") or ""
+                val = ", ".join(filter(None, [sev, outcome])) or "Recorded"
+                date = res.get("date", "")
+                items.append({
+                    "id": res.get("id", "unknown"),
+                    "status": res.get("status", "completed"),
+                    "code": {"coding": [{"code": "adverse-event", "display": ev}]},
+                    "valueString": val,
+                    "effectiveDateTime": date,
+                    "resource_type": "AdverseEvent",
+                })
+            return items
+        except Exception:
             return []
 
     async def __aenter__(self):
