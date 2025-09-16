@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: { imageId: string } }
+  request: Request,
+  context: any
 ) {
   try {
+    const { id } = context.params;
     const sessionId = request.headers.get('x-session-id');
     
     const headers: Record<string, string> = {
@@ -16,10 +17,7 @@ export async function GET(
     }
     
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
-    const response = await fetch(
-      `${baseUrl}/dicom/images/${params.imageId}`,
-      { headers }
-    );
+    const response = await fetch(`${baseUrl}/dicom/images/${id}`, { headers });
     
     if (!response.ok) {
       const errorText = await response.text();
@@ -35,10 +33,11 @@ export async function GET(
 }
 
 export async function DELETE(
-  request: NextRequest,
-  { params }: { params: { imageId: string } }
+  request: Request,
+  context: any
 ) {
   try {
+    const { id } = context.params;
     const sessionId = request.headers.get('x-session-id');
     
     const headers: Record<string, string> = {
@@ -49,12 +48,9 @@ export async function DELETE(
       headers['X-Session-ID'] = sessionId;
     }
     
-    const response = await fetch(
-      `${process.env.API_BASE_URL || 'http://localhost:8000'}/dicom/images/${params.imageId}`,
-      {
-        method: 'DELETE',
-        headers
-      }
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/dicom/images/${id}`,
+      { method: 'DELETE', headers }
     );
     
     if (!response.ok) {

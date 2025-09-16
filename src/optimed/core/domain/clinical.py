@@ -29,46 +29,57 @@ class PatientContext(FrozenModel):
     vitals: Dict[str, str] = {}
     labs: Dict[str, str] = {}
 
-    imaging: Dict[str, str] = {}  # e.g. {"CT Chest": "2023-10-01"}
     exam: Dict[str, str] = {}  # e.g. {"Abdomen": "Normal"}
-    procedure: Dict[str, str] = {}  # e.g. {"Appendectomy": "2023-10-02"}
+    procedure: Dict[str, str] = {}  # Procedures from /Procedure
     social_history: Dict[str, str] = {}  # e.g. {"Smoking": "None", "Alcohol": "Occasional"}
     medications: Dict[str, str] = {}  # e.g. {"Aspirin": "81 mg daily"}
     allergies: Dict[str, str] = {}  # e.g. {"Penicillin": "Rash"}
     diagnoses: Dict[str, str] = {}  # e.g. {"Hypertension": "Controlled"}
     immunizations: Dict[str, str] = {}  # e.g. {"COVID-19 Vaccine": "2023-10-15"}
 
+    # NEW: Observation-based data that used to be in imaging/procedure categories
+    imaging_observations: Dict[str, str] = {}
+    procedure_observations: Dict[str, str] = {}
+    diagnostic_reports: Dict[str, str] = {}
+
     medication_statement: Dict[str, str] = {}
     questionnaire_response: Dict[str, str] = {}
+    care_plan: Dict[str, str] = {}
 
     vitals_timestamps: Dict[str, str] = {}
     labs_timestamps: Dict[str, str] = {}
-    imaging_timestamps: Dict[str, str] = {}
     exam_timestamps: Dict[str, str] = {}
-    procedure_timestamps: Dict[str, str] = {}
+    procedure_timestamps: Dict[str, str] = {}  # From /Procedure
     social_history_timestamps: Dict[str, str] = {}
     medications_timestamps: Dict[str, str] = {}
     allergies_timestamps: Dict[str, str] = {}
     diagnoses_timestamps: Dict[str, str] = {}
     immunizations_timestamps: Dict[str, str] = {}
+    imaging_observations_timestamps: Dict[str, str] = {}
+    procedure_observations_timestamps: Dict[str, str] = {}
+    diagnostic_reports_timestamps: Dict[str, str] = {}
     medication_statement_timestamps: Dict[str, str] = {}
     questionnaire_response_timestamps: Dict[str, str] = {}
+    care_plan_timestamps: Dict[str, str] = {}
     encounters: Dict[str, str] = {}
     encounters_timestamps: Dict[str, str] = {}
 
     # NEW: Data source tracking
     vitals_sources: Dict[str, DataSource] = {}
     labs_sources: Dict[str, DataSource] = {}
-    imaging_sources: Dict[str, DataSource] = {}
     exam_sources: Dict[str, DataSource] = {}
-    procedure_sources: Dict[str, DataSource] = {}
+    procedure_sources: Dict[str, DataSource] = {}  # From /Procedure
     social_history_sources: Dict[str, DataSource] = {}
     medications_sources: Dict[str, DataSource] = {}
     allergies_sources: Dict[str, DataSource] = {}
     diagnoses_sources: Dict[str, DataSource] = {}
     immunizations_sources: Dict[str, DataSource] = {}
+    imaging_observations_sources: Dict[str, DataSource] = {}
+    procedure_observations_sources: Dict[str, DataSource] = {}
+    diagnostic_reports_sources: Dict[str, DataSource] = {}
     medication_statement_sources: Dict[str, DataSource] = {}
     questionnaire_response_sources: Dict[str, DataSource] = {}
+    care_plan_sources: Dict[str, DataSource] = {}
     encounters_sources: Dict[str, DataSource] = {}
     
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

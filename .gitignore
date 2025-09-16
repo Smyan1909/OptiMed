@@ -8,3 +8,6 @@ build/*
 mimic-fhir/*
 *.xlsx
 *.ndjson
+fhir_bundle_*.json
+mask_map.csv
+mask_map.json

@@ -1,13 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
+  request: Request,
+  context: any
 ) {
   try {
     // Get session ID from request headers or cookies
-    const sessionId = request.headers.get('x-session-id') || 
-                     request.cookies.get('session_id')?.value;
+    const cookieStore = await cookies();
+    const sessionId = request.headers.get('x-session-id') || cookieStore.get('session_id')?.value;
     
     const headers: Record<string, string> = {};
     
@@ -17,7 +18,8 @@ export async function GET(
     }
     
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
-    const response = await fetch(`${baseUrl}/patients/${params.id}/journal`, {
+    // Correct: fetch patient detail, not journal list
+    const response = await fetch(`${baseUrl}/patients/${context.params.id}`, {
       headers
     });
     
@@ -29,21 +31,21 @@ export async function GET(
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
-    console.error('Journal API error:', error);
+    console.error('Patient detail API error:', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: { id: string } }
+  request: Request,
+  context: any
 ) {
   try {
-    const body = await request.json();
+    const body = await (request as any).json();
     
     // Get session ID from request headers or cookies
-    const sessionId = request.headers.get('x-session-id') || 
-                     request.cookies.get('session_id')?.value;
+    const cookieStore = await cookies();
+    const sessionId = request.headers.get('x-session-id') || cookieStore.get('session_id')?.value;
     
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
@@ -54,7 +56,8 @@ export async function POST(
       headers['X-Session-ID'] = sessionId;
     }
     
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:8000'}/patients/${params.id}/journal`, {
+    const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/patients/${context.params.id}/journal`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body)

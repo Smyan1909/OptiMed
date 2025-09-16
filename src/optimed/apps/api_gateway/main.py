@@ -11,6 +11,7 @@ from PIL import Image
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode
 from typing import AsyncGenerator, Dict, Optional, Any, List
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, Header, Depends, File, Form, Body, Response # type: ignore
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,10 +23,59 @@ from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalE
 
 from pydantic import BaseModel
 
-_engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service = create_app_dependencies()
+# Defer heavy dependency wiring to startup to avoid crashing on import
+# if env vars (e.g., PGVECTOR_DSN) are missing at container boot.
+from typing import Any as _Any  # local alias to annotate dynamic singletons
 
+_engine: _Any = None
+_fhir: _Any = None
+_vector_store: _Any = None
+_user_repo: _Any = None
+_connection_repo: _Any = None
+_connection_service: _Any = None
+_create_image_service: _Any = None
+_image_analysis_engine: _Any = None
+_image_generation_service: _Any = None
+_generated_image_repo: _Any = None
+_journal_llm_service: _Any = None
+_web_search_service: _Any = None
 
-app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True)
+ 
+
+_dependencies_ready: asyncio.Event = asyncio.Event()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service
+    try:
+        (
+            _engine,
+            _fhir,
+            _vector_store,
+            _user_repo,
+            _connection_repo,
+            _connection_service,
+            _create_image_service,
+            _image_analysis_engine,
+            _image_generation_service,
+            _generated_image_repo,
+            _journal_llm_service,
+            _web_search_service,
+        ) = create_app_dependencies()
+        _dependencies_ready.set()
+        print("[startup] Dependencies initialized")
+        yield
+    except Exception as e:
+        import traceback
+        print(f"[startup] Dependency init failed: {e}")
+        traceback.print_exc()
+        # Fail fast: prevent the app from serving if dependencies cannot initialize
+        raise
+    finally:
+        # Optional: add shutdown/cleanup here if needed
+        pass
+
+app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -73,27 +123,31 @@ class PatientOut(BaseModel):
     care_unit: str
     vitals: Dict[str, str]
     labs: Dict[str, str]
-    imaging: Dict[str, str]
     exam: Dict[str, str]
     procedure: Dict[str, str]
+    imaging_observations: Dict[str, str]
+    procedure_observations: Dict[str, str]
     social_history: Dict[str, str]
     medications: Dict[str, str]
     allergies: Dict[str, str]
     diagnoses: Dict[str, str]
     immunizations: Dict[str, str]
+    diagnostic_reports: Dict[str, str]
     medication_statement: Dict[str, str]
     questionnaire_response: Dict[str, str]
     # Timestamp fields
     vitals_timestamps: Dict[str, str]
     labs_timestamps: Dict[str, str]
-    imaging_timestamps: Dict[str, str]
     exam_timestamps: Dict[str, str]
     procedure_timestamps: Dict[str, str]
+    imaging_observations_timestamps: Dict[str, str]
+    procedure_observations_timestamps: Dict[str, str]
     social_history_timestamps: Dict[str, str]
     medications_timestamps: Dict[str, str]
     allergies_timestamps: Dict[str, str]
     diagnoses_timestamps: Dict[str, str]
     immunizations_timestamps: Dict[str, str]
+    diagnostic_reports_timestamps: Dict[str, str]
     medication_statement_timestamps: Dict[str, str]
     questionnaire_response_timestamps: Dict[str, str]
     # Encounters
@@ -102,14 +156,16 @@ class PatientOut(BaseModel):
 
     vitals_sources: Dict[str, DataSource] = {}
     labs_sources: Dict[str, DataSource] = {}
-    imaging_sources: Dict[str, DataSource] = {}
     exam_sources: Dict[str, DataSource] = {}
     procedure_sources: Dict[str, DataSource] = {}
+    imaging_observations_sources: Dict[str, DataSource] = {}
+    procedure_observations_sources: Dict[str, DataSource] = {}
     social_history_sources: Dict[str, DataSource] = {}
     medications_sources: Dict[str, DataSource] = {}
     allergies_sources: Dict[str, DataSource] = {}
     diagnoses_sources: Dict[str, DataSource] = {}
     immunizations_sources: Dict[str, DataSource] = {}
+    diagnostic_reports_sources: Dict[str, DataSource] = {}
     medication_statement_sources: Dict[str, DataSource] = {}
     questionnaire_response_sources: Dict[str, DataSource] = {}
     encounters_sources: Dict[str, DataSource] = {}
@@ -226,7 +282,7 @@ class SessionOut(BaseModel):
     mode: str
     is_active: bool
     last_participant_id: str | None
-    user_can_join: bool = True
+    user_can_join: bool
 
 class SessionCreateRequest(BaseModel):
     patient_id: str | None = None
@@ -238,6 +294,18 @@ class ImageGenerationRequestModel(BaseModel):
     width: int = 1024
     height: int = 1024
     patient_id: Optional[str] = None
+
+def get_health_status():
+    return {"status": "ok"}
+
+@app.get("/health", summary="Health Check (GET)")
+async def health_get():
+    return get_health_status()
+
+@app.post("/health", summary="Health Check")
+async def health():
+    """Simple health check endpoint."""
+    return get_health_status()
 
 async def get_current_user(
     x_session_id: str = Header(None, alias="X-Session-ID")
@@ -293,12 +361,12 @@ async def get_user_fhir_repository(user_ctx: dict = Depends(get_user_context)) -
     
     # Fallback to default HAPI repository
     print("[API] Using default HAPI FHIR repository")
+    if _fhir is None:
+        # Service not initialized yet
+        raise HTTPException(status_code=503, detail="Service initializing, please try again shortly")
     return _fhir
 
-@app.post("/health", summary="Health Check")
-async def health():
-    """Simple health check endpoint."""
-    return {"status": "ok"}
+# Removed duplicate /health endpoint (was redefining the same route)
 
 @app.post("/sessions/list", response_model=List[SessionOut])
 async def list_user_sessions(
@@ -570,27 +638,31 @@ async def search_patients(
                 care_unit=p.care_unit,
                 vitals=p.vitals,
                 labs=p.labs,
-                imaging=p.imaging,
                 exam=p.exam,
                 procedure=p.procedure,
+                imaging_observations=p.imaging_observations,
+                procedure_observations=p.procedure_observations,
                 social_history=p.social_history,
                 medications=p.medications,
                 allergies=p.allergies,
                 diagnoses=p.diagnoses,
                 immunizations=p.immunizations,
+                diagnostic_reports=p.diagnostic_reports,
                 medication_statement=p.medication_statement,
                 questionnaire_response=p.questionnaire_response,
                 # Timestamp fields
                 vitals_timestamps=p.vitals_timestamps,
                 labs_timestamps=p.labs_timestamps,
-                imaging_timestamps=p.imaging_timestamps,
                 exam_timestamps=p.exam_timestamps,
                 procedure_timestamps=p.procedure_timestamps,
+                imaging_observations_timestamps=p.imaging_observations_timestamps,
+                procedure_observations_timestamps=p.procedure_observations_timestamps,
                 social_history_timestamps=p.social_history_timestamps,
                 medications_timestamps=p.medications_timestamps,
                 allergies_timestamps=p.allergies_timestamps,
                 diagnoses_timestamps=p.diagnoses_timestamps,
                 immunizations_timestamps=p.immunizations_timestamps,
+                diagnostic_reports_timestamps=p.diagnostic_reports_timestamps,
                 medication_statement_timestamps=p.medication_statement_timestamps,
                 questionnaire_response_timestamps=p.questionnaire_response_timestamps,
                 # Encounters
@@ -599,14 +671,16 @@ async def search_patients(
                 # Data sources
                 vitals_sources = p.vitals_sources,
                 labs_sources = p.labs_sources,
-                imaging_sources = p.imaging_sources,
                 exam_sources = p.exam_sources,
                 procedure_sources = p.procedure_sources,
+                imaging_observations_sources = p.imaging_observations_sources,
+                procedure_observations_sources = p.procedure_observations_sources,
                 social_history_sources = p.social_history_sources,
                 medications_sources = p.medications_sources,
                 allergies_sources = p.allergies_sources,
                 diagnoses_sources = p.diagnoses_sources,
                 immunizations_sources = p.immunizations_sources,
+                diagnostic_reports_sources = p.diagnostic_reports_sources,
                 medication_statement_sources = p.medication_statement_sources,
                 questionnaire_response_sources = p.questionnaire_response_sources,
                 encounters_sources = p.encounters_sources
@@ -934,27 +1008,31 @@ async def get_patient(
                 care_unit=pctx.care_unit,
                 vitals=pctx.vitals,
                 labs=pctx.labs,
-                imaging=pctx.imaging,
                 exam=pctx.exam,
                 procedure=pctx.procedure,
+                imaging_observations=pctx.imaging_observations,
+                procedure_observations=pctx.procedure_observations,
                 social_history=pctx.social_history,
                 medications=pctx.medications,
                 allergies=pctx.allergies,
                 diagnoses=pctx.diagnoses,
                 immunizations=pctx.immunizations,
+                diagnostic_reports=pctx.diagnostic_reports,
                 medication_statement=pctx.medication_statement,
                 questionnaire_response=pctx.questionnaire_response,
                 # Timestamp fields
                 vitals_timestamps=pctx.vitals_timestamps,
                 labs_timestamps=pctx.labs_timestamps,
-                imaging_timestamps=pctx.imaging_timestamps,
                 exam_timestamps=pctx.exam_timestamps,
                 procedure_timestamps=pctx.procedure_timestamps,
+                imaging_observations_timestamps=pctx.imaging_observations_timestamps,
+                procedure_observations_timestamps=pctx.procedure_observations_timestamps,
                 social_history_timestamps=pctx.social_history_timestamps,
                 medications_timestamps=pctx.medications_timestamps,
                 allergies_timestamps=pctx.allergies_timestamps,
                 diagnoses_timestamps=pctx.diagnoses_timestamps,
                 immunizations_timestamps=pctx.immunizations_timestamps,
+                diagnostic_reports_timestamps=pctx.diagnostic_reports_timestamps,
                 medication_statement_timestamps=pctx.medication_statement_timestamps,
                 questionnaire_response_timestamps=pctx.questionnaire_response_timestamps,
                 # Encounters
@@ -963,14 +1041,16 @@ async def get_patient(
                 # Data sources
                 vitals_sources=pctx.vitals_sources,
                 labs_sources=pctx.labs_sources,
-                imaging_sources=pctx.imaging_sources,
                 exam_sources=pctx.exam_sources,
                 procedure_sources=pctx.procedure_sources,
+                imaging_observations_sources=pctx.imaging_observations_sources,
+                procedure_observations_sources=pctx.procedure_observations_sources,
                 social_history_sources=pctx.social_history_sources,
                 medications_sources=pctx.medications_sources,
                 allergies_sources=pctx.allergies_sources,
                 diagnoses_sources=pctx.diagnoses_sources,
                 immunizations_sources=pctx.immunizations_sources,
+                diagnostic_reports_sources=pctx.diagnostic_reports_sources,
                 medication_statement_sources=pctx.medication_statement_sources,
                 questionnaire_response_sources=pctx.questionnaire_response_sources,
                 encounters_sources=pctx.encounters_sources

@@ -1,12 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: { imageId: string } }
+  req: Request,
+  context: any
 ) {
+  const { id } = context.params;
   try {
-    const sessionId = request.headers.get('x-session-id');
-    const { searchParams } = new URL(request.url);
+    const sessionId = req.headers.get('x-session-id');
+    const { searchParams } = new URL(req.url);
     
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
@@ -27,7 +28,7 @@ export async function GET(
     
     const queryString = queryParams.toString();
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
-    const url = `${baseUrl}/dicom/images/${params.imageId}/pixel-data${queryString ? '?' + queryString : ''}`;
+    const url = `${baseUrl}/dicom/images/${id}/pixel-data${queryString ? '?' + queryString : ''}`;
     
     const response = await fetch(url, { headers });
     

@@ -12,7 +12,7 @@ from datetime import datetime
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
-from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, ImageGenerationRequest, GeneratedImage, ImageGenerationContext, WebSearchInfo, CrossSessionHistoryInfo, GeneratedImageInfo, GeneratedImagePurpose
+from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, ImageGenerationRequest, GeneratedImage, ImageGenerationContext, GeneratedImagePurpose
 from optimed.core.lang import detect_language_code
 
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, ImageGenerationService, GeneratedImageRepository
@@ -602,7 +602,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                                 "source_type": source.source_type,
                                 "resource_id": source.resource_id,
                                 "resource_url": source.resource_url,
-                                "timestamp": source.timestamp.isoformat(),
+                                "timestamp": source.timestamp.isoformat() if getattr(source, "timestamp", None) else "",
                                 "category": source.category,
                                 "display_name": source.display_name
                             })
@@ -715,9 +715,245 @@ class LangGraphInformationEngine(DiagnosticEngine):
                             }
                         )
                     
+                    # 5. Allergies chunk with sources
+                    if patient_data.allergies:
+                        allergies_sources = extract_sources_for_data_type(
+                            patient_data.allergies,
+                            patient_data.allergies_sources
+                        )
+                        allergies_text = f"""
+                        Allergies for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.allergies.items()])}
+                        
+                        Data Sources:
+                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in allergies_sources])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Allergies",
+                            object_id=f"{patient_id}_allergies",
+                            text={"content": allergies_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "allergies",
+                                "timestamp": str(int(time.time() * 1000)),
+                                "sources": allergies_sources
+                            }
+                        )
+
+                    # 6. Diagnoses chunk with sources
+                    if patient_data.diagnoses:
+                        diagnoses_sources = extract_sources_for_data_type(
+                            patient_data.diagnoses,
+                            patient_data.diagnoses_sources
+                        )
+                        diagnoses_text = f"""
+                        Diagnoses for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.diagnoses.items()])}
+                        
+                        Data Sources:
+                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in diagnoses_sources])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Diagnoses",
+                            object_id=f"{patient_id}_diagnoses",
+                            text={"content": diagnoses_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "diagnoses",
+                                "timestamp": str(int(time.time() * 1000)),
+                                "sources": diagnoses_sources
+                            }
+                        )
+
+                    # 7. Immunizations chunk with sources
+                    if patient_data.immunizations:
+                        immunizations_sources = extract_sources_for_data_type(
+                            patient_data.immunizations,
+                            patient_data.immunizations_sources
+                        )
+                        immunizations_text = f"""
+                        Immunizations for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.immunizations.items()])}
+                        
+                        Data Sources:
+                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in immunizations_sources])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Immunizations",
+                            object_id=f"{patient_id}_immunizations",
+                            text={"content": immunizations_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "immunizations",
+                                "timestamp": str(int(time.time() * 1000)),
+                                "sources": immunizations_sources
+                            }
+                        )
+
+                    # 8. Medication Statements chunk with sources
+                    if patient_data.medication_statement:
+                        med_stmt_sources = extract_sources_for_data_type(
+                            patient_data.medication_statement,
+                            patient_data.medication_statement_sources
+                        )
+                        med_stmt_text = f"""
+                        Medication Statements for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.medication_statement.items()])}
+                        
+                        Data Sources:
+                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in med_stmt_sources])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="MedicationStatement",
+                            object_id=f"{patient_id}_medication_statement",
+                            text={"content": med_stmt_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "medication_statement",
+                                "timestamp": str(int(time.time() * 1000)),
+                                "sources": med_stmt_sources
+                            }
+                        )
+
+                    # 9. Questionnaire Responses chunk with sources
+                    if patient_data.questionnaire_response:
+                        qnr_sources = extract_sources_for_data_type(
+                            patient_data.questionnaire_response,
+                            patient_data.questionnaire_response_sources
+                        )
+                        qnr_text = f"""
+                        Questionnaire Responses for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.questionnaire_response.items()])}
+                        
+                        Data Sources:
+                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in qnr_sources])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="QuestionnaireResponse",
+                            object_id=f"{patient_id}_questionnaire_response",
+                            text={"content": qnr_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "questionnaire_response",
+                                "timestamp": str(int(time.time() * 1000)),
+                                "sources": qnr_sources
+                            }
+                        )
+
+                    # 10. Encounters chunk with sources
+                    if patient_data.encounters:
+                        encounters_sources = extract_sources_for_data_type(
+                            patient_data.encounters,
+                            patient_data.encounters_sources
+                        )
+                        encounters_text = f"""
+                        Encounters for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.encounters.items()])}
+                        
+                        Data Sources:
+                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in encounters_sources])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Encounters",
+                            object_id=f"{patient_id}_encounters",
+                            text={"content": encounters_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "encounters",
+                                "timestamp": str(int(time.time() * 1000)),
+                                "sources": encounters_sources
+                            }
+                        )
+
+                    # 11. Exams chunk with sources
+                    if patient_data.exam:
+                        exam_sources = extract_sources_for_data_type(
+                            patient_data.exam,
+                            patient_data.exam_sources
+                        )
+                        exam_text = f"""
+                        Physical Exams for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.exam.items()])}
+                        
+                        Data Sources:
+                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in exam_sources])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Exams",
+                            object_id=f"{patient_id}_exams",
+                            text={"content": exam_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "exam",
+                                "timestamp": str(int(time.time() * 1000)),
+                                "sources": exam_sources
+                            }
+                        )
+
+                    # 12. Procedures chunk with sources
+                    if patient_data.procedure:
+                        procedure_sources = extract_sources_for_data_type(
+                            patient_data.procedure,
+                            patient_data.procedure_sources
+                        )
+                        procedure_text = f"""
+                        Procedures for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.procedure.items()])}
+                        
+                        Data Sources:
+                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in procedure_sources])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="Procedures",
+                            object_id=f"{patient_id}_procedures",
+                            text={"content": procedure_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "procedure",
+                                "timestamp": str(int(time.time() * 1000)),
+                                "sources": procedure_sources
+                            }
+                        )
+
+                    # 13. Social History chunk with sources
+                    if patient_data.social_history:
+                        social_sources = extract_sources_for_data_type(
+                            patient_data.social_history,
+                            patient_data.social_history_sources
+                        )
+                        social_text = f"""
+                        Social History for {patient_data.name} (ID: {patient_id}):
+                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.social_history.items()])}
+                        
+                        Data Sources:
+                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in social_sources])}
+                        """
+                        await embed_and_store(
+                            namespace="clinical",
+                            object_type="SocialHistory",
+                            object_id=f"{patient_id}_social_history",
+                            text={"content": social_text.strip()},
+                            metadata={
+                                "patient_id": patient_id,
+                                "data_type": "social_history",
+                                "timestamp": str(int(time.time() * 1000)),
+                                "sources": social_sources
+                            }
+                        )
+
+                    # Imaging chunk removed in current version
+                    
                     # 5. Complete patient context with all sources
                     all_sources = []
-                    for data_type in ['vitals', 'labs', 'medications', 'allergies', 'diagnoses', 'immunizations']:
+                    for data_type in ['vitals', 'labs', 'medications', 'allergies', 'diagnoses', 'immunizations', 'medication_statement', 'questionnaire_response', 'encounters', 'exam', 'procedure', 'social_history']:
                         data_dict = getattr(patient_data, data_type, {})
                         sources_dict = getattr(patient_data, f"{data_type}_sources", {})
                         all_sources.extend(extract_sources_for_data_type(data_dict, sources_dict))
@@ -814,7 +1050,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                                     "entry_id": entry.entry_id,
                                     "author_name": entry.author_name,
                                     "author_role": entry.author_role,
-                                    "created_at": entry.created_at.isoformat(),
+                                    "created_at": entry.created_at.isoformat() if getattr(entry, "created_at", None) else "",
                                     "timestamp": str(int(entry.created_at.timestamp() * 1000))
                                 }
                             )
@@ -1734,13 +1970,10 @@ Please reference this generated image in your response when relevant and explain
         if session_id and user_id:
             await self._vec.update_session_activity(session_id=session_id, user_id=user_id)
         
-        if patient is not None:
-            if hasattr(data, "model_dump"):
-                return self._to_output(data.model_dump())
-            else:
-                return self._to_output(data)
-        else:
-            return self.chat_output(data)
+        # Always return the same completion-shaped output as run_stream's final chunk
+        if hasattr(data, "model_dump"):
+            return self._to_output(data.model_dump())
+        return self._to_output(data)
 
     def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "info_retrieval", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Return an async generator that yields chunks as they stream from the graph."""
@@ -1924,76 +2157,41 @@ Please reference this generated image in your response when relevant and explain
 
         return _stream_generator()
 
-    def _to_output(self, data: dict[str, Any]) -> DiagnosisResult:
-        """Convert raw dict emitted by compiled_graph to DiagnosisResult."""
-        
-        # Handle web search info
-        web_search_info = WebSearchInfo()
-        if data.get("web_search_response"):
-            web_response = data["web_search_response"]
-            
-            # Check if the response actually contains citations
-            response_content = data["llm_response"].content if data["llm_response"] else ""
-            citations_found = []
-            
-            for result in web_response.results[:5]:
-                if result.url in response_content or result.title in response_content:
-                    citations_found.append(result.url)
-            
-            web_search_info = WebSearchInfo(
-                web_search_performed=True,
-                sources_consulted=[result.url for result in web_response.results[:5]],
-                sources_cited_in_response=citations_found,
-                search_summary=web_response.summary,
-                source_count=len(web_response.results),
-                citations_included=len(citations_found) > 0
-            )
-        
-        # Handle cross-session history info
-        cross_session_info = CrossSessionHistoryInfo()
-        if data.get("relevant_cross_session_history"):
-            cross_session_info = CrossSessionHistoryInfo(
-                cross_session_search_performed=True,
-                historical_sessions_consulted=len(set(item.get("session_id") for item in data["relevant_cross_session_history"] if item.get("session_id"))),
-                historical_messages_found=len(data["relevant_cross_session_history"]),
-                oldest_reference=min((item.get("timestamp") for item in data["relevant_cross_session_history"] if item.get("timestamp")), default=None)
-            )
-        else:
-            cross_session_info = CrossSessionHistoryInfo(
-                cross_session_search_performed=data.get("needs_cross_session_search", False),
-                historical_sessions_consulted=0,
-                historical_messages_found=0,
-                oldest_reference=None
-            )
-        
-        # Handle generated image info
-        generated_image_info = GeneratedImageInfo()
+    def _to_output(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Build the same completion-shaped dict that run_stream emits at the end."""
+        final_response_content = ""
+        if data.get("llm_response"):
+            try:
+                final_response_content = data["llm_response"].content
+            except Exception:
+                final_response_content = str(data.get("llm_response", ""))
+
+        completion_update: dict[str, Any] = {
+            "type": "completion",
+            "status": "completed",
+            "details": "Analysis complete",
+            "progress": 100.0,
+            "timestamp": data.get("timestamp", datetime.now().isoformat()),
+            "final_response": final_response_content,
+        }
+
+        # Include reasoning if available
+        if data.get("llm_reasoning"):
+            completion_update["reasoning"] = data.get("llm_reasoning")
+        if data.get("reasoning_steps"):
+            completion_update["reasoning_steps"] = data.get("reasoning_steps", [])
+
+        # Include image information in completion if available
         if data.get("generated_image"):
             generated_image = data["generated_image"]
-            generated_image_info = GeneratedImageInfo(
-                image_generated=True,
-                image_id=generated_image.generation_id,
-                image_prompt=generated_image.prompt,
-                generation_metadata=generated_image.metadata,
-                model_info=generated_image.model_info
-            )
-        
-        return DiagnosisResult(
-            patient_id=data["patient_id"],
-            primary_icd=data["primary_icd"], 
-            differential=data["differential"],
-            confidence=data["confidence"],
-            explanation=data["llm_response"].content if data["llm_response"] else "",
-            created_by_user_id=data.get("user_id"),
-            is_ai_generated=True,
-            session_id=data.get("session_id"),
-            web_search_info=web_search_info,
-            cross_session_history_info=cross_session_info,
-            generated_image=generated_image_info,
-            retrieved_chunks=data.get("retrieved_chunks", []),
-            retrieval_reasoning=data.get("retrieval_reasoning"),
-            timestamp=data.get("timestamp", datetime.now().isoformat())
-        )
+            completion_update["generated_image"] = {
+                "image_id": getattr(generated_image, "generation_id", None),
+                "prompt": getattr(generated_image, "prompt", None),
+                "created_at": getattr(generated_image, "created_at", None).isoformat() if getattr(generated_image, "created_at", None) else None, # type: ignore
+                "metadata": getattr(generated_image, "metadata", {})
+            }
+
+        return completion_update
 
     def chat_output(self, data: dict[str, Any]) -> dict[str, Any]:
         """Convert raw dict emitted by compiled_graph to a chat output format."""
@@ -2099,8 +2297,7 @@ Please reference this generated image in your response when relevant and explain
             ("Encounters", patient_ctx.encounters, patient_ctx.encounters_sources),
             ("Exams", patient_ctx.exam, patient_ctx.exam_sources),
             ("Procedures", patient_ctx.procedure, patient_ctx.procedure_sources),
-            ("Social History", patient_ctx.social_history, patient_ctx.social_history_sources),
-            ("Imaging", patient_ctx.imaging, patient_ctx.imaging_sources)
+            ("Social History", patient_ctx.social_history, patient_ctx.social_history_sources)
         ]
         
         for data_type_name, data_dict, sources_dict in data_types:

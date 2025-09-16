@@ -122,7 +122,13 @@ function JournalPageContent() {
                 <div className="flex items-center">
                   <div className="h-12 w-12 bg-blue-100 rounded-full flex items-center justify-center">
                     <span className="text-blue-600 font-bold text-lg">
-                      {patient?.name.split(' ').map(n => n[0]).join('').substring(0, 2)}
+                      {(() => {
+                        const fullName = patient?.name;
+                        if (!fullName || typeof fullName !== 'string') return '';
+                        const parts = fullName.trim().split(/\s+/).filter(Boolean);
+                        if (parts.length === 0) return '';
+                        return parts.map(p => p[0]).join('').substring(0, 2).toUpperCase();
+                      })()}
                     </span>
                   </div>
                   <div className="ml-4">

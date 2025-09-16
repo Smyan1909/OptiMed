@@ -248,7 +248,13 @@ function VitalsPageContent() {
                 <div className="flex items-center">
                   <div className="h-12 w-12 bg-blue-100 rounded-full flex items-center justify-center">
                     <span className="text-blue-600 font-bold text-lg">
-                      {patient?.name.split(' ').map(n => n[0]).join('').substring(0, 2)}
+                      {(() => {
+                        const fullName = patient?.name;
+                        if (!fullName || typeof fullName !== 'string') return '';
+                        const parts = fullName.trim().split(/\s+/).filter(Boolean);
+                        if (parts.length === 0) return '';
+                        return parts.map(p => p[0]).join('').substring(0, 2).toUpperCase();
+                      })()}
                     </span>
                   </div>
                   <div className="ml-4">
@@ -361,15 +367,17 @@ function VitalsPageContent() {
               'labs'
             )}
 
-            {/* Imaging Studies */}
+            {/* Imaging Studies removed in current version */}
+
+            {/* Diagnostic Reports */}
             {renderObservationSection(
-              t('vitalsPage.sections.imaging'),
-              patient?.imaging || {},
-              patient?.imaging_timestamps,
-              <Camera className="h-5 w-5 mr-2 text-purple-500" />,
-              'from-purple-50',
-              'to-violet-50',
-              t('vitalsPage.noData.imaging'),
+              t('vitalsPage.sections.diagnosticReports'),
+              patient?.diagnostic_reports || {},
+              patient?.diagnostic_reports_timestamps,
+              <FileText className="h-5 w-5 mr-2 text-fuchsia-600" />,
+              'from-fuchsia-50',
+              'to-pink-50',
+              t('vitalsPage.noData.diagnosticReports'),
               undefined,
               'imaging'
             )}
@@ -396,6 +404,32 @@ function VitalsPageContent() {
               'from-orange-50',
               'to-amber-50',
               t('vitalsPage.noData.procedures'),
+              undefined,
+              'procedures'
+            )}
+
+            {/* Imaging Observations (legacy Observation-based) */}
+            {renderObservationSection(
+              t('vitalsPage.sections.imagingObservations'),
+              patient?.imaging_observations || {},
+              patient?.imaging_observations_timestamps,
+              <Camera className="h-5 w-5 mr-2 text-purple-400" />,
+              'from-purple-50',
+              'to-indigo-50',
+              t('vitalsPage.noData.imagingObservations'),
+              undefined,
+              'imaging'
+            )}
+
+            {/* Procedure Observations (legacy Observation-based) */}
+            {renderObservationSection(
+              t('vitalsPage.sections.procedureObservations'),
+              patient?.procedure_observations || {},
+              patient?.procedure_observations_timestamps,
+              <Scissors className="h-5 w-5 mr-2 text-orange-400" />,
+              'from-amber-50',
+              'to-orange-50',
+              t('vitalsPage.noData.procedureObservations'),
               undefined,
               'procedures'
             )}
@@ -525,12 +559,7 @@ function VitalsPageContent() {
                   </div>
                   <div className="text-sm text-blue-700">{t('vitalsPage.summary.labs')}</div>
                 </div>
-                <div className="bg-purple-50 p-4 rounded-lg">
-                  <div className="text-2xl font-bold text-purple-600">
-                    {patient?.imaging ? Object.keys(patient.imaging).length : 0}
-                  </div>
-                  <div className="text-sm text-purple-700">{t('vitalsPage.summary.imaging')}</div>
-                </div>
+                {/* Imaging summary removed in current version */}
                 <div className="bg-green-50 p-4 rounded-lg">
                   <div className="text-2xl font-bold text-green-600">
                     {patient?.exam ? Object.keys(patient.exam).length : 0}

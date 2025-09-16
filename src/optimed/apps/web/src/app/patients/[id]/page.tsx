@@ -90,7 +90,13 @@ function PatientDetailContent() {
   }
 
   /* ---------------------- HELPERS ---------------------- */
-  const initials = patient?.name ? patient.name.split(' ').map(n => n[0]).join('').substring(0, 2) : '';
+  const initials = (() => {
+    const fullName = patient?.name;
+    if (!fullName || typeof fullName !== 'string') return '';
+    const parts = fullName.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return '';
+    return parts.map(p => p[0]).join('').substring(0, 2).toUpperCase();
+  })();
 
   /* ---------------------- MAIN RENDER ---------------------- */
   return (

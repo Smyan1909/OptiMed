@@ -1,4 +1,4 @@
-export type Patient = { id: string; name: string; dob?: string; age?: number };
+export type Patient = { id: string; name: string; dob?: string; age?: number; sex?: string };
 export type PatientDetail = {
   id: string;
   name: string;
@@ -7,27 +7,31 @@ export type PatientDetail = {
   care_unit: string;
   vitals: Record<string,string>;
   labs:   Record<string,string>;
-  imaging: Record<string,string>;
   exam: Record<string,string>;
   procedure: Record<string,string>;
+  imaging_observations: Record<string,string>;
+  procedure_observations: Record<string,string>;
   social_history: Record<string,string>;
   medications: Record<string,string>;
   allergies: Record<string,string>;
   diagnoses: Record<string,string>;
   immunizations: Record<string,string>;
+  diagnostic_reports: Record<string,string>;
   medication_statement: Record<string,string>;
   questionnaire_response: Record<string,string>;
   // Timestamp fields
   vitals_timestamps: Record<string,string>;
   labs_timestamps: Record<string,string>;
-  imaging_timestamps: Record<string,string>;
   exam_timestamps: Record<string,string>;
   procedure_timestamps: Record<string,string>;
+  imaging_observations_timestamps: Record<string,string>;
+  procedure_observations_timestamps: Record<string,string>;
   social_history_timestamps: Record<string,string>;
   medications_timestamps: Record<string,string>;
   allergies_timestamps: Record<string,string>;
   diagnoses_timestamps: Record<string,string>;
   immunizations_timestamps: Record<string,string>;
+  diagnostic_reports_timestamps: Record<string,string>;
   medication_statement_timestamps: Record<string,string>;
   questionnaire_response_timestamps: Record<string,string>;
   // Encounters

@@ -235,7 +235,13 @@ function PatientsPageContent() {
                             <div className="flex-shrink-0">
                               <div className="h-14 w-14 bg-gradient-to-br from-blue-100 to-blue-200 rounded-full flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow">
                                 <span className="text-blue-700 font-bold text-lg">
-                                  {patient.name.split(' ').map(n => n[0]).join('').substring(0, 2)}
+                                  {(() => {
+                                    const fullName = patient?.name as string | undefined;
+                                    if (!fullName || typeof fullName !== 'string') return '';
+                                    const parts = fullName.trim().split(/\s+/).filter(Boolean);
+                                    if (parts.length === 0) return '';
+                                    return parts.map(p => p[0]).join('').substring(0, 2).toUpperCase();
+                                  })()}
                                 </span>
                               </div>
                             </div>

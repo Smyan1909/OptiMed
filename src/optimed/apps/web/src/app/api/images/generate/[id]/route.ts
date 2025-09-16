@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
+  request: Request,
+  context: any
 ) {
   try {
+    const { id } = context.params;
     // Get session ID from request headers
     const sessionId = request.headers.get('x-session-id');
     
@@ -15,11 +16,11 @@ export async function GET(
       headers['X-Session-ID'] = sessionId;
     }
     
-    console.log(`[API Route] Fetching generated image: ${params.id}`);
+    console.log(`[API Route] Fetching generated image: ${id}`);
     console.log(`[API Route] Session ID: ${sessionId}`);
     
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
-    const response = await fetch(`${baseUrl}/images/generated/${params.id}`, {
+    const response = await fetch(`${baseUrl}/images/generated/${id}`, {
       headers
     });
     
