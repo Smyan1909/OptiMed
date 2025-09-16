@@ -3111,10 +3111,10 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
         # Include image information in completion if available
         if data.get("generated_image"):
             generated_image = data["generated_image"]
-            completion_update["generated_image"] = {
+            completion_update["generated_image"] = { # type: ignore
                 "image_id": getattr(generated_image, "generation_id", None),
                 "prompt": getattr(generated_image, "prompt", None),
-                "created_at": getattr(generated_image, "created_at", None).isoformat() if getattr(generated_image, "created_at", None) else None, #type :ignore
+                "created_at": getattr(generated_image, "created_at", None).isoformat() if getattr(generated_image, "created_at", None) else None, # type: ignore
                 "metadata": getattr(generated_image, "metadata", {})
             }
 
