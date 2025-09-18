@@ -1014,7 +1014,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     print(f"[intelligent_retrieve_chunks] Chunk {i+1} preview: '{chunk.text[:100]}...'")
                 
                 # Adapt to local chunk dicts
-                chunks = [{
+                chunks: list[dict[str, Any]] = [{
                     "id": c.id,
                     "content": c.text,
                     "metadata": {"patient_id": patient_id_str, "data_type": c.resource_type, "timestamp": str(int(time.time()*1000))},
@@ -1057,7 +1057,8 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 print(f"[intelligent_retrieve_chunks] Computing bi-encoder scores for {len(chunks)} chunks...")
                 def bi_score(vec: list[float]) -> float:
                     return max(self._cosine(vec, qv) for qv in query_vecs)
-                bi_scored = [(i, bi_score(chunks[i]["embedding"])) for i in range(len(chunks))]
+                from typing import cast
+                bi_scored = [(i, bi_score(cast(list[float], chunks[i]["embedding"]))) for i in range(len(chunks))]
                 bi_scored.sort(key=lambda x: x[1], reverse=True)
                 
                 # Log top bi-encoder scores
@@ -1080,7 +1081,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 print("[intelligent_retrieve_chunks] Running cross-encoder reranking...")
                 
                 cross = self._cross_encoder
-                rerank_scores = cross.score_pairs(state.user_prompt, [chunks[i]["content"] for i in initial_indices])
+                rerank_scores = cross.score_pairs(state.user_prompt, [cast(str, chunks[i]["content"]) for i in initial_indices])
                 # Align with indices
                 rerank_scores = list(rerank_scores)
                 reranked = list(zip(initial_indices, rerank_scores))
@@ -1106,7 +1107,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
                 # 7) MMR on top 30
                 print(f"[intelligent_retrieve_chunks] Running MMR with lambda={MMR_LAMBDA}, n={n_dynamic}")
-                candidate_vecs = [chunks[i]["embedding"] for i, _ in reranked]
+                candidate_vecs = [cast(list[float], chunks[i]["embedding"]) for i, _ in reranked]
                 best_q_idx = max(range(len(query_vecs)), key=lambda qi: sum(self._cosine(query_vecs[qi], v) for v in candidate_vecs) / max(len(candidate_vecs), 1))
                 best_q_vec = query_vecs[best_q_idx]
                 mmr_local_indices = self._mmr(candidate_vecs, best_q_vec, n_dynamic, lambda_=MMR_LAMBDA)
@@ -1115,7 +1116,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
                 # 8) Binary gate via cross-encoder threshold
                 print(f"[intelligent_retrieve_chunks] Applying binary gate with threshold {GATE_THRESH}")
-                gate_scores = cross.score_pairs(state.user_prompt, [chunks[i]["content"] for i in selected_indices])
+                gate_scores = cross.score_pairs(state.user_prompt, [cast(str, chunks[i]["content"]) for i in selected_indices])
                 gate_results = [s >= GATE_THRESH for s in gate_scores]
                 final_selected = [i for i, ok in zip(selected_indices, gate_results) if ok]
                 
@@ -1154,7 +1155,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 if state.needs_refinement:
                     print(f"[intelligent_retrieve_chunks] Too few chunks selected ({len(final_selected)}), attempting refinement...")
                     try:
-                        refinements = await self._refine_queries(state.user_prompt, [chunks[i]["content"] for i in final_selected])
+                        refinements = await self._refine_queries(state.user_prompt, [cast(str, chunks[i]["content"]) for i in final_selected])
                         print(f"[intelligent_retrieve_chunks] Generated {len(refinements)} refined queries: {refinements}")
                     except Exception as e:
                         print(f"[intelligent_retrieve_chunks] Refinement failed: {e}")
@@ -1163,7 +1164,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     state.retrieval_retry_attempts += 1
                     
                     # Set partial state for streaming decorator to show progress
-                    state.retrieved_chunks = [chunks[i]["content"] for i in final_selected] if final_selected else []
+                    state.retrieved_chunks = [cast(str, chunks[i]["content"]) for i in final_selected] if final_selected else []
                     state.chunk_analysis = {
                         "method": "bi_cross_mmr_gate_refining",
                         "dynamic_n": len(final_selected),
@@ -1192,11 +1193,11 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 print(f"[intelligent_retrieve_chunks] Final selected chunks ({len(final_selected)}):")
                 for i, idx in enumerate(final_selected):
                     chunk_type = chunks[idx]["data_type"]
-                    chunk_preview = chunks[idx]["content"][:100]
+                    chunk_preview = cast(str, chunks[idx]["content"])[:100]
                     print(f"[intelligent_retrieve_chunks]   {i+1}. Chunk {idx} ({chunk_type}): '{chunk_preview}...'")
 
                 # Set state variables early so streaming decorator can access them
-                state.retrieved_chunks = [chunks[i]["content"] for i in final_selected]
+                state.retrieved_chunks = [cast(str, chunks[i]["content"]) for i in final_selected]
                 state.chunk_analysis = {
                     "method": "bi_cross_mmr_gate",
                     "dynamic_n": len(final_selected),
@@ -1779,14 +1780,13 @@ Content:
             policy = ChunkPolicy(
                 name="journal_fallback",
                 max_tokens=512,
-                overlap=0.1,
-                min_tokens=50
+                overlap=0.1
             )
         
         # Apply redaction to records
         redacted_records = []
         for record in records:
-            redacted_text = redactor.redact(record.text)
+            redacted_text = redactor.redact(record.text or "")
             redacted_record = record.model_copy(update={"text": redacted_text})
             redacted_records.append(redacted_record)
         
@@ -1812,7 +1812,9 @@ Content:
         return dot / (na * nb)
 
     async def _embed_many(self, texts: list[str], mode: str = "passage") -> list[list[float]]:
-        tasks = [embed(t or "", mode) for t in texts]
+        from typing import cast, Literal
+        mode_literal = cast(Literal["query", "passage"], mode)
+        tasks = [embed(t or "", mode_literal) for t in texts]
         return await asyncio.gather(*tasks)
 
     def _mmr(self, doc_vecs: list[list[float]], query_vec: list[float], top_n: int, lambda_: float = 0.5) -> list[int]:

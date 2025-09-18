@@ -181,7 +181,7 @@ class MultilingualZeroShotClassifier:
         
         # Return the label with the highest score, or None if no matches
         if scores and max(scores.values()) > 0:
-            result = max(scores, key=scores.get)
+            result = max(scores, key=lambda k: scores[k])
             print(f"[MultilingualZeroShotClassifier] Heuristic classification: {result} (score: {scores[result]})")
             return result
         
