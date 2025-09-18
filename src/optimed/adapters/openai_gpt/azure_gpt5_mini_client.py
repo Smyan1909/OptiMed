@@ -139,13 +139,20 @@ class AzureOpenAIGPT5MiniClient(LLMClient):
         if self._minimal_reasoning:
             kwargs["reasoning"] = {"effort": "minimal"}
 
-        stream = await self._client.responses.create(**kwargs)
+        try:
+            stream = await self._client.responses.create(**kwargs)
 
-        # The stream yields typed events; we only forward text deltas.
-        async for event in stream:
-            # Text delta events:
-            if getattr(event, "type", "") == "response.output_text.delta":
-                delta = getattr(event, "delta", None)
-                if delta:
-                    yield delta
+            # The stream yields typed events; we only forward text deltas.
+            async for event in stream:
+                # Text delta events:
+                if getattr(event, "type", "") == "response.output_text.delta":
+                    delta = getattr(event, "delta", None)
+                    if delta:
+                        yield delta
+        except Exception as e:
+            # Handle network errors gracefully
+            import logging
+            logging.error(f"Azure GPT streaming error: {e}")
+            # Re-raise with more context
+            raise Exception(f"Failed to stream from Azure GPT: {e}") from e
 

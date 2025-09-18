@@ -17,6 +17,7 @@ STRATEGY_REGISTRY: dict[str, str] = {
     "diagnostic_report": "NarrativeV1",
     "clinical_impression": "NarrativeV1",
     "questionnaire": "NarrativeV1",
+    "journal_entry": "NarrativeV1",
     "document": "NarrativeV1",
     "csv_row": "NarrativeV1",
     "pdf": "NarrativeV1",

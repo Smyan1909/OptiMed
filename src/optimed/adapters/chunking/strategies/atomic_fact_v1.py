@@ -26,11 +26,15 @@ class AtomicFactV1(ChunkingStrategy):
                 header_parts.append(r.resource_type.capitalize())
             if r.key:
                 header_parts.append(r.key)
+            # Use the text field if available (contains source information), otherwise fall back to value
             value_str = r.value or ""
-            units_str = f" {r.units}" if r.units else ""
-            code_str = f" [{r.system}:{r.code}]" if r.code and r.system else (f" [{r.code}]" if r.code else "")
-            line = f"{' - '.join(header_parts)}: {value_str}{units_str}{code_str}"
-            content = line.strip()
+            if r.text:
+                content = r.text.strip()
+            else:
+                units_str = f" {r.units}" if r.units else ""
+                code_str = f" [{r.system}:{r.code}]" if r.code and r.system else (f" [{r.code}]" if r.code else "")
+                line = f"{' - '.join(header_parts)}: {value_str}{units_str}{code_str}"
+                content = line.strip()
             chunk_id = stable_hash(
                 {
                     "patient_ref": r.patient_ref,

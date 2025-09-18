@@ -5,6 +5,7 @@ from .streaming_llm import StreamingLLMWrapper
 import uuid 
 import json
 import time
+import math
 import asyncio
 from typing import List, Any, Union, AsyncGenerator, Optional
 from datetime import datetime
@@ -12,16 +13,37 @@ from datetime import datetime
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
-from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, ImageGenerationRequest, GeneratedImage, ImageGenerationContext, GeneratedImagePurpose
+from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, JournalEntry, Chunk
 from optimed.core.lang import detect_language_code
 
-from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, ImageGenerationService, GeneratedImageRepository
+from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService
 
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
 
 from optimed.embeddings.minilm import embed
 from optimed.embeddings.service import embed_and_store
+from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator
+from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY as CHUNK_STRATEGY_REGISTRY, POLICY_PRESETS as CHUNK_POLICY_PRESETS
+from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
+from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
+from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder, MultilingualZeroShotClassifier
 import re
+
+
+# =========================
+# RAM-only mode and retrieval params
+# =========================
+# Global flag to disable any persistence (DB/files/caches). All writes are gated.
+PERSISTENCE_ENABLED: bool = False
+
+# Retrieval parameters
+TOPK_INITIAL: int = 100
+TOPK_RERANK: int = 30
+N_MIN: int = 5
+N_MAX: int = 25
+MMR_LAMBDA: float = 0.5
+GATE_THRESH: float = 0.5
+RETRY_MAX: int = 2
 
 
 
@@ -48,15 +70,13 @@ SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                                         `[Source Title](URL)`  
                                         Otherwise, omit citations.
                                     - Link policy (**STRICT for EHR**):  
-                                        For every EHR-derived item you mention (vital, lab value, medication, allergy, diagnosis, imaging finding, date, encounter, note), include a **clickable Markdown link** immediately after that specific item, within the same sentence.  
-                                        Examples:
-                                        - Correct: `BP 128/76 (2024-05-01) [Vitals](URL)`
-                                        - Correct: `metformin 500 mg BID [Meds](URL)`
-                                        - Incorrect: Grouping links at the end of the answer.
-                                        Additional rules:
-                                        - If multiple EHR items appear in one sentence, **each must have its own adjacent link**.
-                                        - If no URL is available, write `(from EHR, no link available)` immediately after the item.
+                                        When referencing specific patient data from the clinical information chunks, you MUST include the source links that are embedded in the chunk content.
+                                        - For atomic data (vitals, labs, medications, etc.): The chunks contain data in the format "value [EHR Source](URL)" - preserve this exact format when referencing the data
+                                        - For narrative data (reports, impressions, etc.): The chunks contain source information at the end as "**Source:** [EHR Record](URL)" - preserve this when referencing the content
+                                        - If you see data without a source link, write `(from EHR, no link available)` immediately after that item
+                                        - NEVER remove or modify existing source links - they are essential for clinical traceability
                                     - Do not escape Markdown unnecessarily; the final response must always render cleanly.
+                                    - When the user asks for a summary start by explaining the current situation and then provide the summary.
 
                                     Restrictions:
                                     - Provide information and education, **not** diagnostic conclusions or treatment recommendations.
@@ -76,6 +96,7 @@ class FlowState(BaseModel):
     # parsed_response: Optional[DiagnosisResult] = None
 
     patient_ctx: PatientContext | None = None
+    journal_entries: List[JournalEntry] = Field(default_factory=list)  # Store fetched journal entries
     retrieved_chunks: List[str] = Field(default_factory=list)
 
     chunk_analysis: dict[str, Any] = Field(default_factory=dict)
@@ -104,11 +125,6 @@ class FlowState(BaseModel):
     user_context: User | None = None
     session_id: str | None = None
 
-    # Image generation fields
-    image_generation_needed: bool = False
-    image_generation_prompt: str = ""
-    generated_image: Optional[GeneratedImage] = None
-    image_generation_context: Optional[ImageGenerationContext] = None
 
     # Reasoning fields
     llm_reasoning: str = ""
@@ -129,9 +145,14 @@ class FlowState(BaseModel):
     streaming_response: str = ""  # Accumulated response during streaming
     stream_callback: Optional[Any] = None  # Callback for streaming updates
     
+    # Retrieval refinement fields (agentic loop)
+    retrieval_retry_attempts: int = 0
+    refined_queries: List[str] = Field(default_factory=list)
+    needs_refinement: bool = False
+    
 
 
-class LangGraphInformationEngine(DiagnosticEngine):
+class LangGraphRAMInformationEngine(DiagnosticEngine):
     """Concrete engine that streams or returns full result."""
 
     def __init__(self, fhir_repo: FHIRRepository, 
@@ -140,8 +161,8 @@ class LangGraphInformationEngine(DiagnosticEngine):
                  user_repo: UserRepository, 
                  connection_service: UserEHRConnectionService, 
                  web_search_service: WebSearchService,
-                 image_generation_service: ImageGenerationService | None = None,
-                 generated_image_repo: GeneratedImageRepository | None = None, 
+                 cross_encoder: MultilingualCrossEncoder,
+                 zero_shot_classifier: MultilingualZeroShotClassifier,
                  default_prompt: str = "Provide the most likely diagnosis"):
         self._fhir = fhir_repo
         self._vec = vector_store
@@ -152,10 +173,14 @@ class LangGraphInformationEngine(DiagnosticEngine):
         self._connection_service = connection_service
         self._web_search = web_search_service
         self._default_prompt = default_prompt
-        self._image_generation = image_generation_service
-        self._generated_image_repo = generated_image_repo
+        
+        # ML models for intelligent retrieval
+        self._cross_encoder = cross_encoder
+        self._zero_shot_classifier = zero_shot_classifier
 
         self._compiled_graph = self._build_graph()
+        # Ephemeral per-session chat memory (RAM-only)
+        self._session_memory: dict[str, list[dict[str, Any]]] = {}
 
     def _build_graph(self) -> Any:
         """Build the LangGraph state graph for diagnosis."""
@@ -178,6 +203,16 @@ class LangGraphInformationEngine(DiagnosticEngine):
                     print(f"[fetch_patient] Failed to use SMART connection: {e}, falling back to default")
             
             state.patient_ctx = await fhir_repo.get_patient(str(state.patient_id))
+            
+            # Also fetch journal entries for this patient
+            try:
+                journal_entries = await fhir_repo.get_patient_journal_entries(str(state.patient_id))
+                state.journal_entries = list(journal_entries)
+                print(f"[fetch_patient] Fetched {len(state.journal_entries)} journal entries for patient {state.patient_id}")
+            except Exception as e:
+                print(f"[fetch_patient] Failed to fetch journal entries: {e}")
+                state.journal_entries = []
+            
             return state
 
         @streaming_step("load_user_context")
@@ -199,17 +234,14 @@ class LangGraphInformationEngine(DiagnosticEngine):
             """Evaluate if web search is needed for medical information."""
             try:
                 # For other modes, evaluate based on query content
-                patient_context_str = None
-                if state.patient_ctx:
-                    patient_context_str = f"Patient: {state.patient_ctx.name}, Age: {state.patient_ctx.age}"
-                
+                # Note: No patient data is sent to external APIs for GDPR compliance
                 chat_history_str = None
                 if state.chat_history:
                     chat_history_str = [msg.content for msg in state.chat_history[-3:]]
                 
                 needs_search = await self._web_search.evaluate_search_need(
                     user_query=state.user_prompt,
-                    patient_context=patient_context_str,
+                    patient_context=None,  # No patient data sent to external APIs
                     chat_history=chat_history_str
                 )
                 
@@ -229,15 +261,8 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 if not state.web_search_performed:
                     return state
                 
-                # Prepare enhanced query with patient context
+                # Prepare search query without patient data for GDPR compliance
                 search_query = state.user_prompt
-                patient_context_str = None
-                
-                if state.patient_ctx:
-                    patient_context_str = (
-                        f"Patient demographics: {state.patient_ctx.name}, "
-                        f"Age: {state.patient_ctx.age}, Sex: {state.patient_ctx.sex}"
-                    )
                 
                 # Perform search with target language based on user's prompt
                 try:
@@ -247,7 +272,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 search_response = await self._web_search.search(
                     query=search_query,
                     max_results=8,
-                    patient_context=patient_context_str,
+                    patient_context=None,  # No patient data sent to external APIs
                     search_intent="clinical_information",
                     target_language=(active_lang if active_lang and active_lang != "en" else None)
                 )
@@ -274,125 +299,15 @@ class LangGraphInformationEngine(DiagnosticEngine):
             """Conditional function to determine if web search should be performed."""
             return state.web_search_performed
 
-        @streaming_step("evaluate_image_generation_need")
-        async def evaluate_image_generation_need(state: FlowState) -> FlowState:
-            """Evaluate if image generation would be helpful for this query."""
-            if not self._image_generation:
-                state.image_generation_needed = False
-                return state
-            
-            try:
-                # Check if service is available
-                if not await self._image_generation.is_available():
-                    print("[image_generation] Service not available")
-                    state.image_generation_needed = False
-                    return state
-                
-                # Convert chat history from ChatMessage objects to dictionaries
-                chat_history_dicts = []
-                if state.chat_history:
-                    for chat_msg in state.chat_history:
-                        if hasattr(chat_msg, 'role') and hasattr(chat_msg, 'content'):
-                            # It's a ChatMessage object, convert to dict
-                            chat_dict = {
-                                "role": chat_msg.role.value if hasattr(chat_msg.role, 'value') else str(chat_msg.role),
-                                "content": chat_msg.content,
-                                "timestamp": chat_msg.timestamp.isoformat() if hasattr(chat_msg, 'timestamp') and chat_msg.timestamp else None,
-                                "user_id": getattr(chat_msg, 'user_id', None),
-                                "metadata": getattr(chat_msg, 'metadata', {})
-                            }
-                            chat_history_dicts.append(chat_dict)
-                        elif isinstance(chat_msg, dict):
-                            # It's already a dict, use as-is
-                            chat_history_dicts.append(chat_msg)
-                
-                # Create context for evaluation
-                context = ImageGenerationContext(
-                    user_query=state.user_prompt,
-                    patient_context=state.patient_ctx,
-                    chat_history=chat_history_dicts,
-                    medical_context=state.retrieved_chunks[0] if state.retrieved_chunks else None,
-                    generation_purpose=GeneratedImagePurpose.EDUCATIONAL  # Default purpose, can be changed later
-                )
-                
-                state.image_generation_context = context
-                
-                # Evaluate need
-                should_generate, image_prompt = await self._image_generation.evaluate_generation_need(context)
-                
-                state.image_generation_needed = should_generate
-                state.image_generation_prompt = image_prompt or ""
-                
-                print(f"[image_generation] Generation needed: {should_generate}")
-                if should_generate:
-                    print(f"[image_generation] Prompt: {image_prompt}")
-                
-            except Exception as e:
-                print(f"[image_generation] Error evaluating generation need: {e}")
-                import traceback
-                traceback.print_exc()
-                state.image_generation_needed = False
-            
-            return state
-        
-        @streaming_step("generate_image",  is_long_running=True, estimated_time="30-60 seconds")
-        async def generate_image(state: FlowState) -> FlowState:
-            """Generate an image if needed."""
-            if not state.image_generation_needed or not state.image_generation_prompt:
-                return state
-            
-            try:
-                # Create generation request
-                request = ImageGenerationRequest(
-                    prompt=state.image_generation_prompt,
-                    width=1024,  # Higher resolution for Stability AI
-                    height=1024,
-                    guidance_scale=7.5,
-                    num_inference_steps=30,  # Good balance of quality vs speed
-                    user_id=state.user_id,
-                    patient_id=state.patient_id,
-                    session_id=state.session_id
-                )
-                
-                # Generate image
-                generated_image = await self._image_generation.generate_image(request) if self._image_generation else None
-                state.generated_image = generated_image
-                
-                # Store image if repository is available
-                if self._generated_image_repo and generated_image:
-                    await self._generated_image_repo.store_generated_image(generated_image)
-
-                print(f"[image_generation] Successfully generated image: {generated_image.generation_id}") if generated_image else print("[image_generation] No image generated")
-
-            except Exception as e:
-                print(f"[image_generation] Error generating image: {e}")
-                # Don't fail the entire flow for image generation errors
-                state.generated_image = None
-            
-            return state
-
-        def needs_image_generation(state: FlowState) -> bool:
-            """Conditional function to determine if image generation should be performed."""
-            return state.image_generation_needed
 
         @streaming_step("load_current_session_history")
         async def load_current_session_history(state: FlowState) -> FlowState:
-            """Load chat history for the patient if available."""
+            """Always load current session chat history from in-memory session store (ephemeral)."""
             print(f"[load_current_session_history] Loading for patient_id={state.patient_id}, session_id={state.session_id}")
-
-            if state.patient_id and state.session_id:
-                try:
-                    # Get history for this specific session
-                    history_data = await self._vec.get_chat_history(
-                        patient_id=str(state.patient_id), 
-                        session_id=state.session_id,
-                        limit=20
-                    )
-                    print(f"[load_current_session_history] Retrieved {len(history_data)} messages")
-
-                    chat_messages = []
-                    
-                    for item in history_data:
+            try:
+                history = self._session_memory.get(state.session_id or "", []) if state.session_id else []
+                chat_messages: list[ChatMessage] = []
+                for item in history:
                         try:
                             role = ChatRole(item.get("role", "user"))
                             content = item.get("content", "")
@@ -400,43 +315,19 @@ class LangGraphInformationEngine(DiagnosticEngine):
                         except Exception as e:
                             print(f"[load_current_session_history] Error parsing item: {e}")
                             continue
-                            
-                    state.chat_history = chat_messages
-                except Exception as e:
-                    print(f"[load_current_session_history] Error loading chat history: {e}")
-                    state.chat_history = []
-            else:
-                try:
-                    # Get history for this specific session
-                    history_data = await self._vec.get_chat_history(
-                        patient_id="general_chat", 
-                        session_id=state.session_id,
-                        limit=20
-                    )
-                    print(f"[load_current_session_history] Retrieved {len(history_data)} messages")
-
-                    chat_messages = []
-                    
-                    for item in history_data:
-                        try:
-                            role = ChatRole(item.get("role", "user"))
-                            content = item.get("content", "")
-                            chat_messages.append(ChatMessage(role=role, content=content))
-                        except Exception as e:
-                            print(f"[load_current_session_history] Error parsing item: {e}")
-                            continue
-                            
-                    state.chat_history = chat_messages
-                except Exception as e:
-                    print(f"[load_current_session_history] Error loading chat history: {e}")
-                    state.chat_history = []
-
+                state.chat_history = chat_messages
+            except Exception as e:
+                print(f"[load_current_session_history] Error loading in-memory chat history: {e}")
+                state.chat_history = []
             return state
         
 
         @streaming_step("evaluate_cross_session_history_need")
         async def evaluate_cross_session_history_need(state: FlowState) -> FlowState:
             """Evaluate if cross-session chat history would be helpful for context."""
+            if not PERSISTENCE_ENABLED:
+                state.needs_cross_session_search = False
+                return state
             try:
                 # Use LLM to determine if historical context from other sessions would help
                 evaluation_prompt = f"""
@@ -477,6 +368,9 @@ class LangGraphInformationEngine(DiagnosticEngine):
         @streaming_step("search_cross_session_history")
         async def search_cross_session_history(state: FlowState) -> FlowState:
             """Search across all previous sessions for relevant context."""
+            if not PERSISTENCE_ENABLED:
+                state.relevant_cross_session_history = []
+                return state
             if not state.needs_cross_session_search:
                 state.relevant_cross_session_history = []
                 return state
@@ -567,6 +461,9 @@ class LangGraphInformationEngine(DiagnosticEngine):
         async def store_patient_chunks(state: FlowState) -> FlowState:
             """Store patient context as chunks in the vector database for future retrieval."""
             if not state.patient_ctx:
+                return state
+            # RAM-only mode: bypass all storage
+            if not PERSISTENCE_ENABLED:
                 return state
                 
             try:
@@ -1072,271 +969,272 @@ class LangGraphInformationEngine(DiagnosticEngine):
 
         @streaming_step("intelligent_retrieve_chunks")
         async def intelligent_retrieve_chunks(state: FlowState) -> FlowState:
-            """Intelligently retrieve and filter chunks based on LLM analysis with recency-aware filtering."""
-            
+            """In-RAM retrieval: chunk, embed, paraphrase, bi-encoder, cross-encoder rerank, dynamic-N MMR, gate, retry."""
             try:
-                # Step 1: Initial similarity search (broader search)
-                if state.patient_id:
-                    q_vec = await embed(state.user_prompt, "query")
-                    rows = await self._vec.similarity_search(
-                        q_vec,
-                        top_k=20,  # Increased to accommodate recency filtering
-                        filter_={
-                            "namespace": "clinical", 
-                            "patient_id": str(state.patient_id)
-                        },
-                    )
-                else:
-                    rows = []
+                print(f"[intelligent_retrieve_chunks] Starting retrieval for patient_id: {state.patient_id}")
+                print(f"[intelligent_retrieve_chunks] User prompt: '{state.user_prompt[:100]}...'")
+                
+                if not state.patient_ctx:
+                    print("[intelligent_retrieve_chunks] No patient context available - returning empty chunks")
+                    state.retrieved_chunks = []
+                    state.chunk_analysis = {"method": "none", "reason": "No patient context available"}
+                    return state
 
-                if not rows and state.patient_ctx:
-                    # Fallback to patient context
+                # 1) Chunking via ChunkingOrchestrator (policy-driven)
+                patient_id_str = str(state.patient_id) if state.patient_id else ""
+                print(f"[intelligent_retrieve_chunks] Creating chunking orchestrator for patient: {patient_id_str}")
+                
+                tokenizer = WhitespaceTokenizer()
+                redactor = SimplePhiRedactor()
+                orchestrator = ChunkingOrchestrator(
+                    tokenizer=tokenizer,
+                    redactor=redactor,
+                    strategy_registry=CHUNK_STRATEGY_REGISTRY,
+                    policies=CHUNK_POLICY_PRESETS,
+                )
+                
+                print("[intelligent_retrieve_chunks] Chunking patient context...")
+                produced = orchestrator.chunk_patient(state.patient_ctx, CHUNK_POLICY_PRESETS)
+                print(f"[intelligent_retrieve_chunks] Patient context chunking produced {len(produced)} chunks")
+                
+                # Also chunk journal entries if available
+                journal_chunks = []
+                if state.journal_entries:
+                    print(f"[intelligent_retrieve_chunks] Chunking {len(state.journal_entries)} journal entries...")
+                    journal_chunks = await self._chunk_journal_entries(state.journal_entries, orchestrator, patient_id_str)
+                    print(f"[intelligent_retrieve_chunks] Journal entries chunking produced {len(journal_chunks)} chunks")
+                
+                # Combine all chunks
+                all_chunks = produced + journal_chunks
+                print(f"[intelligent_retrieve_chunks] Total chunks produced: {len(all_chunks)} (patient: {len(produced)}, journal: {len(journal_chunks)})")
+                
+                # Log chunk details
+                for i, chunk in enumerate(all_chunks):
+                    print(f"[intelligent_retrieve_chunks] Chunk {i+1}: type={chunk.resource_type}, id={chunk.id}, length={len(chunk.text)} chars")
+                    print(f"[intelligent_retrieve_chunks] Chunk {i+1} preview: '{chunk.text[:100]}...'")
+                
+                # Adapt to local chunk dicts
+                chunks: list[dict[str, Any]] = [{
+                    "id": c.id,
+                    "content": c.text,
+                    "metadata": {"patient_id": patient_id_str, "data_type": c.resource_type, "timestamp": str(int(time.time()*1000))},
+                    "data_type": c.resource_type,
+                } for c in all_chunks]
+                
+                if not chunks:
+                    print("[intelligent_retrieve_chunks] No chunks produced - using fallback to full patient context")
                     state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
-                    state.chunk_analysis = {"method": "fallback", "reason": "No chunks found, using patient context"}
-                    return state
-                elif not rows and not state.patient_ctx:
-                    state.retrieved_chunks = []
-                    state.chunk_analysis = {"method": "none", "reason": "No relevant chunks found"}
-                    return state
-                # Step 2: Apply recency-based filtering and prepare chunks
-                current_time = time.time() * 1000  # Current time in milliseconds
-                candidate_chunks = []
-                
-                # Define recency thresholds for different data types (in milliseconds)
-                # Only vitals, labs, and medications have time-based filtering
-                recency_thresholds = {
-                    "vitals": 7 * 24 * 60 * 60 * 1000,        # 7 days - vitals change frequently
-                    "labs": 14 * 24 * 60 * 60 * 1000,         # 14 days - lab values change regularly
-                    "medications": 90 * 24 * 60 * 60 * 1000,   # 90 days - medication changes less frequent
-                    "journal_entry": float('inf'),              # Always relevant - clinical notes don't expire
-                    "demographics": float('inf'),               # Always relevant
-                    "allergies": float('inf'),                  # Always relevant
-                    "family_history": float('inf'),             # Always relevant
-                    "immunizations": float('inf'),              # Always relevant
-                    "complete_context": float('inf'),           # Always relevant as fallback
-                    "unknown": float('inf')                     # Default to always relevant for unknown types
-                }
-                
-                for i, row in enumerate(rows):
-                    try:
-                        # rows are (id, similarity, content)
-                        chunk_text = row[2] if len(row) > 2 else row[1]
-                        similarity_score = row[1] if len(row) > 1 else 0.0
-                        
-                        # Extract metadata if available (for data type identification)
-                        metadata: dict[str, Any] = row[3] if len(row) > 3 else {}
-                        data_type = metadata.get("data_type", "unknown") if isinstance(metadata, dict) else "unknown"
-                        
-                        # Get timestamp for recency evaluation
-                        timestamp_str = metadata.get("timestamp") if isinstance(metadata, dict) else None
-                        chunk_timestamp = None
-                        is_recent = True  # Default to True for chunks without timestamps
-                        days_old = None
-                        
-                        if timestamp_str:
-                            try:
-                                chunk_timestamp = int(timestamp_str)
-                                time_diff = current_time - chunk_timestamp
-                                threshold = recency_thresholds.get(data_type, recency_thresholds["unknown"])
-                                is_recent = time_diff <= threshold
-                                days_old = time_diff / (24 * 60 * 60 * 1000)
-                                
-                            except (ValueError, TypeError):
-                                is_recent = True  # Default to including if timestamp parsing fails
-                        
-                        # Apply recency filter - skip old time-sensitive data
-                        if not is_recent:
-                            continue
-                        
-                        # Verify patient relevance
-                        if state.patient_ctx:
-                            patient_name = state.patient_ctx.name
-                            if str(state.patient_id) in chunk_text or patient_name in chunk_text:
-                                
-                                # Calculate recency-adjusted similarity score
-                                adjusted_score = similarity_score
-                                if chunk_timestamp and data_type in ["vitals", "labs", "medications"]:
-                                    # Boost score for more recent time-sensitive data (only for vitals, labs, medications)
-                                    time_diff = current_time - chunk_timestamp
-                                    threshold = recency_thresholds.get(data_type, recency_thresholds["unknown"])
-                                    if threshold != float('inf') and time_diff < threshold:
-                                        # Apply recency boost: more recent = higher boost
-                                        recency_factor = 1.0 + (0.3 * (1.0 - time_diff / threshold))
-                                        adjusted_score = similarity_score * recency_factor # type: ignore
-                                
-                                candidate_chunks.append({
-                                    "id": f"chunk_{i}",
-                                    "content": chunk_text[:600],  # Increased limit for journal entries
-                                    "similarity_score": similarity_score,
-                                    "adjusted_score": adjusted_score,
-                                    "full_content": chunk_text,
-                                    "data_type": data_type,
-                                    "metadata": metadata,
-                                    "timestamp": chunk_timestamp,
-                                    "is_recent": is_recent,
-                                    "days_old": days_old
-                                })
-                        
-                    except Exception:
-                        continue
-
-                if not candidate_chunks:
-                    state.retrieved_chunks = []
-                    state.chunk_analysis = {"method": "none", "reason": "No relevant or recent chunks found"}
+                    state.chunk_analysis = {"method": "fallback", "reason": "No chunks from context"}
                     return state
 
-                # Step 3: Simplified LLM-based chunk analysis
-                chunk_analysis_prompt = f"""
-                You are analyzing medical data chunks to determine which ones are relevant for answering this query:
+                # 2) Embed chunks
+                print(f"[intelligent_retrieve_chunks] Embedding {len(chunks)} chunks...")
+                chunk_texts = [c["content"] for c in chunks]
+                chunk_vecs = await self._embed_many(chunk_texts, mode="passage")
+                for i, vec in enumerate(chunk_vecs):
+                    chunks[i]["embedding"] = vec
+                print(f"[intelligent_retrieve_chunks] Successfully embedded {len(chunk_vecs)} chunks")
 
-                QUERY: "{state.user_prompt}"
-                
-                PATIENT CONTEXT: {state.patient_ctx.name if state.patient_ctx else "Unknown"} (ID: {state.patient_id})
-                
-                AVAILABLE CHUNKS (including demographics, vitals, labs, and journal entries):
-                {chr(10).join([f"CHUNK {chunk['id']} ({chunk.get('data_type', 'unknown')}): {chunk['content'][:400]}..." for chunk in candidate_chunks])}
-
-                For each chunk, analyze:
-                1. Relevance to the specific query (0-10 scale)
-                2. Clinical importance for this case (0-10 scale)  
-                3. Whether it contains information that directly helps answer the query
-                4. Whether it provides necessary context or background
-
-                CHUNK TYPES AVAILABLE:
-                - demographics: Basic patient information
-                - vitals: Current vital signs and measurements (recent values prioritized)
-                - labs: Laboratory test results (recent values prioritized)
-                - medications: Current medication regimen (recent changes prioritized)
-                - journal_entry: Clinical notes, observations, treatments, diagnoses, assessments, and care plans
-                - complete_context: Full patient overview
-
-                Return a JSON response with:
-                {{
-                    "selected_chunks": ["chunk_1", "chunk_3", ...],
-                    "reasoning": "Brief explanation of why these chunks were selected",
-                    "relevance_analysis": {{
-                        "chunk_1": {{"relevance": 8, "importance": 7, "reason": "Contains recent clinical assessment"}},
-                        "chunk_2": {{"relevance": 3, "importance": 4, "reason": "General background, not specific to query"}},
-                        ...
-                    }},
-                    "query_type": "diagnostic|follow_up|general_inquiry|medication|test_results|care_planning|clinical_notes"
-                }}
-
-                RULES:
-                - Select 3-6 most relevant chunks maximum
-                - For vitals, labs, medications: Recent values are automatically prioritized
-                - Journal entries are always relevant regardless of age
-                - Always include patient demographics for context
-                - For diagnostic queries, include recent journal entries, symptoms, vitals, and test results
-                - For medication queries, focus on current medications, allergies, and relevant journal notes
-                - For follow-up queries, include previous treatments/outcomes from journal entries
-                - For care planning, prioritize recent assessments and treatment notes
-                """
-
+                # 3) Query variants
+                print("[intelligent_retrieve_chunks] Generating query variants...")
                 try:
-                    analysis_response = await self._llm.chat([
-                        ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information analyst. Analyze and select the most relevant data chunks for clinical queries."),
-                        ChatMessage(role=ChatRole.USER, content=chunk_analysis_prompt)
-                    ], json_mode=True)
-
-                    if not analysis_response or not analysis_response.content:
-                        raise ValueError("Empty response from LLM")
-
-                    # Strip whitespace and check if content is empty
-                    response_content = analysis_response.content.strip()
-                    if not response_content:
-                        raise ValueError("Empty content in response")
-
-                    # Remove markdown code block markers if present
-                    if response_content.startswith("```json"):
-                        start_idx = response_content.find('\n') + 1
-                        end_idx = response_content.rfind("```")
-                        if start_idx > 0 and end_idx > start_idx:
-                            response_content = response_content[start_idx:end_idx].strip()
-                    elif response_content.startswith("```"):
-                        start_idx = response_content.find('\n') + 1
-                        end_idx = response_content.rfind("```")
-                        if start_idx > 0 and end_idx > start_idx:
-                            response_content = response_content[start_idx:end_idx].strip()
-
-                    analysis_data = json.loads(response_content)
-                    
-                    # Extract selected chunks
-                    selected_chunk_ids = analysis_data.get("selected_chunks", [])
-                    selected_chunks = []
-                    
-                    for chunk in candidate_chunks:
-                        if chunk["id"] in selected_chunk_ids:
-                            selected_chunks.append(chunk["full_content"])
-
-                    state.retrieved_chunks = selected_chunks
-                    state.chunk_analysis = analysis_data
-                    state.retrieval_reasoning = analysis_data.get("reasoning", "")
-
+                    paraphrases = await self._paraphrase_query_variants(state.user_prompt)
+                    print(f"[intelligent_retrieve_chunks] Generated {len(paraphrases)} paraphrases: {paraphrases}")
                 except Exception as e:
-                    # Fallback to top similarity scores, but prioritize journal entries and recent data
-                    journal_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") == "journal_entry"]
-                    recent_time_sensitive = [chunk for chunk in candidate_chunks if chunk.get("data_type") in ["vitals", "labs", "medications"] and chunk.get("is_recent", True)]
-                    other_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") not in ["journal_entry", "vitals", "labs", "medications"]]
-                    
-                    # Take top chunks from each category
-                    top_journal = sorted(journal_chunks, key=lambda x: x["similarity_score"], reverse=True)[:2]
-                    top_recent = sorted(recent_time_sensitive, key=lambda x: x.get("adjusted_score", x["similarity_score"]), reverse=True)[:2]
-                    top_other = sorted(other_chunks, key=lambda x: x["similarity_score"], reverse=True)[:2]
-                    
-                    fallback_chunks = top_journal + top_recent + top_other
-                    state.retrieved_chunks = [chunk["full_content"] for chunk in fallback_chunks]
-                    state.chunk_analysis = {"method": "fallback_similarity", "error": str(e)}
+                    print(f"[intelligent_retrieve_chunks] Failed to generate paraphrases: {e}")
+                    paraphrases = []
+                
+                # If in refinement loop, include refined queries at front
+                refinements = getattr(state, 'refined_queries', []) or []
+                base_variants = [state.user_prompt] + paraphrases[:2]
+                query_variants = refinements + base_variants
+                print(f"[intelligent_retrieve_chunks] Using {len(query_variants)} query variants: {query_variants}")
+                
+                query_vecs = await self._embed_many(query_variants, mode="query")
+                print(f"[intelligent_retrieve_chunks] Successfully embedded {len(query_vecs)} query variants")
 
+                # 4) Bi-encoder scoring (max cosine)
+                print(f"[intelligent_retrieve_chunks] Computing bi-encoder scores for {len(chunks)} chunks...")
+                def bi_score(vec: list[float]) -> float:
+                    return max(self._cosine(vec, qv) for qv in query_vecs)
+                from typing import cast
+                bi_scored = [(i, bi_score(cast(list[float], chunks[i]["embedding"]))) for i in range(len(chunks))]
+                bi_scored.sort(key=lambda x: x[1], reverse=True)
+                
+                # Log top bi-encoder scores
+                print("[intelligent_retrieve_chunks] Top 5 bi-encoder scores:")
+                for i, (idx, score) in enumerate(bi_scored[:5]):
+                    chunk_type = chunks[idx]["data_type"]
+                    print(f"[intelligent_retrieve_chunks]   {i+1}. Chunk {idx} ({chunk_type}): {score:.4f}")
+                
+                # Log bi-encoder score range
+                if bi_scored:
+                    bi_scores = [score for _, score in bi_scored]
+                    print(f"[intelligent_retrieve_chunks] Bi-encoder score range: [{min(bi_scores):.4f}, {max(bi_scores):.4f}]")
+                
+                initial_indices = [idx for idx, _ in bi_scored[:TOPK_INITIAL]]
+                print(f"[intelligent_retrieve_chunks] Selected top {len(initial_indices)} chunks for cross-encoder reranking")
+
+                # 5) Cross-encoder rerank (multilingual)
+                lang = detect_language_code(state.user_prompt or "")
+                print(f"[intelligent_retrieve_chunks] Detected language: {lang}")
+                print("[intelligent_retrieve_chunks] Running cross-encoder reranking...")
+                
+                cross = self._cross_encoder
+                rerank_scores = cross.score_pairs(state.user_prompt, [cast(str, chunks[i]["content"]) for i in initial_indices])
+                # Align with indices
+                rerank_scores = list(rerank_scores)
+                reranked = list(zip(initial_indices, rerank_scores))
+                reranked.sort(key=lambda x: x[1], reverse=True)
+                reranked = reranked[:TOPK_RERANK]
+                
+                # Log top cross-encoder scores
+                print(f"[intelligent_retrieve_chunks] Top {len(reranked)} cross-encoder scores:")
+                for i, (idx, score) in enumerate(reranked):
+                    chunk_type = chunks[idx]["data_type"]
+                    print(f"[intelligent_retrieve_chunks]   {i+1}. Chunk {idx} ({chunk_type}): {score:.4f}")
+                
+                # Log cross-encoder score range
+                if reranked:
+                    cross_scores = [score for _, score in reranked]
+                    print(f"[intelligent_retrieve_chunks] Cross-encoder score range: [{min(cross_scores):.4f}, {max(cross_scores):.4f}]")
+
+                # 6) Dynamic n via multilingual classifier (fallback to heuristic)
+                rerank_only_scores = [s for _, s in reranked]
+                n_dynamic = self._compute_dynamic_n(state.user_prompt, rerank_only_scores)
+                print(f"[intelligent_retrieve_chunks] dynamic n: {n_dynamic}")
+                
+
+                # 7) MMR on top 30
+                print(f"[intelligent_retrieve_chunks] Running MMR with lambda={MMR_LAMBDA}, n={n_dynamic}")
+                candidate_vecs = [cast(list[float], chunks[i]["embedding"]) for i, _ in reranked]
+                best_q_idx = max(range(len(query_vecs)), key=lambda qi: sum(self._cosine(query_vecs[qi], v) for v in candidate_vecs) / max(len(candidate_vecs), 1))
+                best_q_vec = query_vecs[best_q_idx]
+                mmr_local_indices = self._mmr(candidate_vecs, best_q_vec, n_dynamic, lambda_=MMR_LAMBDA)
+                selected_indices = [reranked[j][0] for j in mmr_local_indices]
+                print(f"[intelligent_retrieve_chunks] MMR selected {len(selected_indices)} chunks: {selected_indices}")
+
+                # 8) Binary gate via cross-encoder threshold
+                print(f"[intelligent_retrieve_chunks] Applying binary gate with threshold {GATE_THRESH}")
+                gate_scores = cross.score_pairs(state.user_prompt, [cast(str, chunks[i]["content"]) for i in selected_indices])
+                gate_results = [s >= GATE_THRESH for s in gate_scores]
+                final_selected = [i for i, ok in zip(selected_indices, gate_results) if ok]
+                
+                # Log gating results
+                print("[intelligent_retrieve_chunks] Gate results:")
+                for i, (idx, score, passed) in enumerate(zip(selected_indices, gate_scores, gate_results)):
+                    chunk_type = chunks[idx]["data_type"]
+                    status = "PASSED" if passed else "FILTERED"
+                    print(f"[intelligent_retrieve_chunks]   Chunk {idx} ({chunk_type}): {score:.4f} - {status}")
+                
+                print(f"[intelligent_retrieve_chunks] Final selected chunks after gating: {len(final_selected)}")
+                
+                # If no chunks pass gating, try with a lower threshold
+                if not final_selected and gate_scores:
+                    max_score = max(gate_scores)
+                    print(f"[intelligent_retrieve_chunks] No chunks passed gating (max score: {max_score:.4f}), trying with lower threshold")
+                    lower_threshold = min(0.3, max_score * 0.8)  # Use 80% of max score or 0.3, whichever is lower
+                    print(f"[intelligent_retrieve_chunks] Using lower threshold: {lower_threshold:.4f}")
+                    gate_results_lower = [s >= lower_threshold for s in gate_scores]
+                    final_selected = [i for i, ok in zip(selected_indices, gate_results_lower) if ok]
+                    print(f"[intelligent_retrieve_chunks] Final selected chunks with lower threshold: {len(final_selected)}")
+                    
+                    # Log the new results
+                    for i, (idx, score, passed) in enumerate(zip(selected_indices, gate_scores, gate_results_lower)):
+                        chunk_type = chunks[idx]["data_type"]
+                        status = "PASSED" if passed else "FILTERED"
+                        print(f"[intelligent_retrieve_chunks]   Chunk {idx} ({chunk_type}): {score:.4f} - {status}")
+
+                # 9) Retry if too few
+                # Agentic refinement handoff: if too few, set state and branch in the graph
+                min_required = max(N_MIN, min(N_MAX, len(chunks)))
+                state.needs_refinement = len(final_selected) < min_required and state.retrieval_retry_attempts < RETRY_MAX
+                
+                print(f"[intelligent_retrieve_chunks] Retry check: {len(final_selected)} < {min_required} and attempts {state.retrieval_retry_attempts} < {RETRY_MAX}")
+                
+                if state.needs_refinement:
+                    print(f"[intelligent_retrieve_chunks] Too few chunks selected ({len(final_selected)}), attempting refinement...")
+                    try:
+                        refinements = await self._refine_queries(state.user_prompt, [cast(str, chunks[i]["content"]) for i in final_selected])
+                        print(f"[intelligent_retrieve_chunks] Generated {len(refinements)} refined queries: {refinements}")
+                    except Exception as e:
+                        print(f"[intelligent_retrieve_chunks] Refinement failed: {e}")
+                        refinements = []
+                    state.refined_queries = [r for r in refinements if r][:2]
+                    state.retrieval_retry_attempts += 1
+                    
+                    # Set partial state for streaming decorator to show progress
+                    state.retrieved_chunks = [cast(str, chunks[i]["content"]) for i in final_selected] if final_selected else []
+                    state.chunk_analysis = {
+                        "method": "bi_cross_mmr_gate_refining",
+                        "dynamic_n": len(final_selected),
+                        "selected_chunks": [f"chunk_{i}" for i in final_selected],
+                        "total_chunks_processed": len(chunks),
+                        "chunks_after_bi_encoder": len(initial_indices),
+                        "chunks_after_cross_encoder": len(reranked),
+                        "chunks_after_mmr": len(selected_indices),
+                        "chunks_after_gating": len(final_selected),
+                        "refinement_attempt": state.retrieval_retry_attempts,
+                        "refined_queries": state.refined_queries
+                    }
+                    state.retrieval_reasoning = f"Refining search (attempt {state.retrieval_retry_attempts}) - too few chunks selected"
+                    
+                    print(f"[intelligent_retrieve_chunks] Setting up for retry with {len(state.refined_queries)} refined queries")
+                    # Do not finalize retrieved_chunks yet; upstream conditional edge will loop
+                    return state
+
+                if not final_selected:
+                    print("[intelligent_retrieve_chunks] No chunks passed gating, using fallback selection")
+                    fallback_n = min(max(N_MIN, 1), len(reranked))
+                    final_selected = [idx for idx, _ in reranked[:fallback_n]]
+                    print(f"[intelligent_retrieve_chunks] Fallback selected {len(final_selected)} chunks: {final_selected}")
+
+                # Log final selected chunks
+                print(f"[intelligent_retrieve_chunks] Final selected chunks ({len(final_selected)}):")
+                for i, idx in enumerate(final_selected):
+                    chunk_type = chunks[idx]["data_type"]
+                    chunk_preview = cast(str, chunks[idx]["content"])[:100]
+                    print(f"[intelligent_retrieve_chunks]   {i+1}. Chunk {idx} ({chunk_type}): '{chunk_preview}...'")
+
+                # Set state variables early so streaming decorator can access them
+                state.retrieved_chunks = [cast(str, chunks[i]["content"]) for i in final_selected]
+                state.chunk_analysis = {
+                    "method": "bi_cross_mmr_gate",
+                    "dynamic_n": len(final_selected),
+                    "selected_chunks": [f"chunk_{i}" for i in final_selected],
+                    "total_chunks_processed": len(chunks),
+                    "chunks_after_bi_encoder": len(initial_indices),
+                    "chunks_after_cross_encoder": len(reranked),
+                    "chunks_after_mmr": len(selected_indices),
+                    "chunks_after_gating": len(final_selected)
+                }
+                state.retrieval_reasoning = "Paraphrases + bi-encoder, cross-encoder rerank, MMR diversity, binary gating"
+                
+                print(f"[intelligent_retrieve_chunks] Retrieval complete: {len(state.retrieved_chunks)} chunks selected")
+                print(f"[intelligent_retrieve_chunks] Chunk analysis: {state.chunk_analysis}")
             except Exception as e:
-                # Ultimate fallback to patient context if everything fails
-                if state.patient_ctx:
-                    state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
-                    state.chunk_analysis = {"method": "critical_fallback", "error": str(e)}
-                else:
-                    state.retrieved_chunks = []
-                    state.chunk_analysis = {"method": "failure", "error": str(e)}
+                print(f"[intelligent_retrieve_chunks] Error: {e}")
+                state.retrieved_chunks = []
+                state.chunk_analysis = {"method": "error", "reason": str(e)}
+                return state
 
             return state
-        
 
         async def store_user_message(state: FlowState) -> FlowState:
-            """Store the user message in chat history."""
+            """Store the user message in ephemeral memory for current session only."""
             if not state.user_prompt:
                 return state
             
             try:
-                # Create user message
-                user_message = ChatMessage(
-                    role=ChatRole.USER,
-                    content=state.user_prompt,
-                    timestamp=datetime.now(),
-                    user_id=state.user_id,
-                    metadata={}  # Keep metadata empty for user messages or ensure all values are strings
-                )
-                
-                # Store user message - ALL METADATA VALUES MUST BE STRINGS
-                await self._vec.upsert(
-                    embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_{state.user_id}",
-                    embedding=await embed(state.user_prompt, "passage"),
-                    object_type="chat_message",
-                    object_id=str(state.session_id),
-                    content={
-                        "role": user_message.role.value,
-                        "content": user_message.content,
-                        "timestamp": str(int(user_message.timestamp.timestamp() * 1000)),
+                # Append to in-memory session store if available
+                if state.session_id:
+                    self._session_memory.setdefault(state.session_id, [])
+                    self._session_memory[state.session_id].append({
+                        "role": "user",
+                        "content": state.user_prompt,
+                        "timestamp": str(int(time.time() * 1000)),
                         "user_id": state.user_id or ""
-                    },
-                    metadata={
-                        "namespace": "chat_history",
-                        "patient_id": state.patient_id or "general_chat",
-                        "session_id": state.session_id or "",
-                        "timestamp": str(int(user_message.timestamp.timestamp() * 1000)),
-                        "user_id": state.user_id or "",
-                        "message_type": "user",
-                        "language": detect_language_code(state.user_prompt or "")
-                    }
-                )
+                    })
                 
             except Exception as e:
                 print(f"[store_user_message] Error: {e}")
@@ -1346,62 +1244,19 @@ class LangGraphInformationEngine(DiagnosticEngine):
             return state
 
         async def store_assistant_response(state: FlowState) -> FlowState:
-            """Store the assistant response and any generated image in chat history."""
+            """Store the assistant response in ephemeral memory for current session only."""
             if not state.llm_response:
                 return state
             
             try:
-                # Prepare message content
-                message_content = {
+                if state.session_id:
+                    self._session_memory.setdefault(state.session_id, [])
+                    self._session_memory[state.session_id].append({
                     "role": state.llm_response.role.value,
                     "content": state.llm_response.content,
                     "timestamp": str(int(time.time() * 1000)),
-                    "user_id": state.user_id,
-                }
-                
-                # Add generated image info if available
-                if state.generated_image:
-                    image_info = {
-                        "image_generated": True,
-                        "image_id": state.generated_image.generation_id,
-                        "image_prompt": state.generated_image.prompt,
-                        "generation_metadata": state.generated_image.metadata,
-                        "model_info": state.generated_image.model_info
-                    }
-                    message_content["generated_image"] = image_info # type: ignore
-                
-            
-                # Prepare metadata - ALL VALUES MUST BE STRINGS
-                metadata = {
-                    "namespace": "chat_history",
-                    "patient_id": state.patient_id or "general_chat",
-                    "session_id": state.session_id or "",
-                    "timestamp": str(int(time.time() * 1000)),
-                    "user_id": state.user_id or "",
-                    "message_type": "assistant"
-                }
-                
-                # Add reasoning steps as JSON string if available
-                if hasattr(state, 'reasoning_steps') and state.reasoning_steps:
-                    metadata["reasoning_steps"] = json.dumps(state.reasoning_steps)
-                
-                # Add web search info if available
-                if state.web_search_response:
-                    metadata["web_search_performed"] = "true"
-                    metadata["source_count"] = str(len(state.web_search_response.results))
-                
-                # Store assistant message
-                await self._vec.upsert(
-                    embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_assistant",
-                    embedding=await embed(state.llm_response.content, "passage"),
-                    object_type="chat_message",
-                    object_id=str(state.session_id),
-                    content=message_content,
-                    metadata={
-                        **metadata,
-                        "language": detect_language_code(state.llm_response.content or "")
-                    }
-                )
+                        "user_id": state.user_id or ""
+                    })
                 
             except Exception as e:
                 print(f"[store_assistant_response] Error: {e}")
@@ -1436,7 +1291,11 @@ class LangGraphInformationEngine(DiagnosticEngine):
                     role=ChatRole.SYSTEM, 
                     content="""You are CLARA, a helpful medical information assistant. Provide clear, accurate medical information. For general medical questions, draw on your medical knowledge. Keep responses concise and helpful.
 
-Link policy (STRICT for EHR): For every EHR-derived item you mention (vital, lab value, medication, allergy, diagnosis, imaging finding, date, encounter, note), include a clickable markdown link immediately after that specific item, within the same sentence, e.g., "BP 128/76 (2024‑05‑01) [Vitals](URL)" or "metformin 500 mg BID [Meds](URL)". Do this for each individual item you list. Do not group EHR links in a separate Sources section. If no URL is available, write "(from EHR, no link available)" immediately after the item.
+Link policy (STRICT for EHR): When referencing patient data from clinical information chunks, preserve the source links that are embedded in the chunk content:
+- For atomic data: Use the format "value [EHR Source](URL)" as it appears in the chunks
+- For narrative data: Include the "**Source:** [EHR Record](URL)" information from the chunks
+- If no source link is available, write "(from EHR, no link available)" immediately after the item
+- NEVER remove or modify existing source links - they are essential for clinical traceability
 """
                 )
                 messages = [simple_system_msg]
@@ -1463,86 +1322,58 @@ Link policy (STRICT for EHR): For every EHR-derived item you mention (vital, lab
                     content="=== END OF CURRENT SESSION HISTORY ==="
                 )
                 messages.append(history_footer)
-            # Only add complex context for full processing path
-            if getattr(state, 'requires_full_processing', True):
-
-                # Add cross-session relevant history if available
-                if state.relevant_cross_session_history:
-                    cross_session_header = ChatMessage(
-                        role=ChatRole.USER,
-                        content="=== RELEVANT PREVIOUS CONVERSATIONS (FROM OTHER SESSIONS) ==="
-                    )
-                    messages.append(cross_session_header)
+            
+            # Ensure intelligent retrieval results are available for direct path as well
+            try:
+                if not getattr(state, 'requires_full_processing', True):
+                    print("[provide_information] Direct path - checking if retrieval needed")
+                    print(f"[provide_information] Patient context available: {state.patient_ctx is not None}")
+                    print(f"[provide_information] Retrieved chunks available: {len(state.retrieved_chunks) if state.retrieved_chunks else 0}")
                     
-                    for historical_item in state.relevant_cross_session_history:
-                        session_info = f"Session: {historical_item.get('session_id', 'unknown')}"
-                        timestamp_info = ""
-                        if historical_item.get('timestamp'):
-                            try:
-                                timestamp_ms = int(historical_item['timestamp'])
-                                timestamp_dt = datetime.fromtimestamp(timestamp_ms / 1000)
-                                timestamp_info = f" | Date: {timestamp_dt.strftime('%Y-%m-%d %H:%M')}"
-                            except Exception:
-                                pass
-                        
-                        role = historical_item.get('role', 'user').upper()
-                        content = historical_item.get('content', '')
-                        
-                        historical_msg = ChatMessage(
-                            role=ChatRole.USER,
-                            content=f"[{session_info}{timestamp_info}] {role}: {content}"
-                        )
-                        messages.append(historical_msg)
-                    
-                    cross_session_footer = ChatMessage(
-                        role=ChatRole.USER,
-                        content="=== END OF PREVIOUS CONVERSATIONS ==="
-                    )
-                    messages.append(cross_session_footer)
+                    if state.patient_ctx and not state.retrieved_chunks:
+                        print("[provide_information] Direct path - running intelligent retrieval for patient context")
+                        # Populate retrieval using the new intelligent retrieval within this node
+                        await intelligent_retrieve_chunks(state)
+                        print(f"[provide_information] Direct path - retrieval complete, got {len(state.retrieved_chunks) if state.retrieved_chunks else 0} chunks")
+                    else:
+                        print(f"[provide_information] Direct path - no retrieval needed (patient_ctx: {state.patient_ctx is not None}, chunks: {len(state.retrieved_chunks) if state.retrieved_chunks else 0})")
+            except Exception as e:
+                print(f"[provide_information] Retrieval attempt failed on direct path: {e}")
+                import traceback
+                traceback.print_exc()
 
-                if state.patient_ctx:
-                    # NEW: Extract and format source information
-                    source_info = self._extract_source_summary(state.patient_ctx)
-                    
-                    ctx_content = f"""Patient context: 
-{state.patient_ctx.model_dump_json(indent=2)}
 
-=== DATA SOURCE TRACEABILITY ===
-{source_info}
-=== END OF DATA SOURCES ===
-
-IMPORTANT: When referencing specific patient data, you MUST provide the source of the information AND include links to the EHR from exactly where the data was retrieved from."""
-                    
-                    ctx = ChatMessage(
-                        role=ChatRole.USER,
-                        content=ctx_content,
-                    )
-                    messages.append(ctx)
+            # Add retrieved chunks (this is now the primary source of patient data)
+            print(f"[provide_information] Retrieved chunks count: {len(state.retrieved_chunks) if state.retrieved_chunks else 0}")
+            if state.retrieved_chunks:
+                print(f"[provide_information] Adding {len(state.retrieved_chunks)} chunks to LLM context")
+                chunk_context = "Relevant clinical information"
+                if state.retrieval_reasoning:
+                    chunk_context += f" (Selected because: {state.retrieval_reasoning})"
                 
-
-                if state.retrieved_chunks:
-                    chunk_context = "Relevant clinical notes"
-                    if state.retrieval_reasoning:
-                        chunk_context += f" (Selected because: {state.retrieval_reasoning})"
-                    
-                    # Add recency context if available
-                    temporal_context = ""
-                    if state.chunk_analysis:
-                        temporal_strategy = state.chunk_analysis.get("temporal_strategy")
-                        if temporal_strategy:
-                            temporal_context = f"\n\nTEMPORAL STRATEGY: {temporal_strategy}"
-                            if temporal_strategy == "recent_priority":
-                                temporal_context += " - Prioritizing most recent clinical data"
-                            elif temporal_strategy == "trend_analysis": 
-                                temporal_context += " - Including data to show trends over time"
-                            elif temporal_strategy == "historical_context":
-                                temporal_context += " - Including historical context for comparison"
-                    
-                    docs = ChatMessage(
-                        role=ChatRole.USER,
-                        content=f"{chunk_context}:{temporal_context}\n" + "\n---\n".join(state.retrieved_chunks),
-                    )
-                    messages.append(docs)
+                # Add recency context if available
+                temporal_context = ""
+                if state.chunk_analysis:
+                    temporal_strategy = state.chunk_analysis.get("temporal_strategy")
+                    if temporal_strategy:
+                        temporal_context = f"\n\nTEMPORAL STRATEGY: {temporal_strategy}"
+                        if temporal_strategy == "recent_priority":
+                            temporal_context += " - Prioritizing most recent clinical data"
+                        elif temporal_strategy == "trend_analysis": 
+                            temporal_context += " - Including data to show trends over time"
+                        elif temporal_strategy == "historical_context":
+                            temporal_context += " - Including historical context for comparison"
+                
+                # Log chunk previews
+                for i, chunk in enumerate(state.retrieved_chunks):
+                    print(f"[provide_information] Chunk {i+1} preview: '{chunk[:100]}...'")
+                
+                docs = ChatMessage(
+                    role=ChatRole.USER,
+                    content=f"{chunk_context}:{temporal_context}\n" + "\n---\n".join(state.retrieved_chunks),
+                )
+                messages.append(docs)
+                print(f"[provide_information] Added chunks message to LLM context (total length: {len(docs.content)} chars)")
 
                 # Include chunk analysis metadata for transparency
                 if state.chunk_analysis and state.chunk_analysis.get("query_type"):
@@ -1551,16 +1382,19 @@ IMPORTANT: When referencing specific patient data, you MUST provide the source o
                         content=f"Query type identified: {state.chunk_analysis['query_type']}"
                     )
                     messages.append(analysis_info)
+            else:
+                print("[provide_information] No retrieved chunks available - LLM will rely on general knowledge and other context")
 
-                if state.web_search_response and state.web_search_response.results:
-                    # Create a more detailed and instructional web search message
-                    sources_list = []
-                    for i, result in enumerate(state.web_search_response.results[:5], 1):
-                        sources_list.append(f"{i}. [{result.title}]({result.url})\n   - {result.snippet[:200]}...")
-                    
-                    web_info = ChatMessage(
-                        role=ChatRole.USER,
-                        content=f"""=== WEB SEARCH RESULTS FOR: '{state.user_prompt}' ===
+            # Add web search results if available
+            if state.web_search_response and state.web_search_response.results:
+                # Create a more detailed and instructional web search message
+                sources_list = []
+                for i, result in enumerate(state.web_search_response.results[:5], 1):
+                    sources_list.append(f"{i}. [{result.title}]({result.url})\n   - {result.snippet[:200]}...")
+                
+                web_info = ChatMessage(
+                    role=ChatRole.USER,
+                    content=f"""=== WEB SEARCH RESULTS FOR: '{state.user_prompt}' ===
 
 SEARCH SUMMARY: {state.web_search_response.summary}
 
@@ -1570,22 +1404,8 @@ SOURCES TO CITE IN YOUR RESPONSE:
 INSTRUCTION: You MUST cite these sources in your response using the format [Source Title](URL). Include at least 2-3 citations in your answer.
 
 === END OF WEB SEARCH RESULTS ===""")
-                    messages.append(web_info)
-                
+                messages.append(web_info)
 
-                if state.generated_image:
-                    image_context = ChatMessage(
-                        role=ChatRole.USER,
-                        content=f"""Generated Educational Image Available:
-                        
-An educational medical illustration has been generated to help visualize the concepts discussed:
-- Image ID: {state.generated_image.generation_id}
-- Generated from prompt: {state.generated_image.prompt}
-- Purpose: Educational visualization to aid understanding
-
-Please reference this generated image in your response when relevant and explain how it relates to the medical concepts being discussed. Let the user know they can view the image through the interface."""
-                    )
-                    messages.append(image_context)
 
             user = ChatMessage(
                 role=ChatRole.USER,
@@ -1750,10 +1570,10 @@ Please reference this generated image in your response when relevant and explain
 
         def has_patient(state: FlowState) -> bool:
             return state.patient_id is not None and state.patient_id.strip() != ""
+            
+        def needs_refinement(state: FlowState) -> bool:
+            return getattr(state, 'needs_refinement', False)
 
-        def needs_cross_session_search(state: FlowState) -> bool:
-            """Conditional function to determine if cross-session search should be performed."""
-            return state.needs_cross_session_search
 
         _builder = StateGraph(FlowState)
         _builder.add_node("check_patient", check_patient_exists)  # New decision node
@@ -1799,20 +1619,17 @@ Please reference this generated image in your response when relevant and explain
         )
 
         # PATIENT PROCESSING PATH (only when patient_id exists)
-        _builder.add_edge("fetch_patient", "store_patient_chunks")
-        _builder.add_edge("store_patient_chunks", "evaluate_cross_session_history_need")
+        _builder.add_edge("fetch_patient", "intelligent_retrieve_chunks")
 
+        
         _builder.add_conditional_edges(
-            "evaluate_cross_session_history_need",
-             needs_cross_session_search,
+            "intelligent_retrieve_chunks",
+            needs_refinement,
             {
-                True: "search_cross_session_history",
-                False: "intelligent_retrieve_chunks"
+                True: "intelligent_retrieve_chunks",
+                False: "evaluate_web_search_need",
             }
         )
-
-        _builder.add_edge("search_cross_session_history", "intelligent_retrieve_chunks")
-        _builder.add_edge("intelligent_retrieve_chunks", "evaluate_web_search_need")
         _builder.add_conditional_edges(
             "evaluate_web_search_need",
             needs_web_search,
@@ -1821,6 +1638,9 @@ Please reference this generated image in your response when relevant and explain
                 False: "provide_information"
             }
         )
+
+        # Agentic refinement: loop back to intelligent_retrieve_chunks if needed
+        
 
         _builder.add_edge("perform_web_search", "provide_information")
         _builder.add_edge("provide_information", "store_assistant_response")
@@ -1832,6 +1652,7 @@ Please reference this generated image in your response when relevant and explain
         """Convert bare URLs to markdown hyperlinks to ensure clickability.
 
         If a URL is already embedded in [title](url) format, it is not modified.
+        This method works with the new chunk format that embeds source links.
         """
         if not text:
             return text
@@ -1845,6 +1666,7 @@ Please reference this generated image in your response when relevant and explain
             context = text[start:match.start()]
             if "](" in context:
                 return url
+            # For bare URLs, create a generic EHR record link
             return f"[EHR record]({url})"
 
         return re.sub(url_pattern, repl, text)
@@ -1904,6 +1726,226 @@ Please reference this generated image in your response when relevant and explain
 6. Are there any important warnings, limitations, or considerations to mention?
 7. How can I best present this information to be helpful and educational?"""
 
+    # =========================
+    # Journal entry chunking
+    # =========================
+    async def _chunk_journal_entries(self, journal_entries: List[JournalEntry], orchestrator: ChunkingOrchestrator, patient_id_str: str) -> List[Chunk]:
+        """Chunk journal entries using the narrative strategy."""
+        from optimed.core.domain import Record
+        from optimed.adapters.chunking.strategies.narrative_v1 import NarrativeV1
+        from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
+        from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
+        from optimed.core.services.hash_utils import stable_hash
+        
+        if not journal_entries:
+            return []
+        
+        # Create records from journal entries
+        records = []
+        pseudo_patient = stable_hash({"pid": patient_id_str}, namespace="patient")
+        
+        for entry in journal_entries:
+            # Create a comprehensive text representation of the journal entry
+            journal_text = f"""
+Journal Entry: {entry.title}
+Type: {entry.entry_type.value}
+Author: {entry.author_name} ({entry.author_role})
+Date: {entry.created_at.strftime('%Y-%m-%d %H:%M')}
+Patient ID: {patient_id_str}
+
+Content:
+{entry.content}
+"""
+            
+            record = Record(
+                patient_ref=pseudo_patient,
+                encounter_ref=None,
+                resource_type="journal_entry",
+                key=entry.entry_id,
+                text=journal_text.strip(),
+                timestamp=entry.created_at,
+            )
+            records.append(record)
+        
+        # Use narrative strategy to chunk the journal entries
+        tokenizer = WhitespaceTokenizer()
+        redactor = SimplePhiRedactor()
+        strategy = NarrativeV1()
+        
+        # Get narrative policy from the orchestrator's policies
+        policy = CHUNK_POLICY_PRESETS.get("narrative_default")
+        if not policy:
+            # Fallback policy if narrative_default is not available
+            from optimed.core.domain import ChunkPolicy
+            policy = ChunkPolicy(
+                name="journal_fallback",
+                max_tokens=512,
+                overlap=0.1
+            )
+        
+        # Apply redaction to records
+        redacted_records = []
+        for record in records:
+            redacted_text = redactor.redact(record.text or "")
+            redacted_record = record.model_copy(update={"text": redacted_text})
+            redacted_records.append(redacted_record)
+        
+        # Apply chunking strategy
+        chunks = strategy.apply(redacted_records, policy, tokenizer)
+        
+        print(f"[_chunk_journal_entries] Created {len(chunks)} chunks from {len(journal_entries)} journal entries")
+        
+        return chunks
+
+    # =========================
+    # Retrieval helpers (RAM-only)
+    # =========================
+    def _cosine(self, a: list[float], b: list[float]) -> float:
+        if not a or not b:
+            return 0.0
+        n = min(len(a), len(b))
+        dot = sum(a[i] * b[i] for i in range(n))
+        na = math.sqrt(sum(a[i] * a[i] for i in range(n)))
+        nb = math.sqrt(sum(b[i] * b[i] for i in range(n)))
+        if na == 0 or nb == 0:
+            return 0.0
+        return dot / (na * nb)
+
+    async def _embed_many(self, texts: list[str], mode: str = "passage") -> list[list[float]]:
+        from typing import cast, Literal
+        mode_literal = cast(Literal["query", "passage"], mode)
+        tasks = [embed(t or "", mode_literal) for t in texts]
+        return await asyncio.gather(*tasks)
+
+    def _mmr(self, doc_vecs: list[list[float]], query_vec: list[float], top_n: int, lambda_: float = 0.5) -> list[int]:
+        selected: list[int] = []
+        candidates = list(range(len(doc_vecs)))
+        sim_to_query = [self._cosine(v, query_vec) for v in doc_vecs]
+        while candidates and len(selected) < top_n:
+            best_idx = None
+            best_score = -1.0
+            for i in candidates:
+                diversity = 0.0
+                if selected:
+                    diversity = max(self._cosine(doc_vecs[i], doc_vecs[j]) for j in selected)
+                score = lambda_ * sim_to_query[i] - (1 - lambda_) * diversity
+                if score > best_score:
+                    best_score = score
+                    best_idx = i
+            if best_idx is None:
+                break
+            selected.append(best_idx)
+            candidates.remove(best_idx)
+        return selected
+
+    async def _paraphrase_query_variants(self, query: str) -> list[str]:
+        prompt = (
+            "Generate 3 brief paraphrases of the clinical query, maintaining meaning. "
+            "Return as a JSON array of strings only.\n\nQuery: " + (query or "")
+        )
+        try:
+            resp = await self._llm.chat([
+                ChatMessage(role=ChatRole.SYSTEM, content="You produce concise paraphrases for retrieval."),
+                ChatMessage(role=ChatRole.USER, content=prompt),
+            ], json_mode=True)
+            if resp and resp.content:
+                content = resp.content.strip()
+                if content.startswith("```"):
+                    start = content.find('\n') + 1
+                    end = content.rfind("```")
+                    if start > 0 and end > start:
+                        content = content[start:end].strip()
+                arr = json.loads(content)
+                if isinstance(arr, list):
+                    return [str(x) for x in arr if isinstance(x, (str,))][:3]
+        except Exception:
+            pass
+        return []
+
+    # removed: LLM-based cross scoring and gating replaced with sentence-transformers adapters
+
+    def _compute_dynamic_n(self, query: str, scores: list[float]) -> int:
+        if not scores:
+            return N_MIN
+        diffs = [scores[i] - scores[i+1] for i in range(len(scores)-1)]
+        if not diffs:
+            n_elbow = len(scores)
+        else:
+            median_delta = sorted(diffs)[len(diffs)//2]
+            knee_idx = next((i for i, d in enumerate(diffs) if d < median_delta), len(diffs)-1)
+            n_elbow = knee_idx + 1
+        mean_score = sum(scores) / len(scores)
+        n_thresh = sum(1 for s in scores if s >= mean_score)
+        if n_thresh == 0:
+            n_thresh = 10**9
+        
+        # Use MultilingualZeroShotClassifier instead of heuristic classification
+        try:
+            classifier = self._zero_shot_classifier
+            label = classifier.classify_query(query, [
+                "lookup", "temporal-trend", "comparative", "reasoning", "summary", "guideline"
+            ])
+            print(f"[_compute_dynamic_n] Query classified as: {label}")
+
+            if label == "lookup":
+                n_class = min(8, N_MAX)        # ~5–8
+            elif label == "temporal-trend":
+                n_class = min(20, N_MAX)       # ~12–20
+            elif label == "comparative":
+                n_class = min(28, N_MAX)       # ~18–28
+            elif label == "reasoning":
+                n_class = min(30, N_MAX)       # ~25–40, capped at 30
+            elif label == "summary":
+                n_class = min(30, N_MAX)       # ~40–80, capped at 30
+            elif label == "guideline":
+                n_class = min(12, N_MAX)       # ~6–12
+            else:
+                n_class = 8  # Default fallback
+        except Exception as e:
+            print(f"[_compute_dynamic_n] Classification failed: {e}, using heuristic fallback")
+            n_class = self._classify_query(query)
+        
+        n = max(min(n_elbow, n_thresh), n_class)
+        return max(N_MIN, min(N_MAX, n))
+
+    def _classify_query(self, query: str) -> int:
+        """Heuristic fallback for when MultilingualZeroShotClassifier fails."""
+        q = (query or "").lower()
+        if any(k in q for k in ["what is", "define", "range", "normal", "dose", "dosage", "meaning"]):
+            return 6
+        if any(k in q for k in ["trend", "over time", "change", "increase", "decrease", "since"]):
+            return 10
+        if any(k in q for k in ["plan", "overview", "summary", "workup", "approach", "evaluation"]):
+            return 12
+        return 8
+
+    async def _refine_queries(self, query: str, seen_passages: list[str]) -> list[str]:
+        prompt = (
+            "Given the clinical query and partial relevant passages, propose up to 2 refined queries "
+            "that might retrieve missing aspects or synonyms. Return a JSON array of strings only.\n\n"
+            f"Query: {query}\nPassages:\n- " + "\n- ".join([(p or "")[:300] for p in seen_passages])
+        )
+        try:
+            resp = await self._llm.chat([
+                ChatMessage(role=ChatRole.SYSTEM, content="You refine clinical search queries succinctly."),
+                ChatMessage(role=ChatRole.USER, content=prompt),
+            ], json_mode=True)
+            if resp and resp.content:
+                content = resp.content.strip()
+                if content.startswith("```"):
+                    start = content.find('\n') + 1
+                    end = content.rfind("```")
+                    if start > 0 and end > start:
+                        content = content[start:end].strip()
+                arr = json.loads(content)
+                if isinstance(arr, list):
+                    return [str(x) for x in arr if isinstance(x, (str,))][:2]
+        except Exception:
+            pass
+        return []
+
+    # removed: obsolete manual chunk builder; using ChunkingOrchestrator instead
+
     async def get_or_create_session(
         self, 
         user_id: str, 
@@ -1913,7 +1955,11 @@ Please reference this generated image in your response when relevant and explain
         allow_join_existing: bool = True
     ) -> str:
         """Get existing session or create a new one, with multi-user support."""
-        
+        if not PERSISTENCE_ENABLED:
+            # On new session, clear any existing ephemeral chat
+            sid = session_id or str(uuid.uuid4())
+            self._session_memory[sid] = []
+            return sid
         if session_id:
             # Verify session exists
             session_info = await self._vec.get_session_info(session_id)
@@ -1967,7 +2013,7 @@ Please reference this generated image in your response when relevant and explain
                 "session_id": session_id
             })
         
-        if session_id and user_id:
+        if PERSISTENCE_ENABLED and session_id and user_id:
             await self._vec.update_session_activity(session_id=session_id, user_id=user_id)
         
         # Always return the same completion-shaped output as run_stream's final chunk
@@ -2052,13 +2098,6 @@ Please reference this generated image in your response when relevant and explain
                                     }
                                     
                                     # Add special flags for important events
-                                    if current_state.get("current_step") == "generate_image":
-                                        if current_state.get("step_status") == "in_progress":
-                                            status_update["is_long_running"] = True
-                                            status_update["estimated_time"] = "30-60 seconds"
-                                        elif current_state.get("step_status") == "completed" and current_state.get("generated_image"):
-                                            status_update["image_generated"] = True
-                                            status_update["image_id"] = current_state["generated_image"].generation_id
                                 
                                     await chunk_queue.put(status_update)
                                 
@@ -2112,14 +2151,6 @@ Please reference this generated image in your response when relevant and explain
                         completion_update["reasoning_steps"] = previous_state.get("reasoning_steps", [])
                     
 
-                    # Include image information in completion
-                    if previous_state and previous_state.get("generated_image"):
-                        completion_update["generated_image"] = {
-                            "image_id": previous_state["generated_image"].generation_id,
-                            "prompt": previous_state["generated_image"].prompt,
-                            "created_at": previous_state["generated_image"].created_at.isoformat() if hasattr(previous_state["generated_image"], 'created_at') else None,
-                            "metadata": previous_state["generated_image"].metadata if hasattr(previous_state["generated_image"], 'metadata') else {}
-                        }
                     
                     await chunk_queue.put(completion_update)
                     await chunk_queue.put(None)  # Signal end of stream
@@ -2150,10 +2181,28 @@ Please reference this generated image in your response when relevant and explain
                             break
                         continue
                         
-            except Exception:
+            except Exception as e:
                 if graph_task and not graph_task.done():
                     graph_task.cancel()
+                # Check if the graph task also failed and retrieve its exception
+                if graph_task and graph_task.done() and not graph_task.cancelled():
+                    try:
+                        graph_task.result()  # This will raise the exception if the task failed
+                    except Exception as task_exception:
+                        # If the task exception is different from the current exception, 
+                        # it might be more specific (like the ReadError)
+                        if not isinstance(e, type(task_exception)):
+                            raise task_exception from e
                 raise
+            finally:
+                # Ensure we retrieve any task exception to prevent "Task exception was never retrieved" warnings
+                if graph_task and graph_task.done() and not graph_task.cancelled():
+                    try:
+                        graph_task.result()  # This will raise the exception if the task failed
+                    except Exception as task_exception:
+                        # Log the task exception but don't re-raise it since we're in finally
+                        import logging
+                        logging.error(f"Graph task failed with exception: {task_exception}")
 
         return _stream_generator()
 
@@ -2181,15 +2230,6 @@ Please reference this generated image in your response when relevant and explain
         if data.get("reasoning_steps"):
             completion_update["reasoning_steps"] = data.get("reasoning_steps", [])
 
-        # Include image information in completion if available
-        if data.get("generated_image"):
-            generated_image = data["generated_image"]
-            completion_update["generated_image"] = {
-                "image_id": getattr(generated_image, "generation_id", None),
-                "prompt": getattr(generated_image, "prompt", None),
-                "created_at": getattr(generated_image, "created_at", None).isoformat() if getattr(generated_image, "created_at", None) else None, # type: ignore
-                "metadata": getattr(generated_image, "metadata", {})
-            }
 
         return completion_update
 
@@ -2241,74 +2281,15 @@ Please reference this generated image in your response when relevant and explain
                 "oldest_reference": None
             }
 
-        generated_image_info = {}
-        if data.get("generated_image"):
-            generated_image = data["generated_image"]
-            generated_image_info = {
-                "image_generated": True,
-                "image_id": generated_image.generation_id,
-                "image_prompt": generated_image.prompt,
-                "generation_metadata": generated_image.metadata,
-                "model_info": generated_image.model_info
-            }
-        else:
-            generated_image_info = {
-                "image_generated": False
-            }
-
         return {
             "explanation": data["llm_response"].content if data["llm_response"] else "",
             "created_by_user_id": data.get("user_id"),
             "is_ai_generated": True,
             "web_search_info": web_search_info,
             "cross_session_history_info": cross_session_info,
-            "generated_image": generated_image_info,
             "session_id": data.get("session_id"),
         }
     
-    def _extract_source_summary(self, patient_ctx: PatientContext) -> str:
-        """Extract and format source information from patient context."""
-        source_summary = []
-        
-        # Helper to format sources for a data type
-        def format_sources(data_type: str, data_dict: dict, sources_dict: dict) -> list:
-            sources = []
-            for key, value in data_dict.items():
-                if key in sources_dict:
-                    source = sources_dict[key]
-                    sources.append(f"  • {key}: {value}")
-                    sources.append(f"    └─ Source: {source.resource_url}")
-                    sources.append(f"    └─ Recorded: {source.timestamp.strftime('%Y-%m-%d %H:%M')}")
-                    if source.category:
-                        sources.append(f"    └─ Category: {source.category}")
-                    sources.append("")  # Empty line for spacing
-            return sources
-        
-        # Process each data type
-        data_types = [
-            ("Vital Signs", patient_ctx.vitals, patient_ctx.vitals_sources),
-            ("Laboratory Results", patient_ctx.labs, patient_ctx.labs_sources),
-            ("Medications", patient_ctx.medications, patient_ctx.medications_sources),
-            ("Allergies", patient_ctx.allergies, patient_ctx.allergies_sources),
-            ("Diagnoses", patient_ctx.diagnoses, patient_ctx.diagnoses_sources),
-            ("Immunizations", patient_ctx.immunizations, patient_ctx.immunizations_sources),
-            ("Medication Statements", patient_ctx.medication_statement, patient_ctx.medication_statement_sources),
-            ("Questionnaire Responses", patient_ctx.questionnaire_response, patient_ctx.questionnaire_response_sources),
-            ("Encounters", patient_ctx.encounters, patient_ctx.encounters_sources),
-            ("Exams", patient_ctx.exam, patient_ctx.exam_sources),
-            ("Procedures", patient_ctx.procedure, patient_ctx.procedure_sources),
-            ("Social History", patient_ctx.social_history, patient_ctx.social_history_sources)
-        ]
-        
-        for data_type_name, data_dict, sources_dict in data_types:
-            if data_dict:
-                source_summary.append(f"{data_type_name}:")
-                source_summary.extend(format_sources(data_type_name.lower(), data_dict, sources_dict))
-        
-        if not source_summary:
-            return "No specific data sources available for this patient."
-        
-        return "\n".join(source_summary)
 
     @property
     def vector_store(self) -> VectorStore:
