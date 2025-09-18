@@ -1,0 +1,49 @@
+name: Trigger auto deployment for optimed-api
+
+# When this action will be executed
+on:
+  # Automatically trigger it when detected changes in repo
+  push:
+    branches: 
+      [ deployment ]
+    paths:
+    - '**'
+    - '.github/workflows/optimed-api-AutoDeployTrigger-d4a72ba0-e9f8-45b5-aebf-5e98055a5ec1.yml'
+
+  # Allow manual trigger 
+  workflow_dispatch:      
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions: 
+      id-token: write #This is required for requesting the OIDC JWT Token
+      contents: read #Required when GH token is used to authenticate with private repo
+
+    steps:
+      - name: Checkout to the branch
+        uses: actions/checkout@v2
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.OPTIMEDAPI_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.OPTIMEDAPI_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.OPTIMEDAPI_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push container image to registry
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          appSourcePath: ${{ github.workspace }}/Dockerfile.backend
+          _dockerfilePathKey_: _dockerfilePath_
+          _targetLabelKey_: _targetLabel_
+          registryUrl: optimedacr123.azurecr.io
+          registryUsername: ${{ secrets.OPTIMEDAPI_REGISTRY_USERNAME }}
+          registryPassword: ${{ secrets.OPTIMEDAPI_REGISTRY_PASSWORD }}
+          containerAppName: optimed-api
+          resourceGroup: OPTIMED
+          imageToBuild: optimedacr123.azurecr.io/optimed-api:${{ github.sha }}
+          _buildArgumentsKey_: |
+            _buildArgumentsValues_
+
+
