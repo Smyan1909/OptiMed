@@ -60,7 +60,7 @@ class MultilingualCrossEncoder:
                 print(f"[MultilingualCrossEncoder] Error during prediction: {e}, using heuristic fallback")
                 return self._heuristic_score(query, passages)
         else:
-            print(f"[MultilingualCrossEncoder] Using heuristic fallback")
+            print("[MultilingualCrossEncoder] Using heuristic fallback")
             return self._heuristic_score(query, passages)
     
     def _heuristic_score(self, query: str, passages: List[str]) -> List[float]:
@@ -135,7 +135,7 @@ class MultilingualZeroShotClassifier:
                 continue
         
         if not self._loaded:
-            print(f"[MultilingualZeroShotClassifier] All model loading attempts failed")
+            print("[MultilingualZeroShotClassifier] All model loading attempts failed")
             self._pipe = None
 
     def classify_query(self, query: str, labels: List[str]) -> str | None:
@@ -143,7 +143,7 @@ class MultilingualZeroShotClassifier:
         print(f"[MultilingualZeroShotClassifier] Model loaded: {self._loaded}, Pipeline exists: {self._pipe is not None}")
         
         if not self._loaded or self._pipe is None:
-            print(f"[MultilingualZeroShotClassifier] Model not loaded, using heuristic fallback")
+            print("[MultilingualZeroShotClassifier] Model not loaded, using heuristic fallback")
             return self._heuristic_classify(query, labels)
         try:
             out = self._pipe(query or "", candidate_labels=labels, multi_label=False)  # type: ignore[operator]
@@ -155,7 +155,7 @@ class MultilingualZeroShotClassifier:
         except Exception as e:
             print(f"[MultilingualZeroShotClassifier] Error during classification: {e}, using heuristic fallback")
             return self._heuristic_classify(query, labels)
-        print(f"[MultilingualZeroShotClassifier] No valid output, using heuristic fallback")
+        print("[MultilingualZeroShotClassifier] No valid output, using heuristic fallback")
         return self._heuristic_classify(query, labels)
     
     def _heuristic_classify(self, query: str, labels: List[str]) -> str | None:
@@ -185,7 +185,7 @@ class MultilingualZeroShotClassifier:
             print(f"[MultilingualZeroShotClassifier] Heuristic classification: {result} (score: {scores[result]})")
             return result
         
-        print(f"[MultilingualZeroShotClassifier] Heuristic classification: no clear match, returning None")
+        print("[MultilingualZeroShotClassifier] Heuristic classification: no clear match, returning None")
         return None
 
 

@@ -993,7 +993,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     policies=CHUNK_POLICY_PRESETS,
                 )
                 
-                print(f"[intelligent_retrieve_chunks] Chunking patient context...")
+                print("[intelligent_retrieve_chunks] Chunking patient context...")
                 produced = orchestrator.chunk_patient(state.patient_ctx, CHUNK_POLICY_PRESETS)
                 print(f"[intelligent_retrieve_chunks] Patient context chunking produced {len(produced)} chunks")
                 
@@ -1036,7 +1036,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 print(f"[intelligent_retrieve_chunks] Successfully embedded {len(chunk_vecs)} chunks")
 
                 # 3) Query variants
-                print(f"[intelligent_retrieve_chunks] Generating query variants...")
+                print("[intelligent_retrieve_chunks] Generating query variants...")
                 try:
                     paraphrases = await self._paraphrase_query_variants(state.user_prompt)
                     print(f"[intelligent_retrieve_chunks] Generated {len(paraphrases)} paraphrases: {paraphrases}")
@@ -1061,7 +1061,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 bi_scored.sort(key=lambda x: x[1], reverse=True)
                 
                 # Log top bi-encoder scores
-                print(f"[intelligent_retrieve_chunks] Top 5 bi-encoder scores:")
+                print("[intelligent_retrieve_chunks] Top 5 bi-encoder scores:")
                 for i, (idx, score) in enumerate(bi_scored[:5]):
                     chunk_type = chunks[idx]["data_type"]
                     print(f"[intelligent_retrieve_chunks]   {i+1}. Chunk {idx} ({chunk_type}): {score:.4f}")
@@ -1077,7 +1077,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 # 5) Cross-encoder rerank (multilingual)
                 lang = detect_language_code(state.user_prompt or "")
                 print(f"[intelligent_retrieve_chunks] Detected language: {lang}")
-                print(f"[intelligent_retrieve_chunks] Running cross-encoder reranking...")
+                print("[intelligent_retrieve_chunks] Running cross-encoder reranking...")
                 
                 cross = self._cross_encoder
                 rerank_scores = cross.score_pairs(state.user_prompt, [chunks[i]["content"] for i in initial_indices])
@@ -1120,7 +1120,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 final_selected = [i for i, ok in zip(selected_indices, gate_results) if ok]
                 
                 # Log gating results
-                print(f"[intelligent_retrieve_chunks] Gate results:")
+                print("[intelligent_retrieve_chunks] Gate results:")
                 for i, (idx, score, passed) in enumerate(zip(selected_indices, gate_scores, gate_results)):
                     chunk_type = chunks[idx]["data_type"]
                     status = "PASSED" if passed else "FILTERED"
@@ -1183,7 +1183,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     return state
 
                 if not final_selected:
-                    print(f"[intelligent_retrieve_chunks] No chunks passed gating, using fallback selection")
+                    print("[intelligent_retrieve_chunks] No chunks passed gating, using fallback selection")
                     fallback_n = min(max(N_MIN, 1), len(reranked))
                     final_selected = [idx for idx, _ in reranked[:fallback_n]]
                     print(f"[intelligent_retrieve_chunks] Fallback selected {len(final_selected)} chunks: {final_selected}")
@@ -1325,12 +1325,12 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
             # Ensure intelligent retrieval results are available for direct path as well
             try:
                 if not getattr(state, 'requires_full_processing', True):
-                    print(f"[provide_information] Direct path - checking if retrieval needed")
+                    print("[provide_information] Direct path - checking if retrieval needed")
                     print(f"[provide_information] Patient context available: {state.patient_ctx is not None}")
                     print(f"[provide_information] Retrieved chunks available: {len(state.retrieved_chunks) if state.retrieved_chunks else 0}")
                     
                     if state.patient_ctx and not state.retrieved_chunks:
-                        print(f"[provide_information] Direct path - running intelligent retrieval for patient context")
+                        print("[provide_information] Direct path - running intelligent retrieval for patient context")
                         # Populate retrieval using the new intelligent retrieval within this node
                         await intelligent_retrieve_chunks(state)
                         print(f"[provide_information] Direct path - retrieval complete, got {len(state.retrieved_chunks) if state.retrieved_chunks else 0} chunks")

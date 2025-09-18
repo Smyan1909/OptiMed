@@ -2357,6 +2357,9 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 else:
                     print("[batch_priors] No web results found, will use medical knowledge")
                 
+                # Create demographic context from patient data
+                demographic_context = f"Age: {patient_context.age}, Sex: {patient_context.sex}, Care Unit: {patient_context.care_unit}"
+                
                 # Use LLM to extract prior probabilities for all diagnoses at once
                 batch_prior_prompt = f"""
                 Extract epidemiological prior probabilities for multiple diagnoses based on web search results and medical knowledge.
