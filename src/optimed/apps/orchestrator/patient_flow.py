@@ -243,10 +243,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     return state
                 
                 # For other modes, evaluate based on query content
-                patient_context_str = None
-                if state.patient_ctx:
-                    patient_context_str = f"Patient: {state.patient_ctx.name}, Age: {state.patient_ctx.age}"
-                
+                # Note: No patient data is sent to external APIs for GDPR compliance
                 chat_history_str = None
                 if state.chat_history:
                     chat_history_str = [msg.content for msg in state.chat_history[-3:]]
@@ -254,7 +251,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 
                 needs_search = await self._web_search.evaluate_search_need(
                     user_query=state.user_prompt,
-                    patient_context=patient_context_str,
+                    patient_context=None,  # No patient data sent to external APIs
                     chat_history=chat_history_str
                 )
                 
@@ -275,15 +272,8 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 if not state.web_search_performed:
                     return state
                 
-                # Prepare enhanced query with patient context
+                # Prepare search query without patient data for GDPR compliance
                 search_query = state.user_prompt
-                patient_context_str = None
-                
-                if state.patient_ctx:
-                    patient_context_str = (
-                        f"Patient demographics: {state.patient_ctx.name}, "
-                        f"Age: {state.patient_ctx.age}, Sex: {state.patient_ctx.sex}"
-                    )
                 
                 # Perform search with target language based on user's prompt
                 try:
@@ -293,7 +283,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 search_response = await self._web_search.search(
                     query=search_query,
                     max_results=8,
-                    patient_context=patient_context_str,
+                    patient_context=None,  # No patient data sent to external APIs
                     search_intent="clinical_information",
                     target_language=(active_lang if active_lang and active_lang != "en" else None)
                 )
@@ -2337,12 +2327,9 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
             try:
                 print(f"[batch_priors] Starting batch web search for {len(diagnoses)} diagnoses")
                 
-                # Prepare demographic context
-                demographic_context = f"Age: {patient_context.age}, Sex: {patient_context.sex}"
-                
-                # Create a combined search query for all diagnoses
+                # Create a combined search query for all diagnoses without patient data for GDPR compliance
                 diagnosis_list = ", ".join(diagnoses)
-                combined_search_query = f"epidemiology prevalence incidence rates {diagnosis_list} age {patient_context.age} {patient_context.sex} population statistics medical literature"
+                combined_search_query = f"epidemiology prevalence incidence rates {diagnosis_list} population statistics medical literature"
                 
                 print(f"[batch_priors] Combined search query: {combined_search_query}")
                 
@@ -2354,7 +2341,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 web_response = await self._web_search.search(
                     query=combined_search_query,
                     max_results=8,  # Get more results since we're searching for multiple conditions
-                    patient_context=demographic_context,
+                    patient_context=None,  # No patient data sent to external APIs
                     search_intent="epidemiological_data",
                     target_language=(active_lang if active_lang and active_lang != "en" else None)
                 )

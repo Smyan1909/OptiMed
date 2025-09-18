@@ -1,7 +1,7 @@
 import os
 from typing import Tuple, Callable, Optional
 from optimed.apps.orchestrator.patient_flow import LangGraphDiagnosticEngine
-from optimed.apps.orchestrator.info_flow import LangGraphInformationEngine
+from optimed.apps.orchestrator.info_flow_ram import LangGraphRAMInformationEngine
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
 from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
 from optimed.adapters.smart_fhir.repository import SMARTFHIRRepository
@@ -19,6 +19,7 @@ from optimed.adapters.web_search.web_service import TavilyWebSearchService
 from optimed.adapters.image_generation.stabilityai_client import StabilityAIClient
 from optimed.adapters.image_generation.repository import PostgresGeneratedImageRepository
 from optimed.apps.orchestrator.image_flow import LangGraphImageAnalysisEngine
+from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder, MultilingualZeroShotClassifier
 from optimed.core.domain import UserEHRConnection
 from datetime import datetime, timezone
 from dotenv import load_dotenv # type: ignore
@@ -126,6 +127,12 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
         llm_client=llm_client,
     )
 
+    # Initialize ML models for intelligent retrieval
+    print("Initializing ML models for intelligent retrieval...")
+    cross_encoder = MultilingualCrossEncoder()
+    zero_shot_classifier = MultilingualZeroShotClassifier()
+    print("ML models initialized successfully")
+
 
 
     # Main engine with connection service
@@ -138,15 +145,15 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
         web_search_service=web_search_service,
         image_generation_service=image_generation_service,
         generated_image_repo=generated_image_repo,
-    ) if os.getenv("NEXT_PUBLIC_INFO_MODE") == "false" else LangGraphInformationEngine(
+    ) if os.getenv("NEXT_PUBLIC_INFO_MODE") == "false" else LangGraphRAMInformationEngine(
         fhir_repo=fhir_repo,
         vector_store=vector_store,
         llm_client=llm_client,
         user_repo=user_repo,
         connection_service=connection_service,
         web_search_service=web_search_service,
-        image_generation_service=image_generation_service,
-        generated_image_repo=generated_image_repo,  
+        cross_encoder=cross_encoder,
+        zero_shot_classifier=zero_shot_classifier,
     )
     
     return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine, image_generation_service, generated_image_repo, journal_client, web_search_service

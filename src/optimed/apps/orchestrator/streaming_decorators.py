@@ -139,7 +139,30 @@ class StreamingStatus:
         elif step_lower == "intelligent_retrieve_chunks":
             chunks = getattr(self.state, 'retrieved_chunks', [])
             reasoning = getattr(self.state, 'retrieval_reasoning', "")
-            return f"Selected {len(chunks)} relevant clinical data chunks. {reasoning[:100]}..." if reasoning else f"Selected {len(chunks)} relevant clinical data chunks"
+            chunk_analysis = getattr(self.state, 'chunk_analysis', {})
+            
+            # Build detailed completion message
+            if chunk_analysis and chunk_analysis.get("method") != "error":
+                total_processed = chunk_analysis.get("total_chunks_processed", 0)
+                final_selected = len(chunks)
+                method = chunk_analysis.get("method", "unknown")
+                
+                # Handle refinement case
+                if method == "bi_cross_mmr_gate_refining":
+                    refinement_attempt = chunk_analysis.get("refinement_attempt", 1)
+                    refined_queries = chunk_analysis.get("refined_queries", [])
+                    details = f"Processed {total_processed} chunks, selected {final_selected} relevant ones. Refining search (attempt {refinement_attempt}) with {len(refined_queries)} new queries"
+                else:
+                    details = f"Processed {total_processed} chunks, selected {final_selected} relevant ones using {method}"
+                
+                # Add reasoning if available
+                if reasoning:
+                    details += f". {reasoning[:100]}..."
+                
+                return details
+            else:
+                # Fallback for error cases or missing analysis
+                return f"Selected {len(chunks)} relevant clinical data chunks. {reasoning[:100]}..." if reasoning else f"Selected {len(chunks)} relevant clinical data chunks"
         
         elif step_lower == "evaluate_web_search_need":
             needs_search = getattr(self.state, 'web_search_performed', False)

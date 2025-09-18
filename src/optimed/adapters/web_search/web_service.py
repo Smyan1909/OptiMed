@@ -25,9 +25,8 @@ class TavilyWebSearchService(WebSearchService):
     ) -> bool:
         """Use LLM to evaluate if web search is needed."""
         
+        # Note: patient_context is ignored for GDPR compliance - no patient data sent to external APIs
         context_info = ""
-        if patient_context:
-            context_info += f"\nPatient context available: {patient_context[:200]}..."
         
         if chat_history:
             recent_history = "\n".join(chat_history[-3:])
@@ -85,8 +84,8 @@ class TavilyWebSearchService(WebSearchService):
         )
         
         try:
-            # Enhance query for medical context
-            enhanced_query = await self._enhance_medical_query(query, patient_context)
+            # Enhance query for medical context (patient_context ignored for GDPR compliance)
+            enhanced_query = await self._enhance_medical_query(query, None)
 
             # Domain preferences based on language
             prefer_sv = (target_language or "").lower().startswith("sv")
@@ -151,7 +150,8 @@ class TavilyWebSearchService(WebSearchService):
                     results, sources_used = parse_results(fallback_data)
 
             # Generate summary using LLM (still in requested target language)
-            summary = await self._generate_summary(query, results, patient_context, target_language)
+            # Note: patient_context ignored for GDPR compliance
+            summary = await self._generate_summary(query, results, None, target_language)
             
             
 
@@ -178,10 +178,8 @@ class TavilyWebSearchService(WebSearchService):
     
     async def _enhance_medical_query(self, query: str, patient_context: Optional[str]) -> str:
         """Enhance query with medical context for better search results."""
-        if not patient_context:
-            return f"medical {query}"
-        
-        # Add patient demographics for better context
+        # Note: patient_context parameter ignored for GDPR compliance
+        # Always return generic medical query enhancement
         return f"medical {query} clinical guidelines treatment"
     
     def _classify_source(self, url: str) -> str:
@@ -215,9 +213,8 @@ class TavilyWebSearchService(WebSearchService):
             for r in results[:5]  # Top 5 results
         ])
         
+        # Note: patient_context ignored for GDPR compliance
         context_note = ""
-        if patient_context:
-            context_note = f"\nPatient context: {patient_context[:200]}..."
         
         summary_prompt = f"""
         Summarize these web search results for the medical query: "{query}"
