@@ -27,11 +27,21 @@ export async function POST(request: NextRequest) {
     const backendUrl = `${baseUrl}/chat/stream`;
     console.log('🎯 [CHAT API] Backend URL:', backendUrl);
     
+    // Add timeout and abort controller for long-running requests
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      console.log('⏰ [CHAT API] Request timeout after 5 minutes');
+      controller.abort();
+    }, 300000); // 5 minute timeout
+    
     const response = await fetch(backendUrl, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: controller.signal
     });
+    
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       console.error('❌ [CHAT API] Backend error:', response.status, response.statusText);
@@ -67,6 +77,9 @@ export async function POST(request: NextRequest) {
                 }
               } catch (error) {
                 console.error('❌ [CHAT API] Stream error:', error);
+                if (error.name === 'AbortError') {
+                  console.log('🛑 [CHAT API] Stream aborted due to timeout');
+                }
                 controller.error(error);
               }
             };

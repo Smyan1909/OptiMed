@@ -42,7 +42,7 @@ class PostgreSQLImageRepository(ImageRepository):
                     await conn.execute("""
                         CREATE TABLE dicom_images (
                             image_id TEXT PRIMARY KEY,
-                            patient_id TEXT,
+                            -- patient_id removed for GDPR compliance
                             user_id TEXT NOT NULL,
                             filename TEXT NOT NULL,
                             file_size BIGINT NOT NULL,
@@ -60,7 +60,7 @@ class PostgreSQLImageRepository(ImageRepository):
                     
                     # Create indexes
                     await conn.execute("CREATE INDEX IF NOT EXISTS idx_dicom_images_user_id ON dicom_images(user_id)")
-                    await conn.execute("CREATE INDEX IF NOT EXISTS idx_dicom_images_patient_id ON dicom_images(patient_id)")
+                    # patient_id index removed for GDPR compliance
                     await conn.execute("CREATE INDEX IF NOT EXISTS idx_dicom_images_status ON dicom_images(status)")
                     await conn.execute("CREATE INDEX IF NOT EXISTS idx_dicom_images_uploaded_at ON dicom_images(uploaded_at)")
                     

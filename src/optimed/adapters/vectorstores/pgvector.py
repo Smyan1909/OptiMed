@@ -1,19 +1,40 @@
 import asyncpg # type: ignore
 from pgvector.asyncpg import register_vector # type: ignore
-from typing import Sequence, Any
+from typing import Sequence, Any, Dict
 from optimed.core.ports import VectorStore
 from optimed.core.domain import ChatSession, SessionParticipant
 from datetime import datetime, timezone
 import uuid
 import json
+import os
+import faiss
+import numpy as np
+from optimed.adapters.kms.crypto_service import EnvelopeEncryption, EphemeralCacheService
 
 class PGVectorAdapter(VectorStore):
-    def __init__(self, dsn: str, min_size: int = 10, max_size: int = 20):
-        """Initialize the PGVectorAdapter with a PostgreSQL DSN and connection pool settings."""
+    def __init__(self, dsn: str, min_size: int = 10, max_size: int = 20, embedding_dim: int = 1024):
+        """Initialize the PGVectorAdapter with GDPR-compliant RAM-only embeddings."""
         self.dsn = dsn
         self.min_size = min_size
         self.max_size = max_size
         self._pool = None
+        
+        # GDPR compliance features
+        self.embedding_dim = embedding_dim
+        self.persist_phi = os.getenv("PERSIST_PHI", "false").lower() == "true"
+        self.ephemeral_cache_enabled = os.getenv("EPHEMERAL_CACHE_ENABLED", "false").lower() == "true"
+        
+        # RAM-only vector storage (session-scoped)
+        self._ram_stores: Dict[str, Dict] = {}  # session_id -> {index, id_map, metadata_map}
+        
+        # KMS for ephemeral cache
+        if self.ephemeral_cache_enabled:
+            self.envelope_encryption = EnvelopeEncryption(kek_id="optimed-kek")
+            # Initialize ephemeral cache after pool is created
+            self.ephemeral_cache = None
+        else:
+            self.envelope_encryption = None
+            self.ephemeral_cache = None
 
     async def _get_pool(self) -> asyncpg.Pool:
         """Get or create the connection pool."""
@@ -29,6 +50,11 @@ class PGVectorAdapter(VectorStore):
                 max_size=self.max_size,
                 init=_init,
             )
+            
+            # Initialize ephemeral cache after pool is created
+            if self.ephemeral_cache_enabled and self.envelope_encryption and self.ephemeral_cache is None:
+                self.ephemeral_cache = EphemeralCacheService(self.envelope_encryption, self._pool)
+                
         return self._pool
 
     async def close(self) -> None:
@@ -46,7 +72,95 @@ class PGVectorAdapter(VectorStore):
         content: str | dict,
         metadata: dict[str, Any] | None = None,
     ) -> str:
+        """GDPR-compliant upsert: stores embeddings in RAM only, metadata in DB."""
         metadata = metadata or {}
+        
+        # Extract session_id from metadata for RAM storage
+        session_id = metadata.get("session_id")
+        if not session_id:
+            # Generate a default session if none provided (for backward compatibility)
+            session_id = "default_session"
+            metadata["session_id"] = session_id
+        
+        # Ensure RAM store exists for this session
+        if session_id not in self._ram_stores:
+            self._ram_stores[session_id] = {
+                "index": faiss.IndexFlatIP(self.embedding_dim),
+                "id_map": {},  # external_id -> internal_id
+                "metadata_map": {},  # internal_id -> metadata
+                "content_map": {},  # internal_id -> content
+                "next_internal_id": 0
+            }
+        
+        ram_store = self._ram_stores[session_id]
+        
+        # Add to FAISS index
+        vec = np.array(embedding).astype('float32').reshape(1, -1)
+        if vec.shape[1] != self.embedding_dim:
+            raise ValueError(f"Embedding dimension mismatch: expected {self.embedding_dim}, got {vec.shape[1]}")
+        
+        # Get or create internal ID
+        if embedding_id not in ram_store["id_map"]:
+            internal_id = ram_store["next_internal_id"]
+            ram_store["next_internal_id"] += 1
+            ram_store["id_map"][embedding_id] = internal_id
+        else:
+            internal_id = ram_store["id_map"][embedding_id]
+        
+        # Add to FAISS index (replace if exists)
+        if internal_id < ram_store["index"].ntotal:
+            # Update existing vector
+            ram_store["index"].reconstruct(internal_id, vec[0])
+        else:
+            # Add new vector
+            ram_store["index"].add(vec)
+        
+        # Store metadata and content in RAM
+        ram_store["metadata_map"][internal_id] = {**metadata, "object_type": object_type, "object_id": object_id}
+        ram_store["content_map"][internal_id] = content
+        
+        # Optional: Store in ephemeral cache if enabled
+        if self.ephemeral_cache_enabled and self.ephemeral_cache:
+            await self._store_in_ephemeral_cache(session_id, object_type, object_id, content)
+        
+        # Store metadata only in database (no PHI) - only if persist_phi is enabled
+        if self.persist_phi:
+            await self._store_legacy_embedding(embedding_id, object_type, object_id, content, embedding, metadata)
+        else:
+            await self._store_metadata_only(embedding_id, object_type, object_id, metadata)
+        
+        return embedding_id
+    
+    async def _store_in_ephemeral_cache(self, session_id: str, object_type: str, object_id: str, content: str | dict):
+        """Store content in ephemeral cache with crypto-shredding."""
+        try:
+            # Use the ephemeral cache service to store content
+            await self.ephemeral_cache.store_content(
+                session_id=session_id,
+                resource_type=object_type,
+                resource_id=object_id,
+                content=json.dumps(content) if isinstance(content, dict) else content
+            )
+            
+        except Exception as e:
+            print(f"Warning: Failed to store in ephemeral cache: {e}")
+    
+    async def _store_metadata_only(self, embedding_id: str, object_type: str, object_id: str, metadata: dict):
+        """Store only metadata in database, no PHI content."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                # Store in resources table (metadata only)
+                await conn.execute("""
+                    INSERT INTO resources (server_alias, resource_type, resource_id, last_updated)
+                    VALUES ($1, $2, $3, $4)
+                    ON CONFLICT (server_alias, resource_type, resource_id) DO NOTHING
+                """, "local", object_type, object_id, datetime.now(timezone.utc))
+        except Exception as e:
+            print(f"Warning: Failed to store metadata: {e}")
+    
+    async def _store_legacy_embedding(self, embedding_id: str, object_type: str, object_id: str, content: str | dict, embedding: Sequence[float], metadata: dict):
+        """Store in legacy embeddings table (for backward compatibility when persist_phi=true)."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
@@ -67,7 +181,6 @@ class PGVectorAdapter(VectorStore):
                 embedding,
                 json.dumps(metadata)
             )
-            return embedding_id
     
     async def similarity_search(
         self,
@@ -75,7 +188,67 @@ class PGVectorAdapter(VectorStore):
         top_k: int = 5,
         filter_: dict[str, str] | None = None,
     ) -> Sequence[tuple[str, float, str]]:
+        """GDPR-compliant similarity search using RAM-only storage."""
         filter_ = filter_ or {}
+        
+        # Get session_id from filter for RAM search
+        session_id = filter_.get("session_id", "default_session")
+        
+        # Search in RAM store if available
+        if session_id in self._ram_stores:
+            return self._search_ram_store(session_id, embedding, top_k, filter_)
+        
+        # Fallback to database search if persist_phi is enabled
+        if self.persist_phi:
+            return await self._search_database(embedding, top_k, filter_)
+        
+        # No data available (GDPR mode, no RAM store for this session)
+        return []
+    
+    def _search_ram_store(self, session_id: str, embedding: Sequence[float], top_k: int, filter_: dict) -> Sequence[tuple[str, float, str]]:
+        """Search in RAM-only FAISS store."""
+        ram_store = self._ram_stores[session_id]
+        
+        if ram_store["index"].ntotal == 0:
+            return []
+        
+        # Convert query to numpy array
+        query_vec = np.array(embedding).astype('float32').reshape(1, -1)
+        if query_vec.shape[1] != self.embedding_dim:
+            raise ValueError(f"Query embedding dimension mismatch: expected {self.embedding_dim}, got {query_vec.shape[1]}")
+        
+        # Search FAISS index
+        distances, internal_ids = ram_store["index"].search(query_vec, min(top_k, ram_store["index"].ntotal))
+        
+        results = []
+        for dist, internal_id in zip(distances[0], internal_ids[0]):
+            if internal_id == -1:  # No more results
+                continue
+            
+            # Get external ID
+            external_id = next((k for k, v in ram_store["id_map"].items() if v == internal_id), None)
+            if external_id is None:
+                continue
+            
+            # Get metadata and content
+            metadata = ram_store["metadata_map"].get(internal_id, {})
+            content = ram_store["content_map"].get(internal_id, "")
+            
+            # Apply filter if present
+            if filter_:
+                if not all(metadata.get(k) == v for k, v in filter_.items() if k != "session_id"):
+                    continue
+            
+            # Convert distance to similarity (1 - distance for inner product)
+            similarity = float(1 - dist)
+            results.append((external_id, similarity, content))
+        
+        # Sort by similarity in descending order
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results[:top_k]
+    
+    async def _search_database(self, embedding: Sequence[float], top_k: int, filter_: dict) -> Sequence[tuple[str, float, str]]:
+        """Fallback database search when persist_phi is enabled."""
         where_clauses: list[str] = []
         values: list[Any] = [embedding]
 
@@ -106,137 +279,95 @@ class PGVectorAdapter(VectorStore):
             return [(row['id'], float(row['similarity']), row['content']) for row in rows]
 
     async def delete(self, embedding_ids: Sequence[str]) -> None:
-        pool = await self._get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "DELETE FROM embeddings WHERE id = ANY($1)",
-                embedding_ids
-            )
+        """Delete embeddings from RAM stores and optionally from database."""
+        # Delete from all RAM stores
+        for session_id, ram_store in self._ram_stores.items():
+            for embedding_id in embedding_ids:
+                if embedding_id in ram_store["id_map"]:
+                    internal_id = ram_store["id_map"][embedding_id]
+                    del ram_store["id_map"][embedding_id]
+                    ram_store["metadata_map"].pop(internal_id, None)
+                    ram_store["content_map"].pop(internal_id, None)
+        
+        # Delete from database if persist_phi is enabled
+        if self.persist_phi:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM embeddings WHERE id = ANY($1)",
+                    embedding_ids
+                )
+    
+    async def clear_session(self, session_id: str) -> None:
+        """Clear all data for a specific session (GDPR compliance)."""
+        if session_id in self._ram_stores:
+            # Clear RAM store
+            del self._ram_stores[session_id]
+            
+            # Clear ephemeral cache if enabled
+            if self.ephemeral_cache_enabled and self.ephemeral_cache:
+                await self._clear_ephemeral_cache(session_id)
+    
+    async def _clear_ephemeral_cache(self, session_id: str) -> None:
+        """Clear ephemeral cache for a session and delete DEKs."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                # Get all entries for this session
+                rows = await conn.fetch(
+                    "SELECT resource_type, resource_id FROM temp_content WHERE session_id = $1",
+                    uuid.UUID(session_id)
+                )
+                
+                # Delete content from ephemeral cache
+                for row in rows:
+                    await self.ephemeral_cache.delete_content(
+                        session_id=session_id,
+                        resource_type=row["resource_type"],
+                        resource_id=row["resource_id"]
+                    )
+                
+                # Delete from temp_content table
+                await conn.execute(
+                    "DELETE FROM temp_content WHERE session_id = $1",
+                    uuid.UUID(session_id)
+                )
+        except Exception as e:
+            print(f"Warning: Failed to clear ephemeral cache for session {session_id}: {e}")
+    
+    def get_session_memory_usage(self, session_id: str) -> dict:
+        """Get memory usage statistics for a session."""
+        if session_id not in self._ram_stores:
+            return {"vectors": 0, "metadata_entries": 0, "content_entries": 0, "memory_mb": 0}
+        
+        ram_store = self._ram_stores[session_id]
+        vectors = ram_store["index"].ntotal
+        metadata_entries = len(ram_store["metadata_map"])
+        content_entries = len(ram_store["content_map"])
+        
+        # Estimate memory usage (rough calculation)
+        memory_mb = (vectors * self.embedding_dim * 4) / (1024 * 1024)  # 4 bytes per float32
+        
+        return {
+            "vectors": vectors,
+            "metadata_entries": metadata_entries,
+            "content_entries": content_entries,
+            "memory_mb": round(memory_mb, 2)
+        }
 
     async def get_chat_history(self, patient_id: str, session_id: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
-        """Get chat history, optionally filtered by session."""
-
-        # Build the base query
-        where_conditions = [
-            "metadata->>'patient_id' = $1",
-            "metadata->>'namespace' = 'chat_history'"
-        ]
-        params = [patient_id]
+        """GDPR-compliant chat history: returns empty list to prevent PHI storage."""
+        # GDPR Compliance: Chat history with PHI must not be stored or retrieved
+        # This prevents any PHI from being persisted in the database
+        print(f"[GDPR] Chat history access blocked for patient_id={patient_id}, session_id={session_id}")
         
-        # Add session filter if provided
-        if session_id:
-            where_conditions.append(f"metadata->>'session_id' = ${len(params) + 1}")
-            params.append(session_id)
-        
-        where_clause = " AND ".join(where_conditions)
-        
-        query = f"""
-            SELECT content, metadata
-            FROM embeddings 
-            WHERE {where_clause}
-            ORDER BY 
-                CASE WHEN metadata->>'timestamp' ~ '^[0-9]+$' 
-                    THEN (metadata->>'timestamp')::bigint 
-                    ELSE 0 
-                END ASC
-            LIMIT {limit}
-        """
-        
-        pool = await self._get_pool()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(query, *params)
-
-        result = []
-        for row in rows:
-            try:
-                # Parse content
-                raw_content = row["content"]
-                
-                if isinstance(raw_content, str):
-                    try:
-                        content_data = json.loads(raw_content)
-                    except json.JSONDecodeError as e:
-                        print(f"[DEBUG] JSON decode error: {e}")
-                        content_data = {"content": raw_content, "role": "user"}
-                else:
-                    content_data = raw_content
-                
-                raw_metadata = row["metadata"]
-                if isinstance(raw_metadata, str):
-                    try:
-                        metadata = json.loads(raw_metadata)
-                    except json.JSONDecodeError:
-                        metadata = {}
-                else:
-                    metadata = raw_metadata or {}
-                    
-                # Extract the actual message content and role
-                message_content = content_data.get("content", "")
-                message_role = content_data.get("role", "user")
-                
-                # Extract generated image information if present
-                generated_image = content_data.get("generated_image")
-                
-                differential_diagnoses = content_data.get("differential_diagnoses", [])
-
-                message_data = {
-                    "content": message_content,
-                    "role": message_role,
-                    "timestamp": content_data.get("timestamp", ""),
-                    "metadata": json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
-                }
-                
-                if message_role == "assistant":
-                    # Extract reasoning steps from metadata
-                    if metadata.get("reasoning_steps"):
-                        try:
-                            reasoning_steps_data = json.loads(metadata["reasoning_steps"])
-                            message_data["reasoning_steps"] = reasoning_steps_data
-                            # Create a combined reasoning string from steps
-                            message_data["reasoning"] = "\n".join(reasoning_steps_data) if reasoning_steps_data else ""
-                            print(f"[DEBUG] Extracted reasoning with {len(reasoning_steps_data)} steps from metadata")
-                        except json.JSONDecodeError as e:
-                            print(f"[DEBUG] Failed to parse reasoning_steps from metadata: {e}")
-                    
-                    if metadata.get("differential_count"):
-                        try:
-                            differential_data = json.loads(metadata["differential_count"])
-                            message_data["differential_count"] = differential_data
-                            print(f"[DEBUG] Extracted differential_count from metadata: {differential_data}")
-                        except json.JSONDecodeError as e:
-                            print(f"[DEBUG] Failed to parse differential_count from metadata: {e}")
-
-                    # Also check if there's reasoning in the content itself (fallback)
-                    if hasattr(content_data.get("generated_image"), "reasoning"):
-                        message_data["reasoning"] = content_data["generated_image"]["reasoning"]
-
-                # Add generated image info if available
-                if generated_image:
-                    message_data["generated_image"] = generated_image
-                    
-                if differential_diagnoses:
-                    message_data["differential_diagnoses"] = differential_diagnoses
-
-                result.append(message_data)
-                
-            except Exception as e:
-                print(f"Error parsing row in get_chat_history: {e}")
-                continue
-        
-        
-        return result
+        # Return empty list to maintain API compatibility
+        return []
 
     async def clear_chat_history(self, patient_id: str) -> None:
-        """Clear chat history for a specific patient."""
-        query = """
-            DELETE FROM embeddings 
-            WHERE metadata->>'patient_id' = $1 
-            AND metadata->>'namespace' = 'chat_history'
-        """
-        
-        pool = await self._get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(query, patient_id)
+        """GDPR-compliant: No chat history to clear since it's not stored."""
+        # GDPR Compliance: Chat history with PHI is not stored, so nothing to clear
+        print(f"[GDPR] Chat history clear requested for patient_id={patient_id} - no action needed (not stored)")
 
     async def update(
         self,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import List
 
 
@@ -15,6 +17,7 @@ class MultilingualCrossEncoder:
         self._model = None
         self._loaded = False
         self._model_name = model_name or "BAAI/bge-reranker-v2-m3"
+        self._executor = ThreadPoolExecutor(max_workers=4)  # For parallel execution
         
         try:
             from sentence_transformers import CrossEncoder  # type: ignore
@@ -101,6 +104,222 @@ class MultilingualCrossEncoder:
         
         print(f"[MultilingualCrossEncoder] Heuristic scores (sigmoid): {scores}")
         return scores
+
+    async def score_pairs_async(self, query: str, passages: List[str]) -> List[float]:
+        """Async wrapper for score_pairs to enable parallel execution."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(self._executor, self.score_pairs, query, passages)
+
+    async def score_multiple_batches_parallel(self, query: str, passage_batches: List[List[str]]) -> List[List[float]]:
+        """Score multiple batches of passages in parallel.
+        
+        Args:
+            query: The query string
+            passage_batches: List of passage lists to score
+            
+        Returns:
+            List of score lists, one for each batch
+        """
+        print(f"[MultilingualCrossEncoder] score_multiple_batches_parallel called with {len(passage_batches)} batches")
+        
+        # Create tasks for parallel execution
+        tasks = [self.score_pairs_async(query, passages) for passages in passage_batches]
+        
+        # Execute all tasks in parallel
+        results = await asyncio.gather(*tasks)
+        
+        print(f"[MultilingualCrossEncoder] Completed parallel scoring of {len(passage_batches)} batches")
+        return results
+
+    async def score_all_operations_parallel(self, query: str, operations: List[dict]) -> List[List[float]]:
+        """Score multiple different operations in parallel for maximum efficiency.
+        
+        This method combines all cross-encoder operations (reranking, gating, refinement)
+        into a single parallel execution to minimize overhead and maximize throughput.
+        
+        Args:
+            query: The query string
+            operations: List of operation dicts, each containing:
+                - 'passages': List of passages to score
+                - 'operation_type': String identifier for the operation
+                - 'metadata': Optional additional metadata
+                
+        Returns:
+            List of score lists, one for each operation
+        """
+        print(f"[MultilingualCrossEncoder] score_all_operations_parallel called with {len(operations)} operations")
+        
+        # Log operation details
+        for i, op in enumerate(operations):
+            passages = op.get('passages', [])
+            op_type = op.get('operation_type', 'unknown')
+            print(f"[MultilingualCrossEncoder] Operation {i}: {op_type} with {len(passages)} passages")
+        
+        # Create tasks for all operations
+        tasks = []
+        for op in operations:
+            passages = op.get('passages', [])
+            if passages:  # Only create task if there are passages to score
+                task = self.score_pairs_async(query, passages)
+                tasks.append(task)
+            else:
+                # If no passages, return empty scores
+                tasks.append(asyncio.create_task(asyncio.sleep(0, result=[])))
+        
+        # Execute all tasks in parallel
+        start_time = asyncio.get_event_loop().time()
+        results = await asyncio.gather(*tasks)
+        end_time = asyncio.get_event_loop().time()
+        
+        print(f"[MultilingualCrossEncoder] Completed {len(operations)} operations in {end_time - start_time:.3f}s")
+        return results
+
+    async def score_rerank_and_gate_parallel(self, query: str, rerank_passages: List[str], gate_passages: List[str]) -> tuple[List[float], List[float]]:
+        """Optimized method to run reranking and gating in parallel.
+        
+        This is a specialized method for the common pattern of reranking followed by gating,
+        which can be run in parallel since they don't depend on each other.
+        
+        Args:
+            query: The query string
+            rerank_passages: Passages to rerank
+            gate_passages: Passages to gate (may overlap with rerank_passages)
+            
+        Returns:
+            Tuple of (rerank_scores, gate_scores)
+        """
+        print(f"[MultilingualCrossEncoder] score_rerank_and_gate_parallel called with {len(rerank_passages)} rerank and {len(gate_passages)} gate passages")
+        
+        # Create both tasks
+        rerank_task = self.score_pairs_async(query, rerank_passages)
+        gate_task = self.score_pairs_async(query, gate_passages)
+        
+        # Execute both in parallel
+        start_time = asyncio.get_event_loop().time()
+        rerank_scores, gate_scores = await asyncio.gather(rerank_task, gate_task)
+        end_time = asyncio.get_event_loop().time()
+        
+        print(f"[MultilingualCrossEncoder] Completed rerank and gate in {end_time - start_time:.3f}s")
+        return rerank_scores, gate_scores
+
+    async def score_refinement_queries_parallel(self, refined_queries: List[str], passages: List[str]) -> List[List[float]]:
+        """Score multiple refined queries against the same passages in parallel.
+        
+        This is optimized for the refinement scenario where we have multiple query variants
+        but the same set of passages to score against.
+        
+        Args:
+            refined_queries: List of refined query strings
+            passages: List of passages to score against each query
+            
+        Returns:
+            List of score lists, one for each refined query
+        """
+        print(f"[MultilingualCrossEncoder] score_refinement_queries_parallel called with {len(refined_queries)} queries and {len(passages)} passages")
+        
+        if not refined_queries or not passages:
+            return [[] for _ in refined_queries]
+        
+        # Create tasks for each refined query
+        tasks = [self.score_pairs_async(query, passages) for query in refined_queries]
+        
+        # Execute all tasks in parallel
+        start_time = asyncio.get_event_loop().time()
+        results = await asyncio.gather(*tasks)
+        end_time = asyncio.get_event_loop().time()
+        
+        print(f"[MultilingualCrossEncoder] Completed {len(refined_queries)} refinement queries in {end_time - start_time:.3f}s")
+        return results
+
+    async def score_comprehensive_retrieval_parallel(self, query: str, all_passages: List[str], rerank_indices: List[int], gate_indices: List[int], refined_queries: List[str] = None) -> dict:
+        """Comprehensive parallel scoring for the entire retrieval pipeline.
+        
+        This method runs all possible cross-encoder operations in parallel:
+        - Reranking of initial passages
+        - Gating of MMR-selected passages  
+        - Scoring of refined queries (if provided)
+        
+        Args:
+            query: The original query string
+            all_passages: All available passages
+            rerank_indices: Indices of passages to rerank
+            gate_indices: Indices of passages to gate
+            refined_queries: Optional list of refined queries
+            
+        Returns:
+            Dict containing all scoring results
+        """
+        print(f"[MultilingualCrossEncoder] score_comprehensive_retrieval_parallel called")
+        print(f"[MultilingualCrossEncoder] - Query: '{query[:50]}...'")
+        print(f"[MultilingualCrossEncoder] - All passages: {len(all_passages)}")
+        print(f"[MultilingualCrossEncoder] - Rerank indices: {len(rerank_indices)}")
+        print(f"[MultilingualCrossEncoder] - Gate indices: {len(gate_indices)}")
+        print(f"[MultilingualCrossEncoder] - Refined queries: {len(refined_queries) if refined_queries else 0}")
+        
+        # Prepare all operations
+        operations = []
+        
+        # Operation 1: Reranking
+        if rerank_indices:
+            rerank_passages = [all_passages[i] for i in rerank_indices if i < len(all_passages)]
+            if rerank_passages:
+                operations.append({
+                    'passages': rerank_passages,
+                    'operation_type': 'reranking',
+                    'metadata': {'indices': rerank_indices}
+                })
+        
+        # Operation 2: Gating
+        if gate_indices:
+            gate_passages = [all_passages[i] for i in gate_indices if i < len(all_passages)]
+            if gate_passages:
+                operations.append({
+                    'passages': gate_passages,
+                    'operation_type': 'gating',
+                    'metadata': {'indices': gate_indices}
+                })
+        
+        # Operation 3-N: Refined queries (if provided)
+        if refined_queries:
+            for i, refined_query in enumerate(refined_queries):
+                if all_passages:  # Score all passages against each refined query
+                    operations.append({
+                        'passages': all_passages,
+                        'operation_type': f'refined_query_{i}',
+                        'metadata': {'query': refined_query, 'query_index': i}
+                    })
+        
+        print(f"[MultilingualCrossEncoder] Starting comprehensive parallel execution of {len(operations)} operations")
+        start_time = asyncio.get_event_loop().time()
+        
+        # Run all operations in parallel
+        all_results = await self.score_all_operations_parallel(query, operations)
+        
+        end_time = asyncio.get_event_loop().time()
+        print(f"[MultilingualCrossEncoder] Comprehensive parallel execution completed in {end_time - start_time:.3f}s")
+        
+        # Organize results
+        results = {
+            'rerank_scores': [],
+            'gate_scores': [],
+            'refined_query_scores': {}
+        }
+        
+        result_index = 0
+        for op in operations:
+            op_type = op['operation_type']
+            if op_type == 'reranking' and result_index < len(all_results):
+                results['rerank_scores'] = all_results[result_index]
+                result_index += 1
+            elif op_type == 'gating' and result_index < len(all_results):
+                results['gate_scores'] = all_results[result_index]
+                result_index += 1
+            elif op_type.startswith('refined_query_') and result_index < len(all_results):
+                query_index = op['metadata'].get('query_index', 0)
+                results['refined_query_scores'][query_index] = all_results[result_index]
+                result_index += 1
+        
+        return results
 
 
 class MultilingualZeroShotClassifier:

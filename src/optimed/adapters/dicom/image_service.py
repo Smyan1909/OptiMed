@@ -69,7 +69,7 @@ class ImageServiceImpl(ImageService):
             uploaded_at=datetime.now(timezone.utc)
         )
         
-        # Store the image record
+        # Store the image record (GDPR-compliant: no patient_id stored)
         await self._image_repository.save_image(image)
         
         try:
