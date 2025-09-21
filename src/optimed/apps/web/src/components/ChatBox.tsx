@@ -699,6 +699,23 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
   
   // Check if info mode selection is enabled
   const isInfoModeEnabled = process.env.NEXT_PUBLIC_INFO_MODE === 'false';
+
+  // Use provided sessionId or generate one
+  const [sessionId] = useState(() => {
+    if (propSessionId) return propSessionId;
+
+    if (typeof window !== 'undefined') {
+      const key = `chat_session_${mode}_${patientId || 'general'}`;
+      let existing = localStorage.getItem(key);
+      if (!existing) {
+        existing = `${mode}_${patientId || 'general'}_${Date.now()}`;
+        localStorage.setItem(key, existing);
+      }
+      return existing;
+    }
+    return `${mode}_${patientId || 'general'}_${Date.now()}`;
+  });
+
   const {
     isStreaming,
     currentStep,
@@ -714,23 +731,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     progress,
     startStream,
     stopStream,
-  } = useStreamingChat();
-
-  // Use provided sessionId or generate one
-  const [sessionId] = useState(() => {
-    if (propSessionId) return propSessionId;
-    
-    if (typeof window !== 'undefined') {
-      const key = `chat_session_${mode}_${patientId || 'general'}`;
-      let existing = localStorage.getItem(key);
-      if (!existing) {
-        existing = `${mode}_${patientId || 'general'}_${Date.now()}`;
-        localStorage.setItem(key, existing);
-      }
-      return existing;
-    }
-    return `${mode}_${patientId || 'general'}_${Date.now()}`;
-  });
+  } = useStreamingChat(sessionId);
   
   const { user } = useUser();
 

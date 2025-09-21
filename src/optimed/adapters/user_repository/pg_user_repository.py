@@ -350,6 +350,10 @@ class PGUserRepository(UserRepository):
                 json.dumps(action.metadata)
             )
             return action
+
+    async def create_user_action(self, action: UserAction) -> UserAction:
+        """Create a user action (alias for log_action for backward compatibility)."""
+        return await self.log_action(action)
         
     async def get_user_actions(self, user_id: str, limit: int = 100) -> Sequence[UserAction]:
         """Get user actions for audit trail."""

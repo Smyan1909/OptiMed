@@ -429,10 +429,9 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 all_chunks = produced + journal_chunks
                 print(f"[intelligent_retrieve_chunks] Total chunks produced: {len(all_chunks)} (patient: {len(produced)}, journal: {len(journal_chunks)})")
                 
-                # Log chunk details
+                # Log chunk details (GDPR-safe)
                 for i, chunk in enumerate(all_chunks):
                     print(f"[intelligent_retrieve_chunks] Chunk {i+1}: type={chunk.resource_type}, id={chunk.id}, length={len(chunk.text)} chars")
-                    print(f"[intelligent_retrieve_chunks] Chunk {i+1} preview: '{chunk.text[:100]}...'")
                 
                 # Adapt to local chunk dicts
                 chunks: list[dict[str, Any]] = [{
@@ -584,12 +583,12 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     final_selected = [idx for idx, _ in reranked[:fallback_n]]
                     print(f"[intelligent_retrieve_chunks] Fallback selected {len(final_selected)} chunks: {final_selected}")
 
-                # Log final selected chunks
+                # Log final selected chunks (GDPR-safe)
                 print(f"[intelligent_retrieve_chunks] Final selected chunks ({len(final_selected)}):")
                 for i, idx in enumerate(final_selected):
                     chunk_type = chunks[idx]["data_type"]
-                    chunk_preview = cast(str, chunks[idx]["content"])[:100]
-                    print(f"[intelligent_retrieve_chunks]   {i+1}. Chunk {idx} ({chunk_type}): '{chunk_preview}...'")
+                    chunk_length = len(cast(str, chunks[idx]["content"]))
+                    print(f"[intelligent_retrieve_chunks]   {i+1}. Chunk {idx} ({chunk_type}): {chunk_length} chars")
 
                 # Set state variables early so streaming decorator can access them
                 state.retrieved_chunks = [cast(str, chunks[i]["content"]) for i in final_selected]
@@ -828,9 +827,9 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                         elif temporal_strategy == "historical_context":
                             temporal_context += " - Including historical context for comparison"
                 
-                # Log chunk previews
+                # Log chunk info (GDPR-safe)
                 for i, chunk in enumerate(state.retrieved_chunks):
-                    print(f"[provide_information] Chunk {i+1} preview: '{chunk[:100]}...'")
+                    print(f"[provide_information] Chunk {i+1}: {len(chunk)} chars")
                 
                 docs = ChatMessage(
                     role=ChatRole.USER,

@@ -50,7 +50,9 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
         self.streaming_routes = {
             "/diagnose/stream",
             "/chat/stream",
-            "/stream"
+            "/stream",
+            "/api/diagnose/stream",
+            "/api/chat/stream"
         }
     
     async def dispatch(self, request: Request, call_next):
@@ -79,8 +81,8 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
                     # Create new request with decrypted body
                     scope = request.scope.copy()
                     scope["headers"] = [
-                        (k, v) for k, v in scope["headers"] 
-                        if k != b"content-length"
+                        (k, v) for k, v in scope["headers"]
+                        if k.lower() != b"content-length"
                     ]
                     scope["headers"].append((b"content-length", str(len(new_body)).encode()))
                     
@@ -96,9 +98,13 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
         
         # Encrypt outgoing response if needed (skip for streaming responses)
         print(f"[E2E] Response media type: {response.media_type}, path: {request.url.path}")
-        if (self.encrypt_responses and 
+        is_streaming = (response.media_type == "text/event-stream" or
+                       hasattr(response, 'body_iterator') and
+                       hasattr(response.body_iterator, '__aiter__'))
+
+        if (self.encrypt_responses and
             self._should_encrypt_route(request.url.path) and
-            response.media_type != "text/event-stream"):  # Skip encryption for SSE
+            not is_streaming):
             try:
                 # Read response body
                 response_body = b""
@@ -112,13 +118,16 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
                     
                     # Create new response with encrypted data
                     new_response_body = json.dumps(encrypted_response).encode()
-                    
+
                     # Add encryption headers
                     headers = dict(response.headers)
                     headers["X-Encrypted"] = "true"
                     headers["X-Encryption-Version"] = "1.0"
                     headers["X-Encryption-Timestamp"] = str(int(time.time() * 1000))
-                    
+
+                    # Update Content-Length to match encrypted response size
+                    headers["Content-Length"] = str(len(new_response_body))
+
                     return Response(
                         content=new_response_body,
                         status_code=response.status_code,
@@ -199,3 +208,27 @@ def get_session_encryption_manager() -> SessionEncryptionManager:
     if _session_encryption_manager is None:
         _session_encryption_manager = SessionEncryptionManager()
     return _session_encryption_manager
+
+def create_session_with_encryption(session_id: str, client_public_key_pem: Optional[str] = None) -> Dict[str, str]:
+    """Create a new encrypted session with key exchange."""
+    manager = get_session_encryption_manager()
+
+    result = {
+        "session_id": session_id,
+        "encrypted": True,
+        "version": "2.0"
+    }
+
+    if client_public_key_pem:
+        # Perform key exchange
+        encrypted_session_key = manager.setup_session_encryption(session_id, client_public_key_pem)
+        result["encrypted_session_key"] = encrypted_session_key
+
+        # Provide server public key for client
+        encryption_service = get_encryption_service()
+        result["server_public_key"] = encryption_service.get_public_key_pem()
+    else:
+        # Generate session key without key exchange (less secure)
+        manager.generate_session_key(session_id)
+
+    return result

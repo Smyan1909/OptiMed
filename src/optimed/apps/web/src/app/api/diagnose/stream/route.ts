@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
                   }
                   
                   const chunk = decoder.decode(value, { stream: true });
-                  console.log('📦 [DIAGNOSE API] Forwarding chunk:', chunk.slice(0, 100) + '...');
+                  console.log('📦 [DIAGNOSE API] Forwarding chunk:', chunk.length + ' chars');
                   
                   controller.enqueue(value);
                 }

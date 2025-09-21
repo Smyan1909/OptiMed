@@ -20,7 +20,7 @@ from optimed.core.ports import FHIRRepository
 from optimed.apps.orchestrator.factory import create_app_dependencies
 from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalEntryType
 from optimed.adapters.security.encryption_service import get_encryption_service, get_phi_redactor, redact_for_logging
-from optimed.adapters.security.e2e_encryption_middleware import E2EEncryptionMiddleware, get_session_encryption_manager
+from optimed.adapters.security.e2e_encryption_middleware import E2EEncryptionMiddleware, get_session_encryption_manager, create_session_with_encryption
 
 
 from pydantic import BaseModel
@@ -79,9 +79,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True, lifespan=lifespan)
 
-# Add End-to-End Encryption middleware first
-# Temporarily disabled to fix Content-Length issue with streaming responses
-# app.add_middleware(E2EEncryptionMiddleware, encrypt_responses=True, encrypt_requests=True)
+# Add End-to-End Encryption middleware first (now supports streaming)
+app.add_middleware(E2EEncryptionMiddleware, encrypt_responses=True, encrypt_requests=True)
 
 app.add_middleware(
     CORSMiddleware,
@@ -563,6 +562,66 @@ async def get_session_participants(
     except Exception as e:
         print(f"[API] Error getting session participants: {e}")
         raise HTTPException(status_code=500, detail="Could not get session participants")
+
+
+# Encryption and Key Exchange Endpoints
+
+class KeyExchangeRequest(BaseModel):
+    session_id: str
+    client_public_key: Optional[str] = None
+
+class KeyExchangeResponse(BaseModel):
+    session_id: str
+    server_public_key: str
+    encrypted_session_key: Optional[str] = None
+    encrypted: bool
+    version: str
+
+@app.post("/encryption/key-exchange", response_model=KeyExchangeResponse)
+async def setup_session_encryption(
+    request: KeyExchangeRequest,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Setup end-to-end encryption for a session with key exchange."""
+    try:
+        current_user = user_ctx.get("user")
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        # Create encrypted session
+        result = create_session_with_encryption(
+            request.session_id,
+            request.client_public_key
+        )
+
+        return KeyExchangeResponse(
+            session_id=result["session_id"],
+            server_public_key=result["server_public_key"],
+            encrypted_session_key=result.get("encrypted_session_key"),
+            encrypted=result["encrypted"],
+            version=result["version"]
+        )
+
+    except Exception as e:
+        print(f"[API] Key exchange error: {e}")
+        raise HTTPException(status_code=500, detail="Key exchange failed")
+
+@app.get("/encryption/server-public-key")
+async def get_server_public_key():
+    """Get server's public key for encryption key exchange."""
+    try:
+        encryption_service = get_encryption_service()
+        public_key_pem = encryption_service.get_public_key_pem()
+
+        return {
+            "public_key": public_key_pem,
+            "key_format": "PEM",
+            "algorithm": "RSA-2048",
+            "usage": "key_exchange"
+        }
+    except Exception as e:
+        print(f"[API] Error getting server public key: {e}")
+        raise HTTPException(status_code=500, detail="Could not retrieve server public key")
 
 
 @app.get("/status/repository")

@@ -339,11 +339,11 @@ export async function fetchPatient(id: string): Promise<PatientDetail> {
 
 function getSessionHeaders(excludeContentType = false): Record<string, string> {
   const headers: Record<string, string> = {};
-  
+
   if (!excludeContentType) {
     headers['Content-Type'] = 'application/json';
   }
-  
+
   if (typeof window !== 'undefined') {
     const sessionId = localStorage.getItem('session_id');
     if (sessionId) {
@@ -361,8 +361,31 @@ function getSessionHeaders(excludeContentType = false): Record<string, string> {
       }
     } catch {}
   }
-  
+
   return headers;
+}
+
+// Encryption utilities
+async function makeEncryptedRequest(url: string, options: RequestInit): Promise<Response> {
+  try {
+    const { makeEncryptedRequest: encrypt } = await import('@/lib/encryption');
+    const sessionId = typeof window !== 'undefined' ? localStorage.getItem('session_id') : null;
+    return await encrypt(url, options, sessionId || undefined);
+  } catch (error) {
+    console.warn('Encryption not available, making unencrypted request:', error);
+    return fetch(url, options);
+  }
+}
+
+async function handleEncryptedResponse(response: Response): Promise<any> {
+  try {
+    const { handleEncryptedResponse: decrypt } = await import('@/lib/encryption');
+    const sessionId = typeof window !== 'undefined' ? localStorage.getItem('session_id') : null;
+    return await decrypt(response, sessionId || undefined);
+  } catch (error) {
+    console.warn('Decryption not available, handling as regular response:', error);
+    return response.json();
+  }
 }
 
 export async function clearPatientChatHistory(patientId: string): Promise<void> {
@@ -688,6 +711,30 @@ export async function lookupTerm(request: LookupRequest): Promise<LookupResponse
   if (!res.ok) {
     const errorText = await res.text();
     throw new Error(`Lookup failed: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+// Encryption API functions
+export async function setupSessionEncryption(sessionId: string): Promise<boolean> {
+  try {
+    const { getEncryptionClient } = await import('@/lib/encryption');
+    const encryptionClient = getEncryptionClient();
+    return await encryptionClient.setupSessionEncryption(sessionId);
+  } catch (error) {
+    console.error('Failed to setup session encryption:', error);
+    return false;
+  }
+}
+
+export async function getServerPublicKey(): Promise<any> {
+  const res = await fetch('/api/encryption/server-public-key', {
+    headers: getSessionHeaders()
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to get server public key');
   }
 
   return res.json();
