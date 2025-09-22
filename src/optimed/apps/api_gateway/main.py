@@ -598,7 +598,7 @@ async def setup_session_encryption(
             session_id=result["session_id"],
             server_public_key=result["server_public_key"],
             encrypted_session_key=result.get("encrypted_session_key"),
-            encrypted=result["encrypted"],
+            encrypted=result["encrypted"] == "true",
             version=result["version"]
         )
 

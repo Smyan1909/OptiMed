@@ -28,14 +28,13 @@ class PGVectorAdapter(VectorStore):
         self._ram_stores: Dict[str, Dict] = {}  # session_id -> {index, id_map, metadata_map}
         
         # KMS for ephemeral cache
+        self.envelope_encryption: Optional[EnvelopeEncryption] = None
+        self.ephemeral_cache: Optional[EphemeralCacheService] = None
+
         if self.ephemeral_cache_enabled:
             kms_config = KMSConfig(kek_id="optimed-kek")
             self.envelope_encryption = EnvelopeEncryption(kms_config)
             # Initialize ephemeral cache after pool is created
-            self.ephemeral_cache: Optional[EphemeralCacheService] = None
-        else:
-            self.envelope_encryption: Optional[EnvelopeEncryption] = None
-            self.ephemeral_cache: Optional[EphemeralCacheService] = None
 
     async def _get_pool(self) -> asyncpg.Pool:
         """Get or create the connection pool."""
@@ -322,14 +321,9 @@ class PGVectorAdapter(VectorStore):
                     uuid.UUID(session_id)
                 )
                 
-                # Delete content from ephemeral cache
+                # Delete content from ephemeral cache via crypto-shredding
                 if self.ephemeral_cache:
-                    for row in rows:
-                        await self.ephemeral_cache.delete_content(
-                            session_id=session_id,
-                            resource_type=row["resource_type"],
-                            resource_id=row["resource_id"]
-                        )
+                    await self.ephemeral_cache.crypto_shred_session(session_id)
                 
                 # Delete from temp_content table
                 await conn.execute(

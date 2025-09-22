@@ -188,11 +188,11 @@ class MemoryZeroizationService:
 # Global cleanup service instance
 _cleanup_service: Optional[SessionCleanupService] = None
 
-def get_cleanup_service() -> SessionCleanupService:
+def get_cleanup_service() -> Optional[SessionCleanupService]:
     """Get global cleanup service instance."""
     return _cleanup_service
 
-def initialize_cleanup_service(vector_store, user_repo=None):
+def initialize_cleanup_service(vector_store: Any, user_repo: Optional[Any] = None) -> SessionCleanupService:
     """Initialize the global cleanup service."""
     global _cleanup_service
     _cleanup_service = SessionCleanupService(vector_store, user_repo)

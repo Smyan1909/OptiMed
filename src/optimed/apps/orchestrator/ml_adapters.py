@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from typing import List
+from typing import List, Optional
 
 
 class MultilingualCrossEncoder:
@@ -164,7 +164,9 @@ class MultilingualCrossEncoder:
                 tasks.append(task)
             else:
                 # If no passages, return empty scores
-                tasks.append(asyncio.create_task(asyncio.sleep(0, result=[])))
+                async def empty_result() -> list[float]:
+                    return []
+                tasks.append(asyncio.create_task(empty_result()))
         
         # Execute all tasks in parallel
         start_time = asyncio.get_event_loop().time()
@@ -231,7 +233,7 @@ class MultilingualCrossEncoder:
         print(f"[MultilingualCrossEncoder] Completed {len(refined_queries)} refinement queries in {end_time - start_time:.3f}s")
         return results
 
-    async def score_comprehensive_retrieval_parallel(self, query: str, all_passages: List[str], rerank_indices: List[int], gate_indices: List[int], refined_queries: List[str] = None) -> dict:
+    async def score_comprehensive_retrieval_parallel(self, query: str, all_passages: List[str], rerank_indices: List[int], gate_indices: List[int], refined_queries: Optional[List[str]] = None) -> dict:
         """Comprehensive parallel scoring for the entire retrieval pipeline.
         
         This method runs all possible cross-encoder operations in parallel:
@@ -257,7 +259,7 @@ class MultilingualCrossEncoder:
         print(f"[MultilingualCrossEncoder] - Refined queries: {len(refined_queries) if refined_queries else 0}")
         
         # Prepare all operations
-        operations = []
+        operations: List[dict] = []
         
         # Operation 1: Reranking
         if rerank_indices:
@@ -299,7 +301,7 @@ class MultilingualCrossEncoder:
         print(f"[MultilingualCrossEncoder] Comprehensive parallel execution completed in {end_time - start_time:.3f}s")
         
         # Organize results
-        results = {
+        results: dict = {
             'rerank_scores': [],
             'gate_scores': [],
             'refined_query_scores': {}

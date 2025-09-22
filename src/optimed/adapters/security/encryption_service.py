@@ -272,7 +272,7 @@ class PHIRedactor:
     
     def redact_dict(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Redact PHI from dictionary data."""
-        redacted_data = {}
+        redacted_data: Dict[str, Any] = {}
         
         for key, value in data.items():
             if isinstance(value, str):

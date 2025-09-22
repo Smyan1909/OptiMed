@@ -78,7 +78,7 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
                     new_body = json.dumps(decrypted_data).encode()
                     
                     # Create new request with decrypted body
-                    scope = request.scope.copy()
+                    scope = dict(request.scope)
                     scope["headers"] = [
                         (k, v) for k, v in scope["headers"]
                         if k.lower() != b"content-length"
@@ -156,7 +156,7 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
     
     def _create_receive(self, body: bytes):
         """Create a receive function for the request body."""
-        async def receive():
+        async def receive() -> Dict[str, Any]:
             return {"type": "http.request", "body": body}
         return receive
 
@@ -198,6 +198,15 @@ class SessionEncryptionManager:
         if session_id in self.session_keys:
             del self.session_keys[session_id]
 
+    def setup_session_encryption(self, session_id: str, client_public_key_pem: str) -> str:
+        """Setup session encryption with key exchange."""
+        session_key = self.generate_session_key(session_id)
+        # Encrypt session key with client's public key
+        encrypted_key = self.encryption_service.encrypt_session_key_for_client(
+            session_key.encode(), client_public_key_pem
+        )
+        return encrypted_key
+
 # Global session encryption manager
 _session_encryption_manager: Optional[SessionEncryptionManager] = None
 
@@ -214,7 +223,7 @@ def create_session_with_encryption(session_id: str, client_public_key_pem: Optio
 
     result = {
         "session_id": session_id,
-        "encrypted": True,
+        "encrypted": "true",
         "version": "2.0"
     }
 
