@@ -50,7 +50,7 @@ class EncryptionService:
         self.public_key = self.private_key.public_key()
 
         # Session key cache with TTL
-        self.session_keys: Dict[str, Tuple[bytes, float]] = {}
+        self.session_keys: Dict[str, Tuple[str, float]] = {}
         self.session_key_ttl = 3600  # 1 hour TTL
     
     def encrypt_data_aes_gcm(self, data: Dict[str, Any], session_key: Optional[bytes] = None) -> str:
@@ -167,12 +167,12 @@ class EncryptionService:
         """Store session key with TTL."""
         self.session_keys[session_id] = (key, time.time() + self.session_key_ttl)
 
-    def get_session_key(self, session_id: str) -> Optional[str]:
+    def get_session_key(self, session_id: str) -> Optional[bytes]:
         """Get session key if valid and not expired."""
         if session_id in self.session_keys:
             key, expiry = self.session_keys[session_id]
             if time.time() < expiry:
-                return key
+                return key.encode() if isinstance(key, str) else key
             else:
                 del self.session_keys[session_id]  # Remove expired key
         return None
@@ -325,7 +325,7 @@ def decrypt_api_request(encrypted_data: Dict[str, Any]) -> Dict[str, Any]:
         return encryption_service.decrypt_data(encrypted_data["data"])
     return encrypted_data
 
-def encrypt_patient_data(data: Dict[str, Any], session_key: str = None) -> str:
+def encrypt_patient_data(data: Dict[str, Any], session_key: Optional[str] = None) -> str:
     """Encrypt patient data for secure processing."""
     encryption_service = get_encryption_service()
     if session_key:
@@ -338,7 +338,7 @@ def encrypt_patient_data(data: Dict[str, Any], session_key: str = None) -> str:
         # Use master key encryption
         return encryption_service.encrypt_data(data)
 
-def decrypt_patient_data(encrypted_data: str, session_key: str = None) -> Dict[str, Any]:
+def decrypt_patient_data(encrypted_data: str, session_key: Optional[str] = None) -> Dict[str, Any]:
     """Decrypt patient data."""
     if session_key:
         # Use session-specific decryption with Fernet-compatible key

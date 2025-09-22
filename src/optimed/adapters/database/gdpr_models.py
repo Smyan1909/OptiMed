@@ -16,11 +16,11 @@ from sqlalchemy import (
     BigInteger, Float
 )
 from sqlalchemy.dialects.postgresql import UUID, BYTEA, JSONB
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship, Session
+from sqlalchemy.orm import relationship, Session, DeclarativeBase
 from sqlalchemy.sql import func
 
-Base = declarative_base()
+class Base(DeclarativeBase):
+    pass
 
 class SessionModel(Base):
     """Session tracking with pseudonymized patient IDs and audit trail."""

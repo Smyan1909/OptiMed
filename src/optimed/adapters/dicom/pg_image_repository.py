@@ -79,13 +79,12 @@ class PostgreSQLImageRepository(ImageRepository):
             try:
                 await conn.execute("""
                     INSERT INTO dicom_images (
-                        image_id, patient_id, user_id, filename, file_size,
+                        image_id, user_id, filename, file_size,
                         metadata_json, dimensions_json, window_level_json,
                         status, uploaded_at, processed_at, storage_path
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 """,
                     image.image_id,
-                    image.patient_id,
                     image.user_id,
                     image.filename,
                     image.file_size,
@@ -107,7 +106,7 @@ class PostgreSQLImageRepository(ImageRepository):
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow("""
-                SELECT image_id, patient_id, user_id, filename, file_size,
+                SELECT image_id, user_id, filename, file_size,
                        metadata_json, dimensions_json, window_level_json,
                        status, uploaded_at, processed_at, storage_path
                 FROM dicom_images 
@@ -124,7 +123,7 @@ class PostgreSQLImageRepository(ImageRepository):
         async with pool.acquire() as conn:
             try:
                 rows = await conn.fetch("""
-                    SELECT image_id, patient_id, user_id, filename, file_size,
+                    SELECT image_id, user_id, filename, file_size,
                            metadata_json, dimensions_json, window_level_json,
                            status, uploaded_at, processed_at, storage_path
                     FROM dicom_images 
@@ -151,19 +150,9 @@ class PostgreSQLImageRepository(ImageRepository):
                 raise
 
     async def get_images_by_patient(self, patient_id: str) -> Sequence[DICOMImage]:
-        """Get all images for a specific patient."""
-        pool = await self._get_pool()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch("""
-                SELECT image_id, patient_id, user_id, filename, file_size,
-                       metadata_json, dimensions_json, window_level_json,
-                       status, uploaded_at, processed_at, storage_path
-                FROM dicom_images 
-                WHERE patient_id = $1
-                ORDER BY uploaded_at DESC
-            """, patient_id)
-            
-            return [self._row_to_domain(row) for row in rows]
+        """Get all images for a specific patient (GDPR: returns empty list)."""
+        # GDPR compliance: patient_id removed from schema
+        return []
 
     async def update_image(self, image: DICOMImage) -> None:
         """Update an existing image record."""
@@ -171,14 +160,13 @@ class PostgreSQLImageRepository(ImageRepository):
         async with pool.acquire() as conn:
             await conn.execute("""
                 UPDATE dicom_images SET
-                    patient_id = $2, user_id = $3, filename = $4, file_size = $5,
-                    metadata_json = $6, dimensions_json = $7, window_level_json = $8,
-                    status = $9, uploaded_at = $10, processed_at = $11, storage_path = $12,
+                    user_id = $2, filename = $3, file_size = $4,
+                    metadata_json = $5, dimensions_json = $6, window_level_json = $7,
+                    status = $8, uploaded_at = $9, processed_at = $10, storage_path = $11,
                     updated_at = NOW()
                 WHERE image_id = $1
             """,
                 image.image_id,
-                image.patient_id,
                 image.user_id,
                 image.filename,
                 image.file_size,
@@ -254,7 +242,6 @@ class PostgreSQLImageRepository(ImageRepository):
         
         return DICOMImage(
             image_id=row['image_id'],
-            patient_id=row['patient_id'],
             user_id=row['user_id'],
             filename=row['filename'],
             file_size=row['file_size'],

@@ -7,7 +7,7 @@ Implements automatic session timeout and cleanup.
 
 import asyncio
 import os
-from typing import Dict, List
+from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone, timedelta
 import logging
 
@@ -121,7 +121,7 @@ class SessionCleanupService:
         
         logger.warning(f"Force cleanup completed: {len(session_ids)} sessions cleaned")
     
-    def get_session_stats(self) -> Dict[str, any]:
+    def get_session_stats(self) -> Dict[str, Any]:
         """Get statistics about active sessions."""
         current_time = datetime.now(timezone.utc)
         
@@ -186,7 +186,7 @@ class MemoryZeroizationService:
             logger.error(f"Error securely deleting file {file_path}: {e}")
 
 # Global cleanup service instance
-_cleanup_service: SessionCleanupService = None
+_cleanup_service: Optional[SessionCleanupService] = None
 
 def get_cleanup_service() -> SessionCleanupService:
     """Get global cleanup service instance."""

@@ -356,8 +356,8 @@ class PGUserRepository(UserRepository):
         return await self.log_action(action)
 
     async def log_system_usage_metric(self, metric_type: str, metric_name: str, value: int,
-                                     unit: str = "count", dimensions: dict = None,
-                                     tenant_id: str = None) -> None:
+                                     unit: str = "count", dimensions: Optional[dict] = None,
+                                     tenant_id: Optional[str] = None) -> None:
         """Log system usage metric for analytics."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
@@ -373,7 +373,7 @@ class PGUserRepository(UserRepository):
                              resource_identifier: str, data_source: str,
                              lawful_basis: str = "care_delivery",
                              purpose_of_use: str = "clinical_decision_support",
-                             session_id: str = None, **kwargs) -> None:
+                             session_id: Optional[str] = None, **kwargs) -> None:
         """Log data access for GDPR compliance."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
@@ -394,8 +394,8 @@ class PGUserRepository(UserRepository):
                 kwargs.get('access_duration_ms'))
 
     async def log_performance_metric(self, metric_category: str, metric_name: str,
-                                   value: float, unit: str, endpoint: str = None,
-                                   user_id: str = None, session_id: str = None,
+                                   value: float, unit: str, endpoint: Optional[str] = None,
+                                   user_id: Optional[str] = None, session_id: Optional[str] = None,
                                    **kwargs) -> None:
         """Log performance metric for monitoring."""
         pool = await self._get_pool()
@@ -415,8 +415,8 @@ class PGUserRepository(UserRepository):
 
     async def log_encryption_operation(self, operation_type: str, data_type: str,
                                      encryption_algorithm: str, key_type: str,
-                                     success: bool = True, session_id: str = None,
-                                     user_id: str = None, **kwargs) -> None:
+                                     success: bool = True, session_id: Optional[str] = None,
+                                     user_id: Optional[str] = None, **kwargs) -> None:
         """Log encryption operation for security auditing."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
@@ -436,8 +436,8 @@ class PGUserRepository(UserRepository):
                 json.dumps(kwargs.get('compliance_context', {})))
 
     async def log_compliance_event(self, event_type: str, compliance_framework: str,
-                                 user_id: str, lawful_basis: str = None,
-                                 session_id: str = None, patient_id: str = None,
+                                 user_id: str, lawful_basis: Optional[str] = None,
+                                 session_id: Optional[str] = None, patient_id: Optional[str] = None,
                                  **kwargs) -> None:
         """Log compliance event for regulatory tracking."""
         pool = await self._get_pool()
@@ -652,7 +652,7 @@ class PGUserRepository(UserRepository):
                                            data_source: str = 'application',
                                            lawful_basis: str = 'legitimate_interest',
                                            purpose_of_use: str = 'healthcare_delivery',
-                                           session_id: str = None,
+                                           session_id: Optional[str] = None,
                                            privacy_impact_level: str = 'low') -> None:
         """Log data access in GDPR-compliant manner (no PHI stored)."""
         pool = await self._get_pool()

@@ -1,6 +1,6 @@
 import asyncpg # type: ignore
 from pgvector.asyncpg import register_vector # type: ignore
-from typing import Sequence, Any, Dict
+from typing import Sequence, Any, Dict, Optional
 from optimed.core.ports import VectorStore
 from optimed.core.domain import ChatSession, SessionParticipant
 from datetime import datetime, timezone
@@ -9,7 +9,7 @@ import json
 import os
 import faiss
 import numpy as np
-from optimed.adapters.kms.crypto_service import EnvelopeEncryption, EphemeralCacheService
+from optimed.adapters.kms.crypto_service import EnvelopeEncryption, EphemeralCacheService, KMSConfig
 
 class PGVectorAdapter(VectorStore):
     def __init__(self, dsn: str, min_size: int = 10, max_size: int = 20, embedding_dim: int = 1024):
@@ -29,12 +29,13 @@ class PGVectorAdapter(VectorStore):
         
         # KMS for ephemeral cache
         if self.ephemeral_cache_enabled:
-            self.envelope_encryption = EnvelopeEncryption(kek_id="optimed-kek")
+            kms_config = KMSConfig(kek_id="optimed-kek")
+            self.envelope_encryption = EnvelopeEncryption(kms_config)
             # Initialize ephemeral cache after pool is created
-            self.ephemeral_cache = None
+            self.ephemeral_cache: Optional[EphemeralCacheService] = None
         else:
-            self.envelope_encryption = None
-            self.ephemeral_cache = None
+            self.envelope_encryption: Optional[EnvelopeEncryption] = None
+            self.ephemeral_cache: Optional[EphemeralCacheService] = None
 
     async def _get_pool(self) -> asyncpg.Pool:
         """Get or create the connection pool."""
@@ -133,6 +134,8 @@ class PGVectorAdapter(VectorStore):
     
     async def _store_in_ephemeral_cache(self, session_id: str, object_type: str, object_id: str, content: str | dict):
         """Store content in ephemeral cache with crypto-shredding."""
+        if not self.ephemeral_cache:
+            return
         try:
             # Use the ephemeral cache service to store content
             await self.ephemeral_cache.store_content(
@@ -320,12 +323,13 @@ class PGVectorAdapter(VectorStore):
                 )
                 
                 # Delete content from ephemeral cache
-                for row in rows:
-                    await self.ephemeral_cache.delete_content(
-                        session_id=session_id,
-                        resource_type=row["resource_type"],
-                        resource_id=row["resource_id"]
-                    )
+                if self.ephemeral_cache:
+                    for row in rows:
+                        await self.ephemeral_cache.delete_content(
+                            session_id=session_id,
+                            resource_type=row["resource_type"],
+                            resource_id=row["resource_id"]
+                        )
                 
                 # Delete from temp_content table
                 await conn.execute(
