@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
                 }
               } catch (error) {
                 console.error('❌ [DIAGNOSE API] Stream error:', error);
-                if (error.name === 'AbortError') {
+                if (error instanceof Error && error.name === 'AbortError') {
                   console.log('🛑 [DIAGNOSE API] Stream aborted due to timeout');
                 }
                 controller.error(error);

@@ -354,6 +354,245 @@ class PGUserRepository(UserRepository):
     async def create_user_action(self, action: UserAction) -> UserAction:
         """Create a user action (alias for log_action for backward compatibility)."""
         return await self.log_action(action)
+
+    async def log_system_usage_metric(self, metric_type: str, metric_name: str, value: int,
+                                     unit: str = "count", dimensions: dict = None,
+                                     tenant_id: str = None) -> None:
+        """Log system usage metric for analytics."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO system_usage_metrics (
+                    metric_type, metric_name, value, unit, dimensions, tenant_id
+                ) VALUES ($1, $2, $3, $4, $5, $6)
+            """, metric_type, metric_name, value, unit,
+                json.dumps(dimensions or {}),
+                uuid.UUID(tenant_id) if tenant_id else None)
+
+    async def log_data_access(self, user_id: str, access_type: str, resource_type: str,
+                             resource_identifier: str, data_source: str,
+                             lawful_basis: str = "care_delivery",
+                             purpose_of_use: str = "clinical_decision_support",
+                             session_id: str = None, **kwargs) -> None:
+        """Log data access for GDPR compliance."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO data_access_logs (
+                    session_id, user_id, access_type, resource_type, resource_identifier,
+                    data_source, lawful_basis, purpose_of_use, access_method,
+                    requested_fields, returned_count, filter_criteria,
+                    data_retention_days, encryption_method, access_duration_ms
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            """,
+                uuid.UUID(session_id) if session_id else None,
+                uuid.UUID(user_id), access_type, resource_type, resource_identifier,
+                data_source, lawful_basis, purpose_of_use,
+                kwargs.get('access_method'), kwargs.get('requested_fields'),
+                kwargs.get('returned_count'), json.dumps(kwargs.get('filter_criteria', {})),
+                kwargs.get('data_retention_days'), kwargs.get('encryption_method'),
+                kwargs.get('access_duration_ms'))
+
+    async def log_performance_metric(self, metric_category: str, metric_name: str,
+                                   value: float, unit: str, endpoint: str = None,
+                                   user_id: str = None, session_id: str = None,
+                                   **kwargs) -> None:
+        """Log performance metric for monitoring."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO performance_metrics (
+                    metric_category, metric_name, value, unit, endpoint,
+                    user_id, session_id, patient_context_size, model_used,
+                    processing_stage, additional_context
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            """,
+                metric_category, metric_name, value, unit, endpoint,
+                uuid.UUID(user_id) if user_id else None,
+                uuid.UUID(session_id) if session_id else None,
+                kwargs.get('patient_context_size'), kwargs.get('model_used'),
+                kwargs.get('processing_stage'), json.dumps(kwargs.get('additional_context', {})))
+
+    async def log_encryption_operation(self, operation_type: str, data_type: str,
+                                     encryption_algorithm: str, key_type: str,
+                                     success: bool = True, session_id: str = None,
+                                     user_id: str = None, **kwargs) -> None:
+        """Log encryption operation for security auditing."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO encryption_audit_log (
+                    session_id, user_id, operation_type, data_type, encryption_algorithm,
+                    key_type, key_identifier, data_size_bytes, operation_duration_ms,
+                    success, error_details, client_info, compliance_context
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            """,
+                uuid.UUID(session_id) if session_id else None,
+                uuid.UUID(user_id) if user_id else None,
+                operation_type, data_type, encryption_algorithm, key_type,
+                kwargs.get('key_identifier'), kwargs.get('data_size_bytes'),
+                kwargs.get('operation_duration_ms'), success, kwargs.get('error_details'),
+                json.dumps(kwargs.get('client_info', {})),
+                json.dumps(kwargs.get('compliance_context', {})))
+
+    async def log_compliance_event(self, event_type: str, compliance_framework: str,
+                                 user_id: str, lawful_basis: str = None,
+                                 session_id: str = None, patient_id: str = None,
+                                 **kwargs) -> None:
+        """Log compliance event for regulatory tracking."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO compliance_events (
+                    event_type, compliance_framework, session_id, user_id, patient_id,
+                    lawful_basis, consent_status, data_categories, processing_purposes,
+                    retention_period_days, data_minimization_applied, anonymization_method,
+                    cross_border_transfer, transfer_safeguards, individual_rights_exercised,
+                    compliance_status, risk_assessment, mitigation_measures
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            """,
+                event_type, compliance_framework,
+                uuid.UUID(session_id) if session_id else None,
+                uuid.UUID(user_id), patient_id, lawful_basis,
+                kwargs.get('consent_status'), kwargs.get('data_categories'),
+                kwargs.get('processing_purposes'), kwargs.get('retention_period_days'),
+                kwargs.get('data_minimization_applied', True), kwargs.get('anonymization_method'),
+                kwargs.get('cross_border_transfer', False), kwargs.get('transfer_safeguards'),
+                kwargs.get('individual_rights_exercised'), kwargs.get('compliance_status', 'compliant'),
+                json.dumps(kwargs.get('risk_assessment', {})), kwargs.get('mitigation_measures'))
+
+    async def update_session_analytics(self, session_id: str, **metrics) -> None:
+        """Update session analytics with new metrics."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            # Build dynamic update query based on provided metrics
+            updates = []
+            values = []
+            param_count = 1
+
+            metric_mappings = {
+                'requests': 'total_requests',
+                'responses': 'total_responses',
+                'patients_accessed': 'patient_contexts_accessed',
+                'web_searches': 'web_searches_performed',
+                'diagnostic_requests': 'diagnostic_requests',
+                'chat_requests': 'chat_requests',
+                'image_uploads': 'image_uploads',
+                'journal_generations': 'journal_generations',
+                'errors': 'error_count'
+            }
+
+            for key, value in metrics.items():
+                if key in metric_mappings:
+                    updates.append(f"{metric_mappings[key]} = ${param_count}")
+                    values.append(value)
+                    param_count += 1
+                elif key == 'performance_metrics':
+                    updates.append(f"performance_metrics = ${param_count}")
+                    values.append(json.dumps(value))
+                    param_count += 1
+                elif key == 'data_sources_accessed':
+                    updates.append(f"data_sources_accessed = ${param_count}")
+                    values.append(value)
+                    param_count += 1
+
+            if updates:
+                updates.append(f"last_updated = NOW()")
+                query = f"""
+                    UPDATE session_analytics
+                    SET {', '.join(updates)}
+                    WHERE session_id = ${param_count}
+                """
+                values.append(uuid.UUID(session_id))
+                await conn.execute(query, *values)
+
+    async def get_enhanced_user_metrics(self, user_id: str, days: int = 30) -> dict:
+        """Get comprehensive user metrics including new tracking data."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            from_date = datetime.now(timezone.utc) - timedelta(days=days)
+
+            # Get basic user metrics (existing functionality)
+            basic_metrics = await self.get_user_metrics(user_id, days)
+
+            # Get session analytics
+            session_stats = await conn.fetchrow("""
+                SELECT
+                    COUNT(*) as total_sessions,
+                    AVG(session_duration_minutes) as avg_session_duration,
+                    SUM(total_requests) as total_requests,
+                    SUM(patient_contexts_accessed) as patients_accessed,
+                    SUM(web_searches_performed) as web_searches,
+                    SUM(diagnostic_requests) as diagnostic_requests,
+                    SUM(chat_requests) as chat_requests,
+                    SUM(error_count) as total_errors
+                FROM session_analytics sa
+                JOIN sessions s ON sa.session_id = s.session_id
+                WHERE s.user_id = $1 AND s.started_at >= $2
+            """, uuid.UUID(user_id), from_date)
+
+            # Get performance metrics
+            performance_stats = await conn.fetch("""
+                SELECT
+                    metric_category,
+                    metric_name,
+                    AVG(value) as avg_value,
+                    MIN(value) as min_value,
+                    MAX(value) as max_value,
+                    COUNT(*) as measurement_count
+                FROM performance_metrics
+                WHERE user_id = $1 AND measured_at >= $2
+                GROUP BY metric_category, metric_name
+                ORDER BY metric_category, metric_name
+            """, uuid.UUID(user_id), from_date)
+
+            # Get data access summary
+            data_access_stats = await conn.fetch("""
+                SELECT
+                    data_source,
+                    resource_type,
+                    COUNT(*) as access_count,
+                    AVG(access_duration_ms) as avg_duration_ms
+                FROM data_access_logs
+                WHERE user_id = $1 AND accessed_at >= $2
+                GROUP BY data_source, resource_type
+                ORDER BY access_count DESC
+            """, uuid.UUID(user_id), from_date)
+
+            # Format enhanced metrics
+            enhanced_metrics = {
+                **basic_metrics,
+                "session_analytics": {
+                    "total_sessions": session_stats['total_sessions'] if session_stats else 0,
+                    "average_session_duration_minutes": round(session_stats['avg_session_duration'] or 0, 2) if session_stats else 0,
+                    "total_requests": session_stats['total_requests'] if session_stats else 0,
+                    "patients_accessed": session_stats['patients_accessed'] if session_stats else 0,
+                    "web_searches_performed": session_stats['web_searches'] if session_stats else 0,
+                    "diagnostic_requests": session_stats['diagnostic_requests'] if session_stats else 0,
+                    "chat_requests": session_stats['chat_requests'] if session_stats else 0,
+                    "total_errors": session_stats['total_errors'] if session_stats else 0
+                },
+                "performance_metrics": {
+                    row['metric_category']: {
+                        row['metric_name']: {
+                            "average": round(row['avg_value'], 2),
+                            "minimum": round(row['min_value'], 2),
+                            "maximum": round(row['max_value'], 2),
+                            "count": row['measurement_count']
+                        }
+                    } for row in performance_stats
+                },
+                "data_access_patterns": [
+                    {
+                        "data_source": row['data_source'],
+                        "resource_type": row['resource_type'],
+                        "access_count": row['access_count'],
+                        "average_duration_ms": round(row['avg_duration_ms'] or 0, 2)
+                    } for row in data_access_stats
+                ]
+            }
+
+            return enhanced_metrics
         
     async def get_user_actions(self, user_id: str, limit: int = 100) -> Sequence[UserAction]:
         """Get user actions for audit trail."""
@@ -407,3 +646,40 @@ class PGUserRepository(UserRepository):
             description=row['description'],
             metadata=row['metadata'] if row['metadata'] else {},
         )
+
+    async def log_gdpr_compliant_data_access(self, user_id: str, access_type: str,
+                                           resource_type: str, resource_count: int = 1,
+                                           data_source: str = 'application',
+                                           lawful_basis: str = 'legitimate_interest',
+                                           purpose_of_use: str = 'healthcare_delivery',
+                                           session_id: str = None,
+                                           privacy_impact_level: str = 'low') -> None:
+        """Log data access in GDPR-compliant manner (no PHI stored)."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            # Check if table exists before logging
+            table_exists = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'data_access_logs'
+                )
+            """)
+
+            if table_exists:
+                await conn.execute("""
+                    INSERT INTO data_access_logs (
+                        session_id, user_id, access_type, resource_type, resource_count,
+                        data_source, lawful_basis, purpose_of_use, privacy_impact_level,
+                        access_granted, accessed_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, NOW())
+                """,
+                uuid.UUID(session_id) if session_id else None,
+                uuid.UUID(user_id),
+                access_type,
+                resource_type,
+                resource_count,
+                data_source,
+                lawful_basis,
+                purpose_of_use,
+                privacy_impact_level
+                )

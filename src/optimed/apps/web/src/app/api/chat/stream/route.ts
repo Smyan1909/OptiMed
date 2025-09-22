@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
                 }
               } catch (error) {
                 console.error('❌ [CHAT API] Stream error:', error);
-                if (error.name === 'AbortError') {
+                if (error instanceof Error && error.name === 'AbortError') {
                   console.log('🛑 [CHAT API] Stream aborted due to timeout');
                 }
                 controller.error(error);
