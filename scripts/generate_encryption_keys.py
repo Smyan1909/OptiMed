@@ -12,7 +12,6 @@ Usage:
 
 import secrets
 import base64
-import os
 from cryptography.fernet import Fernet
 
 

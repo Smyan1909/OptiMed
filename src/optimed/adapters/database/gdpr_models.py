@@ -7,14 +7,13 @@ and provenance information without any PHI content.
 
 from __future__ import annotations
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional, List
-from decimal import Decimal
 
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, Boolean, 
-    ForeignKey, UniqueConstraint, Index, JSON, ARRAY,
-    LargeBinary, BigInteger, Float
+    Column, Integer, String, Text, DateTime, Boolean,
+    ForeignKey, UniqueConstraint, Index, ARRAY,
+    BigInteger, Float
 )
 from sqlalchemy.dialects.postgresql import UUID, BYTEA, JSONB
 from sqlalchemy.ext.declarative import declarative_base

@@ -10,7 +10,6 @@ import base64
 import json
 import time
 import secrets
-import struct
 from typing import Dict, Any, Optional, Tuple
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes, serialization
@@ -119,7 +118,7 @@ class EncryptionService:
             # Fallback to legacy Fernet decryption
             try:
                 return self._decrypt_data_legacy(encrypted_data)
-            except:
+            except Exception:
                 raise e
 
     def decrypt_data(self, encrypted_data: str) -> Dict[str, Any]:

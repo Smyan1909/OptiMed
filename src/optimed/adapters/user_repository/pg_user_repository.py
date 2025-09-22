@@ -497,7 +497,7 @@ class PGUserRepository(UserRepository):
                     param_count += 1
 
             if updates:
-                updates.append(f"last_updated = NOW()")
+                updates.append("last_updated = NOW()")
                 query = f"""
                     UPDATE session_analytics
                     SET {', '.join(updates)}

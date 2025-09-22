@@ -3,7 +3,6 @@
 Run migrations against Azure PostgreSQL database
 """
 import asyncio
-import os
 import sys
 from pathlib import Path
 import asyncpg
@@ -21,7 +20,7 @@ async def run_azure_migrations():
     dsn = "postgresql://optimeduser:optimedpassword@optimed-pg.postgres.database.azure.com:5432/optimed?sslmode=require"
 
     try:
-        print(f"🔌 Connecting to Azure database...")
+        print("🔌 Connecting to Azure database...")
         conn = await asyncpg.connect(dsn)
 
         # Check if embeddings exists and what type it is

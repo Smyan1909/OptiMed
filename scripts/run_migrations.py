@@ -24,7 +24,7 @@ async def run_migrations():
         return False
 
     try:
-        print(f"🔌 Connecting to database...")
+        print("🔌 Connecting to database...")
         conn = await asyncpg.connect(dsn)
 
         # First, handle GDPR compliance: remove embeddings table/view if it exists

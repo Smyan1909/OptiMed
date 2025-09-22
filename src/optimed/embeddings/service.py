@@ -1,10 +1,7 @@
 from __future__ import annotations
-import os 
-import json 
-import datetime as dt
-from typing import Sequence, Any
+import os
+from typing import Any
 from dotenv import load_dotenv
-from optimed.embeddings.minilm import embed          # multilingual e5 with kind prefixes
 from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
 
 load_dotenv()

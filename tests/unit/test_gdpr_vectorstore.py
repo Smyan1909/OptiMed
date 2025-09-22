@@ -4,16 +4,13 @@ Unit tests for GDPR-compliant vector store implementation.
 
 import pytest
 import asyncio
-import uuid
 import json
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Dict, Any, List
+from unittest.mock import AsyncMock, MagicMock
 
 from optimed.adapters.vectorstores.gdpr_vectorstore import GDPRVectorStore
 from optimed.adapters.vectorstores.ram_vectorstore import RAMVectorStore
 from optimed.adapters.kms import EphemeralCacheService, KMSConfig, EnvelopeEncryption
-from optimed.core.domain import ChatSession, SessionParticipant
 
 
 class TestGDPRVectorStore:

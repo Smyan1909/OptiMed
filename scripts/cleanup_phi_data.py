@@ -21,7 +21,7 @@ import logging
 import os
 import sys
 from datetime import datetime, timezone
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, Optional
 import json
 import asyncpg
 from pathlib import Path
@@ -29,7 +29,6 @@ from pathlib import Path
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from optimed.adapters.kms import create_crypto_service
 
 # Configure logging
 logging.basicConfig(

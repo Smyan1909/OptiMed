@@ -10,7 +10,6 @@ import uuid
 import json
 import os
 from datetime import datetime, timezone
-from typing import Dict, Any
 
 import asyncpg
 
@@ -18,7 +17,6 @@ from optimed.adapters.vectorstores.gdpr_vectorstore import GDPRVectorStore
 from optimed.adapters.vectorstores.ram_vectorstore import RAMVectorStore
 from optimed.adapters.kms import create_crypto_service, create_ephemeral_cache_service
 from optimed.adapters.database.gdpr_models import (
-    SessionModel, AuditEventModel, ResourceModel, EvidenceSetModel,
     GDPRModelUtils
 )
 
@@ -39,7 +37,6 @@ class TestGDPRCompliance:
     async def gdpr_store(self, db_pool):
         """GDPR vector store with real database."""
         ram_store = RAMVectorStore(embedding_dim=128, max_memory_mb=50)
-        crypto_service = create_crypto_service()
         ephemeral_cache = create_ephemeral_cache_service(db_pool)
         
         store = GDPRVectorStore(
@@ -132,7 +129,7 @@ class TestGDPRCompliance:
         
         # Create a session
         async with db_pool.acquire() as conn:
-            session_model = GDPRModelUtils.create_session(
+            GDPRModelUtils.create_session(
                 conn,
                 subject_hash=b"hashed_patient_id",
                 user_id=uuid.uuid4(),
@@ -282,7 +279,7 @@ class TestGDPRCompliance:
         
         # Create evidence set (this would be done by the retrieval system)
         async with db_pool.acquire() as conn:
-            evidence_model = GDPRModelUtils.create_evidence_set(
+            GDPRModelUtils.create_evidence_set(
                 conn,
                 session_id=session_id,
                 question_id=uuid.uuid4(),
@@ -319,7 +316,7 @@ class TestGDPRCompliance:
         """Test that resource catalog stores only metadata."""
         # Create a resource record
         async with db_pool.acquire() as conn:
-            resource_model = GDPRModelUtils.create_resource(
+            GDPRModelUtils.create_resource(
                 conn,
                 subject_hash=b"patient_hash_123",
                 server_alias="epic",

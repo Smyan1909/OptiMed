@@ -249,7 +249,7 @@ class MultilingualCrossEncoder:
         Returns:
             Dict containing all scoring results
         """
-        print(f"[MultilingualCrossEncoder] score_comprehensive_retrieval_parallel called")
+        print("[MultilingualCrossEncoder] score_comprehensive_retrieval_parallel called")
         print(f"[MultilingualCrossEncoder] - Query: '{query[:50]}...'")
         print(f"[MultilingualCrossEncoder] - All passages: {len(all_passages)}")
         print(f"[MultilingualCrossEncoder] - Rerank indices: {len(rerank_indices)}")

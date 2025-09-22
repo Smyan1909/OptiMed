@@ -10,12 +10,11 @@ from typing import Dict, Any, Optional
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from .encryption_service import (
-    get_encryption_service, 
-    encrypt_api_response, 
+    get_encryption_service,
+    encrypt_api_response,
     decrypt_api_request,
     encrypt_patient_data,
-    decrypt_patient_data,
-    redact_for_logging
+    decrypt_patient_data
 )
 
 class E2EEncryptionMiddleware(BaseHTTPMiddleware):

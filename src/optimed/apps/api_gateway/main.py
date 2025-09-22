@@ -19,8 +19,8 @@ from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnec
 from optimed.core.ports import FHIRRepository
 from optimed.apps.orchestrator.factory import create_app_dependencies
 from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalEntryType
-from optimed.adapters.security.encryption_service import get_encryption_service, get_phi_redactor, redact_for_logging
-from optimed.adapters.security.e2e_encryption_middleware import E2EEncryptionMiddleware, get_session_encryption_manager, create_session_with_encryption
+from optimed.adapters.security.encryption_service import get_encryption_service, get_phi_redactor
+from optimed.adapters.security.e2e_encryption_middleware import E2EEncryptionMiddleware, create_session_with_encryption
 
 
 from pydantic import BaseModel

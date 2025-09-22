@@ -74,7 +74,7 @@ MAX_REQUESTS_PER_MINUTE=100
         env_path.rename(backup_path)
     
     env_path.write_text(env_content)
-    print(f"✅ Created .env file with secure encryption keys")
+    print("✅ Created .env file with secure encryption keys")
     print("🔒 IMPORTANT: Keep your .env file secure and never commit it to version control!")
 
 def verify_environment():
