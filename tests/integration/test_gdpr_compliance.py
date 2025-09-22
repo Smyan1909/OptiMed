@@ -15,7 +15,7 @@ import asyncpg
 
 from optimed.adapters.vectorstores.gdpr_vectorstore import GDPRVectorStore
 from optimed.adapters.vectorstores.ram_vectorstore import RAMVectorStore
-from optimed.adapters.kms import create_crypto_service, create_ephemeral_cache_service
+from optimed.adapters.kms import create_ephemeral_cache_service
 from optimed.adapters.database.gdpr_models import (
     GDPRModelUtils
 )
