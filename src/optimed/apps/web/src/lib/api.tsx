@@ -692,3 +692,105 @@ export async function lookupTerm(request: LookupRequest): Promise<LookupResponse
 
   return res.json();
 }
+
+// PDF Document Types
+export type PDFDocument = {
+  document_id: string;
+  filename: string;
+  file_size: number;
+  status: 'UPLOADED' | 'PROCESSING' | 'READY' | 'ERROR';
+  uploaded_at: string;
+  processed_at?: string;
+  patient_id?: string;
+  metadata?: {
+    title?: string;
+    author?: string;
+    subject?: string;
+    page_count?: number;
+  };
+  processing_info?: {
+    extracted_text_length: number;
+    chunk_count: number;
+    extraction_method: string;
+  };
+};
+
+export type PDFUploadResponse = {
+  document_id: string;
+  filename: string;
+  file_size: number;
+  status: string;
+  uploaded_at: string;
+  patient_id?: string;
+};
+
+export type PDFListResponse = {
+  documents: PDFDocument[];
+  total_count: number;
+  patient_specific_count: number;
+  general_count: number;
+};
+
+// PDF Document API Functions
+export async function uploadPDFDocument(file: File, patientId?: string): Promise<PDFUploadResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (patientId) {
+    formData.append('patient_id', patientId);
+  }
+
+  const res = await fetch('/api/documents/upload', {
+    method: 'POST',
+    headers: getSessionHeaders(true), // Excludes Content-Type for FormData
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`PDF upload failed: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function listPDFDocuments(patientId?: string): Promise<PDFListResponse> {
+  const url = patientId
+    ? `/api/documents?patient_id=${encodeURIComponent(patientId)}`
+    : '/api/documents';
+
+  const res = await fetch(url, {
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to list PDF documents: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function getPDFDocument(documentId: string): Promise<PDFDocument> {
+  const res = await fetch(`/api/documents/${encodeURIComponent(documentId)}`, {
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to get PDF document: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function deletePDFDocument(documentId: string): Promise<void> {
+  const res = await fetch(`/api/documents/${encodeURIComponent(documentId)}`, {
+    method: 'DELETE',
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to delete PDF document: ${res.status} - ${errorText}`);
+  }
+}

@@ -5,16 +5,16 @@ from typing import AsyncGenerator, Protocol, Sequence, Any, Union, Optional
 from optimed.core.domain import (
     PatientContext,
     Chunk, Record, ChunkPolicy, PolicySet,
-    KPIEvent, 
-    ChatMessage, 
-    DiagnosisResult, 
+    KPIEvent,
+    ChatMessage,
+    DiagnosisResult,
     WebSearchResponse,
-    User, 
-    UserSession, 
-    UserAction, 
-    UserEHRConnection, 
-    DICOMImage, 
-    ImagePixelData, 
+    User,
+    UserSession,
+    UserAction,
+    UserEHRConnection,
+    DICOMImage,
+    ImagePixelData,
     ImageUploadRequest,
     DICOMMetadata,
     ImageDimensions,
@@ -27,6 +27,8 @@ from optimed.core.domain import (
     JournalEntry,
     JournalEntryCreate,
     JournalEntryUpdate )
+
+from optimed.core.domain.pdf_document import PDFDocument, PDFUploadRequest
 
 # core/ports.py
 #
@@ -679,5 +681,97 @@ class ChunkingOrchestrator(Protocol):
         ...
 
     def chunk_document(self, document_ref: dict[str, Any], policy_set: PolicySet) -> list[Chunk]:
+        ...
+
+
+class PDFStoragePort(Protocol):
+    """Port for PDF document file storage."""
+
+    async def store_pdf_file(self, document_id: str, file_content: bytes) -> str:
+        """Store the raw PDF file content and return the storage path."""
+        ...
+
+    async def get_pdf_file(self, storage_path: str) -> bytes:
+        """Retrieve the raw PDF file content from storage."""
+        ...
+
+    async def delete_pdf_file(self, document_id: str) -> None:
+        """Delete the stored PDF file."""
+        ...
+
+    async def file_exists(self, document_id: str) -> bool:
+        """Check if PDF file exists."""
+        ...
+
+
+class PDFRepository(Protocol):
+    """Repository for managing PDF documents."""
+
+    async def save_document(self, document: PDFDocument) -> None:
+        """Save a PDF document."""
+        ...
+
+    async def get_document_by_id(self, document_id: str) -> Optional[PDFDocument]:
+        """Get a PDF document by its ID."""
+        ...
+
+    async def get_documents_by_user(self, user_id: str) -> Sequence[PDFDocument]:
+        """Get all PDF documents uploaded by a user."""
+        ...
+
+    async def get_documents_by_patient(self, patient_id: str) -> Sequence[PDFDocument]:
+        """Get all PDF documents associated with a patient."""
+        ...
+
+    async def update_document(self, document: PDFDocument) -> None:
+        """Update an existing PDF document."""
+        ...
+
+    async def delete_document(self, document_id: str) -> None:
+        """Delete a PDF document by its ID."""
+        ...
+
+
+class PDFProcessor(Protocol):
+    """Port for processing PDF documents."""
+
+    async def extract_text(self, file_content: bytes) -> str:
+        """Extract text content from a PDF file."""
+        ...
+
+    async def extract_metadata(self, file_content: bytes) -> dict[str, Any]:
+        """Extract metadata from a PDF file."""
+        ...
+
+    async def validate_pdf_file(self, file_content: bytes) -> bool:
+        """Validate if the file content is a valid PDF file."""
+        ...
+
+
+class PDFService(Protocol):
+    """Service for processing and managing PDF documents."""
+
+    async def upload_document(self, upload_request: PDFUploadRequest) -> PDFDocument:
+        """Process and upload a PDF document."""
+        ...
+
+    async def get_document(self, document_id: str, user_id: str) -> Optional[PDFDocument]:
+        """Get a PDF document by its ID and user ID."""
+        ...
+
+    async def list_user_documents(self, user_id: str) -> Sequence[PDFDocument]:
+        """List all PDF documents uploaded by a user."""
+        ...
+
+    async def list_patient_documents(self, patient_id: str, user_id: str) -> Sequence[PDFDocument]:
+        """List all PDF documents associated with a patient."""
+        ...
+
+    async def delete_document(self, document_id: str, user_id: str) -> None:
+        """Delete a PDF document by its ID."""
+        ...
+
+    async def get_documents_for_context(self, user_id: str, patient_id: Optional[str] = None) -> Sequence[PDFDocument]:
+        """Get PDF documents relevant for the current context (patient-specific or general)."""
         ...
 

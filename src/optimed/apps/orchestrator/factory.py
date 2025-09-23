@@ -9,7 +9,7 @@ from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
 from optimed.adapters.openai_gpt.azure_gpt5_mini_client import AzureOpenAIGPT5MiniClient # type: ignore
 from optimed.adapters.user_repository.pg_user_repository import PGUserRepository
 from optimed.adapters.user_repository.pg_ehr_connection_repository import PGUserEHRConnectionRepository
-from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine, ImageGenerationService, GeneratedImageRepository, LLMClient
+from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine, ImageGenerationService, GeneratedImageRepository, LLMClient, PDFService, PDFRepository, PDFStoragePort, PDFProcessor
 from optimed.adapters.dicom.pydicom_processor import PyDICOMProcessor
 from optimed.adapters.dicom.image_service import ImageServiceImpl
 from optimed.adapters.dicom.pg_image_repository import PostgreSQLImageRepository
@@ -20,6 +20,8 @@ from optimed.adapters.image_generation.stabilityai_client import StabilityAIClie
 from optimed.adapters.image_generation.repository import PostgresGeneratedImageRepository
 from optimed.apps.orchestrator.image_flow import LangGraphImageAnalysisEngine
 from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder, MultilingualZeroShotClassifier
+from optimed.adapters.pdf.pdf_processor import PyMuPDFProcessor
+from optimed.apps.pdf.memory_pdf_service import MemoryPDFService
 from optimed.core.domain import UserEHRConnection
 from datetime import datetime, timezone
 from dotenv import load_dotenv # type: ignore
@@ -53,18 +55,19 @@ def create_smart_fhir_repository() -> SMARTFHIRRepository:
     return SMARTFHIRRepository(dummy_connection, auth_provider)
 
 
-def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine, 
-                                                      FHIRRepository, 
-                                                      VectorStore, 
-                                                      UserRepository, 
-                                                      UserEHRConnectionRepository, 
-                                                      UserEHRConnectionService, 
-                                                      Callable[[], ImageServiceImpl], 
+def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
+                                                      FHIRRepository,
+                                                      VectorStore,
+                                                      UserRepository,
+                                                      UserEHRConnectionRepository,
+                                                      UserEHRConnectionService,
+                                                      Callable[[], ImageServiceImpl],
                                                       ImageAnalysisEngine,
                                                       Optional[ImageGenerationService],
                                                       Optional[GeneratedImageRepository],
                                                       LLMClient,
-                                                      TavilyWebSearchService]:
+                                                      TavilyWebSearchService,
+                                                      PDFService]:
     """Factory function to wire up all application dependencies."""
 
     # Load environment variables from .env file
@@ -120,6 +123,10 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
         image_repository = PostgreSQLImageRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
         return ImageServiceImpl(image_repository, image_storage, dicom_processor, image_embedding_service, vector_store)
 
+    # PDF service (memory-only for GDPR compliance)
+    pdf_processor = PyMuPDFProcessor()
+    pdf_service: PDFService = MemoryPDFService(pdf_processor)
+
 
     # Web search service
     web_search_service = TavilyWebSearchService(
@@ -154,9 +161,10 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
         web_search_service=web_search_service,
         cross_encoder=cross_encoder,
         zero_shot_classifier=zero_shot_classifier,
+        pdf_service=pdf_service,
     )
     
-    return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine, image_generation_service, generated_image_repo, journal_client, web_search_service
+    return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine, image_generation_service, generated_image_repo, journal_client, web_search_service, pdf_service
 
 
 # Chunking orchestrator factory (for CLI or future wiring)

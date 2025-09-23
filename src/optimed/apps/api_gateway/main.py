@@ -16,6 +16,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, He
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus, ImageGenerationRequest, DataSource, ChatRole, ChatMessage
+from optimed.core.domain.pdf_document import PDFDocument, PDFUploadRequest, PDFListResponse
 from optimed.core.ports import FHIRRepository
 from optimed.apps.orchestrator.factory import create_app_dependencies
 from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalEntryType
@@ -39,6 +40,7 @@ _image_generation_service: _Any = None
 _generated_image_repo: _Any = None
 _journal_llm_service: _Any = None
 _web_search_service: _Any = None
+_pdf_service: _Any = None
 
  
 
@@ -46,7 +48,7 @@ _dependencies_ready: asyncio.Event = asyncio.Event()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service
+    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service
     try:
         (
             _engine,
@@ -61,6 +63,7 @@ async def lifespan(app: FastAPI):
             _generated_image_repo,
             _journal_llm_service,
             _web_search_service,
+            _pdf_service,
         ) = create_app_dependencies()
         _dependencies_ready.set()
         print("[startup] Dependencies initialized")
@@ -2609,3 +2612,194 @@ async def lookup_term(
     except Exception as e:
         print(f"[Lookup] Error: {e}")
         raise HTTPException(status_code=500, detail="Lookup failed")
+
+
+# PDF Document Upload and Management Endpoints
+
+class PDFUploadResponse(BaseModel):
+    document_id: str
+    filename: str
+    file_size: int
+    status: str
+    uploaded_at: str
+    patient_id: Optional[str] = None
+
+
+@app.post("/documents/upload", response_model=PDFUploadResponse)
+async def upload_pdf_document(
+    request: Request,
+    file: UploadFile = File(...),
+    patient_id: Optional[str] = Form(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Upload a PDF document file."""
+    # Get session ID from user context
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    try:
+        # Validate file type
+        if not file.filename or not file.filename.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+        # Check file size (10MB limit)
+        if file.size and file.size > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File size must be less than 10MB")
+
+        # Read file content
+        file_content = await file.read()
+
+        # Process upload using memory service
+        pdf_document = await _pdf_service.upload_document(
+            user_id=user.user_id,
+            session_id=session_id,
+            filename=file.filename,
+            content=file_content,
+            patient_id=patient_id
+        )
+
+        return PDFUploadResponse(
+            document_id=pdf_document.document_id,
+            filename=pdf_document.filename,
+            file_size=pdf_document.file_size,
+            status=pdf_document.status.value,
+            uploaded_at=pdf_document.uploaded_at.isoformat(),
+            patient_id=pdf_document.patient_id
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"[PDF Upload] Error: {e}")
+        raise HTTPException(status_code=500, detail="PDF upload failed")
+
+
+@app.get("/documents", response_model=PDFListResponse)
+async def list_pdf_documents(
+    request: Request,
+    patient_id: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """List PDF documents for the current session."""
+    # Get session ID from user context
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    try:
+        # Get documents for current session (filtered by patient_id)
+        documents = await _pdf_service.list_documents(
+            user_id=user.user_id,
+            session_id=session_id,
+            patient_id=patient_id
+        )
+
+        # Separate patient-specific and general documents
+        patient_docs = [doc for doc in documents if doc.patient_id is not None]
+        general_docs = [doc for doc in documents if doc.patient_id is None]
+
+        return PDFListResponse(
+            documents=list(documents),
+            total_count=len(documents),
+            patient_specific_count=len(patient_docs),
+            general_count=len(general_docs)
+        )
+
+    except Exception as e:
+        print(f"[PDF List] Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list PDF documents")
+
+
+@app.get("/documents/{document_id}")
+async def get_pdf_document(
+    request: Request,
+    document_id: str = Path(...),
+    patient_id: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Get a specific PDF document."""
+    # Get session ID from user context
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    try:
+        document = await _pdf_service.get_document(
+            document_id=document_id,
+            user_id=user.user_id,
+            session_id=session_id,
+            patient_id=patient_id
+        )
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        return {
+            "document_id": document.document_id,
+            "filename": document.filename,
+            "file_size": document.file_size,
+            "status": document.status.value,
+            "uploaded_at": document.uploaded_at.isoformat(),
+            "updated_at": document.updated_at.isoformat() if document.updated_at else None,
+            "patient_id": document.patient_id,
+            "metadata": {
+                "title": document.metadata.title,
+                "page_count": document.metadata.page_count,
+                "author": document.metadata.author
+            } if document.metadata else None,
+            "processing_info": {
+                "text_extraction_success": document.processing_info.text_extraction_success,
+                "page_count": document.processing_info.page_count,
+                "error_message": document.processing_info.error_message
+            } if document.processing_info else None
+        }
+
+    except Exception as e:
+        print(f"[PDF Get] Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get PDF document")
+
+
+@app.delete("/documents/{document_id}")
+async def delete_pdf_document(
+    request: Request,
+    document_id: str = Path(...),
+    patient_id: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Delete a PDF document."""
+    # Get session ID from user context
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    try:
+        success = await _pdf_service.delete_document(
+            document_id=document_id,
+            user_id=user.user_id,
+            session_id=session_id,
+            patient_id=patient_id
+        )
+        if success:
+            return {"message": "Document deleted successfully"}
+        else:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+    except Exception as e:
+        print(f"[PDF Delete] Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete PDF document")

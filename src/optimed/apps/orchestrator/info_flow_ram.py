@@ -14,9 +14,10 @@ from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
 from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, JournalEntry, Chunk
+from optimed.core.domain.pdf_document import PDFDocument
 from optimed.core.lang import detect_language_code
 
-from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService
+from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, PDFService
 
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
 
@@ -97,6 +98,7 @@ class FlowState(BaseModel):
 
     patient_ctx: PatientContext | None = None
     journal_entries: List[JournalEntry] = Field(default_factory=list)  # Store fetched journal entries
+    uploaded_pdfs: List[PDFDocument] = Field(default_factory=list)  # Store PDF documents
     retrieved_chunks: List[str] = Field(default_factory=list)
 
     chunk_analysis: dict[str, Any] = Field(default_factory=dict)
@@ -173,14 +175,15 @@ class FlowState(BaseModel):
 class LangGraphRAMInformationEngine(DiagnosticEngine):
     """Concrete engine that streams or returns full result."""
 
-    def __init__(self, fhir_repo: FHIRRepository, 
-                 vector_store: VectorStore, 
-                 llm_client: LLMClient, 
-                 user_repo: UserRepository, 
-                 connection_service: UserEHRConnectionService, 
+    def __init__(self, fhir_repo: FHIRRepository,
+                 vector_store: VectorStore,
+                 llm_client: LLMClient,
+                 user_repo: UserRepository,
+                 connection_service: UserEHRConnectionService,
                  web_search_service: WebSearchService,
                  cross_encoder: MultilingualCrossEncoder,
                  zero_shot_classifier: MultilingualZeroShotClassifier,
+                 pdf_service: Optional[PDFService] = None,
                  default_prompt: str = "Provide the most likely diagnosis"):
         self._fhir = fhir_repo
         self._vec = vector_store
@@ -190,6 +193,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         self._user_repo = user_repo
         self._connection_service = connection_service
         self._web_search = web_search_service
+        self._pdf_service = pdf_service
         self._default_prompt = default_prompt
         
         # ML models for intelligent retrieval
@@ -231,6 +235,36 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 print(f"[fetch_patient] Failed to fetch journal entries: {e}")
                 state.journal_entries = []
             
+            return state
+
+        @streaming_step("fetch_pdfs")
+        async def fetch_pdfs(state: FlowState) -> FlowState:
+            """Fetch PDF documents relevant for the current context."""
+            if not self._pdf_service or not state.user_id or not state.session_id:
+                state.uploaded_pdfs = []
+                return state
+
+            try:
+                # Get PDF documents for the current session (patient-specific or general)
+                pdf_documents = await self._pdf_service.get_documents_for_context(
+                    user_id=state.user_id,
+                    session_id=state.session_id,
+                    patient_id=state.patient_id
+                )
+
+                # Filter to only include ready documents with extracted text
+                ready_pdfs = [
+                    doc for doc in pdf_documents
+                    if doc.status.value == "READY" and doc.extracted_text
+                ]
+
+                state.uploaded_pdfs = ready_pdfs
+                print(f"[fetch_pdfs] Fetched {len(state.uploaded_pdfs)} ready PDF documents for session {state.session_id} (patient_id={state.patient_id})")
+
+            except Exception as e:
+                print(f"[fetch_pdfs] Failed to fetch PDF documents: {e}")
+                state.uploaded_pdfs = []
+
             return state
 
         @streaming_step("load_user_context")
@@ -340,48 +374,6 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             return state
         
 
-        @streaming_step("evaluate_cross_session_history_need")
-        async def evaluate_cross_session_history_need(state: FlowState) -> FlowState:
-            """Evaluate if cross-session chat history would be helpful for context."""
-            if not PERSISTENCE_ENABLED:
-                state.needs_cross_session_search = False
-                return state
-            try:
-                # Use LLM to determine if historical context from other sessions would help
-                evaluation_prompt = f"""
-                Analyze this user query to determine if consulting previous conversations from other sessions would be helpful:
-                
-                Query: "{state.user_prompt}"
-                Patient ID: {state.patient_id or "General chat"}
-                Current session history length: {len(state.chat_history)}
-                
-                Consider if the query:
-                - References information that might have been discussed before ("we talked about this before", "as mentioned previously")
-                - Asks about follow-up on treatments or conditions discussed in past sessions
-                - Would benefit from understanding the patient's historical care progression
-                - Seeks clarification on decisions made in previous consultations
-                - Asks about medication changes, test results, or ongoing conditions
-                - References "last time", "before", "previously discussed", etc.
-                
-                Respond with only "YES" or "NO".
-                """
-                
-                evaluation_msg = ChatMessage(role=ChatRole.USER, content=evaluation_prompt)
-                response = await self._llm.chat([
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a clinical assistant that determines if historical conversation context is needed."),
-                    evaluation_msg
-                ])
-                
-                needs_cross_session_history = "YES" in response.content.upper()
-                state.needs_cross_session_search = needs_cross_session_history
-                
-                print(f"[cross_session_eval] Cross-session history needed: {needs_cross_session_history} for query: '{state.user_prompt[:50]}...'")
-                
-            except Exception as e:
-                print(f"[cross_session_eval] Error evaluating cross-session history need: {e}")
-                state.needs_cross_session_search = False
-            
-            return state
 
         @streaming_step("search_cross_session_history")
         async def search_cross_session_history(state: FlowState) -> FlowState:
@@ -992,16 +984,10 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 print(f"[intelligent_retrieve_chunks] Starting retrieval for patient_id: {state.patient_id}")
                 print(f"[intelligent_retrieve_chunks] User prompt: '{state.user_prompt[:100]}...'")
                 
-                if not state.patient_ctx:
-                    print("[intelligent_retrieve_chunks] No patient context available - returning empty chunks")
-                    state.retrieved_chunks = []
-                    state.chunk_analysis = {"method": "none", "reason": "No patient context available"}
-                    return state
-
                 # 1) Chunking via ChunkingOrchestrator (policy-driven)
                 patient_id_str = str(state.patient_id) if state.patient_id else ""
                 print(f"[intelligent_retrieve_chunks] Creating chunking orchestrator for patient: {patient_id_str}")
-                
+
                 tokenizer = WhitespaceTokenizer()
                 redactor = SimplePhiRedactor()
                 orchestrator = ChunkingOrchestrator(
@@ -1010,10 +996,15 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     strategy_registry=CHUNK_STRATEGY_REGISTRY,
                     policies=CHUNK_POLICY_PRESETS,
                 )
-                
-                print("[intelligent_retrieve_chunks] Chunking patient context...")
-                produced = orchestrator.chunk_patient(state.patient_ctx, CHUNK_POLICY_PRESETS)
-                print(f"[intelligent_retrieve_chunks] Patient context chunking produced {len(produced)} chunks")
+
+                # Chunk patient context if available
+                produced = []
+                if state.patient_ctx:
+                    print("[intelligent_retrieve_chunks] Chunking patient context...")
+                    produced = orchestrator.chunk_patient(state.patient_ctx, CHUNK_POLICY_PRESETS)
+                    print(f"[intelligent_retrieve_chunks] Patient context chunking produced {len(produced)} chunks")
+                else:
+                    print("[intelligent_retrieve_chunks] No patient context available - proceeding with PDF-only mode")
                 
                 # Also chunk journal entries if available
                 journal_chunks = []
@@ -1021,10 +1012,17 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     print(f"[intelligent_retrieve_chunks] Chunking {len(state.journal_entries)} journal entries...")
                     journal_chunks = await self._chunk_journal_entries(state.journal_entries, orchestrator, patient_id_str)
                     print(f"[intelligent_retrieve_chunks] Journal entries chunking produced {len(journal_chunks)} chunks")
-                
+
+                # Also chunk PDF documents if available
+                pdf_chunks = []
+                if state.uploaded_pdfs:
+                    print(f"[intelligent_retrieve_chunks] Chunking {len(state.uploaded_pdfs)} PDF documents...")
+                    pdf_chunks = await self._chunk_pdf_documents(state.uploaded_pdfs, orchestrator, patient_id_str)
+                    print(f"[intelligent_retrieve_chunks] PDF documents chunking produced {len(pdf_chunks)} chunks")
+
                 # Combine all chunks
-                all_chunks = produced + journal_chunks
-                print(f"[intelligent_retrieve_chunks] Total chunks produced: {len(all_chunks)} (patient: {len(produced)}, journal: {len(journal_chunks)})")
+                all_chunks = produced + journal_chunks + pdf_chunks
+                print(f"[intelligent_retrieve_chunks] Total chunks produced: {len(all_chunks)} (patient: {len(produced)}, journal: {len(journal_chunks)}, pdf: {len(pdf_chunks)})")
                 
                 # Log chunk details
                 for i, chunk in enumerate(all_chunks):
@@ -1040,9 +1038,15 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 } for c in all_chunks]
                 
                 if not chunks:
-                    print("[intelligent_retrieve_chunks] No chunks produced - using fallback to full patient context")
-                    state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
-                    state.chunk_analysis = {"method": "fallback", "reason": "No chunks from context"}
+                    print("[intelligent_retrieve_chunks] No chunks produced")
+                    if state.patient_ctx:
+                        print("[intelligent_retrieve_chunks] Using fallback to full patient context")
+                        state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
+                        state.chunk_analysis = {"method": "fallback", "reason": "No chunks from patient context"}
+                    else:
+                        print("[intelligent_retrieve_chunks] No patient context or PDF content available")
+                        state.retrieved_chunks = []
+                        state.chunk_analysis = {"method": "none", "reason": "No content available for chunking"}
                     return state
 
                 # 2) Embed chunks
@@ -2348,9 +2352,9 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_node("classify_query_intent", classify_query_intent)
         _builder.add_node("store_user_message", store_user_message)
         _builder.add_node("load_current_session_history", load_current_session_history)
-        _builder.add_node("evaluate_cross_session_history_need", evaluate_cross_session_history_need)
         _builder.add_node("search_cross_session_history", search_cross_session_history)
         _builder.add_node("fetch_patient", fetch_patient)
+        _builder.add_node("fetch_pdfs", fetch_pdfs)
         _builder.add_node("store_patient_chunks", store_patient_chunks)
         _builder.add_node("intelligent_retrieve_chunks", intelligent_retrieve_chunks)
         # SBAR parallel retrieval nodes
@@ -2394,18 +2398,31 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
             has_patient,
             {
                 True: "fetch_patient",                   # Patient ID provided -> fetch patient details
-                False: "evaluate_cross_session_history_need"  # No patient ID -> skip patient fetch
+                False: "fetch_pdfs"  # No patient ID -> fetch general PDFs, then continue
             }
         )
 
         # PATIENT PROCESSING PATH (only when patient_id exists)
-        # Route based on SBAR flow vs regular flow
+        # Always fetch PDFs after fetching patient data
+        _builder.add_edge("fetch_patient", "fetch_pdfs")
+
+        # Route after fetching PDFs - different paths for patient vs general mode
+        def route_after_pdfs(state: FlowState) -> str:
+            if has_patient(state):
+                # Patient mode: proceed with patient flow
+                if is_sbar_flow(state):
+                    return "intelligent_retrieve_chunks"
+                else:
+                    return "intelligent_retrieve_chunks"
+            else:
+                # General mode: proceed directly to chunk retrieval
+                return "intelligent_retrieve_chunks"
+
         _builder.add_conditional_edges(
-            "fetch_patient",
-            is_sbar_flow,
+            "fetch_pdfs",
+            route_after_pdfs,
             {
-                True: "intelligent_retrieve_chunks",  # SBAR flow needs chunks too
-                False: "intelligent_retrieve_chunks"  # Regular flow
+                "intelligent_retrieve_chunks": "intelligent_retrieve_chunks"
             }
         )
 
@@ -2610,6 +2627,82 @@ Content:
         
         print(f"[_chunk_journal_entries] Created {len(chunks)} chunks from {len(journal_entries)} journal entries")
         
+        return chunks
+
+    async def _chunk_pdf_documents(self, pdf_documents: List[PDFDocument], orchestrator: ChunkingOrchestrator, patient_id_str: Optional[str]) -> List[Chunk]:
+        """Chunk PDF documents using the narrative strategy."""
+        from optimed.core.domain import Record
+        from optimed.adapters.chunking.strategies.narrative_v1 import NarrativeV1
+        from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
+        from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
+        from optimed.core.services.hash_utils import stable_hash
+
+        if not pdf_documents:
+            return []
+
+        # Create records from PDF documents
+        records = []
+
+        for pdf in pdf_documents:
+            if not pdf.extracted_text:
+                continue
+
+            # Create a comprehensive text representation of the PDF document
+            metadata_text = ""
+            if pdf.metadata.title:
+                metadata_text += f"Title: {pdf.metadata.title}\n"
+            if pdf.metadata.author:
+                metadata_text += f"Author: {pdf.metadata.author}\n"
+            if pdf.metadata.subject:
+                metadata_text += f"Subject: {pdf.metadata.subject}\n"
+
+            pdf_text = f"""
+PDF Document: {pdf.get_display_name()}
+Filename: {pdf.filename}
+{metadata_text}
+Uploaded by User: {pdf.user_id}
+Upload Date: {pdf.uploaded_at.strftime('%Y-%m-%d %H:%M')}
+{f"Patient ID: {pdf.patient_id}" if pdf.patient_id else "General Document (No Patient Association)"}
+
+Content:
+{pdf.extracted_text}
+"""
+
+            # Use appropriate patient reference
+            if pdf.patient_id:
+                pseudo_patient = stable_hash({"pid": pdf.patient_id}, namespace="patient")
+            else:
+                pseudo_patient = stable_hash({"uid": pdf.user_id}, namespace="user")
+
+            record = Record(
+                patient_ref=pseudo_patient,
+                encounter_ref=None,
+                resource_type="pdf_document",
+                resource_id=pdf.document_id,
+                text=pdf_text
+            )
+            records.append(record)
+
+        if not records:
+            return []
+
+        # Apply redaction and chunking
+        tokenizer = WhitespaceTokenizer()
+        redactor = SimplePhiRedactor()
+        strategy = NarrativeV1()
+        policy = CHUNK_POLICY_PRESETS.get("narrative")
+
+        redacted_records = []
+        for record in records:
+            redacted_text = redactor.redact(record.text or "")
+            redacted_record = record.model_copy(update={"text": redacted_text})
+            redacted_records.append(redacted_record)
+
+        # Apply chunking strategy
+        chunks = strategy.apply(redacted_records, policy, tokenizer)
+
+        print(f"[_chunk_pdf_documents] Created {len(chunks)} chunks from {len(pdf_documents)} PDF documents")
+
         return chunks
 
     # =========================

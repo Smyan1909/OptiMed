@@ -2,8 +2,8 @@
 
 import { useState, useEffect, FormEvent, useRef } from "react";
 import { useUser } from '@/contexts/UserContext';
-import { Download, Image as ImageIcon, ExternalLink } from 'lucide-react';
-import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse } from '@/lib/api';
+import { Download, Image as ImageIcon, ExternalLink, Paperclip, FileText, X } from 'lucide-react';
+import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse, uploadPDFDocument, listPDFDocuments, deletePDFDocument, PDFDocument } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
 import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
@@ -705,6 +705,12 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   const [infoRetrievalMode, setInfoRetrievalMode] = useState("post_meet");
   const [defaultPrompt, setDefaultPrompt] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // PDF upload state
+  const [uploadedPDFs, setUploadedPDFs] = useState<PDFDocument[]>([]);
+  const [isUploadingPDF, setIsUploadingPDF] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Check if info mode selection is enabled
   const isInfoModeEnabled = process.env.NEXT_PUBLIC_INFO_MODE === 'false';
@@ -792,6 +798,19 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
 
   // Use propSessionId if provided, otherwise use generated sessionId
   const currentSessionId = propSessionId || sessionId;
+
+  // Load PDF documents for the current session context
+  const loadPDFs = async () => {
+    try {
+      // PDFs are now session-based, so we get PDFs for the current session
+      // The patientId parameter filters to patient-specific PDFs when a patient is selected
+      const pdfList = await listPDFDocuments(patientId);
+      setUploadedPDFs(pdfList.documents || []);
+      console.log(`[ChatBox] Loaded ${pdfList.documents?.length || 0} PDFs for session (patient: ${patientId || 'general'})`);
+    } catch (error) {
+      console.error('Failed to load PDFs:', error);
+    }
+  };
 
   // Load chat history on component mount or session change
   useEffect(() => {
@@ -973,6 +992,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     // Only load if we have a patient ID for diagnosis mode or if it's general chat
     if ((mode === 'diagnose' && patientId) || mode === 'chat') {
       loadHistory();
+      loadPDFs();
     }
   }, [currentSessionId, patientId, mode]);
 
@@ -1180,6 +1200,70 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   useAutosizeTextArea(textAreaRef, input);
 
+  // PDF upload handlers
+  const handlePDFUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.type !== 'application/pdf') {
+      setUploadError('Please select a PDF file');
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) { // 10MB limit
+      setUploadError('File size must be less than 10MB');
+      return;
+    }
+
+    setIsUploadingPDF(true);
+    setUploadError(null);
+
+    try {
+      const uploadResponse = await uploadPDFDocument(file, patientId);
+      if (uploadResponse.success) {
+        await loadPDFs(); // Refresh the PDF list
+        setMessages(prev => [
+          ...prev,
+          {
+            sender: 'system',
+            text: `PDF document "${file.name}" uploaded successfully and processed. You can now ask questions about its content. Note: PDF is stored temporarily for this session only.`,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ]);
+      }
+    } catch (error: any) {
+      console.error('PDF upload error:', error);
+      setUploadError(error.message || 'Failed to upload PDF');
+    } finally {
+      setIsUploadingPDF(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleDeletePDF = async (documentId: string, filename: string) => {
+    try {
+      await deletePDFDocument(documentId);
+      setUploadedPDFs(prev => prev.filter(pdf => pdf.document_id !== documentId));
+      setMessages(prev => [
+        ...prev,
+        {
+          sender: 'system',
+          text: `PDF document "${filename}" has been removed.`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+    } catch (error: any) {
+      console.error('PDF delete error:', error);
+      setUploadError(error.message || 'Failed to delete PDF');
+    }
+  };
+
+  const triggerFileUpload = () => {
+    fileInputRef.current?.click();
+  };
+
   const markdownComponents = {
     // Links
     a: ({ href, children }: any) => (
@@ -1377,6 +1461,54 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
       {/* Absolutely positioned, centered input bar within the chat pane */}
       <div className="absolute bottom-0 left-0 right-0 px-4 z-20 pointer-events-none flex justify-center">
         <div className="w-full max-w-4xl border border-gray-300 bg-white/80 backdrop-blur-md shadow-xl rounded-2xl pointer-events-auto">
+          {/* PDF Upload Section */}
+          {uploadedPDFs.length > 0 && (
+            <div className="px-4 pt-3 border-b border-gray-200">
+              <div className="text-xs font-medium text-gray-600 mb-2">Uploaded Documents:</div>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {uploadedPDFs.map((pdf) => (
+                  <div key={pdf.document_id} className="flex items-center gap-1 px-2 py-1 bg-blue-50 border border-blue-200 rounded-lg text-xs">
+                    <FileText className="h-3 w-3 text-blue-600" />
+                    <span className="text-blue-800 font-medium truncate max-w-[120px]">{pdf.filename}</span>
+                    <span className={`px-1 rounded text-[10px] font-medium ${
+                      pdf.status === 'READY' ? 'bg-green-100 text-green-700' :
+                      pdf.status === 'PROCESSING' ? 'bg-yellow-100 text-yellow-700' :
+                      pdf.status === 'ERROR' ? 'bg-red-100 text-red-700' :
+                      'bg-gray-100 text-gray-700'
+                    }`}>
+                      {pdf.status.toLowerCase()}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeletePDF(pdf.document_id, pdf.filename)}
+                      className="ml-1 p-0.5 text-red-500 hover:text-red-700 transition-colors"
+                      title="Remove document"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Upload Error Display */}
+          {uploadError && (
+            <div className="px-4 pt-2">
+              <div className="flex items-center gap-2 px-2 py-1 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+                <X className="h-3 w-3" />
+                <span>{uploadError}</span>
+                <button
+                  type="button"
+                  onClick={() => setUploadError(null)}
+                  className="ml-auto text-red-500 hover:text-red-700"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={sendMessage} className="flex gap-3 p-4">
             <textarea
               ref={textAreaRef}
@@ -1397,6 +1529,22 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
               }}
             />
             <div className="flex flex-col gap-2 shrink-0">
+              {/* PDF Upload Button */}
+              <button
+                type="button"
+                onClick={triggerFileUpload}
+                disabled={isStreaming || isUploadingPDF}
+                className="px-3 py-2 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                title="Upload PDF document"
+              >
+                {isUploadingPDF ? (
+                  <div className="animate-spin h-4 w-4 border-2 border-gray-600 border-t-transparent rounded-full" />
+                ) : (
+                  <Paperclip className="h-4 w-4" />
+                )}
+                <span className="text-xs hidden sm:inline">PDF</span>
+              </button>
+
               <button
                 type="submit"
                 disabled={!input.trim() || isStreaming}
@@ -1419,6 +1567,15 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
               )}
             </div>
           </form>
+
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,application/pdf"
+            onChange={handlePDFUpload}
+            className="hidden"
+          />
         </div>
       </div>
 
