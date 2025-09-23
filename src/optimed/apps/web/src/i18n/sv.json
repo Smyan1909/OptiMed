@@ -733,9 +733,25 @@
     "Inpatient stay": "Slutenvård",
     "Outpatient visit": "Öppenvårdsbesök"
   },
+  "sbar": {
+    "sbarSummary": "SBAR-sammanfattning",
+    "healthcareModel": "Kommunikationsmodell för vården",
+    "situation": "Situation",
+    "background": "Bakgrund",
+    "assessment": "Bedömning",
+    "recommendation": "Rekommendation",
+    "situationDescription": "Patientens aktuella status och omedelbara problem",
+    "backgroundDescription": "Relevant patienthistoria och kontext",
+    "assessmentDescription": "Klinisk analys och professionell bedömning",
+    "recommendationDescription": "Föreslagna åtgärder och nästa steg",
+    "aiReasoning": "AI-resonemang",
+    "reasoningSteps": "Resonemangssteg",
+    "detailedReasoning": "Detaljerat resonemang",
+    "sbarDescription": "<strong>SBAR</strong> (Situation, Bakgrund, Bedömning, Rekommendation) är ett strukturerat kommunikationsramverk som används inom vården för att säkerställa tydlig och omfattande informationsutbyte. Denna sammanfattning ger utbildningsinformation och bör inte ersätta professionell medicinsk bedömning."
+  },
   "back" : {
     "toPatients": "Tillbaka till patientsida"
-  } 
+  }
 }
 
 

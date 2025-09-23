@@ -398,12 +398,12 @@ async def get_user_fhir_repository(user_ctx: dict = Depends(get_user_context)) -
                 provider_type="smart_fhir"
             )
             if user_repo:
-                print(f"[API] ✅ Using SMART FHIR repository for user {current_user.username}")
+                print(f"[API] SUCCESS: Using SMART FHIR repository for user {current_user.username}")
                 return user_repo
             else:
-                print(f"[DEBUG] ❌ create_fhir_repository returned None for user {current_user.username}")
+                print(f"[DEBUG] ERROR: create_fhir_repository returned None for user {current_user.username}")
         except Exception as e:
-            print(f"[API] ❌ Failed to create SMART FHIR repo for user {current_user.username}: {e}")
+            print(f"[API] ERROR: Failed to create SMART FHIR repo for user {current_user.username}: {e}")
     else:
         print("[DEBUG] No current user found, using default repository")
     

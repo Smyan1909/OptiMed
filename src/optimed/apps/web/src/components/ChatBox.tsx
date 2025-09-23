@@ -9,6 +9,7 @@ import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
 import { ReasoningViewer } from "./ReasoningViewer";
 import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCards";
+import { SBARSummaryCards } from "./SBARSummaryCards";
 import { useLayoutEffect } from "react";
 import ModeSelector from "./ModeSelector";
 import { useTranslations, useLocale } from 'next-intl';
@@ -52,6 +53,13 @@ interface DifferentialDiagnosis {
   supporting_evidence: string[];
 }
 
+interface SBARResults {
+  situation?: string;
+  background?: string;
+  assessment?: string;
+  recommendation?: string;
+}
+
 interface Message {
   sender: "user" | "system";
   text: string;
@@ -61,6 +69,7 @@ interface Message {
   reasoningSteps?: string[];
   reasoning?: string;
   differentialDiagnoses?: DifferentialDiagnosis[];
+  sbarResults?: SBARResults;
 }
 
 interface ChatBoxProps {
@@ -874,7 +883,61 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                 type: typeof msg.differential_diagnoses
               });
             }
-            
+
+            // Handle SBAR results (both old format and new JSON cards format)
+            if (msg.sbar_results && typeof msg.sbar_results === 'object') {
+              console.log(`📋 Processing SBAR results for message ${index}:`, msg.sbar_results);
+              formattedMessage.sbarResults = {
+                situation: msg.sbar_results.situation || undefined,
+                background: msg.sbar_results.background || undefined,
+                assessment: msg.sbar_results.assessment || undefined,
+                recommendation: msg.sbar_results.recommendation || undefined
+              };
+            } else {
+              // Check if the main content is a JSON SBAR cards response
+              console.log(`🔍 Checking message ${index} text for SBAR JSON:`, msg.text?.substring(0, 100));
+              try {
+                // Trim the text and check if it looks like JSON
+                const trimmedText = msg.text?.trim();
+                if (trimmedText && trimmedText.startsWith('{') && trimmedText.endsWith('}')) {
+                  const parsedContent = JSON.parse(trimmedText);
+                  console.log(`🧪 Parsed JSON for message ${index}:`, parsedContent);
+
+                  if (parsedContent.type === 'sbar_cards' && parsedContent.components) {
+                    console.log(`📋 Processing JSON SBAR cards for message ${index}:`, parsedContent);
+                    formattedMessage.sbarResults = {
+                      situation: parsedContent.components.situation?.content || undefined,
+                      background: parsedContent.components.background?.content || undefined,
+                      assessment: parsedContent.components.assessment?.content || undefined,
+                      recommendation: parsedContent.components.recommendation?.content || undefined
+                    };
+                    // Clear the content so we don't display the raw JSON
+                    formattedMessage.text = '';
+                    console.log(`✅ Successfully processed SBAR cards, cleared text`);
+                  } else {
+                    console.log(`📄 JSON parsed but not SBAR cards format for message ${index}:`, {
+                      type: parsedContent.type,
+                      hasComponents: !!parsedContent.components
+                    });
+                  }
+                } else {
+                  console.log(`📄 Message ${index} text doesn't look like JSON:`, {
+                    startsWith: trimmedText?.startsWith('{'),
+                    endsWith: trimmedText?.endsWith('}'),
+                    length: trimmedText?.length
+                  });
+                }
+              } catch (e) {
+                // Not JSON or not SBAR cards format, continue normally
+                console.log(`📄 Failed to parse JSON for message ${index}:`, {
+                  hasSBAR: !!msg.sbar_results,
+                  type: typeof msg.sbar_results,
+                  parseError: e.message,
+                  textPreview: msg.text?.substring(0, 50)
+                });
+              }
+            }
+
             return formattedMessage;
           });
           
@@ -958,14 +1021,42 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
           hasReasoning: !!reasoningText
         });
         
-        const newMessage = { 
-          sender: "system" as const, 
-          text: finalResponse,
+        // Check if finalResponse is SBAR JSON format and parse it
+        let messageText = finalResponse;
+        let sbarResults = undefined;
+
+        try {
+          const trimmedText = finalResponse?.trim();
+          if (trimmedText && trimmedText.startsWith('{') && trimmedText.endsWith('}')) {
+            const parsedContent = JSON.parse(trimmedText);
+            console.log(`🧪 Parsed streaming JSON:`, parsedContent);
+
+            if (parsedContent.type === 'sbar_cards' && parsedContent.components) {
+              console.log(`📋 Processing streaming SBAR cards:`, parsedContent);
+              sbarResults = {
+                situation: parsedContent.components.situation?.content || undefined,
+                background: parsedContent.components.background?.content || undefined,
+                assessment: parsedContent.components.assessment?.content || undefined,
+                recommendation: parsedContent.components.recommendation?.content || undefined
+              };
+              // Clear the text so we don't display the raw JSON
+              messageText = '';
+              console.log(`✅ Successfully processed streaming SBAR cards, cleared text`);
+            }
+          }
+        } catch (e) {
+          console.log(`📄 Failed to parse streaming JSON:`, e.message);
+        }
+
+        const newMessage = {
+          sender: "system" as const,
+          text: messageText,
           timestamp: new Date().toLocaleTimeString(),
           reasoning: reasoningText,
           reasoningSteps: reasoning,
           generatedImage: formattedGeneratedImage,
-          differentialDiagnoses: streamDifferentialDiagnoses
+          differentialDiagnoses: streamDifferentialDiagnoses,
+          sbarResults: sbarResults
         };
         
         console.log('🔥 Creating new message with data:', {
@@ -1208,7 +1299,18 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                   </div>
                 )}
 
-                {msg.sender === 'system' && msg.reasoningSteps && (msg.reasoning || msg.reasoningSteps?.length > 0) && (
+                {msg.sender === 'system' && msg.sbarResults && (
+                  <div className="mt-3">
+                    <SBARSummaryCards
+                      sbarResults={msg.sbarResults}
+                      isLoading={msg.loading}
+                      reasoning={msg.reasoning}
+                      reasoningSteps={msg.reasoningSteps}
+                    />
+                  </div>
+                )}
+
+                {msg.sender === 'system' && msg.reasoningSteps && (msg.reasoning || msg.reasoningSteps?.length > 0) && !msg.sbarResults && (
                   <div className="mt-3">
                     <ReasoningViewer
                       reasoning={msg.reasoning || ''}

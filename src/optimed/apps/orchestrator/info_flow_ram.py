@@ -7,7 +7,7 @@ import json
 import time
 import math
 import asyncio
-from typing import List, Any, Union, AsyncGenerator, Optional
+from typing import List, Any, Union, AsyncGenerator, Optional, Dict
 from datetime import datetime
 
 from langgraph.graph import StateGraph, END
@@ -149,6 +149,24 @@ class FlowState(BaseModel):
     retrieval_retry_attempts: int = 0
     refined_queries: List[str] = Field(default_factory=list)
     needs_refinement: bool = False
+
+    # SBAR flow fields
+    query_classification: Optional[str] = None
+    is_sbar_flow: bool = False
+
+    # Separate fields for each SBAR component to avoid concurrent updates
+    sbar_situation_chunks: Optional[List[str]] = None
+    sbar_background_chunks: Optional[List[str]] = None
+    sbar_assessment_chunks: Optional[List[str]] = None
+    sbar_recommendation_chunks: Optional[List[str]] = None
+
+    sbar_situation_result: Optional[str] = None
+    sbar_background_result: Optional[str] = None
+    sbar_assessment_result: Optional[str] = None
+    sbar_recommendation_result: Optional[str] = None
+
+    # SBAR retrieval cache for performance optimization
+    sbar_retrieval_cache: Optional[Dict[str, Any]] = None
     
 
 
@@ -1101,7 +1119,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
                 # 6) Dynamic n via multilingual classifier (fallback to heuristic)
                 rerank_only_scores = [s for _, s in reranked]
-                n_dynamic = self._compute_dynamic_n(state.user_prompt, rerank_only_scores)
+                n_dynamic = self._compute_dynamic_n(state.user_prompt, rerank_only_scores, state.query_classification)
                 print(f"[intelligent_retrieve_chunks] dynamic n: {n_dynamic}")
                 
 
@@ -1220,6 +1238,407 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
             return state
 
+        async def _intelligent_retrieve_chunks_with_focus(state: FlowState, focus: str, focus_queries: List[str]) -> List[str]:
+            """Helper function for focused retrieval with specific query variants."""
+            try:
+                print(f"[{focus}_retrieve] Starting focused retrieval for: {focus}")
+
+                if not state.patient_ctx:
+                    print(f"[{focus}_retrieve] No patient context available")
+                    return []
+
+                # Use existing chunking logic
+                patient_id_str = str(state.patient_id) if state.patient_id else ""
+                tokenizer = WhitespaceTokenizer()
+                redactor = SimplePhiRedactor()
+                orchestrator = ChunkingOrchestrator(
+                    tokenizer=tokenizer,
+                    redactor=redactor,
+                    strategy_registry=CHUNK_STRATEGY_REGISTRY,
+                    policies=CHUNK_POLICY_PRESETS,
+                )
+
+                produced = orchestrator.chunk_patient(state.patient_ctx, CHUNK_POLICY_PRESETS)
+
+                # Also chunk journal entries if available
+                journal_chunks = []
+                if state.journal_entries:
+                    journal_chunks = await self._chunk_journal_entries(state.journal_entries, orchestrator, patient_id_str)
+
+                all_chunks = produced + journal_chunks
+
+                if not all_chunks:
+                    print(f"[{focus}_retrieve] No chunks produced")
+                    return []
+
+                # Convert chunks to text
+                chunks = [chunk.text for chunk in all_chunks]
+
+                # Parallel embedding processing
+                print(f"[{focus}_retrieve] Starting parallel embedding...")
+                embedding_tasks = [
+                    self._embed_many(chunks, mode="passage"),
+                    self._embed_many([state.user_prompt] + focus_queries, mode="query")
+                ]
+
+                # Execute embeddings in parallel
+                embedding_results = await asyncio.gather(*embedding_tasks)
+                chunk_vecs, query_vecs = embedding_results
+                all_queries = [state.user_prompt] + focus_queries
+
+                print(f"[{focus}_retrieve] Parallel embedding complete: {len(chunk_vecs)} chunks, {len(query_vecs)} queries")
+
+                # Bi-encoder scoring
+                import numpy as np
+                query_stack = np.stack(query_vecs, axis=0)
+                chunk_stack = np.stack(chunk_vecs, axis=0)
+                scores_matrix = np.dot(query_stack, chunk_stack.T)
+                max_scores = np.max(scores_matrix, axis=0)
+
+                # Get top chunks based on pre-stored classification
+                n_class = 15  # Default for focused retrieval
+                if state.query_classification:
+                    if state.query_classification == "lookup":
+                        n_class = 8
+                    elif state.query_classification == "temporal-trend":
+                        n_class = 20
+                    elif state.query_classification == "comparative":
+                        n_class = 25
+                    elif state.query_classification in ["reasoning", "summary"]:
+                        n_class = 30
+                    elif state.query_classification == "guideline":
+                        n_class = 12
+
+                # Select top N chunks
+                sorted_indices = np.argsort(max_scores)[::-1]
+                top_indices = sorted_indices[:min(n_class, len(chunks))]
+
+                # Parallel cross-encoder reranking for focused queries
+                print(f"[{focus}_retrieve] Starting parallel cross-encoder reranking...")
+
+                if len(all_queries) > 1 and len(top_indices) > 4:
+                    # Use parallel processing for multiple queries and sufficient chunks
+                    async def process_query_batch(query_batch, chunk_indices):
+                        """Process a batch of queries against chunks in parallel."""
+                        batch_pairs = []
+                        for query in query_batch:
+                            for idx in chunk_indices:
+                                batch_pairs.append((query, chunks[idx]))
+
+                        if batch_pairs:
+                            return await self._cross_encoder.compute_similarity_scores(batch_pairs)
+                        return []
+
+                    # Optimized batching strategy based on cross-encoder capacity
+                    # Aim for optimal batch sizes: 8-16 pairs per batch for best GPU utilization
+                    OPTIMAL_BATCH_SIZE = 12
+                    MAX_PARALLEL_BATCHES = 6
+
+                    # Calculate optimal batch sizes
+                    total_pairs = len(all_queries) * len(top_indices)
+                    if total_pairs <= OPTIMAL_BATCH_SIZE:
+                        # Small dataset: process all at once
+                        parallel_tasks = [process_query_batch(all_queries, top_indices)]
+                    else:
+                        # Large dataset: create optimized batches
+                        # Split chunks more granularly for better parallelization
+                        chunk_size = max(3, len(top_indices) // MAX_PARALLEL_BATCHES)
+                        chunk_batches = [top_indices[i:i+chunk_size] for i in range(0, len(top_indices), chunk_size)]
+
+                        # Create tasks with balanced load
+                        parallel_tasks = []
+                        for c_batch in chunk_batches:
+                            if len(c_batch) * len(all_queries) <= OPTIMAL_BATCH_SIZE:
+                                # Batch small enough for all queries
+                                parallel_tasks.append(process_query_batch(all_queries, c_batch))
+                            else:
+                                # Split queries for this chunk batch
+                                query_size = max(1, OPTIMAL_BATCH_SIZE // len(c_batch))
+                                query_batches = [all_queries[i:i+query_size] for i in range(0, len(all_queries), query_size)]
+                                for q_batch in query_batches:
+                                    parallel_tasks.append(process_query_batch(q_batch, c_batch))
+
+                    # Limit total parallel tasks to prevent overload
+                    if len(parallel_tasks) > MAX_PARALLEL_BATCHES:
+                        print(f"[{focus}_retrieve] Limiting {len(parallel_tasks)} tasks to {MAX_PARALLEL_BATCHES} for stability")
+                        parallel_tasks = parallel_tasks[:MAX_PARALLEL_BATCHES]
+
+                    # Execute all batches in parallel with timeout
+                    print(f"[{focus}_retrieve] Executing {len(parallel_tasks)} parallel cross-encoder batches")
+                    try:
+                        # Set reasonable timeout based on batch count (5 seconds per batch max)
+                        timeout = min(30, max(10, len(parallel_tasks) * 5))
+                        batch_results = await asyncio.wait_for(
+                            asyncio.gather(*parallel_tasks, return_exceptions=True),
+                            timeout=timeout
+                        )
+                    except asyncio.TimeoutError:
+                        print(f"[{focus}_retrieve] Cross-encoder timeout after {timeout}s, using bi-encoder fallback")
+                        final_indices = top_indices[:min(12, len(top_indices))]
+                    except Exception as e:
+                        print(f"[{focus}_retrieve] Cross-encoder parallel execution failed: {e}, using bi-encoder fallback")
+                        final_indices = top_indices[:min(12, len(top_indices))]
+                    else:
+                        # Optimized result processing with error handling
+                        cross_scores = []
+                        successful_batches = 0
+
+                        for i, result in enumerate(batch_results):
+                            if isinstance(result, Exception):
+                                print(f"[{focus}_retrieve] Cross-encoder batch {i} failed: {result}")
+                                continue
+
+                            if result:  # Non-empty result
+                                cross_scores.extend(result)
+                                successful_batches += 1
+
+                        print(f"[{focus}_retrieve] Cross-encoder completed: {successful_batches}/{len(batch_results)} batches successful")
+
+                        # Check if we have enough results for meaningful reranking
+                        expected_scores = len(all_queries) * len(top_indices)
+                        if cross_scores and len(cross_scores) >= expected_scores * 0.7:  # Allow 30% failure tolerance
+                            try:
+                                # Pad missing scores with average if needed
+                                if len(cross_scores) < expected_scores:
+                                    avg_score = sum(cross_scores) / len(cross_scores) if cross_scores else 0.5
+                                    cross_scores.extend([avg_score] * (expected_scores - len(cross_scores)))
+
+                                # Fast numpy processing
+                                cross_scores_matrix = np.array(cross_scores[:expected_scores]).reshape(len(all_queries), len(top_indices))
+                                max_cross_scores = np.max(cross_scores_matrix, axis=0)
+
+                                # Re-rank based on cross-encoder scores
+                                cross_sorted = np.argsort(max_cross_scores)[::-1]
+                                final_indices = [top_indices[i] for i in cross_sorted[:min(12, len(top_indices))]]
+
+                                print(f"[{focus}_retrieve] Cross-encoder reranking successful with {len(cross_scores)} scores")
+                            except Exception as e:
+                                print(f"[{focus}_retrieve] Cross-encoder result processing failed: {e}, using bi-encoder fallback")
+                                final_indices = top_indices[:min(12, len(top_indices))]
+                        else:
+                            print(f"[{focus}_retrieve] Insufficient cross-encoder results ({len(cross_scores)}/{expected_scores}), using bi-encoder fallback")
+                            final_indices = top_indices[:min(12, len(top_indices))]
+                else:
+                    # Fall back to sequential processing for small datasets
+                    rerank_pairs = []
+                    for query in all_queries:
+                        for idx in top_indices:
+                            rerank_pairs.append((query, chunks[idx]))
+
+                    if rerank_pairs:
+                        cross_scores = await self._cross_encoder.compute_similarity_scores(rerank_pairs)
+                        cross_scores_matrix = np.array(cross_scores).reshape(len(all_queries), len(top_indices))
+                        max_cross_scores = np.max(cross_scores_matrix, axis=0)
+                        cross_sorted = np.argsort(max_cross_scores)[::-1]
+                        final_indices = [top_indices[i] for i in cross_sorted[:min(12, len(top_indices))]]
+                    else:
+                        final_indices = top_indices[:min(12, len(top_indices))]
+
+                print(f"[{focus}_retrieve] Cross-encoder reranking complete")
+
+                # Return selected chunks
+                selected_chunks = [chunks[i] for i in final_indices]
+                print(f"[{focus}_retrieve] Selected {len(selected_chunks)} chunks for {focus}")
+
+                return selected_chunks
+
+            except Exception as e:
+                print(f"[{focus}_retrieve] Error in focused retrieval: {e}")
+                return []
+
+        async def _fast_sbar_retrieve(state: FlowState, focus: str, queries: List[str]) -> List[str]:
+            """Fast SBAR retrieval using only bi-encoder similarity (no cross-encoder)."""
+            try:
+                print(f"[_fast_sbar_retrieve] {focus} - Starting fast bi-encoder retrieval")
+
+                # Get chunks from state - try multiple sources
+                chunks = []
+                if state.retrieved_chunks:
+                    chunks = state.retrieved_chunks[:50]  # Use cached chunks if available
+                    print(f"[_fast_sbar_retrieve] {focus} - Using {len(chunks)} cached chunks")
+                else:
+                    # Fall back to doing quick retrieval ourselves
+                    print(f"[_fast_sbar_retrieve] {focus} - No cached chunks, doing quick retrieval")
+                    if state.patient_ctx and state.journal_entries:
+                        # Quick retrieval from journal entries (most relevant for SBAR)
+                        for entry in state.journal_entries[:15]:  # Limit for speed
+                            if hasattr(entry, 'content') and entry.content:
+                                chunks.append(entry.content)
+                            elif hasattr(entry, 'text') and entry.text:
+                                chunks.append(entry.text)
+
+                    if not chunks:
+                        print(f"[_fast_sbar_retrieve] {focus} - No chunks available")
+                        return []
+
+                # Simple keyword-based retrieval for maximum speed
+                scored_chunks = []
+                for i, chunk in enumerate(chunks):
+                    score = 0.0
+                    chunk_lower = chunk.lower()
+
+                    for query in queries:
+                        query_words = query.lower().split()
+                        for word in query_words:
+                            if word in chunk_lower:
+                                score += 1.0
+
+                    if score > 0:
+                        scored_chunks.append((score, chunk))
+
+                # Sort by score and return top chunks
+                scored_chunks.sort(key=lambda x: x[0], reverse=True)
+                result_chunks = [chunk for _, chunk in scored_chunks[:15]]
+
+                print(f"[_fast_sbar_retrieve] {focus} - Retrieved {len(result_chunks)} chunks using keyword matching")
+                return result_chunks
+
+            except Exception as e:
+                print(f"[_fast_sbar_retrieve] {focus} - Error: {e}")
+                return []
+
+        async def _generate_sbar_queries(state: FlowState, sbar_component: str, focus_instruction: str) -> List[str]:
+            """Generate focused queries for each SBAR component based on the user's original query."""
+            try:
+                print(f"[_generate_sbar_queries] Generating {sbar_component} queries from: '{state.user_prompt[:100]}...'")
+
+                # Define SBAR component specific instructions
+                component_prompts = {
+                    "situation": "Current symptoms, vital signs, immediate presentation, active problems",
+                    "background": "Medical history, past conditions, medications, family history, social history",
+                    "assessment": "Clinical findings, lab results, diagnostic tests, professional observations",
+                    "recommendation": "Treatment plans, medications, follow-up care, interventions, next steps"
+                }
+
+                prompt = f"""
+Based on this user query: "{state.user_prompt}"
+
+Generate 3 specific search queries focused on the {sbar_component.upper()} component of SBAR medical reporting.
+
+{sbar_component.upper()} should focus on: {component_prompts.get(sbar_component, focus_instruction)}
+
+Return only the 3 queries, one per line, without numbers or bullets.
+Keep queries concise and medical terminology appropriate.
+"""
+
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist generating focused search queries for SBAR components."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                response = await self._llm.chat(messages)
+
+                # Parse response into individual queries
+                queries = []
+                for line in response.content.strip().split('\n'):
+                    query = line.strip()
+                    if query and not query.startswith(('1.', '2.', '3.', '-', '•')):
+                        queries.append(query)
+
+                if len(queries) < 3:
+                    # Fallback queries if LLM didn't generate enough
+                    fallback = {
+                        "situation": ["current symptoms", "vital signs", "active problems"],
+                        "background": ["medical history", "past conditions", "medications"],
+                        "assessment": ["clinical findings", "test results", "observations"],
+                        "recommendation": ["treatment plans", "medications", "follow-up care"]
+                    }
+                    queries.extend(fallback.get(sbar_component, ["medical information"])[:3-len(queries)])
+
+                print(f"[_generate_sbar_queries] Generated {len(queries)} {sbar_component} queries: {queries}")
+                return queries[:3]  # Limit to 3 queries
+
+            except Exception as e:
+                print(f"[_generate_sbar_queries] Error generating {sbar_component} queries: {e}")
+                # Return fallback queries
+                fallback_queries = {
+                    "situation": ["current symptoms complaints", "vital signs measurements", "active problems"],
+                    "background": ["medical history", "past conditions", "medications"],
+                    "assessment": ["clinical findings", "test results", "observations"],
+                    "recommendation": ["treatment plans", "medications", "follow-up"]
+                }
+                return fallback_queries.get(sbar_component, ["medical information"])
+
+        @streaming_step("retrieve_situation_chunks")
+        async def retrieve_situation_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on current patient situation (fast SBAR version)."""
+            try:
+                print("[retrieve_situation_chunks] Generating situation-focused queries from user prompt")
+
+                # Generate SBAR-focused queries from the original user query
+                situation_queries = await _generate_sbar_queries(state, "situation",
+                    "Generate queries focused on the current patient situation and immediate concerns")
+
+                chunks = await _fast_sbar_retrieve(state, "situation", situation_queries)
+                state.sbar_situation_chunks = chunks[:10]  # Limit for speed
+                print(f"[retrieve_situation_chunks] Retrieved {len(state.sbar_situation_chunks)} chunks")
+
+            except Exception as e:
+                print(f"[retrieve_situation_chunks] Error: {e}")
+                state.sbar_situation_chunks = []
+
+            return state
+
+        @streaming_step("retrieve_background_chunks")
+        async def retrieve_background_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on patient background and history (fast SBAR version)."""
+            try:
+                print("[retrieve_background_chunks] Generating background-focused queries from user prompt")
+
+                # Generate SBAR-focused queries from the original user query
+                background_queries = await _generate_sbar_queries(state, "background",
+                    "Generate queries focused on patient medical history and background")
+
+                chunks = await _fast_sbar_retrieve(state, "background", background_queries)
+                state.sbar_background_chunks = chunks[:10]  # Limit for speed
+                print(f"[retrieve_background_chunks] Retrieved {len(state.sbar_background_chunks)} chunks")
+
+            except Exception as e:
+                print(f"[retrieve_background_chunks] Error: {e}")
+                state.sbar_background_chunks = []
+
+            return state
+
+        @streaming_step("retrieve_assessment_chunks")
+        async def retrieve_assessment_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on clinical assessment data (fast SBAR version)."""
+            try:
+                print("[retrieve_assessment_chunks] Generating assessment-focused queries from user prompt")
+
+                # Generate SBAR-focused queries from the original user query
+                assessment_queries = await _generate_sbar_queries(state, "assessment",
+                    "Generate queries focused on clinical assessment and diagnostic findings")
+
+                chunks = await _fast_sbar_retrieve(state, "assessment", assessment_queries)
+                state.sbar_assessment_chunks = chunks[:10]  # Limit for speed
+                print(f"[retrieve_assessment_chunks] Retrieved {len(state.sbar_assessment_chunks)} chunks")
+
+            except Exception as e:
+                print(f"[retrieve_assessment_chunks] Error: {e}")
+                state.sbar_assessment_chunks = []
+
+            return state
+
+        @streaming_step("retrieve_recommendation_chunks")
+        async def retrieve_recommendation_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on treatment and recommendations (fast SBAR version)."""
+            try:
+                print("[retrieve_recommendation_chunks] Generating recommendation-focused queries from user prompt")
+
+                # Generate SBAR-focused queries from the original user query
+                recommendation_queries = await _generate_sbar_queries(state, "recommendation",
+                    "Generate queries focused on treatment recommendations and next steps")
+
+                chunks = await _fast_sbar_retrieve(state, "recommendation", recommendation_queries)
+                state.sbar_recommendation_chunks = chunks[:10]  # Limit for speed
+                print(f"[retrieve_recommendation_chunks] Retrieved {len(state.sbar_recommendation_chunks)} chunks")
+
+            except Exception as e:
+                print(f"[retrieve_recommendation_chunks] Error: {e}")
+                state.sbar_recommendation_chunks = []
+
+            return state
+
         async def store_user_message(state: FlowState) -> FlowState:
             """Store the user message in ephemeral memory for current session only."""
             if not state.user_prompt:
@@ -1263,6 +1682,315 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 import traceback
                 traceback.print_exc()
             
+            return state
+
+        @streaming_step("generate_sbar_situation")
+        async def generate_sbar_situation(state: FlowState) -> FlowState:
+            """Generate SBAR Situation component."""
+            try:
+                print("[generate_sbar_situation] Starting SBAR Situation generation")
+
+                # Get situation-specific chunks
+                situation_chunks = state.sbar_situation_chunks or []
+
+                # Build prompt for situation
+                situation_prompt = f"""
+                Generate a CONCISE SBAR Situation summary (max 3-4 bullet points).
+
+                USER QUERY: {state.user_prompt}
+
+                FOCUS: Current patient status and immediate concerns.
+
+                Include ONLY:
+                • Chief complaint and onset
+                • Key vital signs (if abnormal)
+                • Current symptoms (most important)
+                • Immediate concerns requiring attention
+
+                Format: Short bullet points. No headers. Be clinical and direct.
+                """
+
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR situation summaries. Focus on current patient status and immediate concerns."),
+                    ChatMessage(role=ChatRole.USER, content=situation_prompt)
+                ]
+
+                # Add chunks if available
+                if situation_chunks:
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(situation_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                # Generate response
+                response = await self._llm.chat(messages)
+
+                # Store in SBAR results
+                state.sbar_situation_result = response.content.strip()
+
+                print(f"[generate_sbar_situation] Generated situation summary: {len(response.content)} chars")
+
+            except Exception as e:
+                print(f"[generate_sbar_situation] Error: {e}")
+                state.sbar_situation_result = f"Error generating situation summary: {str(e)}"
+
+            return state
+
+        @streaming_step("generate_sbar_background")
+        async def generate_sbar_background(state: FlowState) -> FlowState:
+            """Generate SBAR Background component."""
+            try:
+                print("[generate_sbar_background] Starting SBAR Background generation")
+
+                # Get background-specific chunks
+                background_chunks = state.sbar_background_chunks or []
+
+                # Build prompt for background
+                background_prompt = f"""
+                Generate a CONCISE SBAR Background summary (max 3-4 bullet points).
+
+                USER QUERY: {state.user_prompt}
+
+                FOCUS: Essential patient history relevant to current situation.
+
+                Include ONLY:
+                • Relevant medical history/comorbidities
+                • Current medications (key ones)
+                • Known allergies
+                • Recent significant events/treatments
+
+                Format: Short bullet points. No headers. Be clinical and direct.
+                """
+
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR background summaries. Focus on relevant patient history and context."),
+                    ChatMessage(role=ChatRole.USER, content=background_prompt)
+                ]
+
+                # Add chunks if available
+                if background_chunks:
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(background_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                # Generate response
+                response = await self._llm.chat(messages)
+
+                # Store in SBAR results
+                state.sbar_background_result = response.content.strip()
+
+                print(f"[generate_sbar_background] Generated background summary: {len(response.content)} chars")
+
+            except Exception as e:
+                print(f"[generate_sbar_background] Error: {e}")
+                state.sbar_background_result = f"Error generating background summary: {str(e)}"
+
+            return state
+
+        @streaming_step("generate_sbar_assessment")
+        async def generate_sbar_assessment(state: FlowState) -> FlowState:
+            """Generate SBAR Assessment component."""
+            try:
+                print("[generate_sbar_assessment] Starting SBAR Assessment generation")
+
+                # Get assessment-specific chunks
+                assessment_chunks = state.sbar_assessment_chunks or []
+
+                # Build prompt for assessment
+                assessment_prompt = f"""
+                Generate a CONCISE SBAR Assessment summary (max 3-4 bullet points).
+
+                USER QUERY: {state.user_prompt}
+
+                FOCUS: Clinical interpretation and professional judgment.
+
+                Include ONLY:
+                • Primary clinical impression/working diagnosis
+                • Key clinical findings analysis
+                • Risk level/severity assessment
+                • Most likely differential diagnoses (if relevant)
+
+                Format: Short bullet points. No headers. Be clinical and direct.
+                """
+
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR assessment summaries. Focus on clinical analysis and professional interpretation."),
+                    ChatMessage(role=ChatRole.USER, content=assessment_prompt)
+                ]
+
+                # Add chunks if available
+                if assessment_chunks:
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(assessment_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                # Generate response
+                response = await self._llm.chat(messages)
+
+                # Store in SBAR results
+                state.sbar_assessment_result = response.content.strip()
+
+                print(f"[generate_sbar_assessment] Generated assessment summary: {len(response.content)} chars")
+
+            except Exception as e:
+                print(f"[generate_sbar_assessment] Error: {e}")
+                state.sbar_assessment_result = f"Error generating assessment summary: {str(e)}"
+
+            return state
+
+        @streaming_step("generate_sbar_recommendation")
+        async def generate_sbar_recommendation(state: FlowState) -> FlowState:
+            """Generate SBAR Recommendation component."""
+            try:
+                print("[generate_sbar_recommendation] Starting SBAR Recommendation generation")
+
+                # Get recommendation-specific chunks
+                recommendation_chunks = state.sbar_recommendation_chunks or []
+
+                # Build prompt for recommendation
+                recommendation_prompt = f"""
+                Generate a CONCISE SBAR Recommendation summary (max 3-4 bullet points).
+
+                USER QUERY: {state.user_prompt}
+
+                FOCUS: Essential next steps and actions.
+
+                Include ONLY:
+                • Most urgent intervention needed
+                • Key diagnostic tests/monitoring
+                • Important follow-up care
+                • Specialist consultation (if needed)
+
+                Format: Short bullet points. No headers. Be clinical and direct.
+                IMPORTANT: Educational information only. Refer complex decisions to healthcare providers.
+                """
+
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR recommendation summaries. Focus on actionable next steps while providing education, not specific treatments."),
+                    ChatMessage(role=ChatRole.USER, content=recommendation_prompt)
+                ]
+
+                # Add chunks if available
+                if recommendation_chunks:
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(recommendation_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                # Generate response
+                response = await self._llm.chat(messages)
+
+                # Store in SBAR results
+                state.sbar_recommendation_result = response.content.strip()
+
+                print(f"[generate_sbar_recommendation] Generated recommendation summary: {len(response.content)} chars")
+
+            except Exception as e:
+                print(f"[generate_sbar_recommendation] Error: {e}")
+                state.sbar_recommendation_result = f"Error generating recommendation summary: {str(e)}"
+
+            return state
+
+        @streaming_step("merge_sbar_results")
+        async def merge_sbar_results(state: FlowState) -> FlowState:
+            """Merge parallel SBAR results and prepare final response."""
+            try:
+                print("[merge_sbar_results] All parallel SBAR components completed, merging results")
+
+                # Collect results from separate fields
+                sbar_results = {
+                    "situation": state.sbar_situation_result,
+                    "background": state.sbar_background_result,
+                    "assessment": state.sbar_assessment_result,
+                    "recommendation": state.sbar_recommendation_result
+                }
+
+                completed_components = [comp for comp, result in sbar_results.items() if result]
+                print(f"[merge_sbar_results] Available components: {completed_components}")
+
+                if not completed_components:
+                    print("[merge_sbar_results] No SBAR results available")
+                    state.llm_response = ChatMessage(
+                        role=ChatRole.ASSISTANT,
+                        content="Error: No SBAR results were generated"
+                    )
+                    return state
+
+                # Create structured SBAR response for frontend cards
+                import json
+
+                structured_sbar = {
+                    "type": "sbar_cards",
+                    "components": {
+                        "situation": {
+                            "title": "Situation",
+                            "content": sbar_results.get("situation", "Content generation failed").strip() or "Content generation failed",
+                            "icon": "info-circle",
+                            "color": "blue"
+                        },
+                        "background": {
+                            "title": "Background",
+                            "content": sbar_results.get("background", "Content generation failed").strip() or "Content generation failed",
+                            "icon": "history",
+                            "color": "green"
+                        },
+                        "assessment": {
+                            "title": "Assessment",
+                            "content": sbar_results.get("assessment", "Content generation failed").strip() or "Content generation failed",
+                            "icon": "stethoscope",
+                            "color": "orange"
+                        },
+                        "recommendation": {
+                            "title": "Recommendation",
+                            "content": sbar_results.get("recommendation", "Content generation failed").strip() or "Content generation failed",
+                            "icon": "lightbulb",
+                            "color": "purple"
+                        }
+                    }
+                }
+
+                # Create JSON response for frontend
+                json_response = json.dumps(structured_sbar, indent=2)
+
+                # Create response message with structured data
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content=json_response
+                )
+
+                print(f"[merge_sbar_results] Created structured SBAR response: {len(json_response)} chars")
+
+            except Exception as e:
+                print(f"[merge_sbar_results] Error merging SBAR results: {e}")
+                # Fallback response
+                import json
+                fallback_sbar = {
+                    "type": "sbar_cards",
+                    "error": str(e),
+                    "components": {
+                        "situation": {"title": "Situation", "content": "Error generating content", "icon": "info-circle", "color": "blue"},
+                        "background": {"title": "Background", "content": "Error generating content", "icon": "history", "color": "green"},
+                        "assessment": {"title": "Assessment", "content": "Error generating content", "icon": "stethoscope", "color": "orange"},
+                        "recommendation": {"title": "Recommendation", "content": "Error generating content", "icon": "lightbulb", "color": "purple"}
+                    }
+                }
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content=json.dumps(fallback_sbar, indent=2)
+                )
+
+            return state
+
+        @streaming_step("sbar_parallel_dispatcher")
+        async def sbar_parallel_dispatcher(state: FlowState) -> FlowState:
+            """Dispatcher node that triggers parallel SBAR processing."""
+            try:
+                print("[sbar_parallel_dispatcher] Initiating parallel SBAR processing")
+
+                # Initialize SBAR component fields if needed
+                print("[sbar_parallel_dispatcher] SBAR fields initialized for parallel processing")
+
+                # This node doesn't do much - it's just a dispatcher
+                # The actual parallel work will happen in the parallel tasks
+                print("[sbar_parallel_dispatcher] Dispatcher ready for parallel execution")
+
+            except Exception as e:
+                print(f"[sbar_parallel_dispatcher] Error in dispatcher: {e}")
+
             return state
 
         @streaming_step("provide_information")
@@ -1559,9 +2287,47 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 
             return state
 
+        @streaming_step("classify_query_intent")
+        async def classify_query_intent(state: FlowState) -> FlowState:
+            """Classify the query to determine if it should use SBAR flow or regular flow."""
+            try:
+                print(f"[classify_query_intent] Classifying query: '{state.user_prompt[:100]}...'")
+
+                # Use the existing classifier
+                classifier = self._zero_shot_classifier
+                label = classifier.classify_query(state.user_prompt, [
+                    "lookup", "temporal-trend", "comparative", "reasoning", "summary", "guideline"
+                ])
+
+                print(f"[classify_query_intent] Query classified as: {label}")
+
+                # Store classification in state
+                state.query_classification = label
+
+                # Determine if this should use SBAR flow (big picture queries)
+                sbar_query_types = ["summary", "comparative", "reasoning", "temporal-trend", "guideline"]
+                state.is_sbar_flow = label in sbar_query_types
+
+                print(f"[classify_query_intent] SBAR flow: {state.is_sbar_flow}")
+
+                # Initialize SBAR cache if using SBAR flow
+                if state.is_sbar_flow:
+                    state.sbar_retrieval_cache = {}
+
+            except Exception as e:
+                print(f"[classify_query_intent] Classification failed: {e}, defaulting to regular flow")
+                state.query_classification = "lookup"  # Default fallback
+                state.is_sbar_flow = False
+
+            return state
+
         def requires_full_processing(state: FlowState) -> bool:
             """Conditional function to determine if full processing is needed."""
             return getattr(state, 'requires_full_processing', True)
+
+        def is_sbar_flow(state: FlowState) -> bool:
+            """Conditional function to determine if SBAR flow should be used."""
+            return getattr(state, 'is_sbar_flow', False)
 
         def check_patient_exists(state: FlowState) -> FlowState:
             """Check if patient_id is provided in the state."""
@@ -1579,13 +2345,26 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_node("check_patient", check_patient_exists)  # New decision node
         _builder.add_node("load_user_context", load_user_context)  # Load user context if available
         _builder.add_node("evaluate_query_complexity", evaluate_query_complexity)
+        _builder.add_node("classify_query_intent", classify_query_intent)
         _builder.add_node("store_user_message", store_user_message)
         _builder.add_node("load_current_session_history", load_current_session_history)
-        _builder.add_node("evaluate_cross_session_history_need", evaluate_cross_session_history_need)  
+        _builder.add_node("evaluate_cross_session_history_need", evaluate_cross_session_history_need)
         _builder.add_node("search_cross_session_history", search_cross_session_history)
         _builder.add_node("fetch_patient", fetch_patient)
         _builder.add_node("store_patient_chunks", store_patient_chunks)
         _builder.add_node("intelligent_retrieve_chunks", intelligent_retrieve_chunks)
+        # SBAR parallel retrieval nodes
+        _builder.add_node("retrieve_situation_chunks", retrieve_situation_chunks)
+        _builder.add_node("retrieve_background_chunks", retrieve_background_chunks)
+        _builder.add_node("retrieve_assessment_chunks", retrieve_assessment_chunks)
+        _builder.add_node("retrieve_recommendation_chunks", retrieve_recommendation_chunks)
+        # SBAR parallel generation nodes
+        _builder.add_node("generate_sbar_situation", generate_sbar_situation)
+        _builder.add_node("generate_sbar_background", generate_sbar_background)
+        _builder.add_node("generate_sbar_assessment", generate_sbar_assessment)
+        _builder.add_node("generate_sbar_recommendation", generate_sbar_recommendation)
+        _builder.add_node("merge_sbar_results", merge_sbar_results)
+        _builder.add_node("sbar_parallel_dispatcher", sbar_parallel_dispatcher)
         _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
         _builder.add_node("perform_web_search", perform_web_search)
         _builder.add_node("provide_information", provide_information)
@@ -1593,9 +2372,10 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 
         _builder.set_entry_point("load_user_context")  # Start with loading user context
 
-        # Add edges for user context loading
+        # Add edges for user context loading and classification
         _builder.add_edge("load_user_context", "evaluate_query_complexity")
-        _builder.add_edge("evaluate_query_complexity", "store_user_message")
+        _builder.add_edge("evaluate_query_complexity", "classify_query_intent")
+        _builder.add_edge("classify_query_intent", "store_user_message")
         _builder.add_edge("store_user_message", "load_current_session_history")
         # Branch based on query complexity
         _builder.add_conditional_edges(
@@ -1619,15 +2399,50 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         )
 
         # PATIENT PROCESSING PATH (only when patient_id exists)
-        _builder.add_edge("fetch_patient", "intelligent_retrieve_chunks")
+        # Route based on SBAR flow vs regular flow
+        _builder.add_conditional_edges(
+            "fetch_patient",
+            is_sbar_flow,
+            {
+                True: "intelligent_retrieve_chunks",  # SBAR flow needs chunks too
+                False: "intelligent_retrieve_chunks"  # Regular flow
+            }
+        )
 
-        
+        # Sequential SBAR execution to avoid concurrent state updates
+        _builder.add_edge("sbar_parallel_dispatcher", "retrieve_situation_chunks")
+
+        # Sequential retrieval and generation chain
+        _builder.add_edge("retrieve_situation_chunks", "generate_sbar_situation")
+        _builder.add_edge("generate_sbar_situation", "retrieve_background_chunks")
+        _builder.add_edge("retrieve_background_chunks", "generate_sbar_background")
+        _builder.add_edge("generate_sbar_background", "retrieve_assessment_chunks")
+        _builder.add_edge("retrieve_assessment_chunks", "generate_sbar_assessment")
+        _builder.add_edge("generate_sbar_assessment", "retrieve_recommendation_chunks")
+        _builder.add_edge("retrieve_recommendation_chunks", "generate_sbar_recommendation")
+
+        # Final generation node goes to merge
+        _builder.add_edge("generate_sbar_recommendation", "merge_sbar_results")
+
+        # SBAR merge to store response (skip web search for now in SBAR flow)
+        _builder.add_edge("merge_sbar_results", "store_assistant_response")
+
+        # Route after chunk retrieval: check if SBAR flow
+        def route_after_chunks(state):
+            if hasattr(state, 'is_sbar_flow') and state.is_sbar_flow:
+                return "sbar_parallel_dispatcher"
+            elif hasattr(state, 'needs_refinement') and state.needs_refinement:
+                return "intelligent_retrieve_chunks"
+            else:
+                return "evaluate_web_search_need"
+
         _builder.add_conditional_edges(
             "intelligent_retrieve_chunks",
-            needs_refinement,
+            route_after_chunks,
             {
-                True: "intelligent_retrieve_chunks",
-                False: "evaluate_web_search_need",
+                "sbar_parallel_dispatcher": "sbar_parallel_dispatcher",
+                "intelligent_retrieve_chunks": "intelligent_retrieve_chunks",
+                "evaluate_web_search_need": "evaluate_web_search_need"
             }
         )
         _builder.add_conditional_edges(
@@ -1864,7 +2679,7 @@ Content:
 
     # removed: LLM-based cross scoring and gating replaced with sentence-transformers adapters
 
-    def _compute_dynamic_n(self, query: str, scores: list[float]) -> int:
+    def _compute_dynamic_n(self, query: str, scores: list[float], pre_classification: str = None) -> int:
         if not scores:
             return N_MIN
         diffs = [scores[i] - scores[i+1] for i in range(len(scores)-1)]
@@ -1878,14 +2693,18 @@ Content:
         n_thresh = sum(1 for s in scores if s >= mean_score)
         if n_thresh == 0:
             n_thresh = 10**9
-        
-        # Use MultilingualZeroShotClassifier instead of heuristic classification
+
+        # Use pre-stored classification if available, otherwise classify
         try:
-            classifier = self._zero_shot_classifier
-            label = classifier.classify_query(query, [
-                "lookup", "temporal-trend", "comparative", "reasoning", "summary", "guideline"
-            ])
-            print(f"[_compute_dynamic_n] Query classified as: {label}")
+            if pre_classification:
+                label = pre_classification
+                print(f"[_compute_dynamic_n] Using pre-stored classification: {label}")
+            else:
+                classifier = self._zero_shot_classifier
+                label = classifier.classify_query(query, [
+                    "lookup", "temporal-trend", "comparative", "reasoning", "summary", "guideline"
+                ])
+                print(f"[_compute_dynamic_n] Query classified as: {label}")
 
             if label == "lookup":
                 n_class = min(8, N_MAX)        # ~5–8

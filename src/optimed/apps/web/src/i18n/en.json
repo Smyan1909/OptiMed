@@ -440,6 +440,14 @@
     "supportingEvidence": "Supporting Evidence:",
     "disclaimer": "These differential diagnoses are AI-generated suggestions based on available clinical data. Always correlate with clinical judgment and additional testing as appropriate."
   },
+  "sbar": {
+    "title": "SBAR Summary",
+    "situation": "Situation",
+    "background": "Background",
+    "assessment": "Assessment",
+    "recommendation": "Recommendation",
+    "disclaimer": "SBAR (Situation, Background, Assessment, Recommendation) is a structured communication framework used in healthcare to ensure clear and comprehensive information exchange. This summary provides educational information and should not replace professional medical judgment."
+  },
   "sessions": {
     "headers": {
       "chatSessions": "Chat Sessions",
@@ -733,9 +741,25 @@
     "Inpatient stay": "Inpatient stay",
     "Outpatient visit": "Outpatient visit"
   },
+  "sbar": {
+    "sbarSummary": "SBAR Summary",
+    "healthcareModel": "Healthcare Communication Model",
+    "situation": "Situation",
+    "background": "Background",
+    "assessment": "Assessment",
+    "recommendation": "Recommendation",
+    "situationDescription": "Current patient status and immediate concerns",
+    "backgroundDescription": "Relevant patient history and context",
+    "assessmentDescription": "Clinical analysis and professional interpretation",
+    "recommendationDescription": "Suggested actions and next steps",
+    "aiReasoning": "AI Reasoning",
+    "reasoningSteps": "Reasoning Steps",
+    "detailedReasoning": "Detailed Reasoning",
+    "sbarDescription": "<strong>SBAR</strong> (Situation, Background, Assessment, Recommendation) is a structured communication framework used in healthcare to ensure clear and comprehensive information exchange. This summary provides educational information and should not replace professional medical judgment."
+  },
   "back" : {
     "toPatients": "Back to Patients"
-  } 
+  }
 }
 
 
