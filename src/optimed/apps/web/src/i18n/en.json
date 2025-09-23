@@ -755,7 +755,8 @@
     "aiReasoning": "AI Reasoning",
     "reasoningSteps": "Reasoning Steps",
     "detailedReasoning": "Detailed Reasoning",
-    "sbarDescription": "<strong>SBAR</strong> (Situation, Background, Assessment, Recommendation) is a structured communication framework used in healthcare to ensure clear and comprehensive information exchange. This summary provides educational information and should not replace professional medical judgment."
+    "sbarDescription": "<strong>SBAR</strong> (Situation, Background, Assessment, Recommendation) is a structured communication framework used in healthcare to ensure clear and comprehensive information exchange. This summary provides educational information and should not replace professional medical judgment.",
+    "sbarDescriptionText": "(Situation, Background, Assessment, Recommendation) is a structured communication framework used in healthcare to ensure clear and comprehensive information exchange. This summary provides educational information and should not replace professional medical judgment."
   },
   "back" : {
     "toPatients": "Back to Patients"

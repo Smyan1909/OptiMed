@@ -747,7 +747,8 @@
     "aiReasoning": "AI-resonemang",
     "reasoningSteps": "Resonemangssteg",
     "detailedReasoning": "Detaljerat resonemang",
-    "sbarDescription": "<strong>SBAR</strong> (Situation, Bakgrund, Bedömning, Rekommendation) är ett strukturerat kommunikationsramverk som används inom vården för att säkerställa tydlig och omfattande informationsutbyte. Denna sammanfattning ger utbildningsinformation och bör inte ersätta professionell medicinsk bedömning."
+    "sbarDescription": "<strong>SBAR</strong> (Situation, Bakgrund, Bedömning, Rekommendation) är ett strukturerat kommunikationsramverk som används inom vården för att säkerställa tydlig och omfattande informationsutbyte. Denna sammanfattning ger utbildningsinformation och bör inte ersätta professionell medicinsk bedömning.",
+    "sbarDescriptionText": "(Situation, Bakgrund, Bedömning, Rekommendation) är ett strukturerat kommunikationsramverk som används inom vården för att säkerställa tydlig och omfattande informationsutbyte. Denna sammanfattning ger utbildningsinformation och bör inte ersätta professionell medicinsk bedömning."
   },
   "back" : {
     "toPatients": "Tillbaka till patientsida"

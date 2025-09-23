@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Activity, Clock, Stethoscope, Lightbulb } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { useLookup } from '@/hooks/useLookup';
+import { LookupPanel } from '@/components/LookupPanel';
 
 // Function to format numbers to 2 decimal places in text
 const formatNumbersInText = (text: string): string => {
@@ -26,6 +28,8 @@ interface SBARSummaryCardsProps {
   isLoading?: boolean;
   reasoning?: string;
   reasoningSteps?: string[];
+  patientId?: string;
+  sessionId?: string | null;
 }
 
 // Custom markdown components for SBAR cards
@@ -96,6 +100,42 @@ const SBARMarkdownComponents = {
   ),
 };
 
+// Component for SBAR card content with lookup functionality
+const SBARCardContent: React.FC<{
+  content: string;
+  lookup: any;
+  isLoading: boolean;
+  component: string;
+  patientId?: string;
+  sessionId?: string | null;
+}> = ({ content, lookup, isLoading, component, patientId, sessionId }) => {
+  return (
+    <div
+      ref={lookup.contentRef}
+      className="text-sm leading-relaxed flex-grow overflow-hidden p-2 select-text"
+      onTouchEnd={lookup.handleTouchEnd}
+      onMouseUp={lookup.handleMouseUp}
+      onKeyUp={lookup.handleKeyUp}
+    >
+      <ReactMarkdown
+        components={SBARMarkdownComponents}
+        remarkPlugins={[remarkGfm]}
+      >
+        {formatNumbersInText(content)}
+      </ReactMarkdown>
+      <lookup.LookupButton />
+      {lookup.showLookup && lookup.lookupTerm && (
+        <LookupPanel
+          term={lookup.lookupTerm}
+          onClose={lookup.closeLookup}
+          patientId={patientId}
+          sessionId={sessionId}
+        />
+      )}
+    </div>
+  );
+};
+
 const getSBARConfig = (component: keyof SBARResults, t: any) => {
   const configs = {
     situation: {
@@ -138,9 +178,24 @@ export const SBARSummaryCards: React.FC<SBARSummaryCardsProps> = ({
   sbarResults,
   isLoading = false,
   reasoning,
-  reasoningSteps
+  reasoningSteps,
+  patientId,
+  sessionId
 }) => {
   const t = useTranslations('sbar');
+
+  // Create separate lookup hooks for each card to avoid conflicts
+  const situationLookup = useLookup({ patientId, sessionId });
+  const backgroundLookup = useLookup({ patientId, sessionId });
+  const assessmentLookup = useLookup({ patientId, sessionId });
+  const recommendationLookup = useLookup({ patientId, sessionId });
+
+  const lookupMap = {
+    situation: situationLookup,
+    background: backgroundLookup,
+    assessment: assessmentLookup,
+    recommendation: recommendationLookup,
+  };
 
   if (!sbarResults || Object.keys(sbarResults).length === 0) {
     return null;
@@ -193,14 +248,14 @@ export const SBARSummaryCards: React.FC<SBARSummaryCardsProps> = ({
                     </div>
                   </div>
                 ) : hasContent ? (
-                  <div className="text-sm leading-relaxed flex-grow overflow-hidden p-2">
-                    <ReactMarkdown
-                      components={SBARMarkdownComponents}
-                      remarkPlugins={[remarkGfm]}
-                    >
-                      {formatNumbersInText(content)}
-                    </ReactMarkdown>
-                  </div>
+                  <SBARCardContent
+                    content={content}
+                    lookup={lookupMap[component]}
+                    isLoading={isLoading}
+                    component={component}
+                    patientId={patientId}
+                    sessionId={sessionId}
+                  />
                 ) : (
                   <div className="flex-grow flex items-center justify-center">
                     <div className="text-sm text-gray-400 italic">
@@ -250,7 +305,9 @@ export const SBARSummaryCards: React.FC<SBARSummaryCardsProps> = ({
       <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
         <p className="text-sm text-blue-700 flex items-start leading-relaxed">
           <Stethoscope className="h-4 w-4 inline mr-3 flex-shrink-0 mt-0.5" />
-          <span dangerouslySetInnerHTML={{ __html: t('sbarDescription') }} />
+          <span>
+            <strong>SBAR</strong> {t('sbarDescriptionText')}
+          </span>
         </p>
       </div>
     </div>

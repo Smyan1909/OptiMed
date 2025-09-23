@@ -1306,6 +1306,8 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                       isLoading={msg.loading}
                       reasoning={msg.reasoning}
                       reasoningSteps={msg.reasoningSteps}
+                      patientId={patientId}
+                      sessionId={sessionId}
                     />
                   </div>
                 )}
