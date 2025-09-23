@@ -204,6 +204,10 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         self._compiled_graph = self._build_graph()
         # Ephemeral per-session chat memory (RAM-only)
         self._session_memory: dict[str, list[dict[str, Any]]] = {}
+        # Session cleanup tracking
+        self._session_last_access: dict[str, float] = {}
+        self._cleanup_interval = 3600  # 1 hour in seconds
+        self._last_cleanup = time.time()
 
     async def _run_parallel_cross_encoder_operations(self, state: FlowState, chunks: list[dict[str, Any]], initial_indices: list[int], query_vecs: list[list[float]]) -> tuple[list[tuple[int, float]], list[int], list[float]]:
         """Run all cross-encoder operations in parallel for maximum efficiency.
@@ -268,6 +272,39 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         gate_scores = await cross.score_pairs_async(state.user_prompt, gate_passages)
         
         return reranked, selected_indices, list(gate_scores)
+
+    def _update_session_access(self, session_id: str) -> None:
+        """Update last access time for a session."""
+        if session_id:
+            self._session_last_access[session_id] = time.time()
+
+    async def _cleanup_expired_sessions(self) -> None:
+        """Clean up expired sessions to prevent memory leaks."""
+        current_time = time.time()
+
+        # Only run cleanup if enough time has passed
+        if current_time - self._last_cleanup < self._cleanup_interval:
+            return
+
+        expired_sessions = []
+        cutoff_time = current_time - (2 * self._cleanup_interval)  # 2 hours
+
+        for session_id, last_access in self._session_last_access.items():
+            if last_access < cutoff_time:
+                expired_sessions.append(session_id)
+
+        # Clean up expired sessions
+        for session_id in expired_sessions:
+            if session_id in self._session_memory:
+                del self._session_memory[session_id]
+            if session_id in self._session_last_access:
+                del self._session_last_access[session_id]
+            print(f"[cleanup] Removed expired session: {session_id}")
+
+        self._last_cleanup = current_time
+
+        if expired_sessions:
+            print(f"[cleanup] Cleaned up {len(expired_sessions)} expired sessions")
 
     def _build_graph(self) -> Any:
         """Build the LangGraph state graph for diagnosis."""
@@ -422,6 +459,10 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             """Always load current session chat history from in-memory session store (ephemeral)."""
             print(f"[load_current_session_history] Loading for patient_id={state.patient_id}, session_id={state.session_id}")
             try:
+                # Update session access time and cleanup if needed
+                self._update_session_access(state.session_id)
+                await self._cleanup_expired_sessions()
+
                 history = self._session_memory.get(state.session_id or "", []) if state.session_id else []
                 chat_messages: list[ChatMessage] = []
                 for item in history:
@@ -726,6 +767,8 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 
                 # Store encrypted message in session memory
                 if state.session_id:
+                    # Update session access time
+                    self._update_session_access(state.session_id)
                     self._session_memory.setdefault(state.session_id, [])
                     # Encrypt the entire message
                     encrypted_data = session_manager.encrypt_session_data(state.session_id, encrypted_message)
@@ -776,6 +819,8 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             
             try:
                 if state.session_id:
+                    # Update session access time
+                    self._update_session_access(state.session_id)
                     self._session_memory.setdefault(state.session_id, [])
                     self._session_memory[state.session_id].append({
                         "role": state.llm_response.role.value,
@@ -790,6 +835,110 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 traceback.print_exc()
             
             return state
+
+        async def retrieve_situation_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks relevant to SBAR Situation component."""
+            try:
+                print("[retrieve_situation_chunks] Starting situation chunk retrieval")
+
+                # Use the existing intelligent retrieval with situation-focused query
+                situation_query = f"Current situation, immediate presentation, chief complaint: {state.user_prompt}"
+
+                # Set focus for situation retrieval
+                state.retrieval_focus = "situation"
+                state.user_prompt = situation_query
+
+                # Use existing intelligent retrieval
+                state = await intelligent_retrieve_chunks(state)
+
+                # Store situation-specific chunks
+                state.situation_chunks = state.retrieved_chunks.copy() if state.retrieved_chunks else []
+
+                print(f"[retrieve_situation_chunks] Retrieved {len(state.situation_chunks)} situation chunks")
+                return state
+
+            except Exception as e:
+                print(f"[retrieve_situation_chunks] Error: {e}")
+                state.situation_chunks = []
+                return state
+
+        async def retrieve_background_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks relevant to SBAR Background component."""
+            try:
+                print("[retrieve_background_chunks] Starting background chunk retrieval")
+
+                # Use the existing intelligent retrieval with background-focused query
+                background_query = f"Medical history, relevant background, past medical history: {state.user_prompt}"
+
+                # Set focus for background retrieval
+                state.retrieval_focus = "background"
+                state.user_prompt = background_query
+
+                # Use existing intelligent retrieval
+                state = await intelligent_retrieve_chunks(state)
+
+                # Store background-specific chunks
+                state.background_chunks = state.retrieved_chunks.copy() if state.retrieved_chunks else []
+
+                print(f"[retrieve_background_chunks] Retrieved {len(state.background_chunks)} background chunks")
+                return state
+
+            except Exception as e:
+                print(f"[retrieve_background_chunks] Error: {e}")
+                state.background_chunks = []
+                return state
+
+        async def retrieve_assessment_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks relevant to SBAR Assessment component."""
+            try:
+                print("[retrieve_assessment_chunks] Starting assessment chunk retrieval")
+
+                # Use the existing intelligent retrieval with assessment-focused query
+                assessment_query = f"Clinical assessment, diagnosis, evaluation, analysis: {state.user_prompt}"
+
+                # Set focus for assessment retrieval
+                state.retrieval_focus = "assessment"
+                state.user_prompt = assessment_query
+
+                # Use existing intelligent retrieval
+                state = await intelligent_retrieve_chunks(state)
+
+                # Store assessment-specific chunks
+                state.assessment_chunks = state.retrieved_chunks.copy() if state.retrieved_chunks else []
+
+                print(f"[retrieve_assessment_chunks] Retrieved {len(state.assessment_chunks)} assessment chunks")
+                return state
+
+            except Exception as e:
+                print(f"[retrieve_assessment_chunks] Error: {e}")
+                state.assessment_chunks = []
+                return state
+
+        async def retrieve_recommendation_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks relevant to SBAR Recommendation component."""
+            try:
+                print("[retrieve_recommendation_chunks] Starting recommendation chunk retrieval")
+
+                # Use the existing intelligent retrieval with recommendation-focused query
+                recommendation_query = f"Treatment recommendations, management plan, next steps: {state.user_prompt}"
+
+                # Set focus for recommendation retrieval
+                state.retrieval_focus = "recommendation"
+                state.user_prompt = recommendation_query
+
+                # Use existing intelligent retrieval
+                state = await intelligent_retrieve_chunks(state)
+
+                # Store recommendation-specific chunks
+                state.recommendation_chunks = state.retrieved_chunks.copy() if state.retrieved_chunks else []
+
+                print(f"[retrieve_recommendation_chunks] Retrieved {len(state.recommendation_chunks)} recommendation chunks")
+                return state
+
+            except Exception as e:
+                print(f"[retrieve_recommendation_chunks] Error: {e}")
+                state.recommendation_chunks = []
+                return state
 
         @streaming_step("generate_sbar_situation")
         async def generate_sbar_situation(state: FlowState) -> FlowState:

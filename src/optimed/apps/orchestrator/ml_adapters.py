@@ -18,7 +18,8 @@ class MultilingualCrossEncoder:
         self._loaded = False
         self._model_name = model_name or "BAAI/bge-reranker-v2-m3"
         self._executor = ThreadPoolExecutor(max_workers=4)  # For parallel execution
-        
+        self._shutdown = False
+
         try:
             from sentence_transformers import CrossEncoder  # type: ignore
             print(f"[MultilingualCrossEncoder] Loading model: {self._model_name}")
@@ -105,10 +106,28 @@ class MultilingualCrossEncoder:
         print(f"[MultilingualCrossEncoder] Heuristic scores (sigmoid): {scores}")
         return scores
 
+    def shutdown(self) -> None:
+        """Shutdown the thread pool executor."""
+        if not self._shutdown and self._executor:
+            self._executor.shutdown(wait=True)
+            self._shutdown = True
+
+    def __del__(self) -> None:
+        """Ensure executor is properly shutdown when instance is garbage collected."""
+        self.shutdown()
+
     async def score_pairs_async(self, query: str, passages: List[str]) -> List[float]:
         """Async wrapper for score_pairs to enable parallel execution."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self._executor, self.score_pairs, query, passages)
+        try:
+            if self._shutdown:
+                # Fallback to synchronous execution
+                return self.score_pairs(query, passages)
+
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(self._executor, self.score_pairs, query, passages)
+        except Exception as e:
+            print(f"[MultilingualCrossEncoder] Async execution failed: {e}, falling back to sync")
+            return self.score_pairs(query, passages)
 
     async def score_multiple_batches_parallel(self, query: str, passage_batches: List[List[str]]) -> List[List[float]]:
         """Score multiple batches of passages in parallel.
