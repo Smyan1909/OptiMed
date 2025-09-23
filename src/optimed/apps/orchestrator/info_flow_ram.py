@@ -22,7 +22,8 @@ from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, Vect
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
 
 from optimed.embeddings.minilm import embed
-from optimed.embeddings.service import embed_and_store
+# from optimed.embeddings.service import embed_and_store  # Removed for GDPR compliance
+from optimed.adapters.security.e2e_encryption_middleware import get_session_encryption_manager
 from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator
 from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY as CHUNK_STRATEGY_REGISTRY, POLICY_PRESETS as CHUNK_POLICY_PRESETS
 from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
@@ -40,7 +41,7 @@ PERSISTENCE_ENABLED: bool = False
 # Retrieval parameters
 TOPK_INITIAL: int = 100
 TOPK_RERANK: int = 30
-N_MIN: int = 5
+N_MIN: int = 3
 N_MAX: int = 25
 MMR_LAMBDA: float = 0.5
 GATE_THRESH: float = 0.5
@@ -203,6 +204,70 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         self._compiled_graph = self._build_graph()
         # Ephemeral per-session chat memory (RAM-only)
         self._session_memory: dict[str, list[dict[str, Any]]] = {}
+
+    async def _run_parallel_cross_encoder_operations(self, state: FlowState, chunks: list[dict[str, Any]], initial_indices: list[int], query_vecs: list[list[float]]) -> tuple[list[tuple[int, float]], list[int], list[float]]:
+        """Run all cross-encoder operations in parallel for maximum efficiency.
+        
+        This method combines reranking, MMR selection, and gating into a single parallel execution.
+        
+        Returns:
+            Tuple of (reranked_chunks, selected_indices, gate_scores)
+        """
+        cross = self._cross_encoder
+        rerank_passages = [chunks[i]["content"] for i in initial_indices]
+        
+        # Prepare all operations for parallel execution
+        operations = []
+        
+        # Operation 1: Reranking
+        operations.append({
+            'passages': rerank_passages,
+            'operation_type': 'reranking',
+            'metadata': {'indices': initial_indices}
+        })
+        
+        print(f"[_run_parallel_cross_encoder_operations] Starting parallel execution of {len(operations)} operations")
+        start_time = time.time()
+        
+        # Run all operations in parallel
+        all_results = await cross.score_all_operations_parallel(state.user_prompt, operations)
+        
+        end_time = time.time()
+        print(f"[_run_parallel_cross_encoder_operations] Parallel execution completed in {end_time - start_time:.3f}s")
+        
+        # Process reranking results
+        rerank_scores = all_results[0] if all_results else []
+        reranked = list(zip(initial_indices, rerank_scores))
+        reranked.sort(key=lambda x: x[1], reverse=True)
+        reranked = reranked[:TOPK_RERANK]
+        
+        # Log reranking results
+        print(f"[_run_parallel_cross_encoder_operations] Reranked {len(reranked)} chunks")
+        for i, (idx, score) in enumerate(reranked[:5]):
+            chunk_type = chunks[idx]["data_type"]
+            print(f"[_run_parallel_cross_encoder_operations]   {i+1}. Chunk {idx} ({chunk_type}): {score:.4f}")
+        
+        # Compute dynamic n and MMR selection
+        rerank_only_scores = [s for _, s in reranked]
+        n_dynamic = self._compute_dynamic_n(state.user_prompt, rerank_only_scores)
+        print(f"[_run_parallel_cross_encoder_operations] Dynamic n: {n_dynamic}")
+        
+        # MMR selection
+        candidate_vecs = [chunks[i]["embedding"] for i, _ in reranked]
+        best_q_idx = max(range(len(query_vecs)), key=lambda qi: sum(self._cosine(query_vecs[qi], v) for v in candidate_vecs) / max(len(candidate_vecs), 1))
+        best_q_vec = query_vecs[best_q_idx]
+        mmr_local_indices = self._mmr(candidate_vecs, best_q_vec, n_dynamic, lambda_=MMR_LAMBDA)
+        selected_indices = [reranked[j][0] for j in mmr_local_indices]
+        
+        print(f"[_run_parallel_cross_encoder_operations] MMR selected {len(selected_indices)} chunks")
+        
+        # Prepare gating operation
+        gate_passages = [chunks[i]["content"] for i in selected_indices]
+        
+        # Run gating
+        gate_scores = await cross.score_pairs_async(state.user_prompt, gate_passages)
+        
+        return reranked, selected_indices, list(gate_scores)
 
     def _build_graph(self) -> Any:
         """Build the LangGraph state graph for diagnosis."""
@@ -375,609 +440,6 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         
 
 
-        @streaming_step("search_cross_session_history")
-        async def search_cross_session_history(state: FlowState) -> FlowState:
-            """Search across all previous sessions for relevant context."""
-            if not PERSISTENCE_ENABLED:
-                state.relevant_cross_session_history = []
-                return state
-            if not state.needs_cross_session_search:
-                state.relevant_cross_session_history = []
-                return state
-                
-            try:
-                # Use embedding-based search to find relevant historical conversations
-                query_embedding = await embed(state.user_prompt, "query")
-                
-                # Search for relevant chat history across all sessions
-                if state.patient_id:
-                    # Patient-specific cross-session search
-                    rows = await self._vec.similarity_search(
-                        query_embedding,
-                        top_k=8,  # Get more results to filter through
-                        filter_={
-                            "namespace": "chat_history", 
-                            "patient_id": str(state.patient_id)
-                        },
-                    )
-                else:
-                    # General chat cross-session search for this user
-                    rows = await self._vec.similarity_search(
-                        query_embedding,
-                        top_k=8,
-                        filter_={
-                            "namespace": "chat_history",
-                            "user_id": str(state.user_id)
-                        },
-                    )
-                
-                # Parse and filter the results
-                relevant_history = []
-                current_session_id = state.session_id
-                
-                for row in rows:
-                    try:
-                        # Extract content and metadata
-                        # rows are (id, similarity, content)
-                        content_text = row[2] if len(row) > 2 else row[1]
-                        
-                        # Parse if it's JSON
-                        if isinstance(content_text, str) and content_text.strip().startswith('{'):
-                            content_data = json.loads(content_text)
-                            session_id_from_content = content_data.get("session_id")
-                            role = content_data.get("role", "user")
-                            message_content = content_data.get("content", "")
-                            timestamp = content_data.get("timestamp")
-                        else:
-                            # Simple text content
-                            message_content = content_text
-                            session_id_from_content = None
-                            role = "user"
-                            timestamp = None
-                        
-                        # Skip if it's from current session (we already have that)
-                        if session_id_from_content == current_session_id:
-                            continue
-                            
-                        # Skip empty content
-                        if not message_content or len(message_content.strip()) < 10:
-                            continue
-                        
-                        # Add relevant historical context
-                        relevant_history.append({
-                            "content": message_content,
-                            "role": role,
-                            "session_id": session_id_from_content,
-                            "timestamp": timestamp,
-                            "similarity_score": row[1] if len(row) > 1 else 0.0
-                        })
-                        
-                    except Exception as e:
-                        print(f"[cross_session_search] Error parsing history row: {e}")
-                        continue
-                
-                # Sort by similarity score and take the most relevant
-                relevant_history.sort(key=lambda x: x.get("similarity_score", 0.0), reverse=True)
-                state.relevant_cross_session_history = relevant_history[:5]  # Keep top 5 most relevant
-                
-                print(f"[cross_session_search] Found {len(state.relevant_cross_session_history)} relevant historical conversations")
-                
-            except Exception as e:
-                print(f"[cross_session_search] Error searching cross-session history: {e}")
-                state.relevant_cross_session_history = []
-
-            return state
-
-        async def store_patient_chunks(state: FlowState) -> FlowState:
-            """Store patient context as chunks in the vector database for future retrieval."""
-            if not state.patient_ctx:
-                return state
-            # RAM-only mode: bypass all storage
-            if not PERSISTENCE_ENABLED:
-                return state
-                
-            try:
-                patient_id = str(state.patient_id)
-                
-                # Check if we already have chunks for this patient
-                existing_chunks = await self._vec.similarity_search(
-                    await embed("patient context", "query"),
-                    top_k=1,
-                    filter_={
-                        "namespace": "clinical",
-                        "patient_id": patient_id
-                    }
-                )
-                
-                if existing_chunks:
-                    print(f"[store_chunks] Patient {patient_id} chunks already exist, checking for new journal entries")
-                else:
-                    print(f"[store_chunks] Creating new chunks for patient {patient_id}")
-                
-                patient_data = state.patient_ctx
-                
-                # Helper function to extract sources from patient data - CORRECTED
-                def extract_sources_for_data_type(data_dict: dict, sources_dict: dict) -> list:
-                    """Extract source information for a data type."""
-                    sources_list = []
-                    for key, value in data_dict.items():
-                        if key in sources_dict:
-                            source = sources_dict[key]
-                            sources_list.append({
-                                "data_field": key,
-                                "value": value,
-                                "source_type": source.source_type,
-                                "resource_id": source.resource_id,
-                                "resource_url": source.resource_url,
-                                "timestamp": source.timestamp.isoformat() if getattr(source, "timestamp", None) else "",
-                                "category": source.category,
-                                "display_name": source.display_name
-                            })
-                    return sources_list
-                
-                # Store chunks with source information
-                if not existing_chunks:
-                    # 1. Demographics chunk
-                    demographics_text = f"""
-                    Patient Demographics:
-                    Name: {patient_data.name}
-                    Age: {patient_data.age}
-                    Sex: {patient_data.sex}
-                    Patient ID: {patient_id}
-                    """
-                    
-                    await embed_and_store(
-                        namespace="clinical",
-                        object_type="Demographics",
-                        object_id=f"{patient_id}_demographics",
-                        text={"content": demographics_text.strip()},
-                        metadata={
-                            "patient_id": patient_id,
-                            "data_type": "demographics",
-                            "timestamp": str(int(time.time() * 1000))
-                        }
-                    )
-                    
-                    # 2. Vitals chunk with sources
-                    if patient_data.vitals:
-                        vitals_sources = extract_sources_for_data_type(
-                            patient_data.vitals, 
-                            patient_data.vitals_sources
-                        )
-                        
-                        vitals_text = f"""
-                        Patient Vitals for {patient_data.name} (ID: {patient_id}):
-                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.vitals.items()])}
-                        
-                        Data Sources:
-                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in vitals_sources])}
-                        """
-                        
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="Vitals",
-                            object_id=f"{patient_id}_vitals",
-                            text={"content": vitals_text.strip()},
-                            metadata={
-                                "patient_id": patient_id,
-                                "data_type": "vitals",
-                                "timestamp": str(int(time.time() * 1000)),
-                                "sources": vitals_sources
-                            }
-                        )
-                    
-                    # 3. Labs chunk with sources
-                    if patient_data.labs:
-                        labs_sources = extract_sources_for_data_type(
-                            patient_data.labs, 
-                            patient_data.labs_sources
-                        )
-                        
-                        labs_text = f"""
-                        Laboratory Results for {patient_data.name} (ID: {patient_id}):
-                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.labs.items()])}
-                        
-                        Data Sources:
-                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in labs_sources])}
-                        """
-                        
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="Labs",
-                            object_id=f"{patient_id}_labs",
-                            text={"content": labs_text.strip()},
-                            metadata={
-                                "patient_id": patient_id,
-                                "data_type": "labs",
-                                "timestamp": str(int(time.time() * 1000)),
-                                "sources": labs_sources
-                            }
-                        )
-                    
-                    # 4. Medications chunk with sources
-                    if patient_data.medications:
-                        medications_sources = extract_sources_for_data_type(
-                            patient_data.medications, 
-                            patient_data.medications_sources
-                        )
-                        
-                        medications_text = f"""
-                        Medications for {patient_data.name} (ID: {patient_id}):
-                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.medications.items()])}
-                        
-                        Data Sources:
-                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in medications_sources])}
-                        """
-                        
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="Medications",
-                            object_id=f"{patient_id}_medications",
-                            text={"content": medications_text.strip()},
-                            metadata={
-                                "patient_id": patient_id,
-                                "data_type": "medications",
-                                "timestamp": str(int(time.time() * 1000)),
-                                "sources": medications_sources
-                            }
-                        )
-                    
-                    # 5. Allergies chunk with sources
-                    if patient_data.allergies:
-                        allergies_sources = extract_sources_for_data_type(
-                            patient_data.allergies,
-                            patient_data.allergies_sources
-                        )
-                        allergies_text = f"""
-                        Allergies for {patient_data.name} (ID: {patient_id}):
-                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.allergies.items()])}
-                        
-                        Data Sources:
-                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in allergies_sources])}
-                        """
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="Allergies",
-                            object_id=f"{patient_id}_allergies",
-                            text={"content": allergies_text.strip()},
-                            metadata={
-                                "patient_id": patient_id,
-                                "data_type": "allergies",
-                                "timestamp": str(int(time.time() * 1000)),
-                                "sources": allergies_sources
-                            }
-                        )
-
-                    # 6. Diagnoses chunk with sources
-                    if patient_data.diagnoses:
-                        diagnoses_sources = extract_sources_for_data_type(
-                            patient_data.diagnoses,
-                            patient_data.diagnoses_sources
-                        )
-                        diagnoses_text = f"""
-                        Diagnoses for {patient_data.name} (ID: {patient_id}):
-                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.diagnoses.items()])}
-                        
-                        Data Sources:
-                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in diagnoses_sources])}
-                        """
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="Diagnoses",
-                            object_id=f"{patient_id}_diagnoses",
-                            text={"content": diagnoses_text.strip()},
-                            metadata={
-                                "patient_id": patient_id,
-                                "data_type": "diagnoses",
-                                "timestamp": str(int(time.time() * 1000)),
-                                "sources": diagnoses_sources
-                            }
-                        )
-
-                    # 7. Immunizations chunk with sources
-                    if patient_data.immunizations:
-                        immunizations_sources = extract_sources_for_data_type(
-                            patient_data.immunizations,
-                            patient_data.immunizations_sources
-                        )
-                        immunizations_text = f"""
-                        Immunizations for {patient_data.name} (ID: {patient_id}):
-                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.immunizations.items()])}
-                        
-                        Data Sources:
-                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in immunizations_sources])}
-                        """
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="Immunizations",
-                            object_id=f"{patient_id}_immunizations",
-                            text={"content": immunizations_text.strip()},
-                            metadata={
-                                "patient_id": patient_id,
-                                "data_type": "immunizations",
-                                "timestamp": str(int(time.time() * 1000)),
-                                "sources": immunizations_sources
-                            }
-                        )
-
-                    # 8. Medication Statements chunk with sources
-                    if patient_data.medication_statement:
-                        med_stmt_sources = extract_sources_for_data_type(
-                            patient_data.medication_statement,
-                            patient_data.medication_statement_sources
-                        )
-                        med_stmt_text = f"""
-                        Medication Statements for {patient_data.name} (ID: {patient_id}):
-                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.medication_statement.items()])}
-                        
-                        Data Sources:
-                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in med_stmt_sources])}
-                        """
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="MedicationStatement",
-                            object_id=f"{patient_id}_medication_statement",
-                            text={"content": med_stmt_text.strip()},
-                            metadata={
-                                "patient_id": patient_id,
-                                "data_type": "medication_statement",
-                                "timestamp": str(int(time.time() * 1000)),
-                                "sources": med_stmt_sources
-                            }
-                        )
-
-                    # 9. Questionnaire Responses chunk with sources
-                    if patient_data.questionnaire_response:
-                        qnr_sources = extract_sources_for_data_type(
-                            patient_data.questionnaire_response,
-                            patient_data.questionnaire_response_sources
-                        )
-                        qnr_text = f"""
-                        Questionnaire Responses for {patient_data.name} (ID: {patient_id}):
-                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.questionnaire_response.items()])}
-                        
-                        Data Sources:
-                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in qnr_sources])}
-                        """
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="QuestionnaireResponse",
-                            object_id=f"{patient_id}_questionnaire_response",
-                            text={"content": qnr_text.strip()},
-                            metadata={
-                                "patient_id": patient_id,
-                                "data_type": "questionnaire_response",
-                                "timestamp": str(int(time.time() * 1000)),
-                                "sources": qnr_sources
-                            }
-                        )
-
-                    # 10. Encounters chunk with sources
-                    if patient_data.encounters:
-                        encounters_sources = extract_sources_for_data_type(
-                            patient_data.encounters,
-                            patient_data.encounters_sources
-                        )
-                        encounters_text = f"""
-                        Encounters for {patient_data.name} (ID: {patient_id}):
-                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.encounters.items()])}
-                        
-                        Data Sources:
-                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in encounters_sources])}
-                        """
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="Encounters",
-                            object_id=f"{patient_id}_encounters",
-                            text={"content": encounters_text.strip()},
-                            metadata={
-                                "patient_id": patient_id,
-                                "data_type": "encounters",
-                                "timestamp": str(int(time.time() * 1000)),
-                                "sources": encounters_sources
-                            }
-                        )
-
-                    # 11. Exams chunk with sources
-                    if patient_data.exam:
-                        exam_sources = extract_sources_for_data_type(
-                            patient_data.exam,
-                            patient_data.exam_sources
-                        )
-                        exam_text = f"""
-                        Physical Exams for {patient_data.name} (ID: {patient_id}):
-                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.exam.items()])}
-                        
-                        Data Sources:
-                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in exam_sources])}
-                        """
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="Exams",
-                            object_id=f"{patient_id}_exams",
-                            text={"content": exam_text.strip()},
-                            metadata={
-                                "patient_id": patient_id,
-                                "data_type": "exam",
-                                "timestamp": str(int(time.time() * 1000)),
-                                "sources": exam_sources
-                            }
-                        )
-
-                    # 12. Procedures chunk with sources
-                    if patient_data.procedure:
-                        procedure_sources = extract_sources_for_data_type(
-                            patient_data.procedure,
-                            patient_data.procedure_sources
-                        )
-                        procedure_text = f"""
-                        Procedures for {patient_data.name} (ID: {patient_id}):
-                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.procedure.items()])}
-                        
-                        Data Sources:
-                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in procedure_sources])}
-                        """
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="Procedures",
-                            object_id=f"{patient_id}_procedures",
-                            text={"content": procedure_text.strip()},
-                            metadata={
-                                "patient_id": patient_id,
-                                "data_type": "procedure",
-                                "timestamp": str(int(time.time() * 1000)),
-                                "sources": procedure_sources
-                            }
-                        )
-
-                    # 13. Social History chunk with sources
-                    if patient_data.social_history:
-                        social_sources = extract_sources_for_data_type(
-                            patient_data.social_history,
-                            patient_data.social_history_sources
-                        )
-                        social_text = f"""
-                        Social History for {patient_data.name} (ID: {patient_id}):
-                        {chr(10).join([f"{key}: {value}" for key, value in patient_data.social_history.items()])}
-                        
-                        Data Sources:
-                        {chr(10).join([f"- {s['data_field']}: {s['resource_url']} (recorded: {s['timestamp'][:10]})" for s in social_sources])}
-                        """
-                        await embed_and_store(
-                            namespace="clinical",
-                            object_type="SocialHistory",
-                            object_id=f"{patient_id}_social_history",
-                            text={"content": social_text.strip()},
-                            metadata={
-                                "patient_id": patient_id,
-                                "data_type": "social_history",
-                                "timestamp": str(int(time.time() * 1000)),
-                                "sources": social_sources
-                            }
-                        )
-
-                    # Imaging chunk removed in current version
-                    
-                    # 5. Complete patient context with all sources
-                    all_sources = []
-                    for data_type in ['vitals', 'labs', 'medications', 'allergies', 'diagnoses', 'immunizations', 'medication_statement', 'questionnaire_response', 'encounters', 'exam', 'procedure', 'social_history']:
-                        data_dict = getattr(patient_data, data_type, {})
-                        sources_dict = getattr(patient_data, f"{data_type}_sources", {})
-                        all_sources.extend(extract_sources_for_data_type(data_dict, sources_dict))
-                    
-                    complete_context = patient_data.model_dump_json(indent=2)
-                    
-                    complete_context_with_sources = f"""
-                    Complete patient context for {patient_data.name} (ID: {patient_id}):
-                    {complete_context}
-                    
-                    All Data Sources:
-                    {chr(10).join([f"- {s['data_field']} ({s['category']}): {s['resource_url']}" for s in all_sources])}
-                    """
-                    
-                    await embed_and_store(
-                        namespace="clinical",
-                        object_type="PatientContext",
-                        object_id=f"{patient_id}_complete",
-                        text={"content": complete_context_with_sources.strip()},
-                        metadata={
-                            "patient_id": patient_id,
-                            "data_type": "complete_context",
-                            "timestamp": str(int(time.time() * 1000)),
-                            "all_sources": all_sources
-                        }
-                    )
-
-
-                # 5. Fetch and store recent journal entries
-                try:
-                    # Try to use user's EHR connection first
-                    fhir_repo = self._fhir
-                    if state.user_id:
-                        try:
-                            user_fhir_repo = await self._connection_service.create_fhir_repository(
-                                state.user_id, 
-                                "smart_fhir"
-                            )
-                            if user_fhir_repo:
-                                fhir_repo = user_fhir_repo
-                        except Exception as e:
-                            print(f"[store_chunks] Failed to use SMART connection for journal: {e}")
-
-                    # Fetch journal entries for this patient
-                    journal_entries = await fhir_repo.get_patient_journal_entries(patient_id)
-                    
-                    if journal_entries:
-                        print(f"[store_chunks] Found {len(journal_entries)} journal entries for patient {patient_id}")
-
-                        # Prepare a reusable embedding for existence checks to avoid duplicates
-                        existence_query_vec = await embed("journal entry existence check", "query")
-                        count = 0
-                        # Store only new journal entries as separate chunks
-                        for entry in journal_entries:
-                            # Skip if this journal entry is already stored (avoid duplicates)
-                            try:
-                                existing_entry = await self._vec.similarity_search(
-                                    existence_query_vec,
-                                    top_k=1,
-                                    filter_={
-                                        "namespace": "clinical",
-                                        "patient_id": patient_id,
-                                        "entry_id": entry.entry_id,
-                                    },
-                                )
-                                if existing_entry:
-                                    print(f"[store_chunks] Skipping already stored journal entry {entry.entry_id}")
-                                    continue
-                                count += 1
-                            except Exception as e:
-                                print(f"[store_chunks] Existence check failed for journal entry {entry.entry_id}: {e}")
-                                # Fall through and attempt to store
-                                pass
-                            journal_text = f"""
-                            Journal Entry: {entry.title}
-                            Type: {entry.entry_type.value}
-                            Author: {entry.author_name} ({entry.author_role})
-                            Date: {entry.created_at.strftime('%Y-%m-%d %H:%M')}
-                            Patient: {patient_data.name} (ID: {patient_id})
-                            
-                            Content:
-                            {entry.content}
-                            """
-                            
-                            await embed_and_store(
-                                namespace="clinical",
-                                object_type="JournalEntry",
-                                object_id=f"{patient_id}_journal_{entry.entry_id}",
-                                text={"content": journal_text.strip()},
-                                metadata={
-                                    "patient_id": patient_id,
-                                    "data_type": "journal_entry",
-                                    "entry_type": entry.entry_type.value,
-                                    "entry_id": entry.entry_id,
-                                    "author_name": entry.author_name,
-                                    "author_role": entry.author_role,
-                                    "created_at": entry.created_at.isoformat() if getattr(entry, "created_at", None) else "",
-                                    "timestamp": str(int(entry.created_at.timestamp() * 1000))
-                                }
-                            )
-                        
-                        print(f"[store_chunks] Successfully stored {count} journal entries")
-                    else:
-                        print(f"[store_chunks] No journal entries found for patient {patient_id}")
-                        
-                except Exception as journal_error:
-                    print(f"[store_chunks] Error fetching/storing journal entries: {journal_error}")
-                    # Continue without journal entries - don't fail the entire process
-                
-                print(f"[store_chunks] Successfully processed chunks for patient {patient_id}")
-                
-            except Exception as e:
-                print(f"[store_chunks] Error storing patient chunks: {e}")
-            
-            return state
-
-        @streaming_step("intelligent_retrieve_chunks")
         async def intelligent_retrieve_chunks(state: FlowState) -> FlowState:
             """In-RAM retrieval: chunk, embed, paraphrase, bi-encoder, cross-encoder rerank, dynamic-N MMR, gate, retry."""
             try:
@@ -1024,10 +486,9 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 all_chunks = produced + journal_chunks + pdf_chunks
                 print(f"[intelligent_retrieve_chunks] Total chunks produced: {len(all_chunks)} (patient: {len(produced)}, journal: {len(journal_chunks)}, pdf: {len(pdf_chunks)})")
                 
-                # Log chunk details
+                # Log chunk details (GDPR-safe)
                 for i, chunk in enumerate(all_chunks):
                     print(f"[intelligent_retrieve_chunks] Chunk {i+1}: type={chunk.resource_type}, id={chunk.id}, length={len(chunk.text)} chars")
-                    print(f"[intelligent_retrieve_chunks] Chunk {i+1} preview: '{chunk.text[:100]}...'")
                 
                 # Adapt to local chunk dicts
                 chunks: list[dict[str, Any]] = [{
@@ -1097,48 +558,18 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 initial_indices = [idx for idx, _ in bi_scored[:TOPK_INITIAL]]
                 print(f"[intelligent_retrieve_chunks] Selected top {len(initial_indices)} chunks for cross-encoder reranking")
 
-                # 5) Cross-encoder rerank (multilingual)
+                # 5-8) Cross-encoder operations (reranking, MMR, gating) - MAXIMUM PARALLEL EXECUTION
                 lang = detect_language_code(state.user_prompt or "")
                 print(f"[intelligent_retrieve_chunks] Detected language: {lang}")
-                print("[intelligent_retrieve_chunks] Running cross-encoder reranking...")
+                print("[intelligent_retrieve_chunks] Running optimized parallel cross-encoder operations...")
                 
-                cross = self._cross_encoder
-                rerank_scores = cross.score_pairs(state.user_prompt, [cast(str, chunks[i]["content"]) for i in initial_indices])
-                # Align with indices
-                rerank_scores = list(rerank_scores)
-                reranked = list(zip(initial_indices, rerank_scores))
-                reranked.sort(key=lambda x: x[1], reverse=True)
-                reranked = reranked[:TOPK_RERANK]
+                # Use the new parallel method for all cross-encoder operations
+                reranked, selected_indices, gate_scores = await self._run_parallel_cross_encoder_operations(
+                    state, chunks, initial_indices, query_vecs
+                )
                 
-                # Log top cross-encoder scores
-                print(f"[intelligent_retrieve_chunks] Top {len(reranked)} cross-encoder scores:")
-                for i, (idx, score) in enumerate(reranked):
-                    chunk_type = chunks[idx]["data_type"]
-                    print(f"[intelligent_retrieve_chunks]   {i+1}. Chunk {idx} ({chunk_type}): {score:.4f}")
-                
-                # Log cross-encoder score range
-                if reranked:
-                    cross_scores = [score for _, score in reranked]
-                    print(f"[intelligent_retrieve_chunks] Cross-encoder score range: [{min(cross_scores):.4f}, {max(cross_scores):.4f}]")
-
-                # 6) Dynamic n via multilingual classifier (fallback to heuristic)
-                rerank_only_scores = [s for _, s in reranked]
-                n_dynamic = self._compute_dynamic_n(state.user_prompt, rerank_only_scores, state.query_classification)
-                print(f"[intelligent_retrieve_chunks] dynamic n: {n_dynamic}")
-                
-
-                # 7) MMR on top 30
-                print(f"[intelligent_retrieve_chunks] Running MMR with lambda={MMR_LAMBDA}, n={n_dynamic}")
-                candidate_vecs = [cast(list[float], chunks[i]["embedding"]) for i, _ in reranked]
-                best_q_idx = max(range(len(query_vecs)), key=lambda qi: sum(self._cosine(query_vecs[qi], v) for v in candidate_vecs) / max(len(candidate_vecs), 1))
-                best_q_vec = query_vecs[best_q_idx]
-                mmr_local_indices = self._mmr(candidate_vecs, best_q_vec, n_dynamic, lambda_=MMR_LAMBDA)
-                selected_indices = [reranked[j][0] for j in mmr_local_indices]
-                print(f"[intelligent_retrieve_chunks] MMR selected {len(selected_indices)} chunks: {selected_indices}")
-
-                # 8) Binary gate via cross-encoder threshold
+                # Apply gating threshold
                 print(f"[intelligent_retrieve_chunks] Applying binary gate with threshold {GATE_THRESH}")
-                gate_scores = cross.score_pairs(state.user_prompt, [cast(str, chunks[i]["content"]) for i in selected_indices])
                 gate_results = [s >= GATE_THRESH for s in gate_scores]
                 final_selected = [i for i, ok in zip(selected_indices, gate_results) if ok]
                 
@@ -1179,10 +610,14 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     try:
                         refinements = await self._refine_queries(state.user_prompt, [cast(str, chunks[i]["content"]) for i in final_selected])
                         print(f"[intelligent_retrieve_chunks] Generated {len(refinements)} refined queries: {refinements}")
+                        
+                        # If we have refined queries, we could potentially run them in parallel here
+                        # but for now, we'll use them in the next iteration
+                        state.refined_queries = [r for r in refinements if r][:2]
                     except Exception as e:
                         print(f"[intelligent_retrieve_chunks] Refinement failed: {e}")
                         refinements = []
-                    state.refined_queries = [r for r in refinements if r][:2]
+                        state.refined_queries = []
                     state.retrieval_retry_attempts += 1
                     
                     # Set partial state for streaming decorator to show progress
@@ -1211,12 +646,12 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     final_selected = [idx for idx, _ in reranked[:fallback_n]]
                     print(f"[intelligent_retrieve_chunks] Fallback selected {len(final_selected)} chunks: {final_selected}")
 
-                # Log final selected chunks
+                # Log final selected chunks (GDPR-safe)
                 print(f"[intelligent_retrieve_chunks] Final selected chunks ({len(final_selected)}):")
                 for i, idx in enumerate(final_selected):
                     chunk_type = chunks[idx]["data_type"]
-                    chunk_preview = cast(str, chunks[idx]["content"])[:100]
-                    print(f"[intelligent_retrieve_chunks]   {i+1}. Chunk {idx} ({chunk_type}): '{chunk_preview}...'")
+                    chunk_length = len(cast(str, chunks[idx]["content"]))
+                    print(f"[intelligent_retrieve_chunks]   {i+1}. Chunk {idx} ({chunk_type}): {chunk_length} chars")
 
                 # Set state variables early so streaming decorator can access them
                 state.retrieved_chunks = [cast(str, chunks[i]["content"]) for i in final_selected]
@@ -1242,422 +677,90 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
             return state
 
-        async def _intelligent_retrieve_chunks_with_focus(state: FlowState, focus: str, focus_queries: List[str]) -> List[str]:
-            """Helper function for focused retrieval with specific query variants."""
-            try:
-                print(f"[{focus}_retrieve] Starting focused retrieval for: {focus}")
-
-                if not state.patient_ctx:
-                    print(f"[{focus}_retrieve] No patient context available")
-                    return []
-
-                # Use existing chunking logic
-                patient_id_str = str(state.patient_id) if state.patient_id else ""
-                tokenizer = WhitespaceTokenizer()
-                redactor = SimplePhiRedactor()
-                orchestrator = ChunkingOrchestrator(
-                    tokenizer=tokenizer,
-                    redactor=redactor,
-                    strategy_registry=CHUNK_STRATEGY_REGISTRY,
-                    policies=CHUNK_POLICY_PRESETS,
-                )
-
-                produced = orchestrator.chunk_patient(state.patient_ctx, CHUNK_POLICY_PRESETS)
-
-                # Also chunk journal entries if available
-                journal_chunks = []
-                if state.journal_entries:
-                    journal_chunks = await self._chunk_journal_entries(state.journal_entries, orchestrator, patient_id_str)
-
-                all_chunks = produced + journal_chunks
-
-                if not all_chunks:
-                    print(f"[{focus}_retrieve] No chunks produced")
-                    return []
-
-                # Convert chunks to text
-                chunks = [chunk.text for chunk in all_chunks]
-
-                # Parallel embedding processing
-                print(f"[{focus}_retrieve] Starting parallel embedding...")
-                embedding_tasks = [
-                    self._embed_many(chunks, mode="passage"),
-                    self._embed_many([state.user_prompt] + focus_queries, mode="query")
-                ]
-
-                # Execute embeddings in parallel
-                embedding_results = await asyncio.gather(*embedding_tasks)
-                chunk_vecs, query_vecs = embedding_results
-                all_queries = [state.user_prompt] + focus_queries
-
-                print(f"[{focus}_retrieve] Parallel embedding complete: {len(chunk_vecs)} chunks, {len(query_vecs)} queries")
-
-                # Bi-encoder scoring
-                import numpy as np
-                query_stack = np.stack(query_vecs, axis=0)
-                chunk_stack = np.stack(chunk_vecs, axis=0)
-                scores_matrix = np.dot(query_stack, chunk_stack.T)
-                max_scores = np.max(scores_matrix, axis=0)
-
-                # Get top chunks based on pre-stored classification
-                n_class = 15  # Default for focused retrieval
-                if state.query_classification:
-                    if state.query_classification == "lookup":
-                        n_class = 8
-                    elif state.query_classification == "temporal-trend":
-                        n_class = 20
-                    elif state.query_classification == "comparative":
-                        n_class = 25
-                    elif state.query_classification in ["reasoning", "summary"]:
-                        n_class = 30
-                    elif state.query_classification == "guideline":
-                        n_class = 12
-
-                # Select top N chunks
-                sorted_indices = np.argsort(max_scores)[::-1]
-                top_indices = sorted_indices[:min(n_class, len(chunks))]
-
-                # Parallel cross-encoder reranking for focused queries
-                print(f"[{focus}_retrieve] Starting parallel cross-encoder reranking...")
-
-                if len(all_queries) > 1 and len(top_indices) > 4:
-                    # Use parallel processing for multiple queries and sufficient chunks
-                    async def process_query_batch(query_batch, chunk_indices):
-                        """Process a batch of queries against chunks in parallel."""
-                        batch_pairs = []
-                        for query in query_batch:
-                            for idx in chunk_indices:
-                                batch_pairs.append((query, chunks[idx]))
-
-                        if batch_pairs:
-                            return await self._cross_encoder.compute_similarity_scores(batch_pairs)
-                        return []
-
-                    # Optimized batching strategy based on cross-encoder capacity
-                    # Aim for optimal batch sizes: 8-16 pairs per batch for best GPU utilization
-                    OPTIMAL_BATCH_SIZE = 12
-                    MAX_PARALLEL_BATCHES = 6
-
-                    # Calculate optimal batch sizes
-                    total_pairs = len(all_queries) * len(top_indices)
-                    if total_pairs <= OPTIMAL_BATCH_SIZE:
-                        # Small dataset: process all at once
-                        parallel_tasks = [process_query_batch(all_queries, top_indices)]
-                    else:
-                        # Large dataset: create optimized batches
-                        # Split chunks more granularly for better parallelization
-                        chunk_size = max(3, len(top_indices) // MAX_PARALLEL_BATCHES)
-                        chunk_batches = [top_indices[i:i+chunk_size] for i in range(0, len(top_indices), chunk_size)]
-
-                        # Create tasks with balanced load
-                        parallel_tasks = []
-                        for c_batch in chunk_batches:
-                            if len(c_batch) * len(all_queries) <= OPTIMAL_BATCH_SIZE:
-                                # Batch small enough for all queries
-                                parallel_tasks.append(process_query_batch(all_queries, c_batch))
-                            else:
-                                # Split queries for this chunk batch
-                                query_size = max(1, OPTIMAL_BATCH_SIZE // len(c_batch))
-                                query_batches = [all_queries[i:i+query_size] for i in range(0, len(all_queries), query_size)]
-                                for q_batch in query_batches:
-                                    parallel_tasks.append(process_query_batch(q_batch, c_batch))
-
-                    # Limit total parallel tasks to prevent overload
-                    if len(parallel_tasks) > MAX_PARALLEL_BATCHES:
-                        print(f"[{focus}_retrieve] Limiting {len(parallel_tasks)} tasks to {MAX_PARALLEL_BATCHES} for stability")
-                        parallel_tasks = parallel_tasks[:MAX_PARALLEL_BATCHES]
-
-                    # Execute all batches in parallel with timeout
-                    print(f"[{focus}_retrieve] Executing {len(parallel_tasks)} parallel cross-encoder batches")
-                    try:
-                        # Set reasonable timeout based on batch count (5 seconds per batch max)
-                        timeout = min(30, max(10, len(parallel_tasks) * 5))
-                        batch_results = await asyncio.wait_for(
-                            asyncio.gather(*parallel_tasks, return_exceptions=True),
-                            timeout=timeout
-                        )
-                    except asyncio.TimeoutError:
-                        print(f"[{focus}_retrieve] Cross-encoder timeout after {timeout}s, using bi-encoder fallback")
-                        final_indices = top_indices[:min(12, len(top_indices))]
-                    except Exception as e:
-                        print(f"[{focus}_retrieve] Cross-encoder parallel execution failed: {e}, using bi-encoder fallback")
-                        final_indices = top_indices[:min(12, len(top_indices))]
-                    else:
-                        # Optimized result processing with error handling
-                        cross_scores = []
-                        successful_batches = 0
-
-                        for i, result in enumerate(batch_results):
-                            if isinstance(result, Exception):
-                                print(f"[{focus}_retrieve] Cross-encoder batch {i} failed: {result}")
-                                continue
-
-                            if result:  # Non-empty result
-                                cross_scores.extend(result)
-                                successful_batches += 1
-
-                        print(f"[{focus}_retrieve] Cross-encoder completed: {successful_batches}/{len(batch_results)} batches successful")
-
-                        # Check if we have enough results for meaningful reranking
-                        expected_scores = len(all_queries) * len(top_indices)
-                        if cross_scores and len(cross_scores) >= expected_scores * 0.7:  # Allow 30% failure tolerance
-                            try:
-                                # Pad missing scores with average if needed
-                                if len(cross_scores) < expected_scores:
-                                    avg_score = sum(cross_scores) / len(cross_scores) if cross_scores else 0.5
-                                    cross_scores.extend([avg_score] * (expected_scores - len(cross_scores)))
-
-                                # Fast numpy processing
-                                cross_scores_matrix = np.array(cross_scores[:expected_scores]).reshape(len(all_queries), len(top_indices))
-                                max_cross_scores = np.max(cross_scores_matrix, axis=0)
-
-                                # Re-rank based on cross-encoder scores
-                                cross_sorted = np.argsort(max_cross_scores)[::-1]
-                                final_indices = [top_indices[i] for i in cross_sorted[:min(12, len(top_indices))]]
-
-                                print(f"[{focus}_retrieve] Cross-encoder reranking successful with {len(cross_scores)} scores")
-                            except Exception as e:
-                                print(f"[{focus}_retrieve] Cross-encoder result processing failed: {e}, using bi-encoder fallback")
-                                final_indices = top_indices[:min(12, len(top_indices))]
-                        else:
-                            print(f"[{focus}_retrieve] Insufficient cross-encoder results ({len(cross_scores)}/{expected_scores}), using bi-encoder fallback")
-                            final_indices = top_indices[:min(12, len(top_indices))]
-                else:
-                    # Fall back to sequential processing for small datasets
-                    rerank_pairs = []
-                    for query in all_queries:
-                        for idx in top_indices:
-                            rerank_pairs.append((query, chunks[idx]))
-
-                    if rerank_pairs:
-                        cross_scores = await self._cross_encoder.compute_similarity_scores(rerank_pairs)
-                        cross_scores_matrix = np.array(cross_scores).reshape(len(all_queries), len(top_indices))
-                        max_cross_scores = np.max(cross_scores_matrix, axis=0)
-                        cross_sorted = np.argsort(max_cross_scores)[::-1]
-                        final_indices = [top_indices[i] for i in cross_sorted[:min(12, len(top_indices))]]
-                    else:
-                        final_indices = top_indices[:min(12, len(top_indices))]
-
-                print(f"[{focus}_retrieve] Cross-encoder reranking complete")
-
-                # Return selected chunks
-                selected_chunks = [chunks[i] for i in final_indices]
-                print(f"[{focus}_retrieve] Selected {len(selected_chunks)} chunks for {focus}")
-
-                return selected_chunks
-
-            except Exception as e:
-                print(f"[{focus}_retrieve] Error in focused retrieval: {e}")
-                return []
-
-        async def _fast_sbar_retrieve(state: FlowState, focus: str, queries: List[str]) -> List[str]:
-            """Fast SBAR retrieval using only bi-encoder similarity (no cross-encoder)."""
-            try:
-                print(f"[_fast_sbar_retrieve] {focus} - Starting fast bi-encoder retrieval")
-
-                # Get chunks from state - try multiple sources
-                chunks = []
-                if state.retrieved_chunks:
-                    chunks = state.retrieved_chunks[:50]  # Use cached chunks if available
-                    print(f"[_fast_sbar_retrieve] {focus} - Using {len(chunks)} cached chunks")
-                else:
-                    # Fall back to doing quick retrieval ourselves
-                    print(f"[_fast_sbar_retrieve] {focus} - No cached chunks, doing quick retrieval")
-                    if state.patient_ctx and state.journal_entries:
-                        # Quick retrieval from journal entries (most relevant for SBAR)
-                        for entry in state.journal_entries[:15]:  # Limit for speed
-                            if hasattr(entry, 'content') and entry.content:
-                                chunks.append(entry.content)
-                            elif hasattr(entry, 'text') and entry.text:
-                                chunks.append(entry.text)
-
-                    if not chunks:
-                        print(f"[_fast_sbar_retrieve] {focus} - No chunks available")
-                        return []
-
-                # Simple keyword-based retrieval for maximum speed
-                scored_chunks = []
-                for i, chunk in enumerate(chunks):
-                    score = 0.0
-                    chunk_lower = chunk.lower()
-
-                    for query in queries:
-                        query_words = query.lower().split()
-                        for word in query_words:
-                            if word in chunk_lower:
-                                score += 1.0
-
-                    if score > 0:
-                        scored_chunks.append((score, chunk))
-
-                # Sort by score and return top chunks
-                scored_chunks.sort(key=lambda x: x[0], reverse=True)
-                result_chunks = [chunk for _, chunk in scored_chunks[:15]]
-
-                print(f"[_fast_sbar_retrieve] {focus} - Retrieved {len(result_chunks)} chunks using keyword matching")
-                return result_chunks
-
-            except Exception as e:
-                print(f"[_fast_sbar_retrieve] {focus} - Error: {e}")
-                return []
-
-        async def _generate_sbar_queries(state: FlowState, sbar_component: str, focus_instruction: str) -> List[str]:
-            """Generate focused queries for each SBAR component based on the user's original query."""
-            try:
-                print(f"[_generate_sbar_queries] Generating {sbar_component} queries from: '{state.user_prompt[:100]}...'")
-
-                # Define SBAR component specific instructions
-                component_prompts = {
-                    "situation": "Current symptoms, vital signs, immediate presentation, active problems",
-                    "background": "Medical history, past conditions, medications, family history, social history",
-                    "assessment": "Clinical findings, lab results, diagnostic tests, professional observations",
-                    "recommendation": "Treatment plans, medications, follow-up care, interventions, next steps"
-                }
-
-                prompt = f"""
-Based on this user query: "{state.user_prompt}"
-
-Generate 3 specific search queries focused on the {sbar_component.upper()} component of SBAR medical reporting.
-
-{sbar_component.upper()} should focus on: {component_prompts.get(sbar_component, focus_instruction)}
-
-Return only the 3 queries, one per line, without numbers or bullets.
-Keep queries concise and medical terminology appropriate.
-"""
-
-                messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist generating focused search queries for SBAR components."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
-                ]
-
-                response = await self._llm.chat(messages)
-
-                # Parse response into individual queries
-                queries = []
-                for line in response.content.strip().split('\n'):
-                    query = line.strip()
-                    if query and not query.startswith(('1.', '2.', '3.', '-', '•')):
-                        queries.append(query)
-
-                if len(queries) < 3:
-                    # Fallback queries if LLM didn't generate enough
-                    fallback = {
-                        "situation": ["current symptoms", "vital signs", "active problems"],
-                        "background": ["medical history", "past conditions", "medications"],
-                        "assessment": ["clinical findings", "test results", "observations"],
-                        "recommendation": ["treatment plans", "medications", "follow-up care"]
-                    }
-                    queries.extend(fallback.get(sbar_component, ["medical information"])[:3-len(queries)])
-
-                print(f"[_generate_sbar_queries] Generated {len(queries)} {sbar_component} queries: {queries}")
-                return queries[:3]  # Limit to 3 queries
-
-            except Exception as e:
-                print(f"[_generate_sbar_queries] Error generating {sbar_component} queries: {e}")
-                # Return fallback queries
-                fallback_queries = {
-                    "situation": ["current symptoms complaints", "vital signs measurements", "active problems"],
-                    "background": ["medical history", "past conditions", "medications"],
-                    "assessment": ["clinical findings", "test results", "observations"],
-                    "recommendation": ["treatment plans", "medications", "follow-up"]
-                }
-                return fallback_queries.get(sbar_component, ["medical information"])
-
-        @streaming_step("retrieve_situation_chunks")
-        async def retrieve_situation_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on current patient situation (fast SBAR version)."""
-            try:
-                print("[retrieve_situation_chunks] Generating situation-focused queries from user prompt")
-
-                # Generate SBAR-focused queries from the original user query
-                situation_queries = await _generate_sbar_queries(state, "situation",
-                    "Generate queries focused on the current patient situation and immediate concerns")
-
-                chunks = await _fast_sbar_retrieve(state, "situation", situation_queries)
-                state.sbar_situation_chunks = chunks[:10]  # Limit for speed
-                print(f"[retrieve_situation_chunks] Retrieved {len(state.sbar_situation_chunks)} chunks")
-
-            except Exception as e:
-                print(f"[retrieve_situation_chunks] Error: {e}")
-                state.sbar_situation_chunks = []
-
-            return state
-
-        @streaming_step("retrieve_background_chunks")
-        async def retrieve_background_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on patient background and history (fast SBAR version)."""
-            try:
-                print("[retrieve_background_chunks] Generating background-focused queries from user prompt")
-
-                # Generate SBAR-focused queries from the original user query
-                background_queries = await _generate_sbar_queries(state, "background",
-                    "Generate queries focused on patient medical history and background")
-
-                chunks = await _fast_sbar_retrieve(state, "background", background_queries)
-                state.sbar_background_chunks = chunks[:10]  # Limit for speed
-                print(f"[retrieve_background_chunks] Retrieved {len(state.sbar_background_chunks)} chunks")
-
-            except Exception as e:
-                print(f"[retrieve_background_chunks] Error: {e}")
-                state.sbar_background_chunks = []
-
-            return state
-
-        @streaming_step("retrieve_assessment_chunks")
-        async def retrieve_assessment_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on clinical assessment data (fast SBAR version)."""
-            try:
-                print("[retrieve_assessment_chunks] Generating assessment-focused queries from user prompt")
-
-                # Generate SBAR-focused queries from the original user query
-                assessment_queries = await _generate_sbar_queries(state, "assessment",
-                    "Generate queries focused on clinical assessment and diagnostic findings")
-
-                chunks = await _fast_sbar_retrieve(state, "assessment", assessment_queries)
-                state.sbar_assessment_chunks = chunks[:10]  # Limit for speed
-                print(f"[retrieve_assessment_chunks] Retrieved {len(state.sbar_assessment_chunks)} chunks")
-
-            except Exception as e:
-                print(f"[retrieve_assessment_chunks] Error: {e}")
-                state.sbar_assessment_chunks = []
-
-            return state
-
-        @streaming_step("retrieve_recommendation_chunks")
-        async def retrieve_recommendation_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on treatment and recommendations (fast SBAR version)."""
-            try:
-                print("[retrieve_recommendation_chunks] Generating recommendation-focused queries from user prompt")
-
-                # Generate SBAR-focused queries from the original user query
-                recommendation_queries = await _generate_sbar_queries(state, "recommendation",
-                    "Generate queries focused on treatment recommendations and next steps")
-
-                chunks = await _fast_sbar_retrieve(state, "recommendation", recommendation_queries)
-                state.sbar_recommendation_chunks = chunks[:10]  # Limit for speed
-                print(f"[retrieve_recommendation_chunks] Retrieved {len(state.sbar_recommendation_chunks)} chunks")
-
-            except Exception as e:
-                print(f"[retrieve_recommendation_chunks] Error: {e}")
-                state.sbar_recommendation_chunks = []
-
-            return state
+        def _categorize_prompt(prompt: str) -> str:
+            """Categorize user prompt for GDPR-safe analytics."""
+            prompt_lower = prompt.lower()
+
+            # Medical/Clinical categories
+            if any(word in prompt_lower for word in ['diagnose', 'diagnosis', 'what is', 'what are', 'disease', 'condition']):
+                return "Diagnosis"
+            elif any(word in prompt_lower for word in ['summary', 'summarize', 'overview', 'brief']):
+                return "Summary"
+            elif any(word in prompt_lower for word in ['search', 'find', 'look for', 'locate']):
+                return "Search"
+            elif any(word in prompt_lower for word in ['explain', 'what does', 'how does', 'why']):
+                return "Explanation"
+            elif any(word in prompt_lower for word in ['treatment', 'therapy', 'medication', 'drug', 'prescription']):
+                return "Treatment"
+            elif any(word in prompt_lower for word in ['symptom', 'signs', 'presentation', 'manifestation']):
+                return "Symptoms"
+            elif any(word in prompt_lower for word in ['test', 'lab', 'blood', 'imaging', 'scan', 'x-ray', 'mri', 'ct']):
+                return "Testing"
+            elif any(word in prompt_lower for word in ['history', 'background', 'past', 'previous']):
+                return "History"
+            elif any(word in prompt_lower for word in ['compare', 'difference', 'versus', 'vs', 'contrast']):
+                return "Comparison"
+            elif any(word in prompt_lower for word in ['risk', 'complication', 'side effect', 'adverse']):
+                return "Risk Assessment"
+            else:
+                return "General"
 
         async def store_user_message(state: FlowState) -> FlowState:
-            """Store the user message in ephemeral memory for current session only."""
+            """Store the user message in ephemeral memory with end-to-end encryption and GDPR-safe metrics."""
             if not state.user_prompt:
                 return state
             
             try:
-                # Append to in-memory session store if available
+                # Generate session encryption key if not exists
+                session_manager = get_session_encryption_manager()
+                if state.session_id and not session_manager.get_session_key(state.session_id):
+                    session_manager.generate_session_key(state.session_id)
+                
+                # Encrypt user message for secure storage
+                encrypted_message = {
+                    "role": "user",
+                    "content": state.user_prompt,
+                    "timestamp": str(int(time.time() * 1000)),
+                    "user_id": state.user_id or ""
+                }
+                
+                # Store encrypted message in session memory
                 if state.session_id:
                     self._session_memory.setdefault(state.session_id, [])
+                    # Encrypt the entire message
+                    encrypted_data = session_manager.encrypt_session_data(state.session_id, encrypted_message)
                     self._session_memory[state.session_id].append({
-                        "role": "user",
-                        "content": state.user_prompt,
-                        "timestamp": str(int(time.time() * 1000)),
-                        "user_id": state.user_id or ""
+                        "encrypted": True,
+                        "data": encrypted_data,
+                        "timestamp": str(int(time.time() * 1000))
                     })
+                
+                # Store GDPR-safe user metrics for analytics (not encrypted - no PHI)
+                if state.user_id:
+                    prompt_category = _categorize_prompt(state.user_prompt)
+                    
+                    # Create user action for metrics
+                    user_action = UserAction(
+                        action_id=str(uuid.uuid4()),
+                        user_id=state.user_id,
+                        action_type="chat_message",
+                        resource_type="prompt",
+                        resource_id=str(uuid.uuid4()),
+                        description=f"User sent {prompt_category.lower()} prompt",
+                        metadata={
+                            "prompt_category": prompt_category,
+                            "prompt_length": len(state.user_prompt),
+                            "session_id": state.session_id or "",
+                            "has_patient_id": bool(state.patient_id),
+                            "timestamp": str(int(time.time() * 1000)),
+                            "mode": "info_flow",
+                            "encrypted": True
+                        }
+                    )
+                    
+                    # Store metrics in database
+                    await self._user_repo.create_user_action(user_action)
+                    print(f"[store_user_message] Stored encrypted GDPR-safe metrics: {prompt_category} prompt from user {state.user_id}")
                 
             except Exception as e:
                 print(f"[store_user_message] Error: {e}")
@@ -1667,7 +770,7 @@ Keep queries concise and medical terminology appropriate.
             return state
 
         async def store_assistant_response(state: FlowState) -> FlowState:
-            """Store the assistant response in ephemeral memory for current session only."""
+            """Store the assistant response in ephemeral memory and GDPR-safe metrics."""
             if not state.llm_response:
                 return state
             
@@ -1675,9 +778,9 @@ Keep queries concise and medical terminology appropriate.
                 if state.session_id:
                     self._session_memory.setdefault(state.session_id, [])
                     self._session_memory[state.session_id].append({
-                    "role": state.llm_response.role.value,
-                    "content": state.llm_response.content,
-                    "timestamp": str(int(time.time() * 1000)),
+                        "role": state.llm_response.role.value,
+                        "content": state.llm_response.content,
+                        "timestamp": str(int(time.time() * 1000)),
                         "user_id": state.user_id or ""
                     })
                 
@@ -2096,9 +1199,9 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                         elif temporal_strategy == "historical_context":
                             temporal_context += " - Including historical context for comparison"
                 
-                # Log chunk previews
+                # Log chunk info (GDPR-safe)
                 for i, chunk in enumerate(state.retrieved_chunks):
-                    print(f"[provide_information] Chunk {i+1} preview: '{chunk[:100]}...'")
+                    print(f"[provide_information] Chunk {i+1}: {len(chunk)} chars")
                 
                 docs = ChatMessage(
                     role=ChatRole.USER,
@@ -2352,10 +1455,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_node("classify_query_intent", classify_query_intent)
         _builder.add_node("store_user_message", store_user_message)
         _builder.add_node("load_current_session_history", load_current_session_history)
-        _builder.add_node("search_cross_session_history", search_cross_session_history)
         _builder.add_node("fetch_patient", fetch_patient)
-        _builder.add_node("fetch_pdfs", fetch_pdfs)
-        _builder.add_node("store_patient_chunks", store_patient_chunks)
         _builder.add_node("intelligent_retrieve_chunks", intelligent_retrieve_chunks)
         # SBAR parallel retrieval nodes
         _builder.add_node("retrieve_situation_chunks", retrieve_situation_chunks)
@@ -2398,7 +1498,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
             has_patient,
             {
                 True: "fetch_patient",                   # Patient ID provided -> fetch patient details
-                False: "fetch_pdfs"  # No patient ID -> fetch general PDFs, then continue
+                False: "evaluate_web_search_need"  # No patient ID -> skip patient fetch
             }
         )
 

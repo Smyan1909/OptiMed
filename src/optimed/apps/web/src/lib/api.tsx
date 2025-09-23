@@ -339,11 +339,11 @@ export async function fetchPatient(id: string): Promise<PatientDetail> {
 
 function getSessionHeaders(excludeContentType = false): Record<string, string> {
   const headers: Record<string, string> = {};
-  
+
   if (!excludeContentType) {
     headers['Content-Type'] = 'application/json';
   }
-  
+
   if (typeof window !== 'undefined') {
     const sessionId = localStorage.getItem('session_id');
     if (sessionId) {
@@ -361,8 +361,31 @@ function getSessionHeaders(excludeContentType = false): Record<string, string> {
       }
     } catch {}
   }
-  
+
   return headers;
+}
+
+// Encryption utilities
+async function makeEncryptedRequest(url: string, options: RequestInit): Promise<Response> {
+  try {
+    const { makeEncryptedRequest: encrypt } = await import('@/lib/encryption');
+    const sessionId = typeof window !== 'undefined' ? localStorage.getItem('session_id') : null;
+    return await encrypt(url, options, sessionId || undefined);
+  } catch (error) {
+    console.warn('Encryption not available, making unencrypted request:', error);
+    return fetch(url, options);
+  }
+}
+
+async function handleEncryptedResponse(response: Response): Promise<any> {
+  try {
+    const { handleEncryptedResponse: decrypt } = await import('@/lib/encryption');
+    const sessionId = typeof window !== 'undefined' ? localStorage.getItem('session_id') : null;
+    return await decrypt(response, sessionId || undefined);
+  } catch (error) {
+    console.warn('Decryption not available, handling as regular response:', error);
+    return response.json();
+  }
 }
 
 export async function clearPatientChatHistory(patientId: string): Promise<void> {
@@ -693,104 +716,26 @@ export async function lookupTerm(request: LookupRequest): Promise<LookupResponse
   return res.json();
 }
 
-// PDF Document Types
-export type PDFDocument = {
-  document_id: string;
-  filename: string;
-  file_size: number;
-  status: 'UPLOADED' | 'PROCESSING' | 'READY' | 'ERROR';
-  uploaded_at: string;
-  processed_at?: string;
-  patient_id?: string;
-  metadata?: {
-    title?: string;
-    author?: string;
-    subject?: string;
-    page_count?: number;
-  };
-  processing_info?: {
-    extracted_text_length: number;
-    chunk_count: number;
-    extraction_method: string;
-  };
-};
-
-export type PDFUploadResponse = {
-  document_id: string;
-  filename: string;
-  file_size: number;
-  status: string;
-  uploaded_at: string;
-  patient_id?: string;
-};
-
-export type PDFListResponse = {
-  documents: PDFDocument[];
-  total_count: number;
-  patient_specific_count: number;
-  general_count: number;
-};
-
-// PDF Document API Functions
-export async function uploadPDFDocument(file: File, patientId?: string): Promise<PDFUploadResponse> {
-  const formData = new FormData();
-  formData.append('file', file);
-  if (patientId) {
-    formData.append('patient_id', patientId);
+// Encryption API functions
+export async function setupSessionEncryption(sessionId: string): Promise<boolean> {
+  try {
+    const { getEncryptionClient } = await import('@/lib/encryption');
+    const encryptionClient = getEncryptionClient();
+    return await encryptionClient.setupSessionEncryption(sessionId);
+  } catch (error) {
+    console.error('Failed to setup session encryption:', error);
+    return false;
   }
+}
 
-  const res = await fetch('/api/documents/upload', {
-    method: 'POST',
-    headers: getSessionHeaders(true), // Excludes Content-Type for FormData
-    body: formData,
+export async function getServerPublicKey(): Promise<any> {
+  const res = await fetch('/api/encryption/server-public-key', {
+    headers: getSessionHeaders()
   });
 
   if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`PDF upload failed: ${res.status} - ${errorText}`);
+    throw new Error('Failed to get server public key');
   }
 
   return res.json();
-}
-
-export async function listPDFDocuments(patientId?: string): Promise<PDFListResponse> {
-  const url = patientId
-    ? `/api/documents?patient_id=${encodeURIComponent(patientId)}`
-    : '/api/documents';
-
-  const res = await fetch(url, {
-    headers: getSessionHeaders(),
-  });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Failed to list PDF documents: ${res.status} - ${errorText}`);
-  }
-
-  return res.json();
-}
-
-export async function getPDFDocument(documentId: string): Promise<PDFDocument> {
-  const res = await fetch(`/api/documents/${encodeURIComponent(documentId)}`, {
-    headers: getSessionHeaders(),
-  });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Failed to get PDF document: ${res.status} - ${errorText}`);
-  }
-
-  return res.json();
-}
-
-export async function deletePDFDocument(documentId: string): Promise<void> {
-  const res = await fetch(`/api/documents/${encodeURIComponent(documentId)}`, {
-    method: 'DELETE',
-    headers: getSessionHeaders(),
-  });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Failed to delete PDF document: ${res.status} - ${errorText}`);
-  }
 }

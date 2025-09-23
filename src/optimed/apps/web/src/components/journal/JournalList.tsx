@@ -32,7 +32,7 @@ export default function JournalList({ patientId }: JournalListProps) {
       console.log('Fetching journal entries for patient:', patientId);
       
       const data = await fetchPatientJournalEntries(patientId);
-      console.log('Journal entries received:', data);
+      console.log('Journal entries received:', data.length + ' entries');
       setEntries(data);
     } catch (err) {
       console.error('Failed to fetch journal entries:', err);

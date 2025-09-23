@@ -451,6 +451,10 @@ class UserRepository(Protocol):
         """Log a user action."""
         ...
 
+    async def create_user_action(self, action: UserAction) -> UserAction:
+        """Create a user action (alias for log_action)."""
+        ...
+
 class ImageRepository(Protocol):
     """Repository for managing DICOM images."""
 

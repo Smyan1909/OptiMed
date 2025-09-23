@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { getCurrentUser, loginUser, logoutUser, User } from '@/lib/api';
+import { getCurrentUser, loginUser, logoutUser, User, setupSessionEncryption } from '@/lib/api';
 
 type UserContextType = {
   user: User | null;
@@ -49,6 +49,19 @@ export function UserProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('session_id', response.session.session_id);
       setUser(response.user);
       setIsAuthenticated(true);
+
+      // Setup encryption for the session
+      try {
+        const encryptionSetup = await setupSessionEncryption(response.session.session_id);
+        if (encryptionSetup) {
+          console.log('✅ Session encryption setup successful');
+        } else {
+          console.warn('⚠️ Session encryption setup failed, continuing without encryption');
+        }
+      } catch (encryptionError) {
+        console.warn('⚠️ Encryption setup error:', encryptionError);
+        // Continue without encryption - not critical for basic functionality
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
       throw err;

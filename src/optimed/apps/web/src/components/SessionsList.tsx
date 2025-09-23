@@ -48,7 +48,7 @@ export default function SessionsList({
       console.log('Loading sessions with request:', request);
       
       const data = await listSessions(request);
-      console.log('Sessions loaded:', data);
+      console.log('Sessions loaded:', data.length + ' sessions');
       setSessions(data);
       
       // Load actual message counts for each session

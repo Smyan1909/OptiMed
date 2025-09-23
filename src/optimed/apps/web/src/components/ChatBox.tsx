@@ -2,14 +2,13 @@
 
 import { useState, useEffect, FormEvent, useRef } from "react";
 import { useUser } from '@/contexts/UserContext';
-import { Download, Image as ImageIcon, ExternalLink, Paperclip, FileText, X } from 'lucide-react';
-import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse, uploadPDFDocument, listPDFDocuments, deletePDFDocument, PDFDocument } from '@/lib/api';
+import { Download, Image as ImageIcon, ExternalLink } from 'lucide-react';
+import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
 import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
 import { ReasoningViewer } from "./ReasoningViewer";
 import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCards";
-import { SBARSummaryCards } from "./SBARSummaryCards";
 import { useLayoutEffect } from "react";
 import ModeSelector from "./ModeSelector";
 import { useTranslations, useLocale } from 'next-intl';
@@ -53,13 +52,6 @@ interface DifferentialDiagnosis {
   supporting_evidence: string[];
 }
 
-interface SBARResults {
-  situation?: string;
-  background?: string;
-  assessment?: string;
-  recommendation?: string;
-}
-
 interface Message {
   sender: "user" | "system";
   text: string;
@@ -69,7 +61,6 @@ interface Message {
   reasoningSteps?: string[];
   reasoning?: string;
   differentialDiagnoses?: DifferentialDiagnosis[];
-  sbarResults?: SBARResults;
 }
 
 interface ChatBoxProps {
@@ -697,7 +688,7 @@ const formatTimestamp = (timestamp: string | number): string => {
   }
 };
 
-export default function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
+export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
   const t = useTranslations('chatBox');
   const locale = useLocale();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -705,15 +696,26 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   const [infoRetrievalMode, setInfoRetrievalMode] = useState("post_meet");
   const [defaultPrompt, setDefaultPrompt] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // PDF upload state
-  const [uploadedPDFs, setUploadedPDFs] = useState<PDFDocument[]>([]);
-  const [isUploadingPDF, setIsUploadingPDF] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Check if info mode selection is enabled
   const isInfoModeEnabled = process.env.NEXT_PUBLIC_INFO_MODE === 'false';
+
+  // Use provided sessionId or generate one
+  const [sessionId] = useState(() => {
+    if (propSessionId) return propSessionId;
+
+    if (typeof window !== 'undefined') {
+      const key = `chat_session_${mode}_${patientId || 'general'}`;
+      let existing = localStorage.getItem(key);
+      if (!existing) {
+        existing = `${mode}_${patientId || 'general'}_${Date.now()}`;
+        localStorage.setItem(key, existing);
+      }
+      return existing;
+    }
+    return `${mode}_${patientId || 'general'}_${Date.now()}`;
+  });
+
   const {
     isStreaming,
     currentStep,
@@ -729,23 +731,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     progress,
     startStream,
     stopStream,
-  } = useStreamingChat();
-
-  // Use provided sessionId or generate one
-  const [sessionId] = useState(() => {
-    if (propSessionId) return propSessionId;
-    
-    if (typeof window !== 'undefined') {
-      const key = `chat_session_${mode}_${patientId || 'general'}`;
-      let existing = localStorage.getItem(key);
-      if (!existing) {
-        existing = `${mode}_${patientId || 'general'}_${Date.now()}`;
-        localStorage.setItem(key, existing);
-      }
-      return existing;
-    }
-    return `${mode}_${patientId || 'general'}_${Date.now()}`;
-  });
+  } = useStreamingChat(sessionId);
   
   const { user } = useUser();
 
@@ -799,191 +785,20 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   // Use propSessionId if provided, otherwise use generated sessionId
   const currentSessionId = propSessionId || sessionId;
 
-  // Load PDF documents for the current session context
-  const loadPDFs = async () => {
-    try {
-      // PDFs are now session-based, so we get PDFs for the current session
-      // The patientId parameter filters to patient-specific PDFs when a patient is selected
-      const pdfList = await listPDFDocuments(patientId);
-      setUploadedPDFs(pdfList.documents || []);
-      console.log(`[ChatBox] Loaded ${pdfList.documents?.length || 0} PDFs for session (patient: ${patientId || 'general'})`);
-    } catch (error) {
-      console.error('Failed to load PDFs:', error);
-    }
-  };
-
-  // Load chat history on component mount or session change
+  // GDPR-compliant: No chat history loading to prevent PHI storage
   useEffect(() => {
   const loadHistory = async () => {
     try {
-      console.log(`Loading history for session: ${currentSessionId}, patient: ${patientId}`);
+      console.log(`[GDPR] Chat history loading disabled for session: ${currentSessionId}, patient: ${patientId}`);
       
-      const response = await fetch('/api/chat-history', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ 
-          patient_id: patientId,
-          session_id: currentSessionId,
-          mode: mode
-        })
-      });
+      // GDPR Compliance: Do not load chat history with PHI
+      // Return empty messages array to maintain UI compatibility
+      const data = { messages: [], gdpr_compliant: true };
+      console.log('🔍 [GDPR] No chat history loaded (compliant mode)');
       
-      if (response.ok) {
-        const data = await response.json();
-        console.log('🔍 Raw chat history data received:', data);
-        
-        if (data.messages && data.messages.length > 0) {
-          const formattedMessages = data.messages.map((msg: any, index: number) => {
-            console.log(`🔍 Processing message ${index}:`, {
-              role: msg.role,
-              hasDifferential: !!msg.differential_diagnoses,
-              differentialCount: msg.differential_diagnoses?.length || 0,
-              hasReasoning: !!(msg.reasoning || msg.reasoning_steps?.length),
-              reasoningStepsCount: msg.reasoning_steps?.length || 0
-            });
-
-            const formattedMessage: Message = {
-              sender: msg.role === 'user' ? 'user' : 'system',
-              text: msg.content,
-              timestamp: msg.timestamp ? formatTimestamp(msg.timestamp) : new Date().toLocaleTimeString()
-            };
-            
-            // Add reasoning from multiple possible sources
-            if (msg.reasoning || (msg.reasoning_steps && msg.reasoning_steps.length > 0)) {
-              console.log('🧠 Found reasoning in chat history for message', index, ':', {
-                reasoning: !!msg.reasoning,
-                reasoningSteps: msg.reasoning_steps?.length || 0
-              });
-              
-              formattedMessage.reasoning = msg.reasoning || (msg.reasoning_steps ? msg.reasoning_steps.join('\n') : '');
-              formattedMessage.reasoningSteps = msg.reasoning_steps || [];
-            }
-            
-            // Add generated image info if present
-            if (msg.generated_image && msg.generated_image.image_generated) {
-              formattedMessage.generatedImage = msg.generated_image;
-              console.log('📸 Found image in chat history for message', index, ':', msg.generated_image.image_id);
-            }
-
-            // Enhanced differential diagnoses loading - more lenient validation
-            if (msg.differential_diagnoses && Array.isArray(msg.differential_diagnoses)) {
-              console.log(`🩺 Processing differential diagnoses for message ${index}:`, msg.differential_diagnoses);
-              
-              // More lenient validation - only require essential fields
-              const validDiagnoses = msg.differential_diagnoses.filter((diff: any) => {
-                const isValid = diff && 
-                  typeof diff === 'object' && 
-                  diff.diagnosis_name && 
-                  (diff.confidence !== undefined && diff.confidence !== null);
-                
-                if (!isValid) {
-                  console.warn(`🚫 Invalid diagnosis in message ${index}:`, diff);
-                }
-                return isValid;
-              });
-              
-              if (validDiagnoses.length > 0) {
-                // Ensure all required fields have defaults
-                formattedMessage.differentialDiagnoses = validDiagnoses.map((diff: any) => ({
-                  icd_code: diff.icd_code || '',
-                  diagnosis_name: diff.diagnosis_name || 'Unknown Diagnosis',
-                  confidence: typeof diff.confidence === 'number' ? diff.confidence : 0,
-                  reasoning: diff.reasoning || 'No reasoning provided',
-                  supporting_evidence: Array.isArray(diff.supporting_evidence) ? diff.supporting_evidence : []
-                }));
-                
-              } else {
-                console.warn('🚫 No valid differential diagnoses found for message', index, ':', msg.differential_diagnoses);
-              }
-            } else {
-              console.log(`📄 No differential diagnoses for message ${index}:`, {
-                hasDifferential: !!msg.differential_diagnoses,
-                isArray: Array.isArray(msg.differential_diagnoses),
-                type: typeof msg.differential_diagnoses
-              });
-            }
-
-            // Handle SBAR results (both old format and new JSON cards format)
-            if (msg.sbar_results && typeof msg.sbar_results === 'object') {
-              console.log(`📋 Processing SBAR results for message ${index}:`, msg.sbar_results);
-              formattedMessage.sbarResults = {
-                situation: msg.sbar_results.situation || undefined,
-                background: msg.sbar_results.background || undefined,
-                assessment: msg.sbar_results.assessment || undefined,
-                recommendation: msg.sbar_results.recommendation || undefined
-              };
-            } else {
-              // Check if the main content is a JSON SBAR cards response
-              console.log(`🔍 Checking message ${index} text for SBAR JSON:`, msg.text?.substring(0, 100));
-              try {
-                // Trim the text and check if it looks like JSON
-                const trimmedText = msg.text?.trim();
-                if (trimmedText && trimmedText.startsWith('{') && trimmedText.endsWith('}')) {
-                  const parsedContent = JSON.parse(trimmedText);
-                  console.log(`🧪 Parsed JSON for message ${index}:`, parsedContent);
-
-                  if (parsedContent.type === 'sbar_cards' && parsedContent.components) {
-                    console.log(`📋 Processing JSON SBAR cards for message ${index}:`, parsedContent);
-                    formattedMessage.sbarResults = {
-                      situation: parsedContent.components.situation?.content || undefined,
-                      background: parsedContent.components.background?.content || undefined,
-                      assessment: parsedContent.components.assessment?.content || undefined,
-                      recommendation: parsedContent.components.recommendation?.content || undefined
-                    };
-                    // Clear the content so we don't display the raw JSON
-                    formattedMessage.text = '';
-                    console.log(`✅ Successfully processed SBAR cards, cleared text`);
-                  } else {
-                    console.log(`📄 JSON parsed but not SBAR cards format for message ${index}:`, {
-                      type: parsedContent.type,
-                      hasComponents: !!parsedContent.components
-                    });
-                  }
-                } else {
-                  console.log(`📄 Message ${index} text doesn't look like JSON:`, {
-                    startsWith: trimmedText?.startsWith('{'),
-                    endsWith: trimmedText?.endsWith('}'),
-                    length: trimmedText?.length
-                  });
-                }
-              } catch (e) {
-                // Not JSON or not SBAR cards format, continue normally
-                console.log(`📄 Failed to parse JSON for message ${index}:`, {
-                  hasSBAR: !!msg.sbar_results,
-                  type: typeof msg.sbar_results,
-                  parseError: e.message,
-                  textPreview: msg.text?.substring(0, 50)
-                });
-              }
-            }
-
-            return formattedMessage;
-          });
-          
-          setMessages(formattedMessages);
-          
-          // Enhanced logging
-          const messagesWithReasoning = formattedMessages.filter((msg: Message) => 
-            msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)
-          );
-          const messagesWithDifferentials = formattedMessages.filter((msg: Message) => 
-            msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0
-          );
-          const messagesWithBoth = formattedMessages.filter((msg: Message) => 
-            (msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)) && 
-            (msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0)
-          );
-          
-          console.log(`📊 Chat history loaded successfully:`, {
-            totalMessages: formattedMessages.length,
-            withReasoning: messagesWithReasoning.length,
-            withDifferentials: messagesWithDifferentials.length,
-            withBoth: messagesWithBoth.length
-          });
-        }
-      } else {
-        console.error('Failed to load chat history:', response.status, response.statusText);
-      }
+      // GDPR Compliance: Always use empty messages array
+      // Note: Chat history loading is disabled for GDPR compliance
+      console.log('🔍 [GDPR] Chat history loading disabled - using empty messages array');
     } catch (error) {
       console.error('Failed to load conversation history:', error);
     }
@@ -992,7 +807,6 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     // Only load if we have a patient ID for diagnosis mode or if it's general chat
     if ((mode === 'diagnose' && patientId) || mode === 'chat') {
       loadHistory();
-      loadPDFs();
     }
   }, [currentSessionId, patientId, mode]);
 
@@ -1041,42 +855,14 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
           hasReasoning: !!reasoningText
         });
         
-        // Check if finalResponse is SBAR JSON format and parse it
-        let messageText = finalResponse;
-        let sbarResults = undefined;
-
-        try {
-          const trimmedText = finalResponse?.trim();
-          if (trimmedText && trimmedText.startsWith('{') && trimmedText.endsWith('}')) {
-            const parsedContent = JSON.parse(trimmedText);
-            console.log(`🧪 Parsed streaming JSON:`, parsedContent);
-
-            if (parsedContent.type === 'sbar_cards' && parsedContent.components) {
-              console.log(`📋 Processing streaming SBAR cards:`, parsedContent);
-              sbarResults = {
-                situation: parsedContent.components.situation?.content || undefined,
-                background: parsedContent.components.background?.content || undefined,
-                assessment: parsedContent.components.assessment?.content || undefined,
-                recommendation: parsedContent.components.recommendation?.content || undefined
-              };
-              // Clear the text so we don't display the raw JSON
-              messageText = '';
-              console.log(`✅ Successfully processed streaming SBAR cards, cleared text`);
-            }
-          }
-        } catch (e) {
-          console.log(`📄 Failed to parse streaming JSON:`, e.message);
-        }
-
-        const newMessage = {
-          sender: "system" as const,
-          text: messageText,
+        const newMessage = { 
+          sender: "system" as const, 
+          text: finalResponse,
           timestamp: new Date().toLocaleTimeString(),
           reasoning: reasoningText,
           reasoningSteps: reasoning,
           generatedImage: formattedGeneratedImage,
-          differentialDiagnoses: streamDifferentialDiagnoses,
-          sbarResults: sbarResults
+          differentialDiagnoses: streamDifferentialDiagnoses
         };
         
         console.log('🔥 Creating new message with data:', {
@@ -1200,70 +986,6 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   useAutosizeTextArea(textAreaRef, input);
 
-  // PDF upload handlers
-  const handlePDFUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    if (file.type !== 'application/pdf') {
-      setUploadError('Please select a PDF file');
-      return;
-    }
-
-    if (file.size > 10 * 1024 * 1024) { // 10MB limit
-      setUploadError('File size must be less than 10MB');
-      return;
-    }
-
-    setIsUploadingPDF(true);
-    setUploadError(null);
-
-    try {
-      const uploadResponse = await uploadPDFDocument(file, patientId);
-      if (uploadResponse.success) {
-        await loadPDFs(); // Refresh the PDF list
-        setMessages(prev => [
-          ...prev,
-          {
-            sender: 'system',
-            text: `PDF document "${file.name}" uploaded successfully and processed. You can now ask questions about its content. Note: PDF is stored temporarily for this session only.`,
-            timestamp: new Date().toLocaleTimeString()
-          }
-        ]);
-      }
-    } catch (error: any) {
-      console.error('PDF upload error:', error);
-      setUploadError(error.message || 'Failed to upload PDF');
-    } finally {
-      setIsUploadingPDF(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    }
-  };
-
-  const handleDeletePDF = async (documentId: string, filename: string) => {
-    try {
-      await deletePDFDocument(documentId);
-      setUploadedPDFs(prev => prev.filter(pdf => pdf.document_id !== documentId));
-      setMessages(prev => [
-        ...prev,
-        {
-          sender: 'system',
-          text: `PDF document "${filename}" has been removed.`,
-          timestamp: new Date().toLocaleTimeString()
-        }
-      ]);
-    } catch (error: any) {
-      console.error('PDF delete error:', error);
-      setUploadError(error.message || 'Failed to delete PDF');
-    }
-  };
-
-  const triggerFileUpload = () => {
-    fileInputRef.current?.click();
-  };
-
   const markdownComponents = {
     // Links
     a: ({ href, children }: any) => (
@@ -1383,20 +1105,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                   </div>
                 )}
 
-                {msg.sender === 'system' && msg.sbarResults && (
-                  <div className="mt-3">
-                    <SBARSummaryCards
-                      sbarResults={msg.sbarResults}
-                      isLoading={msg.loading}
-                      reasoning={msg.reasoning}
-                      reasoningSteps={msg.reasoningSteps}
-                      patientId={patientId}
-                      sessionId={sessionId}
-                    />
-                  </div>
-                )}
-
-                {msg.sender === 'system' && msg.reasoningSteps && (msg.reasoning || msg.reasoningSteps?.length > 0) && !msg.sbarResults && (
+                {msg.sender === 'system' && msg.reasoningSteps && (msg.reasoning || msg.reasoningSteps?.length > 0) && (
                   <div className="mt-3">
                     <ReasoningViewer
                       reasoning={msg.reasoning || ''}
@@ -1461,54 +1170,6 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
       {/* Absolutely positioned, centered input bar within the chat pane */}
       <div className="absolute bottom-0 left-0 right-0 px-4 z-20 pointer-events-none flex justify-center">
         <div className="w-full max-w-4xl border border-gray-300 bg-white/80 backdrop-blur-md shadow-xl rounded-2xl pointer-events-auto">
-          {/* PDF Upload Section */}
-          {uploadedPDFs.length > 0 && (
-            <div className="px-4 pt-3 border-b border-gray-200">
-              <div className="text-xs font-medium text-gray-600 mb-2">Uploaded Documents:</div>
-              <div className="flex flex-wrap gap-2 mb-2">
-                {uploadedPDFs.map((pdf) => (
-                  <div key={pdf.document_id} className="flex items-center gap-1 px-2 py-1 bg-blue-50 border border-blue-200 rounded-lg text-xs">
-                    <FileText className="h-3 w-3 text-blue-600" />
-                    <span className="text-blue-800 font-medium truncate max-w-[120px]">{pdf.filename}</span>
-                    <span className={`px-1 rounded text-[10px] font-medium ${
-                      pdf.status === 'READY' ? 'bg-green-100 text-green-700' :
-                      pdf.status === 'PROCESSING' ? 'bg-yellow-100 text-yellow-700' :
-                      pdf.status === 'ERROR' ? 'bg-red-100 text-red-700' :
-                      'bg-gray-100 text-gray-700'
-                    }`}>
-                      {pdf.status.toLowerCase()}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleDeletePDF(pdf.document_id, pdf.filename)}
-                      className="ml-1 p-0.5 text-red-500 hover:text-red-700 transition-colors"
-                      title="Remove document"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Upload Error Display */}
-          {uploadError && (
-            <div className="px-4 pt-2">
-              <div className="flex items-center gap-2 px-2 py-1 bg-red-50 border border-red-200 rounded text-xs text-red-700">
-                <X className="h-3 w-3" />
-                <span>{uploadError}</span>
-                <button
-                  type="button"
-                  onClick={() => setUploadError(null)}
-                  className="ml-auto text-red-500 hover:text-red-700"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            </div>
-          )}
-
           <form onSubmit={sendMessage} className="flex gap-3 p-4">
             <textarea
               ref={textAreaRef}
@@ -1529,22 +1190,6 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
               }}
             />
             <div className="flex flex-col gap-2 shrink-0">
-              {/* PDF Upload Button */}
-              <button
-                type="button"
-                onClick={triggerFileUpload}
-                disabled={isStreaming || isUploadingPDF}
-                className="px-3 py-2 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-                title="Upload PDF document"
-              >
-                {isUploadingPDF ? (
-                  <div className="animate-spin h-4 w-4 border-2 border-gray-600 border-t-transparent rounded-full" />
-                ) : (
-                  <Paperclip className="h-4 w-4" />
-                )}
-                <span className="text-xs hidden sm:inline">PDF</span>
-              </button>
-
               <button
                 type="submit"
                 disabled={!input.trim() || isStreaming}
@@ -1567,15 +1212,6 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
               )}
             </div>
           </form>
-
-          {/* Hidden file input */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,application/pdf"
-            onChange={handlePDFUpload}
-            className="hidden"
-          />
         </div>
       </div>
 
@@ -1595,3 +1231,5 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     </div>
   );
 }
+
+export { ChatBox as default };

@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { useStreamDecryption } from './useEncryption';
 
 interface DifferentialDiagnosis {
   icd_code: string;
@@ -56,7 +57,7 @@ interface StreamingState {
   };
 }
 
-export const useStreamingChat = () => {
+export const useStreamingChat = (sessionId?: string) => {
   const [state, setState] = useState<StreamingState>({
     isStreaming: false,
     currentStep: '',
@@ -81,6 +82,9 @@ export const useStreamingChat = () => {
   const stepCountRef = useRef(0);
   const reasoningTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [streamDifferentialDiagnoses, setStreamDifferentialDiagnoses] = useState<DifferentialDiagnosis[]>([]);
+
+  // Get decryption function for session
+  const { decryptStreamChunk } = useStreamDecryption(sessionId || null);
 
   // Handle streaming updates
   const handleStreamUpdate = useCallback((update: StreamingUpdate) => {
@@ -145,8 +149,6 @@ export const useStreamingChat = () => {
 
         case 'response_chunk':
           console.log('📝 Streaming response chunk received:', {
-            content: update.content,
-            accumulated: update.accumulated_content,
             currentLength: prev.streamingResponse.length,
             contentLength: update.content?.length || 0,
             accumulatedLength: update.accumulated_content?.length || 0
@@ -349,7 +351,9 @@ export const useStreamingChat = () => {
                 const data = line.slice(6).trim();
                 if (data && data !== '[DONE]') {
                   try {
-                    const update = JSON.parse(data);
+                    // Try to decrypt the chunk if encrypted
+                    const decryptedData = await decryptStreamChunk(data);
+                    const update = JSON.parse(decryptedData);
                     handleStreamUpdate(update);
                   } catch (e) {
                     console.error('❌ Failed to parse SSE data:', e, 'Raw data:', data.slice(0, 200));
