@@ -67,7 +67,7 @@ class WindowLevel(FrozenModel):
 class DICOMImage(FrozenModel):
     """Domain model for a DICOM medical image."""
     image_id: str
-    patient_id: Optional[str]
+    # patient_id removed for GDPR compliance
     user_id: str  # User who uploaded the image
     filename: str
     file_size: int  # Size in bytes

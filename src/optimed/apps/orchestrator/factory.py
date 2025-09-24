@@ -25,6 +25,7 @@ from optimed.apps.pdf.memory_pdf_service import MemoryPDFService
 from optimed.core.domain import UserEHRConnection
 from datetime import datetime, timezone
 from dotenv import load_dotenv # type: ignore
+from optimed.adapters.security.session_cleanup import initialize_cleanup_service
 
 
 def create_smart_fhir_repository() -> SMARTFHIRRepository:
@@ -74,7 +75,10 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
     load_dotenv()
     # Create repositories
     fhir_repo: FHIRRepository = HAPIFHIRRepository() if not use_smart else create_smart_fhir_repository()
-    vector_store: VectorStore = PGVectorAdapter(dsn=str(os.getenv("PGVECTOR_DSN")))
+    vector_store: VectorStore = PGVectorAdapter(
+        dsn=str(os.getenv("PGVECTOR_DSN")),
+        embedding_dim=int(os.getenv("EMBEDDING_DIM", "1024"))
+    )
     # Use fast GPT-5 mini for general LLM (minimal reasoning effort)
     llm_client = AzureOpenAIGPT5MiniClient()
     journal_client = AzureOpenAIGPT5MiniClient()
@@ -139,6 +143,12 @@ def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
     cross_encoder = MultilingualCrossEncoder()
     zero_shot_classifier = MultilingualZeroShotClassifier()
     print("ML models initialized successfully")
+
+    # Initialize GDPR compliance services
+    print("Initializing GDPR compliance services...")
+    cleanup_service = initialize_cleanup_service(vector_store, user_repo)
+    await cleanup_service.start_cleanup_service()
+    print("GDPR compliance services initialized")
 
 
 

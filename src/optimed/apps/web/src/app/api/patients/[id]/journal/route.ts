@@ -31,7 +31,7 @@ export async function GET(
     }
 
     const data = await response.json();
-    console.log('Journal entries from backend:', data);
+    console.log('Journal entries from backend:', data.length + ' entries');
     return NextResponse.json(data);
   } catch (error) {
     console.error('Journal entries API error:', error);

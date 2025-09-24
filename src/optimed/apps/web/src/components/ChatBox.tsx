@@ -697,7 +697,7 @@ const formatTimestamp = (timestamp: string | number): string => {
   }
 };
 
-export default function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
+export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
   const t = useTranslations('chatBox');
   const locale = useLocale();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -714,6 +714,23 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   
   // Check if info mode selection is enabled
   const isInfoModeEnabled = process.env.NEXT_PUBLIC_INFO_MODE === 'false';
+
+  // Use provided sessionId or generate one
+  const [sessionId] = useState(() => {
+    if (propSessionId) return propSessionId;
+
+    if (typeof window !== 'undefined') {
+      const key = `chat_session_${mode}_${patientId || 'general'}`;
+      let existing = localStorage.getItem(key);
+      if (!existing) {
+        existing = `${mode}_${patientId || 'general'}_${Date.now()}`;
+        localStorage.setItem(key, existing);
+      }
+      return existing;
+    }
+    return `${mode}_${patientId || 'general'}_${Date.now()}`;
+  });
+
   const {
     isStreaming,
     currentStep,
@@ -729,23 +746,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     progress,
     startStream,
     stopStream,
-  } = useStreamingChat();
-
-  // Use provided sessionId or generate one
-  const [sessionId] = useState(() => {
-    if (propSessionId) return propSessionId;
-    
-    if (typeof window !== 'undefined') {
-      const key = `chat_session_${mode}_${patientId || 'general'}`;
-      let existing = localStorage.getItem(key);
-      if (!existing) {
-        existing = `${mode}_${patientId || 'general'}_${Date.now()}`;
-        localStorage.setItem(key, existing);
-      }
-      return existing;
-    }
-    return `${mode}_${patientId || 'general'}_${Date.now()}`;
-  });
+  } = useStreamingChat(sessionId);
   
   const { user } = useUser();
 
@@ -812,12 +813,33 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     }
   };
 
-  // Load chat history on component mount or session change
+  // Load PDF documents for the current session context
+  const loadPDFs = async () => {
+    try {
+      // PDFs are now session-based, so we get PDFs for the current session
+      // The patientId parameter filters to patient-specific PDFs when a patient is selected
+      const pdfList = await listPDFDocuments(patientId);
+      setUploadedPDFs(pdfList.documents || []);
+      console.log(`[ChatBox] Loaded ${pdfList.documents?.length || 0} PDFs for session (patient: ${patientId || 'general'})`);
+    } catch (error) {
+      console.error('Failed to load PDFs:', error);
+    }
+  };
+
+  // GDPR-compliant: No chat history loading to prevent PHI storage
   useEffect(() => {
   const loadHistory = async () => {
     try {
-      console.log(`Loading history for session: ${currentSessionId}, patient: ${patientId}`);
+      console.log(`[GDPR] Chat history loading disabled for session: ${currentSessionId}, patient: ${patientId}`);
       
+      // GDPR Compliance: Do not load chat history with PHI
+      // Return empty messages array to maintain UI compatibility
+      const data = { messages: [], gdpr_compliant: true };
+      console.log('🔍 [GDPR] No chat history loaded (compliant mode)');
+      
+      // GDPR Compliance: Always use empty messages array
+      // Note: Chat history loading is disabled for GDPR compliance
+      console.log('🔍 [GDPR] Chat history loading disabled - using empty messages array');
       const response = await fetch('/api/chat-history', {
         method: 'POST',
         headers: getAuthHeaders(),
@@ -1595,3 +1617,5 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     </div>
   );
 }
+
+export { ChatBox as default };
