@@ -156,6 +156,7 @@ class FlowState(BaseModel):
     # SBAR flow fields
     query_classification: Optional[str] = None
     is_sbar_flow: bool = False
+    retrieval_focus: Optional[str] = None  # For setting retrieval focus (situation, background, etc.)
 
     # Separate fields for each SBAR component to avoid concurrent updates
     sbar_situation_chunks: Optional[List[str]] = None
@@ -170,6 +171,9 @@ class FlowState(BaseModel):
 
     # SBAR retrieval cache for performance optimization
     sbar_retrieval_cache: Optional[Dict[str, Any]] = None
+
+    # Legacy field support for backward compatibility
+    situation_chunks: Optional[List[str]] = None
     
 
 
@@ -1605,6 +1609,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_node("store_user_message", store_user_message)
         _builder.add_node("load_current_session_history", load_current_session_history)
         _builder.add_node("fetch_patient", fetch_patient)
+        _builder.add_node("fetch_pdfs", fetch_pdfs)
         _builder.add_node("intelligent_retrieve_chunks", intelligent_retrieve_chunks)
         # SBAR parallel retrieval nodes
         _builder.add_node("retrieve_situation_chunks", retrieve_situation_chunks)
