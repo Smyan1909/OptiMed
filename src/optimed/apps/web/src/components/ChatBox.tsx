@@ -813,19 +813,6 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     }
   };
 
-  // Load PDF documents for the current session context
-  const loadPDFs = async () => {
-    try {
-      // PDFs are now session-based, so we get PDFs for the current session
-      // The patientId parameter filters to patient-specific PDFs when a patient is selected
-      const pdfList = await listPDFDocuments(patientId);
-      setUploadedPDFs(pdfList.documents || []);
-      console.log(`[ChatBox] Loaded ${pdfList.documents?.length || 0} PDFs for session (patient: ${patientId || 'general'})`);
-    } catch (error) {
-      console.error('Failed to load PDFs:', error);
-    }
-  };
-
   // GDPR-compliant: No chat history loading to prevent PHI storage
   useEffect(() => {
   const loadHistory = async () => {
@@ -968,7 +955,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                     length: trimmedText?.length
                   });
                 }
-              } catch (e) {
+              } catch (e: any) {
                 // Not JSON or not SBAR cards format, continue normally
                 console.log(`📄 Failed to parse JSON for message ${index}:`, {
                   hasSBAR: !!msg.sbar_results,
@@ -1086,7 +1073,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
               console.log(`✅ Successfully processed streaming SBAR cards, cleared text`);
             }
           }
-        } catch (e) {
+        } catch (e: any) {
           console.log(`📄 Failed to parse streaming JSON:`, e.message);
         }
 

@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI):
             _journal_llm_service,
             _web_search_service,
             _pdf_service,
-        ) = create_app_dependencies()
+        ) = await create_app_dependencies()
         _dependencies_ready.set()
         print("[startup] Dependencies initialized")
         yield

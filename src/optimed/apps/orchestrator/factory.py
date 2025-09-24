@@ -56,7 +56,7 @@ def create_smart_fhir_repository() -> SMARTFHIRRepository:
     return SMARTFHIRRepository(dummy_connection, auth_provider)
 
 
-def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
+async def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
                                                       FHIRRepository,
                                                       VectorStore,
                                                       UserRepository,

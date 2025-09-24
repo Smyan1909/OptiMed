@@ -739,6 +739,7 @@ export type PDFDocument = {
 };
 
 export type PDFUploadResponse = {
+  success: any;
   document_id: string;
   filename: string;
   file_size: number;
