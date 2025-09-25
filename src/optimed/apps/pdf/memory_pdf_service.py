@@ -89,16 +89,23 @@ class MemoryPDFService(PDFService):
         try:
             # Generate document ID
             document_id = str(uuid.uuid4())
+            print(f"[MemoryPDFService] Starting upload for document_id: {document_id}")
 
             # Get session data
             session_data = self._get_or_create_session(user_id, session_id, patient_id)
 
             # Store raw content
             session_data.raw_content[document_id] = content
+            print(f"[MemoryPDFService] Stored raw content ({len(content)} bytes)")
 
             # Extract metadata and text
+            print(f"[MemoryPDFService] Extracting metadata...")
             metadata = await self.pdf_processor.extract_metadata(content)
+            print(f"[MemoryPDFService] Metadata extraction complete: {metadata}")
+
+            print(f"[MemoryPDFService] Extracting text...")
             extracted_text = await self.pdf_processor.extract_text(content)
+            print(f"[MemoryPDFService] Text extraction complete: {len(extracted_text) if extracted_text else 0} characters")
 
             # Create PDF document
             pdf_doc = PDFDocument(
@@ -127,6 +134,10 @@ class MemoryPDFService(PDFService):
             return pdf_doc
 
         except Exception as e:
+            print(f"[MemoryPDFService] ERROR during PDF processing: {e}")
+            import traceback
+            traceback.print_exc()
+
             # Create error document
             error_doc = PDFDocument(
                 document_id=str(uuid.uuid4()),

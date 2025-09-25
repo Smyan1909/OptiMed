@@ -58,6 +58,7 @@ class PDFDocument(FrozenModel):
     # Tracking
     status: ImageStatus  # Reusing existing enum: UPLOADED, PROCESSING, READY, ERROR
     uploaded_at: datetime
+    updated_at: datetime
     processed_at: Optional[datetime] = None
 
     # File storage reference

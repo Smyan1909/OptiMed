@@ -805,7 +805,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     try {
       // PDFs are now session-based, so we get PDFs for the current session
       // The patientId parameter filters to patient-specific PDFs when a patient is selected
-      const pdfList = await listPDFDocuments(patientId);
+      const pdfList = await listPDFDocuments(patientId, currentSessionId);
       setUploadedPDFs(pdfList.documents || []);
       console.log(`[ChatBox] Loaded ${pdfList.documents?.length || 0} PDFs for session (patient: ${patientId || 'general'})`);
     } catch (error) {
@@ -1228,7 +1228,8 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     setUploadError(null);
 
     try {
-      const uploadResponse = await uploadPDFDocument(file, patientId);
+      console.log('[ChatBox] Upload params:', { patientId, currentSessionId, propSessionId, sessionId });
+      const uploadResponse = await uploadPDFDocument(file, patientId, currentSessionId);
       if (uploadResponse.success) {
         await loadPDFs(); // Refresh the PDF list
         setMessages(prev => [

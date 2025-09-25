@@ -406,11 +406,15 @@ async def get_current_user(
         return None
     
 
-async def get_user_context(user: Optional[User] = Depends(get_current_user)) -> dict:
+async def get_user_context(
+    user: Optional[User] = Depends(get_current_user),
+    x_session_id: str = Header(None, alias="X-Session-ID")
+) -> dict:
     """Dependency to fetch user context."""
     return {
         "user_id": user.user_id if user else None,
-        "user": user
+        "user": user,
+        "session_id": x_session_id
     }
 
 async def get_user_fhir_repository(user_ctx: dict = Depends(get_user_context)) -> FHIRRepository:
@@ -2747,9 +2751,15 @@ async def upload_pdf_document(
     request: Request,
     file: UploadFile = File(...),
     patient_id: Optional[str] = Form(None),
+    chat_session_id: Optional[str] = Form(None),
     user_ctx: dict = Depends(get_user_context)
 ):
     """Upload a PDF document file."""
+    print("=" * 50)
+    print("PDF UPLOAD ENDPOINT HIT WITH NEW CODE!")
+    print(f"[PDF Upload] Raw form data - chat_session_id: {chat_session_id}, patient_id: {patient_id}")
+    print("=" * 50)
+
     # Get session ID from user context
     session_id = user_ctx.get("session_id")
     if not session_id:
@@ -2771,14 +2781,21 @@ async def upload_pdf_document(
         # Read file content
         file_content = await file.read()
 
+        # Use chat_session_id if provided, otherwise fall back to auth session_id
+        effective_session_id = chat_session_id or session_id
+
+        print(f"[PDF Upload] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, filename: {file.filename}, patient_id: {patient_id}")
+
         # Process upload using memory service
         pdf_document = await _pdf_service.upload_document(
             user_id=user.user_id,
-            session_id=session_id,
+            session_id=effective_session_id,
             filename=file.filename,
             content=file_content,
             patient_id=patient_id
         )
+
+        print(f"[PDF Upload] Success - document_id: {pdf_document.document_id}, status: {pdf_document.status}")
 
         return PDFUploadResponse(
             document_id=pdf_document.document_id,
@@ -2800,9 +2817,12 @@ async def upload_pdf_document(
 async def list_pdf_documents(
     request: Request,
     patient_id: Optional[str] = Query(None),
+    chat_session_id: Optional[str] = Query(None),
     user_ctx: dict = Depends(get_user_context)
 ):
     """List PDF documents for the current session."""
+    print(f"[PDF List] Raw query params - chat_session_id: {chat_session_id}, patient_id: {patient_id}")
+
     # Get session ID from user context
     session_id = user_ctx.get("session_id")
     if not session_id:
@@ -2813,12 +2833,21 @@ async def list_pdf_documents(
         raise HTTPException(status_code=401, detail="User not found")
 
     try:
+        # Use chat_session_id if provided, otherwise fall back to auth session_id
+        effective_session_id = chat_session_id or session_id
+
+        print(f"[PDF List] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, patient_id: {patient_id}")
+
         # Get documents for current session (filtered by patient_id)
         documents = await _pdf_service.list_documents(
             user_id=user.user_id,
-            session_id=session_id,
+            session_id=effective_session_id,
             patient_id=patient_id
         )
+
+        print(f"[PDF List] Found {len(documents)} documents")
+        for doc in documents:
+            print(f"[PDF List] Document: {doc.filename} (status: {doc.status}, patient_id: {doc.patient_id})")
 
         # Separate patient-specific and general documents
         patient_docs = [doc for doc in documents if doc.patient_id is not None]

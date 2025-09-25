@@ -28,7 +28,7 @@ class PyMuPDFProcessor(PDFProcessor):
         except Exception as e:
             raise ValueError(f"Failed to extract text from PDF: {str(e)}")
 
-    async def extract_metadata(self, file_content: bytes) -> Dict[str, Any]:
+    async def extract_metadata(self, file_content: bytes) -> PDFMetadata:
         """Extract metadata from a PDF file."""
         try:
             doc = fitz.open(stream=file_content, filetype="pdf")
@@ -36,36 +36,41 @@ class PyMuPDFProcessor(PDFProcessor):
             # Get PDF metadata
             pdf_metadata = doc.metadata
 
-            # Convert to our domain metadata
-            metadata = {
-                "title": pdf_metadata.get("title"),
-                "author": pdf_metadata.get("author"),
-                "subject": pdf_metadata.get("subject"),
-                "creator": pdf_metadata.get("creator"),
-                "producer": pdf_metadata.get("producer"),
-                "page_count": len(doc),
-                "file_size": len(file_content)
-            }
-
             # Parse dates if available
-            creation_date = pdf_metadata.get("creationDate")
-            if creation_date:
+            creation_date = None
+            modification_date = None
+
+            creation_date_str = pdf_metadata.get("creationDate")
+            if creation_date_str:
                 try:
                     # PyMuPDF date format: D:YYYYMMDDHHmmSSOHH'mm'
-                    if creation_date.startswith("D:"):
-                        date_str = creation_date[2:16]  # Extract YYYYMMDDHHMMSS
-                        metadata["creation_date"] = datetime.strptime(date_str, "%Y%m%d%H%M%S")
+                    if creation_date_str.startswith("D:"):
+                        date_str = creation_date_str[2:16]  # Extract YYYYMMDDHHMMSS
+                        creation_date = datetime.strptime(date_str, "%Y%m%d%H%M%S")
                 except (ValueError, IndexError):
                     pass  # Skip invalid dates
 
-            modification_date = pdf_metadata.get("modDate")
-            if modification_date:
+            modification_date_str = pdf_metadata.get("modDate")
+            if modification_date_str:
                 try:
-                    if modification_date.startswith("D:"):
-                        date_str = modification_date[2:16]
-                        metadata["modification_date"] = datetime.strptime(date_str, "%Y%m%d%H%M%S")
+                    if modification_date_str.startswith("D:"):
+                        date_str = modification_date_str[2:16]
+                        modification_date = datetime.strptime(date_str, "%Y%m%d%H%M%S")
                 except (ValueError, IndexError):
                     pass
+
+            # Convert to our domain metadata
+            metadata = PDFMetadata(
+                title=pdf_metadata.get("title"),
+                author=pdf_metadata.get("author"),
+                subject=pdf_metadata.get("subject"),
+                creator=pdf_metadata.get("creator"),
+                producer=pdf_metadata.get("producer"),
+                creation_date=creation_date,
+                modification_date=modification_date,
+                page_count=len(doc),
+                file_size=len(file_content)
+            )
 
             doc.close()
             return metadata

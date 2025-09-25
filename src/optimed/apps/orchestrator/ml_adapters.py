@@ -27,9 +27,9 @@ class MultilingualCrossEncoder:
 
         # Determine optimal batch size based on environment
         if os.getenv("AZURE_CONTAINER_APP"):
-            self._optimal_batch_size = 16  # Conservative for Azure
+            self._optimal_batch_size = 8  # Conservative for Azure
         else:
-            self._optimal_batch_size = max_batch_size
+            self._optimal_batch_size = 8  # Smaller batches for better GPU memory usage
 
         print(f"[MultilingualCrossEncoder] Initialized with model: {self._model_name}")
         print(f"[MultilingualCrossEncoder] Optimal batch size: {self._optimal_batch_size}")
@@ -42,9 +42,16 @@ class MultilingualCrossEncoder:
         try:
             print(f"[MultilingualCrossEncoder] Loading model: {self._model_name}")
             from sentence_transformers import CrossEncoder
+            import torch
 
-            # Load model with GPU support if available
-            device = "cuda" if os.getenv("CUDA_VISIBLE_DEVICES") else "cpu"
+            # Detect GPU availability properly
+            if torch.cuda.is_available():
+                device = "cuda"
+                print(f"[MultilingualCrossEncoder] GPU detected: {torch.cuda.get_device_name(0)}")
+            else:
+                device = "cpu"
+                print("[MultilingualCrossEncoder] No GPU available, using CPU")
+
             self._model = CrossEncoder(self._model_name, device=device, trust_remote_code=True)
             self._loaded = True
 
@@ -118,13 +125,22 @@ class MultilingualCrossEncoder:
         # Process in batches for better performance
         for i in range(0, len(pairs), batch_size):
             batch_pairs = pairs[i:i + batch_size]
+            batch_num = i//batch_size + 1
+            total_batches = math.ceil(len(pairs) / batch_size)
+
+            print(f"[MultilingualCrossEncoder] Processing batch {batch_num}/{total_batches}")
 
             try:
-                # Direct prediction with timeout
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(self._batch_predict, batch_pairs)
-                    batch_scores = future.result(timeout=timeout)
+                # Direct batch prediction without threading for single batch
+                if len(batch_pairs) <= batch_size:
+                    batch_scores = self._batch_predict(batch_pairs)
                     all_scores.extend(batch_scores)
+                else:
+                    # Use threading only for larger batches
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(self._batch_predict, batch_pairs)
+                        batch_scores = future.result(timeout=min(timeout, 30.0))
+                        all_scores.extend(batch_scores)
 
             except concurrent.futures.TimeoutError:
                 print(f"[MultilingualCrossEncoder] Batch {i//batch_size + 1} timed out")
@@ -182,14 +198,23 @@ class MultilingualCrossEncoder:
                 print("[MultilingualCrossEncoder] No valid pairs for prediction")
                 return []
 
-            # Get raw scores
+            # Get raw scores with proper batch size
+            actual_batch_size = min(len(batch_texts), 4)  # Conservative GPU batch size
             raw_scores = self._model.predict(
                 batch_texts,
-                batch_size=len(batch_texts),
+                batch_size=actual_batch_size,
                 show_progress_bar=False,
                 convert_to_numpy=True,
                 convert_to_tensor=False
             )
+
+            # Clear GPU cache if using CUDA
+            try:
+                import torch
+                if torch.cuda.is_available() and hasattr(torch.cuda, 'empty_cache'):
+                    torch.cuda.empty_cache()
+            except:
+                pass  # Ignore if torch not available
 
             # Apply sigmoid normalization
             normalized_scores = [self._sigmoid(float(score)) for score in raw_scores]
@@ -206,23 +231,33 @@ class MultilingualCrossEncoder:
                     fallback_scores.append(0.5)  # neutral score
             return fallback_scores
 
-    async def predict_async(self, pairs: List[Tuple[str, str]], timeout: float = 30.0) -> List[float]:
-        """Async wrapper for predict method."""
-        loop = asyncio.get_event_loop()
+    async def predict_async(self, pairs: List[Tuple[str, str]], timeout: float = 60.0) -> List[float]:
+        """Async wrapper for predict method with improved timeout handling."""
+        if not pairs:
+            return []
 
-        # Run in thread pool to avoid blocking
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(self.predict, pairs, timeout)
+        try:
+            # Direct async execution without double-threading
+            loop = asyncio.get_event_loop()
 
-            try:
-                return await asyncio.wait_for(
-                    loop.run_in_executor(None, future.result),
-                    timeout=timeout + 5.0  # Add buffer for async overhead
-                )
-            except asyncio.TimeoutError:
-                print(f"[MultilingualCrossEncoder] Async prediction timed out after {timeout}s")
-                # Return fallback scores
-                return [self._fallback_score(query, passage) for query, passage in pairs]
+            def run_prediction():
+                return self.predict(pairs, timeout)
+
+            # Run prediction in thread pool with proper timeout
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, run_prediction),
+                timeout=timeout
+            )
+            return result
+
+        except asyncio.TimeoutError:
+            print(f"[MultilingualCrossEncoder] Async prediction timed out after {timeout}s")
+            # Return fallback scores
+            return [self._fallback_score(str(pair[0]), str(pair[1])) for pair in pairs]
+        except Exception as e:
+            print(f"[MultilingualCrossEncoder] Async prediction error: {e}")
+            # Return fallback scores
+            return [self._fallback_score(str(pair[0]), str(pair[1])) for pair in pairs]
 
     def score_pairs(self, pairs: List[Tuple[str, str]], timeout: float = 30.0) -> List[float]:
         """Alias for predict method to maintain compatibility."""
@@ -250,9 +285,17 @@ class MultilingualZeroShotClassifier:
         try:
             print(f"[MultilingualZeroShotClassifier] Loading model: {self._model_name}")
             from transformers import pipeline
+            import torch
 
-            # Load model with GPU support if available
-            device = 0 if os.getenv("CUDA_VISIBLE_DEVICES") else -1
+            # Detect GPU availability properly
+            if torch.cuda.is_available():
+                device = 0  # First GPU
+                device_name = torch.cuda.get_device_name(0)
+                print(f"[MultilingualZeroShotClassifier] GPU detected: {device_name}")
+            else:
+                device = -1  # CPU
+                print("[MultilingualZeroShotClassifier] No GPU available, using CPU")
+
             self._model = pipeline(
                 "zero-shot-classification",
                 model=self._model_name,
@@ -261,7 +304,8 @@ class MultilingualZeroShotClassifier:
             )
             self._loaded = True
 
-            print(f"[MultilingualZeroShotClassifier] Model loaded successfully")
+            device_str = f"GPU ({torch.cuda.get_device_name(0)})" if device == 0 else "CPU"
+            print(f"[MultilingualZeroShotClassifier] Model loaded successfully on {device_str}")
             return True
 
         except ImportError:

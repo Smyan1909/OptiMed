@@ -756,11 +756,20 @@ export type PDFListResponse = {
 };
 
 // PDF Document API Functions
-export async function uploadPDFDocument(file: File, patientId?: string): Promise<PDFUploadResponse> {
+export async function uploadPDFDocument(file: File, patientId?: string, chatSessionId?: string): Promise<PDFUploadResponse> {
+  console.log('[API] uploadPDFDocument called with:', { patientId, chatSessionId });
+
   const formData = new FormData();
   formData.append('file', file);
   if (patientId) {
+    console.log('[API] Adding patient_id:', patientId);
     formData.append('patient_id', patientId);
+  }
+  if (chatSessionId) {
+    console.log('[API] Adding chat_session_id:', chatSessionId);
+    formData.append('chat_session_id', chatSessionId);
+  } else {
+    console.log('[API] No chat_session_id provided');
   }
 
   const res = await fetch('/api/documents/upload', {
@@ -777,10 +786,16 @@ export async function uploadPDFDocument(file: File, patientId?: string): Promise
   return res.json();
 }
 
-export async function listPDFDocuments(patientId?: string): Promise<PDFListResponse> {
-  const url = patientId
-    ? `/api/documents?patient_id=${encodeURIComponent(patientId)}`
-    : '/api/documents';
+export async function listPDFDocuments(patientId?: string, chatSessionId?: string): Promise<PDFListResponse> {
+  const params = new URLSearchParams();
+  if (patientId) {
+    params.set('patient_id', patientId);
+  }
+  if (chatSessionId) {
+    params.set('chat_session_id', chatSessionId);
+  }
+
+  const url = params.toString() ? `/api/documents?${params}` : '/api/documents';
 
   const res = await fetch(url, {
     headers: getSessionHeaders(),

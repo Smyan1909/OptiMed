@@ -229,8 +229,14 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         print(f"[_run_parallel_cross_encoder_operations] Starting parallel execution of {len(operations)} operations")
         start_time = time.time()
         
-        # Run all operations in parallel
-        all_results = await cross.score_all_operations_parallel(state.user_prompt, operations)
+        # Run reranking operation
+        if operations and 'passages' in operations[0]:
+            # Create pairs from user prompt and passages
+            pairs = [(state.user_prompt, passage) for passage in operations[0]['passages']]
+            rerank_scores = await cross.predict_async(pairs)
+            all_results = [rerank_scores]
+        else:
+            all_results = [[]]
         
         end_time = time.time()
         print(f"[_run_parallel_cross_encoder_operations] Parallel execution completed in {end_time - start_time:.3f}s")
@@ -265,7 +271,8 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         gate_passages = [chunks[i]["content"] for i in selected_indices]
         
         # Run gating
-        gate_scores = await cross.score_pairs_async(state.user_prompt, gate_passages)
+        gate_pairs = [(state.user_prompt, passage) for passage in gate_passages]
+        gate_scores = await cross.predict_async(gate_pairs)
         
         return reranked, selected_indices, list(gate_scores)
 
@@ -1973,7 +1980,7 @@ Content:
                 patient_ref=pseudo_patient,
                 encounter_ref=None,
                 resource_type="pdf_document",
-                resource_id=pdf.document_id,
+                key=pdf.document_id,  # Use key field instead of resource_id
                 text=pdf_text
             )
             records.append(record)
@@ -1985,7 +1992,7 @@ Content:
         tokenizer = WhitespaceTokenizer()
         redactor = SimplePhiRedactor()
         strategy = NarrativeV1()
-        policy = CHUNK_POLICY_PRESETS.get("narrative")
+        policy = CHUNK_POLICY_PRESETS.get("narrative_default")
 
         redacted_records = []
         for record in records:

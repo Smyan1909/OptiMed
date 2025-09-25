@@ -28,7 +28,7 @@ from optimed.core.domain import (
     JournalEntryCreate,
     JournalEntryUpdate )
 
-from optimed.core.domain.pdf_document import PDFDocument, PDFUploadRequest
+from optimed.core.domain.pdf_document import PDFDocument, PDFUploadRequest, PDFMetadata
 
 # core/ports.py
 #
@@ -743,7 +743,7 @@ class PDFProcessor(Protocol):
         """Extract text content from a PDF file."""
         ...
 
-    async def extract_metadata(self, file_content: bytes) -> dict[str, Any]:
+    async def extract_metadata(self, file_content: bytes) -> PDFMetadata:
         """Extract metadata from a PDF file."""
         ...
 
