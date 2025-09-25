@@ -2922,6 +2922,7 @@ async def delete_pdf_document(
     request: Request,
     document_id: str = Path(...),
     patient_id: Optional[str] = Query(None),
+    chat_session_id: Optional[str] = Query(None),
     user_ctx: dict = Depends(get_user_context)
 ):
     """Delete a PDF document."""
@@ -2934,18 +2935,45 @@ async def delete_pdf_document(
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
+    # Use chat_session_id if provided, otherwise fall back to auth session_id (same as upload)
+    effective_session_id = chat_session_id or session_id
+
     try:
+        print(f"[PDF Delete] Request details:")
+        print(f"  - document_id: {document_id}")
+        print(f"  - user_id: {user.user_id}")
+        print(f"  - auth_session_id: {session_id}")
+        print(f"  - chat_session_id: {chat_session_id}")
+        print(f"  - effective_session_id: {effective_session_id}")
+        print(f"  - patient_id: {patient_id}")
+
+        print(f"[PDF Delete] Before deletion - showing all sessions:")
+        _pdf_service.debug_all_sessions()
+
         success = await _pdf_service.delete_document(
             document_id=document_id,
             user_id=user.user_id,
-            session_id=session_id,
+            session_id=effective_session_id,
             patient_id=patient_id
         )
+
+        print(f"[PDF Delete] Delete operation returned: {success}")
+
+        print(f"[PDF Delete] After deletion - showing all sessions:")
+        _pdf_service.debug_all_sessions()
+
         if success:
             return {"message": "Document deleted successfully"}
         else:
+            print(f"[PDF Delete] Document not found, returning 404")
             raise HTTPException(status_code=404, detail="Document not found")
 
+    except HTTPException as he:
+        # Re-raise HTTP exceptions as-is
+        print(f"[PDF Delete] HTTP Exception: {he.status_code} - {he.detail}")
+        raise he
     except Exception as e:
-        print(f"[PDF Delete] Error: {e}")
+        print(f"[PDF Delete] Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to delete PDF document")

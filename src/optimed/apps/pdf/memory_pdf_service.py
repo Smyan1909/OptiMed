@@ -90,8 +90,12 @@ class MemoryPDFService(PDFService):
             # Generate document ID
             document_id = str(uuid.uuid4())
             print(f"[MemoryPDFService] Starting upload for document_id: {document_id}")
+            print(f"[MemoryPDFService] Upload params - user_id: {user_id}, session_id: {session_id}, patient_id: {patient_id}")
 
             # Get session data
+            session_key = self._get_session_key(user_id, session_id, patient_id)
+            print(f"[MemoryPDFService] Generated session key for upload: {session_key}")
+
             session_data = self._get_or_create_session(user_id, session_id, patient_id)
 
             # Store raw content
@@ -192,8 +196,18 @@ class MemoryPDFService(PDFService):
         patient_id: Optional[str] = None
     ) -> List[PDFDocument]:
         """List all PDF documents for a session."""
+        print(f"[MemoryPDFService] List request - user_id: {user_id}, session_id: {session_id}, patient_id: {patient_id}")
+
+        session_key = self._get_session_key(user_id, session_id, patient_id)
+        print(f"[MemoryPDFService] Generated session key for list: {session_key}")
+
         session_data = self._get_or_create_session(user_id, session_id, patient_id)
-        return list(session_data.pdfs.values())
+        pdf_list = list(session_data.pdfs.values())
+
+        print(f"[MemoryPDFService] Found {len(pdf_list)} PDFs in session")
+        print(f"[MemoryPDFService] PDF IDs: {[pdf.document_id for pdf in pdf_list]}")
+
+        return pdf_list
 
     async def delete_document(
         self,
@@ -203,15 +217,32 @@ class MemoryPDFService(PDFService):
         patient_id: Optional[str] = None
     ) -> bool:
         """Delete a PDF document from memory."""
+        print(f"[MemoryPDFService] Delete request - document_id: {document_id}, user_id: {user_id}, session_id: {session_id}, patient_id: {patient_id}")
+
+        session_key = self._get_session_key(user_id, session_id, patient_id)
+        print(f"[MemoryPDFService] Generated session key: {session_key}")
+
         session_data = self._get_or_create_session(user_id, session_id, patient_id)
+        print(f"[MemoryPDFService] Available PDFs in session: {list(session_data.pdfs.keys())}")
 
-        if document_id in session_data.pdfs:
+        deleted_pdf = document_id in session_data.pdfs
+        deleted_content = document_id in session_data.raw_content
+
+        if deleted_pdf:
+            print(f"[MemoryPDFService] Deleting PDF document: {document_id}")
             del session_data.pdfs[document_id]
+        else:
+            print(f"[MemoryPDFService] WARNING: PDF document not found: {document_id}")
 
-        if document_id in session_data.raw_content:
+        if deleted_content:
+            print(f"[MemoryPDFService] Deleting raw content: {document_id}")
             del session_data.raw_content[document_id]
+        else:
+            print(f"[MemoryPDFService] WARNING: Raw content not found: {document_id}")
 
-        return True
+        success = deleted_pdf or deleted_content
+        print(f"[MemoryPDFService] Delete operation result: {success}")
+        return success
 
     async def get_documents_for_context(
         self,
@@ -257,6 +288,18 @@ class MemoryPDFService(PDFService):
             )
         }
         return stats
+
+    def debug_all_sessions(self):
+        """Debug method to show all current sessions and their PDFs."""
+        print(f"[MemoryPDFService] DEBUG: Total sessions: {len(self.sessions)}")
+        for session_key, session_data in self.sessions.items():
+            pdf_count = len(session_data.pdfs)
+            pdf_ids = list(session_data.pdfs.keys())
+            print(f"[MemoryPDFService] Session: {session_key} | PDFs: {pdf_count} | IDs: {pdf_ids}")
+        return {
+            "sessions": list(self.sessions.keys()),
+            "session_pdfs": {k: list(v.pdfs.keys()) for k, v in self.sessions.items()}
+        }
 
     async def shutdown(self):
         """Shutdown the service and cleanup."""

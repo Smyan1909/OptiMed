@@ -348,6 +348,9 @@ function getSessionHeaders(excludeContentType = false): Record<string, string> {
     const sessionId = localStorage.getItem('session_id');
     if (sessionId) {
       headers['X-Session-ID'] = sessionId;
+      console.log('[API] Using session ID from localStorage:', sessionId);
+    } else {
+      console.warn('[API] No session ID found in localStorage');
     }
 
     // Attach the current UI locale as Accept-Language for backend language handling
@@ -739,7 +742,6 @@ export type PDFDocument = {
 };
 
 export type PDFUploadResponse = {
-  success: any;
   document_id: string;
   filename: string;
   file_size: number;
@@ -822,16 +824,41 @@ export async function getPDFDocument(documentId: string): Promise<PDFDocument> {
   return res.json();
 }
 
-export async function deletePDFDocument(documentId: string): Promise<void> {
-  const res = await fetch(`/api/documents/${encodeURIComponent(documentId)}`, {
+export async function deletePDFDocument(documentId: string, patientId?: string, chatSessionId?: string): Promise<{ message: string }> {
+  console.log('[API] deletePDFDocument called with:', { documentId, patientId, chatSessionId });
+
+  const headers = getSessionHeaders();
+  console.log('[API] Delete request headers:', headers);
+
+  // Add query parameters if provided
+  const params = new URLSearchParams();
+  if (patientId) {
+    params.set('patient_id', patientId);
+  }
+  if (chatSessionId) {
+    params.set('chat_session_id', chatSessionId);
+  }
+
+  const url = `/api/documents/${encodeURIComponent(documentId)}${params.toString() ? '?' + params.toString() : ''}`;
+  console.log('[API] Delete request URL:', url);
+
+  const res = await fetch(url, {
     method: 'DELETE',
-    headers: getSessionHeaders(),
+    headers: headers,
   });
+
+  console.log('[API] Delete response status:', res.status);
+  console.log('[API] Delete response headers:', Object.fromEntries(res.headers.entries()));
 
   if (!res.ok) {
     const errorText = await res.text();
+    console.error('[API] Delete failed with error:', errorText);
     throw new Error(`Failed to delete PDF document: ${res.status} - ${errorText}`);
   }
+
+  const responseData = await res.json();
+  console.log('[API] Delete response data:', responseData);
+  return responseData;
 }
 
 // Encryption API functions

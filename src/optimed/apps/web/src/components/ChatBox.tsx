@@ -710,6 +710,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
   const [uploadedPDFs, setUploadedPDFs] = useState<PDFDocument[]>([]);
   const [isUploadingPDF, setIsUploadingPDF] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [forceRefresh, setForceRefresh] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Check if info mode selection is enabled
@@ -800,16 +801,48 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
   // Use propSessionId if provided, otherwise use generated sessionId
   const currentSessionId = propSessionId || sessionId;
 
+  // Debug effect to track PDF state changes
+  useEffect(() => {
+    console.log('[ChatBox] uploadedPDFs state changed:', {
+      count: uploadedPDFs.length,
+      pdfs: uploadedPDFs.map(pdf => ({ name: pdf.filename, status: pdf.status }))
+    });
+  }, [uploadedPDFs]);
+
   // Load PDF documents for the current session context
   const loadPDFs = async () => {
     try {
+      console.log('[ChatBox] Loading PDFs for session:', { patientId, currentSessionId });
+
       // PDFs are now session-based, so we get PDFs for the current session
       // The patientId parameter filters to patient-specific PDFs when a patient is selected
       const pdfList = await listPDFDocuments(patientId, currentSessionId);
-      setUploadedPDFs(pdfList.documents || []);
-      console.log(`[ChatBox] Loaded ${pdfList.documents?.length || 0} PDFs for session (patient: ${patientId || 'general'})`);
+
+      console.log('[ChatBox] Raw API response:', pdfList);
+
+      const newDocs = pdfList.documents || [];
+
+      console.log(`[ChatBox] Parsed ${newDocs.length} PDFs for session (patient: ${patientId || 'general'})`);
+      console.log('[ChatBox] PDF details:', newDocs.map(pdf => ({
+        id: pdf.document_id,
+        name: pdf.filename,
+        status: pdf.status,
+        patient_id: pdf.patient_id
+      })));
+
+      // Update the state and log the change
+      setUploadedPDFs(prevPDFs => {
+        console.log('[ChatBox] Previous PDF count:', prevPDFs.length);
+        console.log('[ChatBox] New PDF count:', newDocs.length);
+        console.log('[ChatBox] PDF count changed:', prevPDFs.length !== newDocs.length);
+        return newDocs;
+      });
+
+      // Force refresh counter update to trigger re-renders
+      setForceRefresh(prev => prev + 1);
+
     } catch (error) {
-      console.error('Failed to load PDFs:', error);
+      console.error('[ChatBox] Failed to load PDFs:', error);
     }
   };
 
@@ -1230,8 +1263,38 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     try {
       console.log('[ChatBox] Upload params:', { patientId, currentSessionId, propSessionId, sessionId });
       const uploadResponse = await uploadPDFDocument(file, patientId, currentSessionId);
-      if (uploadResponse.success) {
-        await loadPDFs(); // Refresh the PDF list
+
+      console.log('[ChatBox] Upload response received:', uploadResponse);
+
+      // Check if upload was successful - API returns document_id on success
+      if (uploadResponse.document_id) {
+        console.log('[ChatBox] Upload successful, refreshing PDF list...');
+
+        // Optimistically add the PDF to the list immediately
+        const newPDF: PDFDocument = {
+          document_id: uploadResponse.document_id,
+          filename: uploadResponse.filename || file.name,
+          file_size: uploadResponse.file_size || file.size,
+          status: (uploadResponse.status as "UPLOADED" | "PROCESSING" | "READY" | "ERROR") || 'PROCESSING',
+          uploaded_at: uploadResponse.uploaded_at || new Date().toISOString(),
+          patient_id: uploadResponse.patient_id || patientId,
+        };
+
+        setUploadedPDFs(prev => {
+          const updated = [...prev, newPDF];
+          console.log('[ChatBox] Optimistically updated PDF list:', updated.length);
+          return updated;
+        });
+
+        // Force refresh the PDF list to get server state
+        setTimeout(async () => {
+          console.log('[ChatBox] Refreshing from server...');
+          await loadPDFs();
+        }, 1000);
+
+        // Force component re-render by updating refresh counter
+        setForceRefresh(prev => prev + 1);
+
         setMessages(prev => [
           ...prev,
           {
@@ -1240,6 +1303,10 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
             timestamp: new Date().toLocaleTimeString()
           }
         ]);
+
+      } else {
+        console.error('[ChatBox] Upload response missing document_id:', uploadResponse);
+        setUploadError('Upload failed - invalid response from server');
       }
     } catch (error: any) {
       console.error('PDF upload error:', error);
@@ -1254,8 +1321,42 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
   const handleDeletePDF = async (documentId: string, filename: string) => {
     try {
-      await deletePDFDocument(documentId);
-      setUploadedPDFs(prev => prev.filter(pdf => pdf.document_id !== documentId));
+      console.log('[ChatBox] Attempting to delete PDF:', {
+        documentId,
+        filename,
+        patientId,
+        currentSessionId,
+        propSessionId,
+        sessionId
+      });
+
+      // Show confirmation to user
+      if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
+        return;
+      }
+
+      // Call the delete API with detailed error handling
+      console.log('[ChatBox] Making DELETE request...');
+      const deleteResponse = await deletePDFDocument(documentId, patientId, currentSessionId);
+      console.log('[ChatBox] Delete API call completed successfully:', deleteResponse);
+
+      // Immediately update the local state to reflect the deletion
+      setUploadedPDFs(prev => {
+        const updated = prev.filter(pdf => pdf.document_id !== documentId);
+        console.log('[ChatBox] Local state updated. PDF count after delete:', updated.length);
+        console.log('[ChatBox] Remaining PDFs:', updated.map(pdf => pdf.filename));
+        return updated;
+      });
+
+      // Force component refresh
+      setForceRefresh(prev => prev + 1);
+
+      // Verify deletion by refreshing from server
+      setTimeout(async () => {
+        console.log('[ChatBox] Verifying deletion by refreshing from server...');
+        await loadPDFs();
+      }, 500);
+
       setMessages(prev => [
         ...prev,
         {
@@ -1264,9 +1365,19 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           timestamp: new Date().toLocaleTimeString()
         }
       ]);
+
     } catch (error: any) {
-      console.error('PDF delete error:', error);
+      console.error('[ChatBox] PDF delete error:', error);
+      console.error('[ChatBox] Error details:', {
+        message: error.message,
+        stack: error.stack,
+        status: error.status || 'unknown'
+      });
+
       setUploadError(error.message || 'Failed to delete PDF');
+
+      // Don't refresh on error - let user see what happened
+      console.log('[ChatBox] Delete failed, NOT refreshing list to preserve current state');
     }
   };
 
@@ -1360,7 +1471,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
   return (
     <div className="flex-1 flex flex-col items-center justify-center min-h-0 h-full w-full relative bg-gray-50">
       {/* Chat area with scrollable messages */}
-      <div className="flex-1 w-full flex justify-center overflow-y-auto min-h-0 pt-4 pb-[180px]">
+      <div className="flex-1 w-full flex justify-center overflow-y-auto min-h-0 pt-4 pb-[90px]">
         <div className="w-full max-w-4xl px-4 space-y-3">
           {/* Messages */}
           {messages.length === 0 && !isStreaming && (
@@ -1464,119 +1575,78 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           {/* Auto-scroll anchor */}
           <div ref={messagesEndRef} />
           {/* Spacer to ensure last message is visible above input bar */}
-          <div style={{ height: 120 }} aria-hidden="true" />
+          <div style={{ height: 20 }} aria-hidden="true" />
         </div>
       </div>
 
-      {/* Absolutely positioned, centered input bar within the chat pane */}
-      <div className="absolute bottom-0 left-0 right-0 px-4 z-20 pointer-events-none flex justify-center">
-        <div className="w-full max-w-4xl border border-gray-300 bg-white/80 backdrop-blur-md shadow-xl rounded-2xl pointer-events-auto">
-          {/* PDF Upload Section */}
-          {uploadedPDFs.length > 0 && (
-            <div className="px-4 pt-3 border-b border-gray-200">
-              <div className="text-xs font-medium text-gray-600 mb-2">Uploaded Documents:</div>
-              <div className="flex flex-wrap gap-2 mb-2">
-                {uploadedPDFs.map((pdf) => (
-                  <div key={pdf.document_id} className="flex items-center gap-1 px-2 py-1 bg-blue-50 border border-blue-200 rounded-lg text-xs">
-                    <FileText className="h-3 w-3 text-blue-600" />
-                    <span className="text-blue-800 font-medium truncate max-w-[120px]">{pdf.filename}</span>
-                    <span className={`px-1 rounded text-[10px] font-medium ${
-                      pdf.status === 'READY' ? 'bg-green-100 text-green-700' :
-                      pdf.status === 'PROCESSING' ? 'bg-yellow-100 text-yellow-700' :
-                      pdf.status === 'ERROR' ? 'bg-red-100 text-red-700' :
-                      'bg-gray-100 text-gray-700'
-                    }`}>
-                      {pdf.status.toLowerCase()}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleDeletePDF(pdf.document_id, pdf.filename)}
-                      className="ml-1 p-0.5 text-red-500 hover:text-red-700 transition-colors"
-                      title="Remove document"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
+      {/* Centered ChatGPT-style input bar */}
+      <div className="absolute bottom-4 left-0 right-0 px-4 z-20 pointer-events-none flex justify-center">
+        <div className="w-full max-w-3xl pointer-events-auto">
           {/* Upload Error Display */}
           {uploadError && (
-            <div className="px-4 pt-2">
-              <div className="flex items-center gap-2 px-2 py-1 bg-red-50 border border-red-200 rounded text-xs text-red-700">
-                <X className="h-3 w-3" />
+            <div className="mb-2">
+              <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                <X className="h-4 w-4" />
                 <span>{uploadError}</span>
                 <button
                   type="button"
                   onClick={() => setUploadError(null)}
                   className="ml-auto text-red-500 hover:text-red-700"
                 >
-                  <X className="h-3 w-3" />
+                  <X className="h-4 w-4" />
                 </button>
               </div>
             </div>
           )}
 
-          <form onSubmit={sendMessage} className="flex gap-3 p-4">
-            <textarea
-              ref={textAreaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={getPlaceholderText()}
-              className="flex-1 resize-none overflow-y-auto border border-gray-200 bg-white/70 placeholder-gray-500
-                        text-gray-900 rounded-2xl px-3 py-1.5 focus:outline-none
-                        focus:ring-2 focus:ring-blue-400 focus:border-blue-400 font-medium text-sm shadow-sm"
-              disabled={isStreaming}
-              rows={1}
-              style={{ minHeight: 40, maxHeight: 240 }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  sendMessage(e as any);
-                }
-              }}
-            />
-            <div className="flex flex-col gap-2 shrink-0">
-              {/* PDF Upload Button */}
-              <button
-                type="button"
-                onClick={triggerFileUpload}
-                disabled={isStreaming || isUploadingPDF}
-                className="px-3 py-2 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-                title="Upload PDF document"
-              >
-                {isUploadingPDF ? (
-                  <div className="animate-spin h-4 w-4 border-2 border-gray-600 border-t-transparent rounded-full" />
-                ) : (
-                  <Paperclip className="h-4 w-4" />
-                )}
-                <span className="text-xs hidden sm:inline">PDF</span>
-              </button>
-
-              <button
-                type="submit"
-                disabled={!input.trim() || isStreaming}
-                className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isStreaming ? t('buttons.analyzing') : (
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
-                  </svg>
-                )}
-              </button>
-              {isStreaming && (
+          {/* ChatGPT-style text input */}
+          <div className="border border-gray-300 bg-white shadow-lg rounded-2xl">
+            <form onSubmit={sendMessage} className="flex items-end gap-2 px-4 py-2">
+              <textarea
+                ref={textAreaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={getPlaceholderText()}
+                className="flex-1 resize-none overflow-hidden border-0 bg-transparent placeholder-gray-400
+                          text-gray-900 focus:outline-none text-base leading-relaxed max-h-32"
+                disabled={isStreaming}
+                rows={1}
+                style={{ minHeight: '24px' }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage(e as any);
+                  }
+                }}
+              />
+              <div className="flex items-center gap-1 pb-1">
                 <button
-                  type="button"
-                  onClick={stopStream}
-                  className="px-4 py-2 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors"
+                  type="submit"
+                  disabled={!input.trim() || isStreaming}
+                  className="p-1.5 bg-black text-white rounded-full hover:bg-gray-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                 >
-                  {t('buttons.stop')}
+                  {isStreaming ? (
+                    <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                    </svg>
+                  )}
                 </button>
-              )}
-            </div>
-          </form>
+                {isStreaming && (
+                  <button
+                    type="button"
+                    onClick={stopStream}
+                    className="p-1.5 bg-gray-600 text-white rounded-full hover:bg-gray-700 transition-colors"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 6h12v12H6z" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
 
           {/* Hidden file input */}
           <input
@@ -1589,9 +1659,90 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         </div>
       </div>
 
+      {/* Separate Document Library - Top Right Corner */}
+      <div className="absolute top-4 right-4 z-20 w-64 pointer-events-auto" key={`docs-${forceRefresh}-${uploadedPDFs.length}`}>
+        <div className="flex flex-col gap-1.5">
+          {/* Document Library - Ultra Compact */}
+          <div className="border border-gray-300 bg-white shadow-sm rounded-lg">
+            <div className="px-2 py-1.5 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium text-gray-700 flex items-center gap-1">
+                  <FileText className="h-3 w-3 text-blue-600" />
+                  Documents ({uploadedPDFs.length})
+                </div>
+                {uploadedPDFs.length > 0 && (
+                  <div className="text-xs text-gray-500">
+                    {uploadedPDFs.filter(pdf => pdf.status === 'READY').length} ready
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="max-h-24 overflow-y-auto">
+              {uploadedPDFs.length > 0 ? (
+                <div className="p-1.5 space-y-1">
+                  {uploadedPDFs.map((pdf) => (
+                    <div key={pdf.document_id} className="flex items-center justify-between p-1 bg-gray-50 rounded text-xs">
+                      <div className="flex items-center gap-1 flex-1 min-w-0">
+                        <FileText className="h-2.5 w-2.5 text-blue-600 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-gray-900 truncate" title={pdf.filename}>
+                            {pdf.filename}
+                          </div>
+                          <div className="text-gray-500 text-xs">
+                            {(pdf.file_size / 1024).toFixed(0)}KB
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className={`w-2 h-2 rounded-full ${
+                          pdf.status === 'READY' ? 'bg-green-500' :
+                          pdf.status === 'PROCESSING' ? 'bg-yellow-500' :
+                          pdf.status === 'ERROR' ? 'bg-red-500' :
+                          'bg-gray-400'
+                        }`} title={pdf.status}></span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePDF(pdf.document_id, pdf.filename)}
+                          className="p-0.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                          title={`Remove ${pdf.filename}`}
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-2 text-gray-500">
+                  <FileText className="h-3 w-3 mx-auto mb-1 text-gray-300" />
+                  <div className="text-xs">No documents</div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* PDF Upload Button */}
+          <button
+            type="button"
+            onClick={triggerFileUpload}
+            disabled={isStreaming || isUploadingPDF}
+            className="px-2 py-1.5 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 border border-gray-300 shadow-sm text-xs"
+            title="Upload PDF document"
+          >
+            {isUploadingPDF ? (
+              <div className="animate-spin h-3 w-3 border-2 border-gray-600 border-t-transparent rounded-full" />
+            ) : (
+              <Paperclip className="h-3 w-3" />
+            )}
+            Upload PDF
+          </button>
+        </div>
+      </div>
+
       {/* Right-side mode selector - only show if info mode is enabled and we're in diagnose mode */}
       {isInfoModeEnabled && mode === "diagnose" && (
-        <div className="absolute right-4 bottom-4 z-30 pointer-events-auto">
+        <div className="absolute right-4 top-40 z-30 pointer-events-auto">
           <div className="p-3 border border-gray-300 bg-white/90 backdrop-blur-md shadow-xl rounded-xl">
             <ModeSelector
               selectedMode={infoRetrievalMode}

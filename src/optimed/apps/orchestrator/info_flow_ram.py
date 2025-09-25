@@ -743,7 +743,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
                 # Define SBAR component specific instructions
                 component_prompts = {
-                    "situation": "Current symptoms, vital signs, immediate presentation, active problems",
+                    "situation": "Current symptoms, vital signs, immediate presentation, active problems, most recent encounter, most recent note",
                     "background": "Medical history, past conditions, medications, family history, social history",
                     "assessment": "Clinical findings, lab results, diagnostic tests, professional observations",
                     "recommendation": "Treatment plans, medications, follow-up care, interventions, next steps"
@@ -1709,7 +1709,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_edge("fetch_patient", "fetch_pdfs")
 
         # Route after fetching PDFs - different paths for patient vs general mode
-        def route_after_pdfs(state: FlowState) -> str:
+        def route_after_pdfs(state) -> str:
             if has_patient(state):
                 # Patient mode: proceed with patient flow
                 if is_sbar_flow(state):
@@ -1945,30 +1945,35 @@ Content:
         # Create records from PDF documents
         records = []
 
+        # Use semantic chunking for better PDF processing
+        from optimed.adapters.pdf.semantic_chunker import SemanticPDFChunker
+
+        chunker = SemanticPDFChunker(
+            target_chunk_size=800,
+            overlap_ratio=0.15,
+            preserve_medical_context=True
+        )
+
         for pdf in pdf_documents:
             if not pdf.extracted_text:
                 continue
 
-            # Create a comprehensive text representation of the PDF document
-            metadata_text = ""
-            if pdf.metadata.title:
-                metadata_text += f"Title: {pdf.metadata.title}\n"
-            if pdf.metadata.author:
-                metadata_text += f"Author: {pdf.metadata.author}\n"
-            if pdf.metadata.subject:
-                metadata_text += f"Subject: {pdf.metadata.subject}\n"
+            # Create semantic chunks from the PDF
+            semantic_chunks = chunker.chunk_pdf_text(
+                pdf.extracted_text,
+                pdf.document_id,
+                {
+                    "title": pdf.metadata.title,
+                    "author": pdf.metadata.author,
+                    "subject": pdf.metadata.subject,
+                    "patient_id": pdf.patient_id,
+                    "user_id": pdf.user_id,
+                    "filename": pdf.filename,
+                    "uploaded_at": pdf.uploaded_at.strftime('%Y-%m-%d %H:%M')
+                }
+            )
 
-            pdf_text = f"""
-PDF Document: {pdf.get_display_name()}
-Filename: {pdf.filename}
-{metadata_text}
-Uploaded by User: {pdf.user_id}
-Upload Date: {pdf.uploaded_at.strftime('%Y-%m-%d %H:%M')}
-{f"Patient ID: {pdf.patient_id}" if pdf.patient_id else "General Document (No Patient Association)"}
-
-Content:
-{pdf.extracted_text}
-"""
+            print(f"[_chunk_pdf_documents] PDF {pdf.filename} -> {len(semantic_chunks)} semantic chunks")
 
             # Use appropriate patient reference
             if pdf.patient_id:
@@ -1976,14 +1981,33 @@ Content:
             else:
                 pseudo_patient = stable_hash({"uid": pdf.user_id}, namespace="user")
 
-            record = Record(
-                patient_ref=pseudo_patient,
-                encounter_ref=None,
-                resource_type="pdf_document",
-                key=pdf.document_id,  # Use key field instead of resource_id
-                text=pdf_text
-            )
-            records.append(record)
+            # Create a record for each semantic chunk
+            for i, chunk in enumerate(semantic_chunks):
+                # Create document header for context
+                doc_header = f"PDF Document: {pdf.get_display_name()}\n"
+                doc_header += f"Filename: {pdf.filename}\n"
+                if pdf.metadata.title:
+                    doc_header += f"Title: {pdf.metadata.title}\n"
+                if pdf.metadata.author:
+                    doc_header += f"Author: {pdf.metadata.author}\n"
+                doc_header += f"Upload Date: {pdf.uploaded_at.strftime('%Y-%m-%d %H:%M')}\n"
+                doc_header += f"{'Patient ID: ' + pdf.patient_id if pdf.patient_id else 'General Document'}\n"
+
+                if chunk.metadata.section_title:
+                    doc_header += f"Section: {chunk.metadata.section_title}\n"
+
+                doc_header += f"Chunk {i+1}/{len(semantic_chunks)}\n---\n"
+
+                full_text = doc_header + chunk.text
+
+                record = Record(
+                    patient_ref=pseudo_patient,
+                    encounter_ref=None,
+                    resource_type="pdf_document",
+                    key=chunk.metadata.chunk_id,
+                    text=full_text
+                )
+                records.append(record)
 
         if not records:
             return []
