@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus, ImageGenerationRequest, DataSource, ChatRole, ChatMessage
 from optimed.core.domain.pdf_document import PDFDocument, PDFUploadRequest, PDFListResponse
+from optimed.core.domain.xml_document import XMLDocument, XMLUploadRequest, XMLListResponse
 from optimed.core.ports import FHIRRepository
 from optimed.apps.orchestrator.factory import create_app_dependencies
 from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalEntryType
@@ -43,6 +44,7 @@ _generated_image_repo: _Any = None
 _journal_llm_service: _Any = None
 _web_search_service: _Any = None
 _pdf_service: _Any = None
+_xml_service: _Any = None
 
  
 
@@ -50,7 +52,7 @@ _dependencies_ready: asyncio.Event = asyncio.Event()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service
+    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service
     try:
         (
             _engine,
@@ -66,6 +68,7 @@ async def lifespan(app: FastAPI):
             _journal_llm_service,
             _web_search_service,
             _pdf_service,
+            _xml_service,
         ) = await create_app_dependencies()
         _dependencies_ready.set()
         print("[startup] Dependencies initialized")
@@ -2746,6 +2749,16 @@ class PDFUploadResponse(BaseModel):
     patient_id: Optional[str] = None
 
 
+class XMLUploadResponse(BaseModel):
+    document_id: str
+    filename: str
+    file_size: int
+    status: str
+    uploaded_at: str
+    patient_id: Optional[str] = None
+    document_type: Optional[str] = None
+
+
 @app.post("/documents/upload", response_model=PDFUploadResponse)
 async def upload_pdf_document(
     request: Request,
@@ -2813,6 +2826,120 @@ async def upload_pdf_document(
         raise HTTPException(status_code=500, detail="PDF upload failed")
 
 
+# XML Document List and Get Endpoints (must come before generic /documents routes)
+@app.get("/documents/xml", response_model=XMLListResponse)
+async def list_xml_documents(
+    request: Request,
+    patient_id: Optional[str] = Query(None),
+    chat_session_id: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """List XML documents for the user session."""
+    await _dependencies_ready.wait()
+
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # Use chat_session_id if provided, otherwise fall back to auth session_id
+    effective_session_id = chat_session_id or session_id
+
+    try:
+        print(f"[XML List] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, patient_id: {patient_id}")
+
+        # Get documents for current session (filtered by patient_id)
+        documents = await _xml_service.list_documents(
+            user_id=user.user_id,
+            session_id=effective_session_id,
+            patient_id=patient_id
+        )
+
+        # Separate counts
+        total_count = len(documents)
+        patient_specific_count = len([doc for doc in documents if doc.patient_id])
+        general_count = total_count - patient_specific_count
+        medical_document_count = len([doc for doc in documents if doc.is_medical_document()])
+
+        return XMLListResponse(
+            documents=documents,
+            total_count=total_count,
+            patient_specific_count=patient_specific_count,
+            general_count=general_count,
+            medical_document_count=medical_document_count
+        )
+
+    except Exception as e:
+        print(f"[XML List] Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list XML documents")
+
+
+@app.get("/documents/xml/{document_id}")
+async def get_xml_document(
+    request: Request,
+    document_id: str = Path(...),
+    patient_id: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Get a specific XML document."""
+    await _dependencies_ready.wait()
+
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    try:
+        document = await _xml_service.get_document(
+            document_id=document_id,
+            user_id=user.user_id,
+            session_id=session_id,
+            patient_id=patient_id
+        )
+
+        if not document:
+            raise HTTPException(status_code=404, detail="XML document not found")
+
+        return {
+            "document_id": document.document_id,
+            "filename": document.filename,
+            "file_size": document.file_size,
+            "status": document.status.value,
+            "uploaded_at": document.uploaded_at.isoformat(),
+            "updated_at": document.updated_at.isoformat() if document.updated_at else None,
+            "patient_id": document.patient_id,
+            "document_type": document.get_document_type(),
+            "metadata": {
+                "title": document.metadata.title,
+                "root_element": document.metadata.root_element,
+                "namespace": document.metadata.namespace,
+                "document_type": document.metadata.document_type,
+                "section_count": document.metadata.section_count,
+                "entry_count": document.metadata.entry_count
+            } if document.metadata else None,
+            "processing_info": {
+                "parsing_success": document.processing_info.parsing_success,
+                "structure_extraction_success": document.processing_info.structure_extraction_success,
+                "section_count": document.processing_info.section_count,
+                "detected_format": document.processing_info.detected_format,
+                "error_message": document.processing_info.error_message
+            } if document.processing_info else None
+        }
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"[XML Get] Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get XML document")
+
+
+# PDF Document List and Get Endpoints
 @app.get("/documents", response_model=PDFListResponse)
 async def list_pdf_documents(
     request: Request,
@@ -2977,3 +3104,125 @@ async def delete_pdf_document(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to delete PDF document")
+
+
+# XML Document Upload and Management Endpoints
+
+@app.post("/documents/upload-xml", response_model=XMLUploadResponse)
+async def upload_xml_document(
+    request: Request,
+    file: UploadFile = File(...),
+    patient_id: Optional[str] = Form(None),
+    chat_session_id: Optional[str] = Form(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Upload and process an XML document."""
+    await _dependencies_ready.wait()
+
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # Validate file type
+    valid_extensions = ['.xml', '.hl7', '.cda', '.ccda']
+    if not any(file.filename.lower().endswith(ext) for ext in valid_extensions):
+        raise HTTPException(status_code=400, detail=f"File must have one of these extensions: {', '.join(valid_extensions)}")
+
+    # Use chat_session_id if provided, otherwise fall back to auth session_id
+    effective_session_id = chat_session_id or session_id
+
+    try:
+        # Read file content
+        content = await file.read()
+
+        print(f"[XML Upload] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, filename: {file.filename}, patient_id: {patient_id}")
+
+        # Process upload using memory service
+        xml_document = await _xml_service.upload_document(
+            user_id=user.user_id,
+            session_id=effective_session_id,
+            filename=file.filename,
+            content=content,
+            patient_id=patient_id
+        )
+
+        return XMLUploadResponse(
+            document_id=xml_document.document_id,
+            filename=xml_document.filename,
+            file_size=xml_document.file_size,
+            status=xml_document.status.value,
+            uploaded_at=xml_document.uploaded_at.isoformat(),
+            patient_id=xml_document.patient_id,
+            document_type=xml_document.get_document_type()
+        )
+
+    except Exception as e:
+        print(f"[XML Upload] Error: {e}")
+        raise HTTPException(status_code=500, detail="XML upload failed")
+
+
+@app.delete("/documents/xml/{document_id}")
+async def delete_xml_document(
+    request: Request,
+    document_id: str = Path(...),
+    patient_id: Optional[str] = Query(None),
+    chat_session_id: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Delete an XML document."""
+    await _dependencies_ready.wait()
+
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # Use chat_session_id if provided, otherwise fall back to auth session_id (same as upload)
+    effective_session_id = chat_session_id or session_id
+
+    try:
+        print(f"[XML Delete] Request details:")
+        print(f"  - document_id: {document_id}")
+        print(f"  - user_id: {user.user_id}")
+        print(f"  - auth_session_id: {session_id}")
+        print(f"  - chat_session_id: {chat_session_id}")
+        print(f"  - effective_session_id: {effective_session_id}")
+        print(f"  - patient_id: {patient_id}")
+
+        print(f"[XML Delete] Before deletion - showing all sessions:")
+        _xml_service.debug_all_sessions()
+
+        success = await _xml_service.delete_document(
+            document_id=document_id,
+            user_id=user.user_id,
+            session_id=effective_session_id,
+            patient_id=patient_id
+        )
+
+        print(f"[XML Delete] Delete operation returned: {success}")
+
+        print(f"[XML Delete] After deletion - showing all sessions:")
+        _xml_service.debug_all_sessions()
+
+        if success:
+            return {"message": "XML document deleted successfully"}
+        else:
+            print(f"[XML Delete] Document not found, returning 404")
+            raise HTTPException(status_code=404, detail="XML document not found")
+
+    except HTTPException as he:
+        # Re-raise HTTP exceptions as-is
+        print(f"[XML Delete] HTTP Exception: {he.status_code} - {he.detail}")
+        raise he
+    except Exception as e:
+        print(f"[XML Delete] Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to delete XML document")

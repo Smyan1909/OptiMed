@@ -15,9 +15,10 @@ from pydantic import BaseModel, Field
 
 from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, JournalEntry, Chunk
 from optimed.core.domain.pdf_document import PDFDocument
+from optimed.core.domain.xml_document import XMLDocument
 from optimed.core.lang import detect_language_code
 
-from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, PDFService
+from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, PDFService, XMLService
 
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
 
@@ -100,6 +101,7 @@ class FlowState(BaseModel):
     patient_ctx: PatientContext | None = None
     journal_entries: List[JournalEntry] = Field(default_factory=list)  # Store fetched journal entries
     uploaded_pdfs: List[PDFDocument] = Field(default_factory=list)  # Store PDF documents
+    uploaded_xmls: List[XMLDocument] = Field(default_factory=list)  # Store XML documents
     retrieved_chunks: List[str] = Field(default_factory=list)
 
     chunk_analysis: dict[str, Any] = Field(default_factory=dict)
@@ -185,6 +187,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                  cross_encoder: MultilingualCrossEncoder,
                  zero_shot_classifier: MultilingualZeroShotClassifier,
                  pdf_service: Optional[PDFService] = None,
+                 xml_service: Optional[XMLService] = None,
                  default_prompt: str = "Provide the most likely diagnosis"):
         self._fhir = fhir_repo
         self._vec = vector_store
@@ -195,6 +198,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         self._connection_service = connection_service
         self._web_search = web_search_service
         self._pdf_service = pdf_service
+        self._xml_service = xml_service
         self._default_prompt = default_prompt
         
         # ML models for intelligent retrieval
@@ -312,6 +316,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         @streaming_step("fetch_pdfs")
         async def fetch_pdfs(state: FlowState) -> FlowState:
             """Fetch PDF documents relevant for the current context."""
+
             if not self._pdf_service or not state.user_id or not state.session_id:
                 state.uploaded_pdfs = []
                 return state
@@ -336,6 +341,37 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             except Exception as e:
                 print(f"[fetch_pdfs] Failed to fetch PDF documents: {e}")
                 state.uploaded_pdfs = []
+
+            return state
+
+        @streaming_step("fetch_xmls")
+        async def fetch_xmls(state: FlowState) -> FlowState:
+            """Fetch XML documents relevant for the current context."""
+
+            if not self._xml_service or not state.user_id or not state.session_id:
+                state.uploaded_xmls = []
+                return state
+
+            try:
+                # Get XML documents for the current session (patient-specific or general)
+                xml_documents = await self._xml_service.get_documents_for_context(
+                    user_id=state.user_id,
+                    session_id=state.session_id,
+                    patient_id=state.patient_id
+                )
+
+                # Filter to only include ready documents with extracted text
+                ready_xmls = [
+                    doc for doc in xml_documents
+                    if doc.status.value == "READY" and doc.extracted_text
+                ]
+
+                state.uploaded_xmls = ready_xmls
+                print(f"[fetch_xmls] Fetched {len(state.uploaded_xmls)} ready XML documents for session {state.session_id} (patient_id={state.patient_id})")
+
+            except Exception as e:
+                print(f"[fetch_xmls] Failed to fetch XML documents: {e}")
+                state.uploaded_xmls = []
 
             return state
 
@@ -490,9 +526,16 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     pdf_chunks = await self._chunk_pdf_documents(state.uploaded_pdfs, orchestrator, patient_id_str)
                     print(f"[intelligent_retrieve_chunks] PDF documents chunking produced {len(pdf_chunks)} chunks")
 
+                # Also chunk XML documents if available
+                xml_chunks = []
+                if state.uploaded_xmls:
+                    print(f"[intelligent_retrieve_chunks] Chunking {len(state.uploaded_xmls)} XML documents...")
+                    xml_chunks = await self._chunk_xml_documents(state.uploaded_xmls, orchestrator, patient_id_str)
+                    print(f"[intelligent_retrieve_chunks] XML documents chunking produced {len(xml_chunks)} chunks")
+
                 # Combine all chunks
-                all_chunks = produced + journal_chunks + pdf_chunks
-                print(f"[intelligent_retrieve_chunks] Total chunks produced: {len(all_chunks)} (patient: {len(produced)}, journal: {len(journal_chunks)}, pdf: {len(pdf_chunks)})")
+                all_chunks = produced + journal_chunks + pdf_chunks + xml_chunks
+                print(f"[intelligent_retrieve_chunks] Total chunks produced: {len(all_chunks)} (patient: {len(produced)}, journal: {len(journal_chunks)}, pdf: {len(pdf_chunks)}, xml: {len(xml_chunks)})")
                 
                 # Log chunk details (GDPR-safe)
                 for i, chunk in enumerate(all_chunks):
@@ -570,7 +613,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 lang = detect_language_code(state.user_prompt or "")
                 print(f"[intelligent_retrieve_chunks] Detected language: {lang}")
                 print("[intelligent_retrieve_chunks] Running optimized parallel cross-encoder operations...")
-                
+
                 # Use the new parallel method for all cross-encoder operations
                 reranked, selected_indices, gate_scores = await self._run_parallel_cross_encoder_operations(
                     state, chunks, initial_indices, query_vecs
@@ -1658,6 +1701,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_node("load_current_session_history", load_current_session_history)
         _builder.add_node("fetch_patient", fetch_patient)
         _builder.add_node("fetch_pdfs", fetch_pdfs)
+        _builder.add_node("fetch_xmls", fetch_xmls)
         _builder.add_node("intelligent_retrieve_chunks", intelligent_retrieve_chunks)
         # SBAR parallel retrieval nodes
         _builder.add_node("retrieve_situation_chunks", retrieve_situation_chunks)
@@ -1700,16 +1744,19 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
             has_patient,
             {
                 True: "fetch_patient",                   # Patient ID provided -> fetch patient details
-                False: "fetch_pdfs"  # No patient ID -> fetch general PDFs, then continue
+                False: "fetch_pdfs"  # No patient ID -> fetch general PDFs and XMLs, then continue
             }
         )
 
         # PATIENT PROCESSING PATH (only when patient_id exists)
-        # Always fetch PDFs after fetching patient data
+        # Always fetch PDFs and XMLs after fetching patient data
         _builder.add_edge("fetch_patient", "fetch_pdfs")
 
-        # Route after fetching PDFs - different paths for patient vs general mode
-        def route_after_pdfs(state) -> str:
+        # BOTH PATIENT AND GENERAL MODES: Always fetch XMLs after PDFs
+        _builder.add_edge("fetch_pdfs", "fetch_xmls")
+
+        # Route after fetching XMLs - different paths for patient vs general mode
+        def route_after_xmls(state) -> str:
             if has_patient(state):
                 # Patient mode: proceed with patient flow
                 if is_sbar_flow(state):
@@ -1721,8 +1768,8 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 return "intelligent_retrieve_chunks"
 
         _builder.add_conditional_edges(
-            "fetch_pdfs",
-            route_after_pdfs,
+            "fetch_xmls",
+            route_after_xmls,
             {
                 "intelligent_retrieve_chunks": "intelligent_retrieve_chunks"
             }
@@ -2030,6 +2077,148 @@ Content:
         print(f"[_chunk_pdf_documents] Created {len(chunks)} chunks from {len(pdf_documents)} PDF documents")
 
         return chunks
+
+    async def _chunk_xml_documents(self, xml_documents: List[XMLDocument], orchestrator: ChunkingOrchestrator, patient_id_str: Optional[str]) -> List[Chunk]:
+        """Chunk XML documents using structure-aware semantic chunking."""
+        from optimed.core.domain import Record
+        from optimed.adapters.chunking.strategies.narrative_v1 import NarrativeV1
+        from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
+        from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
+        from optimed.core.services.hash_utils import stable_hash
+
+        if not xml_documents:
+            return []
+
+        # Create records from XML documents with improved text chunking
+        records = []
+
+        for xml in xml_documents:
+            if not xml.extracted_text:
+                print(f"[_chunk_xml_documents] Skipping XML document {xml.filename} - no extracted text")
+                continue
+
+            # Use appropriate patient reference
+            if xml.patient_id:
+                pseudo_patient = stable_hash({"pid": xml.patient_id}, namespace="patient")
+            else:
+                pseudo_patient = stable_hash({"uid": xml.user_id}, namespace="user")
+
+            # Split the extracted text into logical sections for better chunking
+            sections = self._split_xml_text_into_sections(xml.extracted_text)
+            print(f"[_chunk_xml_documents] XML {xml.filename} -> {len(sections)} sections")
+
+            # Create a record for each section
+            for i, section in enumerate(sections):
+                # Create document header for context
+                doc_header = f"XML Document: {xml.filename}\n"
+                if xml.metadata and xml.metadata.document_type:
+                    doc_header += f"Document Type: {xml.metadata.document_type}\n"
+                doc_header += f"Section: {i + 1} of {len(sections)}\n"
+                doc_header += "---\n\n"
+
+                # Combine header with section content
+                full_text = doc_header + section.strip()
+
+                # Create a record for this section
+                record = Record(
+                    patient_ref=pseudo_patient,
+                    encounter_ref=None,
+                    resource_type="xml_document",
+                    key=f"xml_{xml.document_id}_section_{i}",
+                    text=full_text,
+                    timestamp=xml.updated_at
+                )
+                records.append(record)
+
+        print(f"[_chunk_xml_documents] Created {len(records)} records from {len(xml_documents)} XML documents")
+
+        # Simple conversion to chunks without complex chunking strategy to avoid breaking PDF flow
+        chunks = []
+        for record in records:
+            # Apply basic PHI redaction
+            from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
+            redactor = SimplePhiRedactor()
+            redacted_text = redactor.redact(record.text or "")
+
+            # Create a simple chunk directly from the record
+            chunk = Chunk(
+                id=record.key or f"xml_chunk_{len(chunks)}",
+                patient_ref=record.patient_ref,
+                text=redacted_text,
+                resource_type=record.resource_type,
+                key=record.key,
+                timestamp=record.timestamp,
+                encounter_ref=record.encounter_ref,
+                strategy_id="simple_xml",
+                strategy_version="1.0",
+                has_phi=False
+            )
+            chunks.append(chunk)
+
+        print(f"[_chunk_xml_documents] Created {len(chunks)} chunks from {len(xml_documents)} XML documents")
+
+        return chunks
+
+    def _split_xml_text_into_sections(self, text: str) -> list[str]:
+        """Split XML extracted text into logical sections for better chunking."""
+        if not text or not text.strip():
+            return [text]
+
+        # Split on section headers (lines with --- markers)
+        sections = []
+        lines = text.split('\n')
+        current_section = []
+
+        for line in lines:
+            line_stripped = line.strip()
+
+            # Check if this is a section header (starts/ends with ---)
+            if line_stripped.startswith('---') and line_stripped.endswith('---'):
+                # Finish the current section
+                if current_section:
+                    section_text = '\n'.join(current_section).strip()
+                    if section_text:
+                        sections.append(section_text)
+                    current_section = []
+
+                # Start new section with the header
+                current_section = [line]
+            else:
+                # Add to current section
+                current_section.append(line)
+
+        # Add the final section
+        if current_section:
+            section_text = '\n'.join(current_section).strip()
+            if section_text:
+                sections.append(section_text)
+
+        # If no sections found (no --- markers), split by double newlines
+        if not sections:
+            paragraphs = text.split('\n\n')
+            sections = [p.strip() for p in paragraphs if p.strip()]
+
+        # If still only one large section, split it further
+        if len(sections) == 1 and len(sections[0]) > 2000:
+            large_section = sections[0]
+            # Split by single newlines and group into smaller chunks
+            lines = large_section.split('\n')
+            chunk_size = len(lines) // 4  # Aim for ~4 chunks
+            if chunk_size < 10:
+                chunk_size = 10
+
+            sections = []
+            current_chunk = []
+            for line in lines:
+                current_chunk.append(line)
+                if len(current_chunk) >= chunk_size:
+                    sections.append('\n'.join(current_chunk))
+                    current_chunk = []
+
+            if current_chunk:
+                sections.append('\n'.join(current_chunk))
+
+        return sections
 
     # =========================
     # Retrieval helpers (RAM-only)

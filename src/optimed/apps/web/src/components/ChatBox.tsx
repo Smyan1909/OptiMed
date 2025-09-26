@@ -3,7 +3,7 @@
 import { useState, useEffect, FormEvent, useRef } from "react";
 import { useUser } from '@/contexts/UserContext';
 import { Download, Image as ImageIcon, ExternalLink, Paperclip, FileText, X } from 'lucide-react';
-import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse, uploadPDFDocument, listPDFDocuments, deletePDFDocument, PDFDocument } from '@/lib/api';
+import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse, uploadPDFDocument, listPDFDocuments, deletePDFDocument, PDFDocument, uploadXMLDocument, listXMLDocuments, deleteXMLDocument, XMLDocument } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
 import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
@@ -712,6 +712,11 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [forceRefresh, setForceRefresh] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // XML upload state
+  const [uploadedXMLs, setUploadedXMLs] = useState<XMLDocument[]>([]);
+  const [isUploadingXML, setIsUploadingXML] = useState(false);
+  const xmlFileInputRef = useRef<HTMLInputElement>(null);
   
   // Check if info mode selection is enabled
   const isInfoModeEnabled = process.env.NEXT_PUBLIC_INFO_MODE === 'false';
@@ -809,6 +814,14 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     });
   }, [uploadedPDFs]);
 
+  // Debug effect to track XML state changes
+  useEffect(() => {
+    console.log('[ChatBox] uploadedXMLs state changed:', {
+      count: uploadedXMLs.length,
+      xmls: uploadedXMLs.map(xml => ({ name: xml.filename, status: xml.status, type: xml.document_type }))
+    });
+  }, [uploadedXMLs]);
+
   // Load PDF documents for the current session context
   const loadPDFs = async () => {
     try {
@@ -843,6 +856,44 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
     } catch (error) {
       console.error('[ChatBox] Failed to load PDFs:', error);
+    }
+  };
+
+  // Load XML documents for the current session context
+  const loadXMLs = async () => {
+    try {
+      console.log('[ChatBox] Loading XMLs for session:', { patientId, currentSessionId });
+
+      // XMLs are now session-based, so we get XMLs for the current session
+      // The patientId parameter filters to patient-specific XMLs when a patient is selected
+      const xmlList = await listXMLDocuments(patientId, currentSessionId);
+
+      console.log('[ChatBox] Raw XML API response:', xmlList);
+
+      const newDocs = xmlList.documents || [];
+
+      console.log(`[ChatBox] Parsed ${newDocs.length} XMLs for session (patient: ${patientId || 'general'})`);
+      console.log('[ChatBox] XML details:', newDocs.map(xml => ({
+        id: xml.document_id,
+        name: xml.filename,
+        status: xml.status,
+        patient_id: xml.patient_id,
+        type: xml.document_type
+      })));
+
+      // Update the state and log the change
+      setUploadedXMLs(prevXMLs => {
+        console.log('[ChatBox] Previous XML count:', prevXMLs.length);
+        console.log('[ChatBox] New XML count:', newDocs.length);
+        console.log('[ChatBox] XML count changed:', prevXMLs.length !== newDocs.length);
+        return newDocs;
+      });
+
+      // Force refresh counter update to trigger re-renders
+      setForceRefresh(prev => prev + 1);
+
+    } catch (error) {
+      console.error('[ChatBox] Failed to load XMLs:', error);
     }
   };
 
@@ -1035,6 +1086,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     if ((mode === 'diagnose' && patientId) || mode === 'chat') {
       loadHistory();
       loadPDFs();
+      loadXMLs();
     }
   }, [currentSessionId, patientId, mode]);
 
@@ -1286,10 +1338,11 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           return updated;
         });
 
-        // Force refresh the PDF list to get server state
+        // Force refresh the document lists to get server state
         setTimeout(async () => {
           console.log('[ChatBox] Refreshing from server...');
           await loadPDFs();
+          await loadXMLs();
         }, 1000);
 
         // Force component re-render by updating refresh counter
@@ -1315,6 +1368,88 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
       setIsUploadingPDF(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleXMLUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const validExtensions = ['.xml', '.hl7', '.cda', '.ccda'];
+    const fileExtension = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
+
+    if (!validExtensions.includes(fileExtension)) {
+      setUploadError(`Please select an XML file with one of these extensions: ${validExtensions.join(', ')}`);
+      return;
+    }
+
+    if (file.size > 100 * 1024 * 1024) { // 100MB limit for XML files
+      setUploadError('File size must be less than 100MB');
+      return;
+    }
+
+    setIsUploadingXML(true);
+    setUploadError(null);
+
+    try {
+      console.log('[ChatBox] XML Upload params:', { patientId, currentSessionId, propSessionId, sessionId });
+      const uploadResponse = await uploadXMLDocument(file, patientId, currentSessionId);
+
+      console.log('[ChatBox] XML Upload response received:', uploadResponse);
+
+      // Check if upload was successful - API returns document_id on success
+      if (uploadResponse.document_id) {
+        console.log('[ChatBox] XML Upload successful, refreshing document lists...');
+
+        // Optimistically add the XML to the list immediately
+        const newXML: XMLDocument = {
+          document_id: uploadResponse.document_id,
+          filename: uploadResponse.filename || file.name,
+          file_size: uploadResponse.file_size || file.size,
+          status: (uploadResponse.status as "UPLOADED" | "PROCESSING" | "READY" | "ERROR") || 'PROCESSING',
+          uploaded_at: uploadResponse.uploaded_at || new Date().toISOString(),
+          patient_id: uploadResponse.patient_id || patientId,
+          document_type: uploadResponse.document_type
+        };
+
+        setUploadedXMLs(prev => {
+          const updated = [...prev, newXML];
+          console.log('[ChatBox] Optimistically updated XML list:', updated.length);
+          return updated;
+        });
+
+        // Force refresh the document lists to get server state
+        setTimeout(async () => {
+          console.log('[ChatBox] Refreshing from server...');
+          await loadPDFs();
+          await loadXMLs();
+        }, 1000);
+
+        // Force component re-render by updating refresh counter
+        setForceRefresh(prev => prev + 1);
+
+        const documentTypeText = uploadResponse.document_type ? ` (${uploadResponse.document_type})` : '';
+        setMessages(prev => [
+          ...prev,
+          {
+            sender: 'system',
+            text: `XML document "${file.name}"${documentTypeText} uploaded successfully and processed. You can now ask questions about its content. Note: XML document is stored temporarily for this session only.`,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ]);
+
+      } else {
+        console.error('[ChatBox] XML Upload response missing document_id:', uploadResponse);
+        setUploadError('XML upload failed - invalid response from server');
+      }
+    } catch (error: any) {
+      console.error('XML upload error:', error);
+      setUploadError(error.message || 'Failed to upload XML document');
+    } finally {
+      setIsUploadingXML(false);
+      if (xmlFileInputRef.current) {
+        xmlFileInputRef.current.value = '';
       }
     }
   };
@@ -1355,6 +1490,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
       setTimeout(async () => {
         console.log('[ChatBox] Verifying deletion by refreshing from server...');
         await loadPDFs();
+        await loadXMLs();
       }, 500);
 
       setMessages(prev => [
@@ -1381,8 +1517,75 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     }
   };
 
+  const handleDeleteXML = async (documentId: string, filename: string) => {
+    try {
+      console.log('[ChatBox] Attempting to delete XML:', {
+        documentId,
+        filename,
+        patientId,
+        currentSessionId,
+        propSessionId,
+        sessionId
+      });
+
+      // Show confirmation to user
+      if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
+        return;
+      }
+
+      // Call the delete API with detailed error handling
+      console.log('[ChatBox] Making DELETE request for XML...');
+      const deleteResponse = await deleteXMLDocument(documentId, patientId, currentSessionId);
+      console.log('[ChatBox] Delete XML API call completed successfully:', deleteResponse);
+
+      // Immediately update the local state to reflect the deletion
+      setUploadedXMLs(prev => {
+        const updated = prev.filter(xml => xml.document_id !== documentId);
+        console.log('[ChatBox] Local XML state updated. XML count after delete:', updated.length);
+        console.log('[ChatBox] Remaining XMLs:', updated.map(xml => xml.filename));
+        return updated;
+      });
+
+      // Force component refresh
+      setForceRefresh(prev => prev + 1);
+
+      // Verify deletion by refreshing from server
+      setTimeout(async () => {
+        console.log('[ChatBox] Verifying XML deletion by refreshing from server...');
+        await loadPDFs();
+        await loadXMLs();
+      }, 500);
+
+      setMessages(prev => [
+        ...prev,
+        {
+          sender: 'system',
+          text: `XML document "${filename}" has been removed.`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+
+    } catch (error: any) {
+      console.error('[ChatBox] XML delete error:', error);
+      console.error('[ChatBox] XML Error details:', {
+        message: error.message,
+        stack: error.stack,
+        status: error.status || 'unknown'
+      });
+
+      setUploadError(error.message || 'Failed to delete XML document');
+
+      // Don't refresh on error - let user see what happened
+      console.log('[ChatBox] XML Delete failed, NOT refreshing list to preserve current state');
+    }
+  };
+
   const triggerFileUpload = () => {
     fileInputRef.current?.click();
+  };
+
+  const triggerXMLUpload = () => {
+    xmlFileInputRef.current?.click();
   };
 
   const markdownComponents = {
@@ -1648,7 +1851,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
             </form>
           </div>
 
-          {/* Hidden file input */}
+          {/* Hidden file inputs */}
           <input
             ref={fileInputRef}
             type="file"
@@ -1656,11 +1859,18 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
             onChange={handlePDFUpload}
             className="hidden"
           />
+          <input
+            ref={xmlFileInputRef}
+            type="file"
+            accept=".xml,.hl7,.cda,.ccda,application/xml,text/xml"
+            onChange={handleXMLUpload}
+            className="hidden"
+          />
         </div>
       </div>
 
       {/* Separate Document Library - Top Right Corner */}
-      <div className="absolute top-4 right-4 z-20 w-64 pointer-events-auto" key={`docs-${forceRefresh}-${uploadedPDFs.length}`}>
+      <div className="absolute top-4 right-4 z-20 w-64 pointer-events-auto" key={`docs-${forceRefresh}-${uploadedPDFs.length}-${uploadedXMLs.length}`}>
         <div className="flex flex-col gap-1.5">
           {/* Document Library - Ultra Compact */}
           <div className="border border-gray-300 bg-white shadow-sm rounded-lg">
@@ -1668,21 +1878,22 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
               <div className="flex items-center justify-between">
                 <div className="text-xs font-medium text-gray-700 flex items-center gap-1">
                   <FileText className="h-3 w-3 text-blue-600" />
-                  Documents ({uploadedPDFs.length})
+                  Documents ({uploadedPDFs.length + uploadedXMLs.length})
                 </div>
-                {uploadedPDFs.length > 0 && (
+                {(uploadedPDFs.length + uploadedXMLs.length) > 0 && (
                   <div className="text-xs text-gray-500">
-                    {uploadedPDFs.filter(pdf => pdf.status === 'READY').length} ready
+                    {uploadedPDFs.filter(pdf => pdf.status === 'READY').length + uploadedXMLs.filter(xml => xml.status === 'READY').length} ready
                   </div>
                 )}
               </div>
             </div>
 
             <div className="max-h-24 overflow-y-auto">
-              {uploadedPDFs.length > 0 ? (
+              {(uploadedPDFs.length + uploadedXMLs.length) > 0 ? (
                 <div className="p-1.5 space-y-1">
+                  {/* PDF Documents */}
                   {uploadedPDFs.map((pdf) => (
-                    <div key={pdf.document_id} className="flex items-center justify-between p-1 bg-gray-50 rounded text-xs">
+                    <div key={`pdf-${pdf.document_id}`} className="flex items-center justify-between p-1 bg-gray-50 rounded text-xs">
                       <div className="flex items-center gap-1 flex-1 min-w-0">
                         <FileText className="h-2.5 w-2.5 text-blue-600 flex-shrink-0" />
                         <div className="flex-1 min-w-0">
@@ -1712,6 +1923,40 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                       </div>
                     </div>
                   ))}
+
+                  {/* XML Documents */}
+                  {uploadedXMLs.map((xml) => (
+                    <div key={`xml-${xml.document_id}`} className="flex items-center justify-between p-1 bg-green-50 rounded text-xs">
+                      <div className="flex items-center gap-1 flex-1 min-w-0">
+                        <FileText className="h-2.5 w-2.5 text-green-600 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-gray-900 truncate" title={xml.filename}>
+                            {xml.filename}
+                          </div>
+                          <div className="text-gray-500 text-xs">
+                            {(xml.file_size / 1024).toFixed(0)}KB
+                            {xml.document_type && ` • ${xml.document_type}`}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className={`w-2 h-2 rounded-full ${
+                          xml.status === 'READY' ? 'bg-green-500' :
+                          xml.status === 'PROCESSING' ? 'bg-yellow-500' :
+                          xml.status === 'ERROR' ? 'bg-red-500' :
+                          'bg-gray-400'
+                        }`} title={xml.status}></span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteXML(xml.document_id, xml.filename)}
+                          className="p-0.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                          title={`Remove ${xml.filename}`}
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div className="text-center py-2 text-gray-500">
@@ -1722,21 +1967,40 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
             </div>
           </div>
 
-          {/* PDF Upload Button */}
-          <button
-            type="button"
-            onClick={triggerFileUpload}
-            disabled={isStreaming || isUploadingPDF}
-            className="px-2 py-1.5 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 border border-gray-300 shadow-sm text-xs"
-            title="Upload PDF document"
-          >
-            {isUploadingPDF ? (
-              <div className="animate-spin h-3 w-3 border-2 border-gray-600 border-t-transparent rounded-full" />
-            ) : (
-              <Paperclip className="h-3 w-3" />
-            )}
-            Upload PDF
-          </button>
+          {/* Upload Buttons */}
+          <div className="flex gap-1.5">
+            {/* PDF Upload Button */}
+            <button
+              type="button"
+              onClick={triggerFileUpload}
+              disabled={isStreaming || isUploadingPDF}
+              className="flex-1 px-2 py-1.5 bg-blue-100 text-blue-700 font-medium rounded-lg hover:bg-blue-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 border border-blue-300 shadow-sm text-xs"
+              title="Upload PDF document"
+            >
+              {isUploadingPDF ? (
+                <div className="animate-spin h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full" />
+              ) : (
+                <FileText className="h-3 w-3" />
+              )}
+              PDF
+            </button>
+
+            {/* XML Upload Button */}
+            <button
+              type="button"
+              onClick={triggerXMLUpload}
+              disabled={isStreaming || isUploadingXML}
+              className="flex-1 px-2 py-1.5 bg-green-100 text-green-700 font-medium rounded-lg hover:bg-green-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 border border-green-300 shadow-sm text-xs"
+              title="Upload XML document (HL7, CDA, FHIR, or generic XML)"
+            >
+              {isUploadingXML ? (
+                <div className="animate-spin h-3 w-3 border-2 border-green-600 border-t-transparent rounded-full" />
+              ) : (
+                <FileText className="h-3 w-3" />
+              )}
+              XML
+            </button>
+          </div>
         </div>
       </div>
 

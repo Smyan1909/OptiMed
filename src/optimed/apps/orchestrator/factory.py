@@ -9,7 +9,7 @@ from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
 from optimed.adapters.openai_gpt.azure_gpt5_mini_client import AzureOpenAIGPT5MiniClient # type: ignore
 from optimed.adapters.user_repository.pg_user_repository import PGUserRepository
 from optimed.adapters.user_repository.pg_ehr_connection_repository import PGUserEHRConnectionRepository
-from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine, ImageGenerationService, GeneratedImageRepository, LLMClient, PDFService, PDFRepository, PDFStoragePort, PDFProcessor
+from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine, ImageGenerationService, GeneratedImageRepository, LLMClient, PDFService, PDFRepository, PDFStoragePort, PDFProcessor, XMLService, XMLProcessor
 from optimed.adapters.dicom.pydicom_processor import PyDICOMProcessor
 from optimed.adapters.dicom.image_service import ImageServiceImpl
 from optimed.adapters.dicom.pg_image_repository import PostgreSQLImageRepository
@@ -22,6 +22,8 @@ from optimed.apps.orchestrator.image_flow import LangGraphImageAnalysisEngine
 from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder, MultilingualZeroShotClassifier
 from optimed.adapters.pdf.pdf_processor import PyMuPDFProcessor
 from optimed.apps.pdf.memory_pdf_service import MemoryPDFService
+from optimed.adapters.xml.xml_processor import LibXML2Processor
+from optimed.apps.xml.memory_xml_service import MemoryXMLService
 from optimed.core.domain import UserEHRConnection
 from datetime import datetime, timezone
 from dotenv import load_dotenv # type: ignore
@@ -68,7 +70,8 @@ async def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
                                                       Optional[GeneratedImageRepository],
                                                       LLMClient,
                                                       TavilyWebSearchService,
-                                                      PDFService]:
+                                                      PDFService,
+                                                      XMLService]:
     """Factory function to wire up all application dependencies."""
 
     # Load environment variables from .env file
@@ -131,6 +134,9 @@ async def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
     pdf_processor = PyMuPDFProcessor()
     pdf_service: PDFService = MemoryPDFService(pdf_processor)
 
+    # XML service (memory-only for GDPR compliance)
+    xml_processor = LibXML2Processor()
+    xml_service: XMLService = MemoryXMLService(xml_processor)
 
     # Web search service
     web_search_service = TavilyWebSearchService(
@@ -172,9 +178,10 @@ async def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
         cross_encoder=cross_encoder,
         zero_shot_classifier=zero_shot_classifier,
         pdf_service=pdf_service,
+        xml_service=xml_service,
     )
     
-    return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine, image_generation_service, generated_image_repo, journal_client, web_search_service, pdf_service
+    return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine, image_generation_service, generated_image_repo, journal_client, web_search_service, pdf_service, xml_service
 
 
 # Chunking orchestrator factory (for CLI or future wiring)

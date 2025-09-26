@@ -757,6 +757,51 @@ export type PDFListResponse = {
   general_count: number;
 };
 
+// XML Document Types
+export type XMLDocument = {
+  document_id: string;
+  filename: string;
+  file_size: number;
+  status: 'UPLOADED' | 'PROCESSING' | 'READY' | 'ERROR';
+  uploaded_at: string;
+  processed_at?: string;
+  patient_id?: string;
+  document_type?: string;
+  metadata?: {
+    title?: string;
+    root_element?: string;
+    namespace?: string;
+    document_type?: string;
+    section_count?: number;
+    entry_count?: number;
+  };
+  processing_info?: {
+    parsing_success?: boolean;
+    structure_extraction_success?: boolean;
+    section_count?: number;
+    detected_format?: string;
+    error_message?: string;
+  };
+};
+
+export type XMLUploadResponse = {
+  document_id: string;
+  filename: string;
+  file_size: number;
+  status: string;
+  uploaded_at: string;
+  patient_id?: string;
+  document_type?: string;
+};
+
+export type XMLListResponse = {
+  documents: XMLDocument[];
+  total_count: number;
+  patient_specific_count: number;
+  general_count: number;
+  medical_document_count: number;
+};
+
 // PDF Document API Functions
 export async function uploadPDFDocument(file: File, patientId?: string, chatSessionId?: string): Promise<PDFUploadResponse> {
   console.log('[API] uploadPDFDocument called with:', { patientId, chatSessionId });
@@ -854,6 +899,107 @@ export async function deletePDFDocument(documentId: string, patientId?: string, 
     const errorText = await res.text();
     console.error('[API] Delete failed with error:', errorText);
     throw new Error(`Failed to delete PDF document: ${res.status} - ${errorText}`);
+  }
+
+  const responseData = await res.json();
+  console.log('[API] Delete response data:', responseData);
+  return responseData;
+}
+
+// XML Document API Functions
+export async function uploadXMLDocument(file: File, patientId?: string, chatSessionId?: string): Promise<XMLUploadResponse> {
+  console.log('[API] uploadXMLDocument called with:', { patientId, chatSessionId });
+
+  const formData = new FormData();
+  formData.append('file', file);
+  if (patientId) {
+    console.log('[API] Adding patient_id:', patientId);
+    formData.append('patient_id', patientId);
+  }
+  if (chatSessionId) {
+    console.log('[API] Adding chat_session_id:', chatSessionId);
+    formData.append('chat_session_id', chatSessionId);
+  }
+
+  const res = await fetch('/api/documents/upload-xml', {
+    method: 'POST',
+    headers: getSessionHeaders(true), // Exclude Content-Type for FormData
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`XML upload failed: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function listXMLDocuments(patientId?: string, chatSessionId?: string): Promise<XMLListResponse> {
+  const params = new URLSearchParams();
+  if (patientId) {
+    params.set('patient_id', patientId);
+  }
+  if (chatSessionId) {
+    params.set('chat_session_id', chatSessionId);
+  }
+
+  const url = `/api/documents/xml${params.toString() ? '?' + params.toString() : ''}`;
+  const res = await fetch(url, {
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to list XML documents: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function getXMLDocument(documentId: string): Promise<XMLDocument> {
+  const res = await fetch(`/api/documents/xml/${encodeURIComponent(documentId)}`, {
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to get XML document: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function deleteXMLDocument(documentId: string, patientId?: string, chatSessionId?: string): Promise<{ message: string }> {
+  console.log('[API] deleteXMLDocument called with:', { documentId, patientId, chatSessionId });
+
+  const headers = getSessionHeaders();
+  console.log('[API] Delete request headers:', headers);
+
+  // Add query parameters if provided
+  const params = new URLSearchParams();
+  if (patientId) {
+    params.set('patient_id', patientId);
+  }
+  if (chatSessionId) {
+    params.set('chat_session_id', chatSessionId);
+  }
+
+  const url = `/api/documents/xml/${encodeURIComponent(documentId)}${params.toString() ? '?' + params.toString() : ''}`;
+  console.log('[API] Delete request URL:', url);
+
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: headers,
+  });
+
+  console.log('[API] Delete response status:', res.status);
+  console.log('[API] Delete response headers:', Object.fromEntries(res.headers.entries()));
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error('[API] Delete failed with error:', errorText);
+    throw new Error(`Failed to delete XML document: ${res.status} - ${errorText}`);
   }
 
   const responseData = await res.json();

@@ -29,6 +29,7 @@ from optimed.core.domain import (
     JournalEntryUpdate )
 
 from optimed.core.domain.pdf_document import PDFDocument, PDFUploadRequest, PDFMetadata
+from optimed.core.domain.xml_document import XMLDocument, XMLUploadRequest, XMLMetadata
 
 # core/ports.py
 #
@@ -752,6 +753,30 @@ class PDFProcessor(Protocol):
         ...
 
 
+class XMLProcessor(Protocol):
+    """Port for processing XML documents."""
+
+    async def extract_text(self, file_content: bytes) -> str:
+        """Extract text content from an XML file."""
+        ...
+
+    async def extract_metadata(self, file_content: bytes) -> XMLMetadata:
+        """Extract metadata from an XML file."""
+        ...
+
+    async def extract_structured_data(self, file_content: bytes) -> Dict[str, Any]:
+        """Extract structured data from an XML file."""
+        ...
+
+    async def validate_xml_file(self, file_content: bytes) -> bool:
+        """Validate if the file content is a valid XML file."""
+        ...
+
+    async def detect_document_type(self, file_content: bytes) -> str:
+        """Detect the type of XML document (HL7-CDA, FHIR, generic)."""
+        ...
+
+
 class PDFService(Protocol):
     """Service for processing and managing PDF documents."""
 
@@ -777,5 +802,67 @@ class PDFService(Protocol):
 
     async def get_documents_for_context(self, user_id: str, patient_id: Optional[str] = None) -> Sequence[PDFDocument]:
         """Get PDF documents relevant for the current context (patient-specific or general)."""
+        ...
+
+
+class XMLService(Protocol):
+    """Service for processing and managing XML documents."""
+
+    async def upload_document(
+        self,
+        user_id: str,
+        session_id: str,
+        filename: str,
+        content: bytes,
+        patient_id: Optional[str] = None
+    ) -> XMLDocument:
+        """Upload and process an XML document in memory."""
+        ...
+
+    async def get_document(
+        self,
+        document_id: str,
+        user_id: str,
+        session_id: str,
+        patient_id: Optional[str] = None
+    ) -> Optional[XMLDocument]:
+        """Get a specific XML document."""
+        ...
+
+    async def list_documents(
+        self,
+        user_id: str,
+        session_id: str,
+        patient_id: Optional[str] = None
+    ) -> List[XMLDocument]:
+        """List all XML documents for a session."""
+        ...
+
+    async def delete_document(
+        self,
+        document_id: str,
+        user_id: str,
+        session_id: str,
+        patient_id: Optional[str] = None
+    ) -> bool:
+        """Delete an XML document from memory."""
+        ...
+
+    async def get_documents_for_context(
+        self,
+        user_id: str,
+        session_id: str,
+        patient_id: Optional[str] = None
+    ) -> List[XMLDocument]:
+        """Get all ready XML documents for context processing."""
+        ...
+
+    async def cleanup_user_session(
+        self,
+        user_id: str,
+        session_id: str,
+        patient_id: Optional[str] = None
+    ) -> None:
+        """Clean up XML documents for a specific user session."""
         ...
 
