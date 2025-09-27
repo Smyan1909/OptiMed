@@ -4,7 +4,7 @@ import os
 import math
 import asyncio
 import concurrent.futures
-from typing import List, Tuple, Union, Any
+from typing import List, Tuple, Any
 
 
 class MultilingualCrossEncoder:
