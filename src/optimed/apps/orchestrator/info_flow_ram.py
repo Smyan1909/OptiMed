@@ -28,6 +28,9 @@ from optimed.adapters.security.e2e_encryption_middleware import get_session_encr
 from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator
 from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY as CHUNK_STRATEGY_REGISTRY, POLICY_PRESETS as CHUNK_POLICY_PRESETS
 from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
+
+# Global session memory store to persist across instances
+_GLOBAL_SESSION_MEMORY: dict[str, list[dict[str, Any]]] = {}
 from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
 from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder, MultilingualZeroShotClassifier
 import re
@@ -206,8 +209,8 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         self._zero_shot_classifier = zero_shot_classifier
 
         self._compiled_graph = self._build_graph()
-        # Ephemeral per-session chat memory (RAM-only)
-        self._session_memory: dict[str, list[dict[str, Any]]] = {}
+        # Use global session memory that persists across instances
+        self._session_memory = _GLOBAL_SESSION_MEMORY
 
     async def _run_parallel_cross_encoder_operations(self, state: FlowState, chunks: list[dict[str, Any]], initial_indices: list[int], query_vecs: list[list[float]]) -> tuple[list[tuple[int, float]], list[int], list[float]]:
         """Run all cross-encoder operations in parallel for maximum efficiency.
@@ -462,22 +465,66 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
         @streaming_step("load_current_session_history")
         async def load_current_session_history(state: FlowState) -> FlowState:
-            """Always load current session chat history from in-memory session store (ephemeral)."""
-            print(f"[load_current_session_history] Loading for patient_id={state.patient_id}, session_id={state.session_id}")
+            """Load current session chat history from in-memory session store with decryption and deduplication."""
+            print(f"[load_current_session_history] 📚 Loading history for session_id={state.session_id}")
+            print(f"[load_current_session_history] 🆔 Session memory ID: {id(self._session_memory)}")
             try:
                 history = self._session_memory.get(state.session_id or "", []) if state.session_id else []
+                total_sessions = len(self._session_memory)
+                print(f"[load_current_session_history] 🗄️ Found {len(history)} raw messages in session memory")
+                print(f"[load_current_session_history] 🗂️ Global memory tracking {total_sessions} sessions total")
+
                 chat_messages: list[ChatMessage] = []
-                for item in history:
-                        try:
+                session_manager = get_session_encryption_manager()
+
+                for i, item in enumerate(history):
+                    try:
+                        print(f"[load_current_session_history] 🔍 Processing message {i+1}: encrypted={item.get('encrypted', False)}")
+
+                        # Handle both encrypted and unencrypted messages
+                        if item.get("encrypted", False):
+                            # Decrypt the message
+                            encrypted_data = item.get("data", "")
+                            if state.session_id and encrypted_data:
+                                try:
+                                    decrypted_message = session_manager.decrypt_session_data(state.session_id, encrypted_data)
+                                    role = ChatRole(decrypted_message.get("role", "user"))
+                                    content = decrypted_message.get("content", "")
+                                    chat_messages.append(ChatMessage(role=role, content=content))
+                                    print(f"[load_current_session_history] ✅ Decrypted {role.value}: '{content[:50]}...'")
+                                except Exception as decrypt_error:
+                                    print(f"[load_current_session_history] ❌ Decryption failed for message {i+1}: {decrypt_error}")
+                                    continue
+                        else:
+                            # Handle legacy unencrypted messages
                             role = ChatRole(item.get("role", "user"))
                             content = item.get("content", "")
                             chat_messages.append(ChatMessage(role=role, content=content))
-                        except Exception as e:
-                            print(f"[load_current_session_history] Error parsing item: {e}")
-                            continue
+                            print(f"[load_current_session_history] ✅ Loaded unencrypted {role.value}: '{content[:50]}...'")
+                    except Exception as e:
+                        print(f"[load_current_session_history] ❌ Error parsing message {i+1}: {e}")
+                        continue
+
+                print(f"[load_current_session_history] 📋 Total decrypted messages: {len(chat_messages)}")
+
+                # Remove the last user message to avoid duplication with current prompt
+                # The current user message was stored in store_user_message before this function
+                if chat_messages and chat_messages[-1].role == ChatRole.USER:
+                    removed_msg = chat_messages[-1].content[:50]
+                    print(f"[load_current_session_history] 🗑️ Removing duplicate user message: '{removed_msg}...'")
+                    chat_messages = chat_messages[:-1]
+
                 state.chat_history = chat_messages
+                print(f"[load_current_session_history] ✅ Final chat history: {len(chat_messages)} messages")
+
+                # Debug: Show the final messages
+                for i, msg in enumerate(chat_messages):
+                    print(f"[load_current_session_history]   {i+1}. {msg.role.value}: '{msg.content[:50]}...'")
+
             except Exception as e:
-                print(f"[load_current_session_history] Error loading in-memory chat history: {e}")
+                print(f"[load_current_session_history] ❌ Error loading in-memory chat history: {e}")
+                import traceback
+                traceback.print_exc()
                 state.chat_history = []
             return state
         
@@ -953,13 +1000,17 @@ Keep queries concise and medical terminology appropriate.
             """Store the user message in ephemeral memory with end-to-end encryption and GDPR-safe metrics."""
             if not state.user_prompt:
                 return state
-            
+
             try:
+                print(f"[store_user_message] 🔐 Storing user message for session_id={state.session_id}")
+                print(f"[store_user_message] 📝 Message: '{state.user_prompt[:100]}...'")
+
                 # Generate session encryption key if not exists
                 session_manager = get_session_encryption_manager()
                 if state.session_id and not session_manager.get_session_key(state.session_id):
                     session_manager.generate_session_key(state.session_id)
-                
+                    print(f"[store_user_message] 🔑 Generated new session key for {state.session_id}")
+
                 # Encrypt user message for secure storage
                 encrypted_message = {
                     "role": "user",
@@ -967,7 +1018,7 @@ Keep queries concise and medical terminology appropriate.
                     "timestamp": str(int(time.time() * 1000)),
                     "user_id": state.user_id or ""
                 }
-                
+
                 # Store encrypted message in session memory
                 if state.session_id:
                     self._session_memory.setdefault(state.session_id, [])
@@ -978,7 +1029,16 @@ Keep queries concise and medical terminology appropriate.
                         "data": encrypted_data,
                         "timestamp": str(int(time.time() * 1000))
                     })
-                
+
+                    # Debug: Show current session memory size
+                    current_size = len(self._session_memory[state.session_id])
+                    total_sessions = len(self._session_memory)
+                    print(f"[store_user_message] 💾 Session memory now has {current_size} messages")
+                    print(f"[store_user_message] 🗂️ Global memory tracking {total_sessions} sessions total")
+                    print(f"[store_user_message] 🆔 Session memory ID: {id(self._session_memory)}")
+                else:
+                    print(f"[store_user_message] ⚠️ No session_id provided, message not stored")
+
                 # Store GDPR-safe user metrics for analytics (not encrypted - no PHI)
                 if state.user_id:
                     prompt_category = _categorize_prompt(state.user_prompt)
@@ -1014,25 +1074,66 @@ Keep queries concise and medical terminology appropriate.
             return state
 
         async def store_assistant_response(state: FlowState) -> FlowState:
-            """Store the assistant response in ephemeral memory and GDPR-safe metrics."""
+            """Store the assistant response in ephemeral memory with encryption and GDPR-safe metrics."""
             if not state.llm_response:
+                print(f"[store_assistant_response] ⚠️ No LLM response to store")
                 return state
-            
+
             try:
+                print(f"[store_assistant_response] 🤖 Storing assistant response for session_id={state.session_id}")
+                print(f"[store_assistant_response] 📝 Response: '{state.llm_response.content[:100]}...'")
+
+                # Generate session encryption key if not exists
+                session_manager = get_session_encryption_manager()
+                if state.session_id and not session_manager.get_session_key(state.session_id):
+                    session_manager.generate_session_key(state.session_id)
+                    print(f"[store_assistant_response] 🔑 Generated new session key for {state.session_id}")
+
+                # Clean up assistant message content before storage
+                # Remove internal reasoning format that breaks API calls
+                clean_content = state.llm_response.content
+                if clean_content and "THINKING:" in clean_content:
+                    # Extract only the response part, removing THINKING section
+                    if "RESPONSE:" in clean_content:
+                        clean_content = clean_content.split("RESPONSE:")[-1].strip()
+                    elif "\n\n" in clean_content and clean_content.startswith("THINKING:"):
+                        # If no RESPONSE marker, take content after first double newline
+                        parts = clean_content.split("\n\n", 1)
+                        if len(parts) > 1:
+                            clean_content = parts[1].strip()
+
+                print(f"[store_assistant_response] 🧹 Cleaned content: {len(clean_content)} chars (was {len(state.llm_response.content)} chars)")
+
+                # Encrypt assistant message for secure storage
+                encrypted_message = {
+                    "role": state.llm_response.role.value,
+                    "content": clean_content,
+                    "timestamp": str(int(time.time() * 1000)),
+                    "user_id": state.user_id or ""
+                }
+
+                # Store encrypted message in session memory
                 if state.session_id:
                     self._session_memory.setdefault(state.session_id, [])
+                    # Encrypt the entire message
+                    encrypted_data = session_manager.encrypt_session_data(state.session_id, encrypted_message)
                     self._session_memory[state.session_id].append({
-                        "role": state.llm_response.role.value,
-                        "content": state.llm_response.content,
-                        "timestamp": str(int(time.time() * 1000)),
-                        "user_id": state.user_id or ""
+                        "encrypted": True,
+                        "data": encrypted_data,
+                        "timestamp": str(int(time.time() * 1000))
                     })
-                
+
+                    # Debug: Show current session memory size
+                    current_size = len(self._session_memory[state.session_id])
+                    print(f"[store_assistant_response] 💾 Session memory now has {current_size} messages")
+                else:
+                    print(f"[store_assistant_response] ⚠️ No session_id provided, response not stored")
+
             except Exception as e:
-                print(f"[store_assistant_response] Error: {e}")
+                print(f"[store_assistant_response] ❌ Error: {e}")
                 import traceback
                 traceback.print_exc()
-            
+
             return state
 
         @streaming_step("generate_sbar_situation")
@@ -1062,9 +1163,31 @@ Keep queries concise and medical terminology appropriate.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR situation summaries. Focus on current patient status and immediate concerns."),
-                    ChatMessage(role=ChatRole.USER, content=situation_prompt)
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR situation summaries. Focus on current patient status and immediate concerns. Use previous conversation history when relevant.")
                 ]
+
+                # Add conversation history for context (excluding current message)
+                recent_history = state.chat_history[-10:] if state.chat_history else []
+                if recent_history:
+                    # Use text-based summary to avoid Azure API issues
+                    conversation_lines = []
+                    for msg in recent_history:
+                        if not msg.content or not msg.content.strip():
+                            continue
+                        content = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
+                        role_name = "You" if msg.role == ChatRole.USER else "CLARA"
+                        conversation_lines.append(f"{role_name}: {content}")
+
+                    if conversation_lines:
+                        conversation_summary = "\n".join(conversation_lines)
+                        history_context = ChatMessage(
+                            role=ChatRole.USER,
+                            content=f"Recent conversation context:\n{conversation_summary}"
+                        )
+                        messages.append(history_context)
+
+                # Add the main prompt
+                messages.append(ChatMessage(role=ChatRole.USER, content=situation_prompt))
 
                 # Add chunks if available
                 if situation_chunks:
@@ -1112,9 +1235,31 @@ Keep queries concise and medical terminology appropriate.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR background summaries. Focus on relevant patient history and context."),
-                    ChatMessage(role=ChatRole.USER, content=background_prompt)
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR background summaries. Focus on relevant patient history and context. Use previous conversation history when relevant.")
                 ]
+
+                # Add conversation history for context (excluding current message)
+                recent_history = state.chat_history[-10:] if state.chat_history else []
+                if recent_history:
+                    # Use text-based summary to avoid Azure API issues
+                    conversation_lines = []
+                    for msg in recent_history:
+                        if not msg.content or not msg.content.strip():
+                            continue
+                        content = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
+                        role_name = "You" if msg.role == ChatRole.USER else "CLARA"
+                        conversation_lines.append(f"{role_name}: {content}")
+
+                    if conversation_lines:
+                        conversation_summary = "\n".join(conversation_lines)
+                        history_context = ChatMessage(
+                            role=ChatRole.USER,
+                            content=f"Recent conversation context:\n{conversation_summary}"
+                        )
+                        messages.append(history_context)
+
+                # Add the main prompt
+                messages.append(ChatMessage(role=ChatRole.USER, content=background_prompt))
 
                 # Add chunks if available
                 if background_chunks:
@@ -1162,9 +1307,31 @@ Keep queries concise and medical terminology appropriate.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR assessment summaries. Focus on clinical analysis and professional interpretation."),
-                    ChatMessage(role=ChatRole.USER, content=assessment_prompt)
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR assessment summaries. Focus on clinical analysis and professional interpretation. Use previous conversation history when relevant.")
                 ]
+
+                # Add conversation history for context (excluding current message)
+                recent_history = state.chat_history[-10:] if state.chat_history else []
+                if recent_history:
+                    # Use text-based summary to avoid Azure API issues
+                    conversation_lines = []
+                    for msg in recent_history:
+                        if not msg.content or not msg.content.strip():
+                            continue
+                        content = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
+                        role_name = "You" if msg.role == ChatRole.USER else "CLARA"
+                        conversation_lines.append(f"{role_name}: {content}")
+
+                    if conversation_lines:
+                        conversation_summary = "\n".join(conversation_lines)
+                        history_context = ChatMessage(
+                            role=ChatRole.USER,
+                            content=f"Recent conversation context:\n{conversation_summary}"
+                        )
+                        messages.append(history_context)
+
+                # Add the main prompt
+                messages.append(ChatMessage(role=ChatRole.USER, content=assessment_prompt))
 
                 # Add chunks if available
                 if assessment_chunks:
@@ -1213,9 +1380,31 @@ Keep queries concise and medical terminology appropriate.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR recommendation summaries. Focus on actionable next steps while providing education, not specific treatments."),
-                    ChatMessage(role=ChatRole.USER, content=recommendation_prompt)
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR recommendation summaries. Focus on actionable next steps while providing education, not specific treatments. Use previous conversation history when relevant.")
                 ]
+
+                # Add conversation history for context (excluding current message)
+                recent_history = state.chat_history[-10:] if state.chat_history else []
+                if recent_history:
+                    # Use text-based summary to avoid Azure API issues
+                    conversation_lines = []
+                    for msg in recent_history:
+                        if not msg.content or not msg.content.strip():
+                            continue
+                        content = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
+                        role_name = "You" if msg.role == ChatRole.USER else "CLARA"
+                        conversation_lines.append(f"{role_name}: {content}")
+
+                    if conversation_lines:
+                        conversation_summary = "\n".join(conversation_lines)
+                        history_context = ChatMessage(
+                            role=ChatRole.USER,
+                            content=f"Recent conversation context:\n{conversation_summary}"
+                        )
+                        messages.append(history_context)
+
+                # Add the main prompt
+                messages.append(ChatMessage(role=ChatRole.USER, content=recommendation_prompt))
 
                 # Add chunks if available
                 if recommendation_chunks:
@@ -1264,8 +1453,17 @@ Keep queries concise and medical terminology appropriate.
                 # Create structured SBAR response for frontend cards
                 import json
 
+                # Add conversation context metadata for future reference
+                conversation_context = {
+                    "session_id": state.session_id,
+                    "user_prompt": state.user_prompt,
+                    "timestamp": str(int(time.time() * 1000)),
+                    "has_history": bool(state.chat_history)
+                }
+
                 structured_sbar = {
                     "type": "sbar_cards",
+                    "context": conversation_context,
                     "components": {
                         "situation": {
                             "title": "Situation",
@@ -1346,6 +1544,12 @@ Keep queries concise and medical terminology appropriate.
 
         @streaming_step("provide_information")
         async def provide_information(state: FlowState) -> FlowState:
+            print(f"[provide_information] 🎯 Starting information provision")
+            print(f"[provide_information] 🔍 Query: '{state.user_prompt[:100]}...'")
+            print(f"[provide_information] 🚀 Full processing: {getattr(state, 'requires_full_processing', True)}")
+            print(f"[provide_information] 🆔 Session ID: {state.session_id}")
+            print(f"[provide_information] 👤 User ID: {state.user_id}")
+
             # Use the single system message for information relay
             messages = [SYSTEM_MSG_INFO_RELAY]
 
@@ -1387,20 +1591,127 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                 messages.append(user_info)
 
             current_history = state.chat_history[-15:]  # Recent current session history
-            if current_history:
-                history_header = ChatMessage(
-                    role=ChatRole.USER,
-                    content="=== CURRENT SESSION HISTORY ==="
-                )
-                messages.append(history_header)
-                for msg in current_history:
-                    messages.append(msg)
-                
-                history_footer = ChatMessage(
-                    role=ChatRole.USER,
-                    content="=== END OF CURRENT SESSION HISTORY ==="
-                )
-                messages.append(history_footer)
+            print(f"[provide_information] 💬 Chat history available: {len(state.chat_history)} total, {len(current_history)} recent")
+
+            # Disable ChatMessage history due to Azure API serialization issues
+            # Use alternative text-based conversation history instead
+            ENABLE_CONVERSATION_HISTORY = False
+            ENABLE_TEXT_CONVERSATION_SUMMARY = True
+
+            # Filter out any problematic messages and limit content length
+            safe_history = []
+            total_history_length = 0
+            MAX_HISTORY_LENGTH = 4000  # Limit to prevent token overflow
+
+            if current_history and ENABLE_CONVERSATION_HISTORY:
+                print(f"[provide_information] 📋 Processing conversation history:")
+                for i, msg in enumerate(current_history):
+                    # Skip empty or None content
+                    if not msg.content or not msg.content.strip():
+                        print(f"[provide_information]   {i+1}. SKIPPED - Empty content")
+                        continue
+
+                    # Clean up any remaining THINKING: format in assistant messages
+                    content = msg.content
+                    if msg.role == ChatRole.ASSISTANT and "THINKING:" in content:
+                        print(f"[provide_information]   {i+1}. CLEANING - Removing THINKING format")
+                        if "RESPONSE:" in content:
+                            content = content.split("RESPONSE:")[-1].strip()
+                        elif "\n\n" in content and content.startswith("THINKING:"):
+                            parts = content.split("\n\n", 1)
+                            if len(parts) > 1:
+                                content = parts[1].strip()
+
+                    # Truncate very long messages
+                    content = content[:1000] + "..." if len(content) > 1000 else content
+
+                    # Check if adding this message would exceed limit
+                    if total_history_length + len(content) > MAX_HISTORY_LENGTH:
+                        print(f"[provide_information]   {i+1}. SKIPPED - Would exceed {MAX_HISTORY_LENGTH} char limit")
+                        break
+
+                    # Create a completely new ChatMessage with only essential fields
+                    # This ensures no metadata or other fields cause API issues
+                    clean_msg = ChatMessage(
+                        role=msg.role,
+                        content=str(content),  # Ensure it's definitely a string
+                        user_id=None,  # Clear any user metadata
+                        user_role=None,  # Clear any role metadata
+                        metadata={}  # Clear any metadata
+                    )
+                    safe_history.append(clean_msg)
+                    total_history_length += len(content)
+                    print(f"[provide_information]   {i+1}. {msg.role.value} ({len(content)} chars): '{content[:50]}...'")
+
+                    # Debug: Check message structure
+                    print(f"[provide_information]      Message type: {type(clean_msg.content)}, content preview: '{str(clean_msg.content)[:50]}...'")
+
+                if safe_history:
+                    history_header = ChatMessage(
+                        role=ChatRole.USER,
+                        content="=== CURRENT SESSION HISTORY ===",
+                        user_id=None,
+                        user_role=None,
+                        metadata={}
+                    )
+                    messages.append(history_header)
+                    for msg in safe_history:
+                        messages.append(msg)
+
+                    history_footer = ChatMessage(
+                        role=ChatRole.USER,
+                        content="=== END OF CURRENT SESSION HISTORY ===",
+                        user_id=None,
+                        user_role=None,
+                        metadata={}
+                    )
+                    messages.append(history_footer)
+                    print(f"[provide_information] ✅ Added {len(safe_history)} safe history messages ({total_history_length} chars)")
+                else:
+                    print(f"[provide_information] ⚠️ No safe conversation history to include")
+            else:
+                if not ENABLE_CONVERSATION_HISTORY and ENABLE_TEXT_CONVERSATION_SUMMARY and current_history:
+                    # Alternative approach: Create a text summary of conversation history
+                    print(f"[provide_information] 📝 Creating text-based conversation summary")
+                    conversation_lines = []
+                    for msg in current_history:
+                        if not msg.content or not msg.content.strip():
+                            continue
+
+                        # Clean content similar to before
+                        content = msg.content
+                        if msg.role == ChatRole.ASSISTANT and "THINKING:" in content:
+                            if "RESPONSE:" in content:
+                                content = content.split("RESPONSE:")[-1].strip()
+                            elif "\n\n" in content and content.startswith("THINKING:"):
+                                parts = content.split("\n\n", 1)
+                                if len(parts) > 1:
+                                    content = parts[1].strip()
+
+                        # Truncate if too long
+                        content = content[:300] + "..." if len(content) > 300 else content
+
+                        # Format as text line
+                        role_name = "You" if msg.role == ChatRole.USER else "CLARA"
+                        conversation_lines.append(f"{role_name}: {content}")
+
+                    if conversation_lines:
+                        conversation_summary = "\n".join(conversation_lines)
+                        conversation_context = ChatMessage(
+                            role=ChatRole.USER,
+                            content=f"Previous conversation context:\n{conversation_summary}\n\nCurrent question:",
+                            user_id=None,
+                            user_role=None,
+                            metadata={}
+                        )
+                        messages.append(conversation_context)
+                        print(f"[provide_information] ✅ Added text conversation summary ({len(conversation_summary)} chars)")
+                    else:
+                        print(f"[provide_information] ⚠️ No valid conversation content to summarize")
+                elif not ENABLE_CONVERSATION_HISTORY:
+                    print(f"[provide_information] ⚠️ Conversation history disabled temporarily to prevent API errors")
+                else:
+                    print(f"[provide_information] ⚠️ No conversation history to include in model prompt")
             
             # Ensure intelligent retrieval results are available for direct path as well
             try:
@@ -1504,13 +1815,25 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 2. What medical knowledge can I provide to help?
 3. How can I give a clear, helpful response?"""
 
+            # Debug: Log final message structure before sending to LLM
+            print(f"[provide_information] 🔍 Final prompt structure:")
+            print(f"[provide_information] 📊 Total messages: {len(messages)}")
+            total_content_length = 0
+            for i, msg in enumerate(messages):
+                content_preview = msg.content[:100] + "..." if len(msg.content) > 100 else msg.content
+                content_length = len(msg.content)
+                total_content_length += content_length
+                print(f"[provide_information]   {i+1}. {msg.role.value} ({content_length} chars): '{content_preview}'")
+            print(f"[provide_information] 📏 Total content length: {total_content_length} characters")
+
             if getattr(state, 'should_stream_response', False):
                 state.streaming_response = ""  # Reset streaming response
-                
+
                 # Initialize streaming callback to emit chunks in real-time
                 if not hasattr(state, 'streaming_updates'):
                     state.streaming_updates = []
-                
+
+                print(f"[provide_information] 🚀 Starting streaming LLM call")
                 async for update in self._streaming_llm.chat_with_reasoning_stream(messages=messages, state=state, reasoning_prompt=reasoning_prompt):
                     if update["type"] == "content":
                         # Format EHR links during streaming accumulation
@@ -1547,7 +1870,14 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                         )
                         break
             else:
+                print(f"[provide_information] 🚀 Starting non-streaming LLM call")
                 llm_resp = await self._streaming_llm.chat_with_reasoning(messages=messages, state=state, reasoning_prompt=reasoning_prompt)
+                print(f"[provide_information] 📝 LLM response received: {len(llm_resp.content) if llm_resp and llm_resp.content else 0} characters")
+                if llm_resp and llm_resp.content:
+                    print(f"[provide_information] 📄 Response preview: '{llm_resp.content[:200]}...'")
+                else:
+                    print(f"[provide_information] ⚠️ Empty or null LLM response!")
+
                 state.llm_response = ChatMessage(
                     role=llm_resp.role,
                     content=self._normalize_markdown(self._format_ehr_links(llm_resp.content)),
@@ -2383,9 +2713,25 @@ Content:
     ) -> str:
         """Get existing session or create a new one, with multi-user support."""
         if not PERSISTENCE_ENABLED:
-            # On new session, clear any existing ephemeral chat
+            # Handle ephemeral session management
             sid = session_id or str(uuid.uuid4())
-            self._session_memory[sid] = []
+            # Only clear session memory if this is a truly new session (no existing data)
+            if sid not in self._session_memory:
+                print(f"[get_or_create_session] 🆕 Creating new ephemeral session {sid}")
+                self._session_memory[sid] = []
+            else:
+                print(f"[get_or_create_session] 🔄 Reusing existing ephemeral session {sid} with {len(self._session_memory[sid])} messages")
+                # Validate session memory integrity
+                try:
+                    # Check if session memory contains valid data
+                    for i, item in enumerate(self._session_memory[sid]):
+                        if not isinstance(item, dict) or 'data' not in item:
+                            print(f"[get_or_create_session] ⚠️ Invalid item {i} in session memory, clearing session")
+                            self._session_memory[sid] = []
+                            break
+                except Exception as e:
+                    print(f"[get_or_create_session] ❌ Session memory corrupted, clearing: {e}")
+                    self._session_memory[sid] = []
             return sid
         if session_id:
             # Verify session exists
