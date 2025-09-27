@@ -120,7 +120,7 @@ class MemoryPDFService(PDFService):
                     processing_started_at=datetime.now(timezone.utc),
                     processing_completed_at=datetime.now(timezone.utc),
                     text_extraction_success=bool(extracted_text),
-                    page_count=metadata.page_count if metadata else 0,
+                    page_count=metadata.page_count if metadata and metadata.page_count else 0,
                     extracted_text_length=len(extracted_text) if extracted_text else 0
                 ),
                 status=ImageStatus.READY,
@@ -189,7 +189,7 @@ class MemoryPDFService(PDFService):
         """List all PDF documents uploaded by a user."""
         print(f"[MemoryPDFService] List user documents request - user_id: {user_id}")
 
-        pdf_list = []
+        pdf_list: List[PDFDocument] = []
         # Search through all sessions for this user
         for session_key, session_data in self.sessions.items():
             if user_id in session_key:

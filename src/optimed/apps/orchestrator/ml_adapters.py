@@ -4,7 +4,7 @@ import os
 import math
 import asyncio
 import concurrent.futures
-from typing import List, Tuple
+from typing import List, Tuple, Union, Any
 
 
 class MultilingualCrossEncoder:
@@ -19,7 +19,7 @@ class MultilingualCrossEncoder:
     """
 
     def __init__(self, model_name: str | None = None, max_batch_size: int = 32) -> None:
-        self._model = None
+        self._model: Any = None
         self._loaded = False
         self._model_name = model_name or "BAAI/bge-reranker-v2-m3"
         self._max_batch_size = max_batch_size
@@ -274,7 +274,7 @@ class MultilingualZeroShotClassifier:
     """Simplified zero-shot classifier for query intent detection."""
 
     def __init__(self, model_name: str | None = None) -> None:
-        self._model = None
+        self._model: Any = None
         self._loaded = False
         self._model_name = model_name or "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli"
         print(f"[MultilingualZeroShotClassifier] Initialized with model: {self._model_name}")

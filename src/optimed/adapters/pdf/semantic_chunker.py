@@ -382,6 +382,8 @@ class SemanticPDFChunker:
 
                 # Prepend to next chunk with separator
                 next_chunk.text = f"{overlap_text}\n---\n{next_chunk.text}"
+                if next_chunk.metadata.overlap_with is None:
+                    next_chunk.metadata.overlap_with = []
                 next_chunk.metadata.overlap_with.append(current_chunk.metadata.chunk_id)
 
         return chunks
@@ -411,7 +413,7 @@ class SemanticPDFChunker:
                     section_title=current_chunk.metadata.section_title,
                     chunk_type="merged",
                     semantic_context=current_chunk.metadata.semantic_context,
-                    overlap_with=current_chunk.metadata.overlap_with + next_chunk.metadata.overlap_with
+                    overlap_with=(current_chunk.metadata.overlap_with or []) + (next_chunk.metadata.overlap_with or [])
                 )
 
                 merged_chunk = SemanticChunk(
