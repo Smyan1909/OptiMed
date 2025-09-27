@@ -6,7 +6,7 @@ optimized for medical documents and retrieval-augmented generation.
 """
 
 import lxml.etree as etree
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import re
 from dataclasses import dataclass
 
