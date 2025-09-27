@@ -4,10 +4,9 @@ PDFs are stored in memory only for the duration of the session.
 """
 
 import asyncio
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 from datetime import datetime, timezone
 from optimed.core.domain.pdf_document import PDFDocument, PDFMetadata, PDFProcessingInfo
-from optimed.adapters.pdf.pdf_processor import PyMuPDFProcessor
 from optimed.core.ports import PDFService, PDFProcessor
 from optimed.core.domain import ImageStatus
 import uuid
@@ -103,11 +102,11 @@ class MemoryPDFService(PDFService):
             print(f"[MemoryPDFService] Stored raw content ({len(content)} bytes)")
 
             # Extract metadata and text
-            print(f"[MemoryPDFService] Extracting metadata...")
+            print("[MemoryPDFService] Extracting metadata...")
             metadata = await self.pdf_processor.extract_metadata(content)
             print(f"[MemoryPDFService] Metadata extraction complete: {metadata}")
 
-            print(f"[MemoryPDFService] Extracting text...")
+            print("[MemoryPDFService] Extracting text...")
             extracted_text = await self.pdf_processor.extract_text(content)
             print(f"[MemoryPDFService] Text extraction complete: {len(extracted_text) if extracted_text else 0} characters")
 

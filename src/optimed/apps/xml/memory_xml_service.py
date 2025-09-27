@@ -4,10 +4,9 @@ XML documents are stored in memory only for the duration of the session.
 """
 
 import asyncio
-from typing import Dict, List, Optional, Set, Any
+from typing import Dict, List, Optional
 from datetime import datetime, timezone
 from optimed.core.domain.xml_document import XMLDocument, XMLMetadata, XMLProcessingInfo
-from optimed.adapters.xml.xml_processor import LibXML2Processor
 from optimed.core.ports import XMLService, XMLProcessor
 from optimed.core.domain import ImageStatus
 import uuid
@@ -103,30 +102,30 @@ class MemoryXMLService(XMLService):
             print(f"[MemoryXMLService] Stored raw content ({len(content)} bytes)")
 
             # Validate XML
-            print(f"[MemoryXMLService] Validating XML...")
+            print("[MemoryXMLService] Validating XML...")
             is_valid = await self.xml_processor.validate_xml_file(content)
             if not is_valid:
                 raise ValueError("Invalid XML file format")
 
             # Detect document type
-            print(f"[MemoryXMLService] Detecting document type...")
+            print("[MemoryXMLService] Detecting document type...")
             doc_type = await self.xml_processor.detect_document_type(content)
             print(f"[MemoryXMLService] Detected document type: {doc_type}")
 
             # Extract metadata
-            print(f"[MemoryXMLService] Extracting metadata...")
+            print("[MemoryXMLService] Extracting metadata...")
             metadata = await self.xml_processor.extract_metadata(content)
             print(f"[MemoryXMLService] Metadata extraction complete: {metadata}")
 
             # Extract text content
-            print(f"[MemoryXMLService] Extracting text...")
+            print("[MemoryXMLService] Extracting text...")
             extracted_text = await self.xml_processor.extract_text(content)
             print(f"[MemoryXMLService] Text extraction complete: {len(extracted_text) if extracted_text else 0} characters")
 
             # Extract structured data
-            print(f"[MemoryXMLService] Extracting structured data...")
+            print("[MemoryXMLService] Extracting structured data...")
             structured_data = await self.xml_processor.extract_structured_data(content)
-            print(f"[MemoryXMLService] Structured data extraction complete")
+            print("[MemoryXMLService] Structured data extraction complete")
 
             # Create XML document
             xml_doc = XMLDocument(

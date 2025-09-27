@@ -2425,8 +2425,6 @@ Content:
     async def _chunk_xml_documents(self, xml_documents: List[XMLDocument], orchestrator: ChunkingOrchestrator, patient_id_str: Optional[str]) -> List[Chunk]:
         """Chunk XML documents using structure-aware semantic chunking."""
         from optimed.core.domain import Record
-        from optimed.adapters.chunking.strategies.narrative_v1 import NarrativeV1
-        from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
         from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
         from optimed.core.services.hash_utils import stable_hash
 
@@ -2480,7 +2478,6 @@ Content:
         chunks = []
         for record in records:
             # Apply basic PHI redaction
-            from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
             redactor = SimplePhiRedactor()
             redacted_text = redactor.redact(record.text or "")
 

@@ -4,8 +4,7 @@ import os
 import math
 import asyncio
 import concurrent.futures
-from typing import List, Optional, Tuple
-from pathlib import Path
+from typing import List, Tuple
 
 
 class MultilingualCrossEncoder:
@@ -213,7 +212,7 @@ class MultilingualCrossEncoder:
                 import torch
                 if torch.cuda.is_available() and hasattr(torch.cuda, 'empty_cache'):
                     torch.cuda.empty_cache()
-            except:
+            except ImportError:
                 pass  # Ignore if torch not available
 
             # Apply sigmoid normalization
