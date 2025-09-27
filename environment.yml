@@ -31,3 +31,4 @@ dependencies:
       - transformers
       - langdetect
       - python-multipart
+      - "faiss-cpu==1.12.0"
