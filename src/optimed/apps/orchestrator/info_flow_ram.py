@@ -1135,6 +1135,18 @@ Keep queries concise and medical terminology appropriate.
                 # Get situation-specific chunks
                 situation_chunks = state.sbar_situation_chunks or []
 
+                # Detect user language for appropriate citation format
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                # Set language-appropriate citation format
+                if active_lang == "sv":
+                    citation_format = '"Enligt [Dokument], sida X"'
+                else:
+                    citation_format = '"According to [Document], page X"'
+
                 # Build prompt for situation
                 situation_prompt = f"""
                 Generate a VERY CONCISE SBAR Situation summary (maximum 2-3 short bullet points).
@@ -1146,12 +1158,12 @@ Keep queries concise and medical terminology appropriate.
                 • Current symptoms
                 • Immediate concerns
 
-                MANDATORY: Cite page numbers for any document references: "According to [Document], page X"
+                MANDATORY: Cite page numbers for any document references: {citation_format}
                 Format: Very short bullet points. No headers or explanations.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR situation summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: 'According to [Document], page X'. Be extremely brief - no explanations or elaboration.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR situation summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1205,6 +1217,18 @@ Keep queries concise and medical terminology appropriate.
                 # Get background-specific chunks
                 background_chunks = state.sbar_background_chunks or []
 
+                # Detect user language for appropriate citation format
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                # Set language-appropriate citation format
+                if active_lang == "sv":
+                    citation_format = '"Enligt [Dokument], sida X"'
+                else:
+                    citation_format = '"According to [Document], page X"'
+
                 # Build prompt for background
                 background_prompt = f"""
                 Generate a VERY CONCISE SBAR Background summary (maximum 2-3 short bullet points).
@@ -1216,12 +1240,12 @@ Keep queries concise and medical terminology appropriate.
                 • Critical medications
                 • Important allergies
 
-                MANDATORY: Cite page numbers for any document references: "According to [Document], page X"
+                MANDATORY: Cite page numbers for any document references: {citation_format}
                 Format: Very short bullet points. No headers or explanations.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR background summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: 'According to [Document], page X'. Be extremely brief - no explanations or elaboration.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR background summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1275,6 +1299,18 @@ Keep queries concise and medical terminology appropriate.
                 # Get assessment-specific chunks
                 assessment_chunks = state.sbar_assessment_chunks or []
 
+                # Detect user language for appropriate citation format
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                # Set language-appropriate citation format
+                if active_lang == "sv":
+                    citation_format = '"Enligt [Dokument], sida X"'
+                else:
+                    citation_format = '"According to [Document], page X"'
+
                 # Build prompt for assessment
                 assessment_prompt = f"""
                 Generate a VERY CONCISE SBAR Assessment summary (maximum 2-3 short bullet points).
@@ -1286,12 +1322,12 @@ Keep queries concise and medical terminology appropriate.
                 • Key findings
                 • Risk level
 
-                MANDATORY: Cite page numbers for any document references: "According to [Document], page X"
+                MANDATORY: Cite page numbers for any document references: {citation_format}
                 Format: Very short bullet points. No headers or explanations.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR assessment summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: 'According to [Document], page X'. Be extremely brief - no explanations or elaboration.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR assessment summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1345,6 +1381,18 @@ Keep queries concise and medical terminology appropriate.
                 # Get recommendation-specific chunks
                 recommendation_chunks = state.sbar_recommendation_chunks or []
 
+                # Detect user language for appropriate citation format
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                # Set language-appropriate citation format
+                if active_lang == "sv":
+                    citation_format = '"Enligt [Dokument], sida X"'
+                else:
+                    citation_format = '"According to [Document], page X"'
+
                 # Build prompt for recommendation
                 recommendation_prompt = f"""
                 Generate a VERY CONCISE SBAR Recommendation summary (maximum 2-3 short bullet points).
@@ -1356,13 +1404,13 @@ Keep queries concise and medical terminology appropriate.
                 • Key monitoring
                 • Follow-up needs
 
-                MANDATORY: Cite page numbers for any document references: "According to [Document], page X"
+                MANDATORY: Cite page numbers for any document references: {citation_format}
                 Format: Very short bullet points. No headers or explanations.
                 IMPORTANT: Educational information only - refer complex decisions to healthcare providers.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR recommendation summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: 'According to [Document], page X'. Be extremely brief - no explanations or elaboration.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR recommendation summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
                 ]
 
                 # Add conversation history for context (excluding current message)
