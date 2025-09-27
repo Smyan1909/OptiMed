@@ -1163,7 +1163,7 @@ Keep queries concise and medical terminology appropriate.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR situation summaries. Focus on current patient status and immediate concerns. Use previous conversation history when relevant.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR situation summaries. Focus on current patient status and immediate concerns. Use previous conversation history when relevant. Do not make up information, only use the information provided. If you cannot find information, say so.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1235,7 +1235,7 @@ Keep queries concise and medical terminology appropriate.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR background summaries. Focus on relevant patient history and context. Use previous conversation history when relevant.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR background summaries. Focus on relevant patient history and context. Use previous conversation history when relevant. Do not make up information, only use the information provided. If you cannot find information, say so.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1307,7 +1307,7 @@ Keep queries concise and medical terminology appropriate.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR assessment summaries. Focus on clinical analysis and professional interpretation. Use previous conversation history when relevant.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR assessment summaries. Focus on clinical analysis and professional interpretation. Use previous conversation history when relevant. Do not make up information, only use the information provided. If you cannot find information, say so.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1380,7 +1380,7 @@ Keep queries concise and medical terminology appropriate.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR recommendation summaries. Focus on actionable next steps while providing education, not specific treatments. Use previous conversation history when relevant.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR recommendation summaries. Focus on actionable next steps while providing education, not specific treatments. Use previous conversation history when relevant. Do not make up information, only use the information provided. If you cannot find information, say so.")
                 ]
 
                 # Add conversation history for context (excluding current message)
