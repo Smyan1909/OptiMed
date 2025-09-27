@@ -10,12 +10,10 @@ Implements advanced chunking strategies optimized for XML-based healthcare RAG s
 """
 
 from __future__ import annotations
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 import lxml.etree as etree
 import re
-import uuid
-from datetime import datetime
 
 
 @dataclass
@@ -191,7 +189,7 @@ class XMLSemanticChunker:
             chunks = self._optimize_chunk_sizes(chunks)
             return chunks
 
-        except Exception as e:
+        except Exception:
             # Fallback to text-based chunking if XML parsing fails
             text_content = xml_content.decode('utf-8', errors='ignore')
             return self._chunk_text_content(text_content, document_id, metadata or {})
@@ -689,5 +687,5 @@ class XMLSemanticChunker:
         try:
             tree = element.getroottree()
             return tree.getpath(element)
-        except:
+        except Exception:
             return f"/{element.tag}"

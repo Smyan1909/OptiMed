@@ -10,11 +10,9 @@ Implements advanced chunking strategies optimized for healthcare RAG systems:
 """
 
 from __future__ import annotations
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 import re
-import unicodedata
-from datetime import datetime
 
 
 @dataclass
@@ -251,7 +249,6 @@ class SemanticPDFChunker:
         # Split by paragraphs first to maintain medical context
         paragraphs = re.split(r'\n\s*\n', content)
         current_chunk = ""
-        chunk_counter = 0
 
         for paragraph in paragraphs:
             paragraph = paragraph.strip()

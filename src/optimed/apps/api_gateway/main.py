@@ -16,8 +16,8 @@ from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, He
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus, ImageGenerationRequest, DataSource, ChatRole, ChatMessage
-from optimed.core.domain.pdf_document import PDFDocument, PDFUploadRequest, PDFListResponse
-from optimed.core.domain.xml_document import XMLDocument, XMLUploadRequest, XMLListResponse
+from optimed.core.domain.pdf_document import PDFListResponse
+from optimed.core.domain.xml_document import XMLListResponse
 from optimed.core.ports import FHIRRepository
 from optimed.apps.orchestrator.factory import create_app_dependencies
 from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalEntryType
@@ -46,7 +46,6 @@ _web_search_service: _Any = None
 _pdf_service: _Any = None
 _xml_service: _Any = None
 
- 
 
 _dependencies_ready: asyncio.Event = asyncio.Event()
 
@@ -3066,7 +3065,7 @@ async def delete_pdf_document(
     effective_session_id = chat_session_id or session_id
 
     try:
-        print(f"[PDF Delete] Request details:")
+        print("[PDF Delete] Request details:")
         print(f"  - document_id: {document_id}")
         print(f"  - user_id: {user.user_id}")
         print(f"  - auth_session_id: {session_id}")
@@ -3074,7 +3073,7 @@ async def delete_pdf_document(
         print(f"  - effective_session_id: {effective_session_id}")
         print(f"  - patient_id: {patient_id}")
 
-        print(f"[PDF Delete] Before deletion - showing all sessions:")
+        print("[PDF Delete] Before deletion - showing all sessions:")
         _pdf_service.debug_all_sessions()
 
         success = await _pdf_service.delete_document(
@@ -3086,13 +3085,13 @@ async def delete_pdf_document(
 
         print(f"[PDF Delete] Delete operation returned: {success}")
 
-        print(f"[PDF Delete] After deletion - showing all sessions:")
+        print("[PDF Delete] After deletion - showing all sessions:")
         _pdf_service.debug_all_sessions()
 
         if success:
             return {"message": "Document deleted successfully"}
         else:
-            print(f"[PDF Delete] Document not found, returning 404")
+            print("[PDF Delete] Document not found, returning 404")
             raise HTTPException(status_code=404, detail="Document not found")
 
     except HTTPException as he:
@@ -3188,7 +3187,7 @@ async def delete_xml_document(
     effective_session_id = chat_session_id or session_id
 
     try:
-        print(f"[XML Delete] Request details:")
+        print("[XML Delete] Request details:")
         print(f"  - document_id: {document_id}")
         print(f"  - user_id: {user.user_id}")
         print(f"  - auth_session_id: {session_id}")
@@ -3196,7 +3195,7 @@ async def delete_xml_document(
         print(f"  - effective_session_id: {effective_session_id}")
         print(f"  - patient_id: {patient_id}")
 
-        print(f"[XML Delete] Before deletion - showing all sessions:")
+        print("[XML Delete] Before deletion - showing all sessions:")
         _xml_service.debug_all_sessions()
 
         success = await _xml_service.delete_document(
@@ -3208,13 +3207,13 @@ async def delete_xml_document(
 
         print(f"[XML Delete] Delete operation returned: {success}")
 
-        print(f"[XML Delete] After deletion - showing all sessions:")
+        print("[XML Delete] After deletion - showing all sessions:")
         _xml_service.debug_all_sessions()
 
         if success:
             return {"message": "XML document deleted successfully"}
         else:
-            print(f"[XML Delete] Document not found, returning 404")
+            print("[XML Delete] Document not found, returning 404")
             raise HTTPException(status_code=404, detail="XML document not found")
 
     except HTTPException as he:

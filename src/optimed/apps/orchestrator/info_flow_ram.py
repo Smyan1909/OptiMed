@@ -23,17 +23,16 @@ from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, Vect
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
 
 from optimed.embeddings.minilm import embed
-# from optimed.embeddings.service import embed_and_store  # Removed for GDPR compliance
 from optimed.adapters.security.e2e_encryption_middleware import get_session_encryption_manager
 from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator
 from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY as CHUNK_STRATEGY_REGISTRY, POLICY_PRESETS as CHUNK_POLICY_PRESETS
 from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
-
-# Global session memory store to persist across instances
-_GLOBAL_SESSION_MEMORY: dict[str, list[dict[str, Any]]] = {}
 from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
 from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder, MultilingualZeroShotClassifier
 import re
+
+# Global session memory store to persist across instances
+_GLOBAL_SESSION_MEMORY: dict[str, list[dict[str, Any]]] = {}
 
 
 # =========================
@@ -1037,7 +1036,7 @@ Keep queries concise and medical terminology appropriate.
                     print(f"[store_user_message] 🗂️ Global memory tracking {total_sessions} sessions total")
                     print(f"[store_user_message] 🆔 Session memory ID: {id(self._session_memory)}")
                 else:
-                    print(f"[store_user_message] ⚠️ No session_id provided, message not stored")
+                    print("[store_user_message] ⚠️ No session_id provided, message not stored")
 
                 # Store GDPR-safe user metrics for analytics (not encrypted - no PHI)
                 if state.user_id:
@@ -1076,7 +1075,7 @@ Keep queries concise and medical terminology appropriate.
         async def store_assistant_response(state: FlowState) -> FlowState:
             """Store the assistant response in ephemeral memory with encryption and GDPR-safe metrics."""
             if not state.llm_response:
-                print(f"[store_assistant_response] ⚠️ No LLM response to store")
+                print("[store_assistant_response] ⚠️ No LLM response to store")
                 return state
 
             try:
@@ -1117,7 +1116,7 @@ Keep queries concise and medical terminology appropriate.
                     current_size = len(self._session_memory[state.session_id])
                     print(f"[store_assistant_response] 💾 Session memory now has {current_size} messages")
                 else:
-                    print(f"[store_assistant_response] ⚠️ No session_id provided, response not stored")
+                    print("[store_assistant_response] ⚠️ No session_id provided, response not stored")
 
             except Exception as e:
                 print(f"[store_assistant_response] ❌ Error: {e}")
@@ -1574,7 +1573,7 @@ Keep queries concise and medical terminology appropriate.
 
         @streaming_step("provide_information")
         async def provide_information(state: FlowState) -> FlowState:
-            print(f"[provide_information] 🎯 Starting information provision")
+            print("[provide_information] 🎯 Starting information provision")
             print(f"[provide_information] 🔍 Query: '{state.user_prompt[:100]}...'")
             print(f"[provide_information] 🚀 Full processing: {getattr(state, 'requires_full_processing', True)}")
             print(f"[provide_information] 🆔 Session ID: {state.session_id}")
@@ -1634,7 +1633,7 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
             MAX_HISTORY_LENGTH = 4000  # Limit to prevent token overflow
 
             if current_history and ENABLE_CONVERSATION_HISTORY:
-                print(f"[provide_information] 📋 Processing conversation history:")
+                print("[provide_information] 📋 Processing conversation history:")
                 for i, msg in enumerate(current_history):
                     # Skip empty or None content
                     if not msg.content or not msg.content.strip():
@@ -1690,11 +1689,11 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                     messages.append(history_footer)
                     print(f"[provide_information] ✅ Added {len(safe_history)} safe history messages ({total_history_length} chars)")
                 else:
-                    print(f"[provide_information] ⚠️ No safe conversation history to include")
+                    print("[provide_information] ⚠️ No safe conversation history to include")
             else:
                 if not ENABLE_CONVERSATION_HISTORY and ENABLE_TEXT_CONVERSATION_SUMMARY and current_history:
                     # Alternative approach: Create a text summary of conversation history
-                    print(f"[provide_information] 📝 Creating text-based conversation summary")
+                    print("[provide_information] 📝 Creating text-based conversation summary")
                     conversation_lines = []
                     for msg in current_history:
                         if not msg.content or not msg.content.strip():
@@ -1722,11 +1721,11 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                         messages.append(conversation_context)
                         print(f"[provide_information] ✅ Added text conversation summary ({len(conversation_summary)} chars)")
                     else:
-                        print(f"[provide_information] ⚠️ No valid conversation content to summarize")
+                        print("[provide_information] ⚠️ No valid conversation content to summarize")
                 elif not ENABLE_CONVERSATION_HISTORY:
-                    print(f"[provide_information] ⚠️ Conversation history disabled temporarily to prevent API errors")
+                    print("[provide_information] ⚠️ Conversation history disabled temporarily to prevent API errors")
                 else:
-                    print(f"[provide_information] ⚠️ No conversation history to include in model prompt")
+                    print("[provide_information] ⚠️ No conversation history to include in model prompt")
             
             # Ensure intelligent retrieval results are available for direct path as well
             try:
@@ -1831,7 +1830,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 3. How can I give a clear, helpful response?"""
 
             # Debug: Log final message structure before sending to LLM
-            print(f"[provide_information] 🔍 Final prompt structure:")
+            print("[provide_information] 🔍 Final prompt structure:")
             print(f"[provide_information] 📊 Total messages: {len(messages)}")
             total_content_length = 0
             for i, msg in enumerate(messages):
@@ -1848,7 +1847,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 if not hasattr(state, 'streaming_updates'):
                     state.streaming_updates = []
 
-                print(f"[provide_information] 🚀 Starting streaming LLM call")
+                print("[provide_information] 🚀 Starting streaming LLM call")
                 async for update in self._streaming_llm.chat_with_reasoning_stream(messages=messages, state=state, reasoning_prompt=reasoning_prompt):
                     if update["type"] == "content":
                         # Format EHR links during streaming accumulation
@@ -1885,13 +1884,13 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                         )
                         break
             else:
-                print(f"[provide_information] 🚀 Starting non-streaming LLM call")
+                print("[provide_information] 🚀 Starting non-streaming LLM call")
                 llm_resp = await self._streaming_llm.chat_with_reasoning(messages=messages, state=state, reasoning_prompt=reasoning_prompt)
                 print(f"[provide_information] 📝 LLM response received: {len(llm_resp.content) if llm_resp and llm_resp.content else 0} characters")
                 if llm_resp and llm_resp.content:
                     print(f"[provide_information] 📄 Response preview: '{llm_resp.content[:200]}...'")
                 else:
-                    print(f"[provide_information] ⚠️ Empty or null LLM response!")
+                    print("[provide_information] ⚠️ Empty or null LLM response!")
 
                 state.llm_response = ChatMessage(
                     role=llm_resp.role,

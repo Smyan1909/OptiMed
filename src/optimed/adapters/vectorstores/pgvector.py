@@ -39,8 +39,6 @@ class PGVectorAdapter(VectorStore):
     async def _get_pool(self) -> asyncpg.Pool:
         """Get or create the connection pool."""
         if self._pool is None:
-
-            
             async def _init(conn):
                 await register_vector(conn)
 
@@ -316,7 +314,7 @@ class PGVectorAdapter(VectorStore):
             pool = await self._get_pool()
             async with pool.acquire() as conn:
                 # Get all entries for this session
-                rows = await conn.fetch(
+                await conn.fetch(
                     "SELECT resource_type, resource_id FROM temp_content WHERE session_id = $1",
                     uuid.UUID(session_id)
                 )
@@ -846,8 +844,3 @@ class PGVectorAdapter(VectorStore):
                 continue
                 
         return sessions
-    
-
-        
-
-        

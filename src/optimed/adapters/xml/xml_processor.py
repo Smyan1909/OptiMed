@@ -1,5 +1,4 @@
 import lxml.etree as etree
-from lxml import html
 from typing import Dict, Any
 from datetime import datetime
 import re

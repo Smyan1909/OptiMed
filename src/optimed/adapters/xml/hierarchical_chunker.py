@@ -6,7 +6,7 @@ optimized for medical documents and retrieval-augmented generation.
 """
 
 import lxml.etree as etree
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any
 import re
 from dataclasses import dataclass
 
@@ -79,7 +79,6 @@ class HierarchicalXMLChunker:
             root = etree.fromstring(xml_content.encode('utf-8'))
 
             # Initialize chunking context
-            chunks = []
             document_metadata = document_metadata or {}
 
             # Strategy 1: Major section chunking
@@ -670,7 +669,7 @@ class HierarchicalXMLChunker:
 
             return text.strip()
 
-        except Exception as e:
+        except Exception:
             # Fallback: return ASCII-only version if cleaning fails
             return text.encode('ascii', errors='ignore').decode('ascii').strip()
 
@@ -685,5 +684,5 @@ class HierarchicalXMLChunker:
         """Get XPath for an element."""
         try:
             return element.getroottree().getpath(element)
-        except:
+        except Exception:
             return f"//{self._clean_element_name(element.tag)}"

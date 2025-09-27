@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import AsyncGenerator, Protocol, Sequence, Any, Union, Optional
+from typing import AsyncGenerator, Protocol, Sequence, Any, Union, Optional, Dict, List
 
 from optimed.core.domain import (
     PatientContext,
@@ -29,7 +29,7 @@ from optimed.core.domain import (
     JournalEntryUpdate )
 
 from optimed.core.domain.pdf_document import PDFDocument, PDFUploadRequest, PDFMetadata
-from optimed.core.domain.xml_document import XMLDocument, XMLUploadRequest, XMLMetadata
+from optimed.core.domain.xml_document import XMLDocument, XMLMetadata
 
 # core/ports.py
 #

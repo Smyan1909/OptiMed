@@ -9,7 +9,7 @@ from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
 from optimed.adapters.openai_gpt.azure_gpt5_mini_client import AzureOpenAIGPT5MiniClient # type: ignore
 from optimed.adapters.user_repository.pg_user_repository import PGUserRepository
 from optimed.adapters.user_repository.pg_ehr_connection_repository import PGUserEHRConnectionRepository
-from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine, ImageGenerationService, GeneratedImageRepository, LLMClient, PDFService, PDFRepository, PDFStoragePort, PDFProcessor, XMLService, XMLProcessor
+from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine, ImageGenerationService, GeneratedImageRepository, LLMClient, PDFService, XMLService
 from optimed.adapters.dicom.pydicom_processor import PyDICOMProcessor
 from optimed.adapters.dicom.image_service import ImageServiceImpl
 from optimed.adapters.dicom.pg_image_repository import PostgreSQLImageRepository
@@ -155,8 +155,6 @@ async def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
     cleanup_service = initialize_cleanup_service(vector_store, user_repo)
     await cleanup_service.start_cleanup_service()
     print("GDPR compliance services initialized")
-
-
 
     # Main engine with connection service
     engine: DiagnosticEngine = LangGraphDiagnosticEngine(
