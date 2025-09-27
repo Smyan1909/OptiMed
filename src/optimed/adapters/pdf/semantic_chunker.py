@@ -191,7 +191,8 @@ class SemanticPDFChunker:
                     is_header = True
                     header_type = "section_header"
 
-            if is_header and current_section.get("content", "").strip():
+            content_str = str(current_section.get("content", ""))
+            if is_header and content_str.strip():
                 # Save current section and start new one
                 current_section["end_pos"] = current_pos
                 sections.append(current_section)
@@ -202,12 +203,14 @@ class SemanticPDFChunker:
                     "type": header_type
                 }
             else:
-                current_section["content"] = (current_section.get("content", "") + line + '\n')
+                current_content = str(current_section.get("content", ""))
+                current_section["content"] = current_content + line + '\n'
 
             current_pos += len(line) + 1
 
         # Add final section
-        if current_section.get("content", "").strip():
+        final_content = str(current_section.get("content", ""))
+        if final_content.strip():
             current_section["end_pos"] = current_pos
             sections.append(current_section)
 
