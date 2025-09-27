@@ -22,41 +22,57 @@ class StreamingLLMWrapper:
         Chat with the LLM while streaming both reasoning and response.
         Yields updates about reasoning and text generation.
         """
-        # Step 1: Get the LLM to think through the problem
+        # Step 1: Get the LLM's reasoning process first
         if reasoning_prompt:
-            thinking_messages = messages + [
+            reasoning_messages = messages + [
                 ChatMessage(
-                    role=ChatRole.USER, 
-                    content=f"""Before providing your final response, please think through this step by step:
+                    role=ChatRole.USER,
+                    content=f"""Before responding to the user, please think through your reasoning process step by step. Consider this guidance:
 
 {reasoning_prompt}
 
-Structure your thinking process clearly, explaining your reasoning for each step. Then provide your final response.
+Explain your reasoning process clearly, including:
+- How you're interpreting the question
+- What key factors you're considering
+- What sources or knowledge you're drawing from
+- How you're arriving at your conclusions
 
-Important: Write both THINKING and RESPONSE in the same language as the user's prompt.
-
-Format your response as:
-THINKING:
-[Your step-by-step reasoning here]
-
-RESPONSE:
-[Your final response here]"""
+Provide only your reasoning process here - not the final answer yet."""
                 )
             ]
         else:
-            thinking_messages = messages + [
+            reasoning_messages = messages + [
                 ChatMessage(
-                    role=ChatRole.USER, 
-                    content="""Before providing your final response, please think through this step by step.
+                    role=ChatRole.USER,
+                    content="""Before responding to the user, please think through your reasoning process step by step.
 
-Structure your thinking process clearly, explaining your reasoning for each step. Then provide your final response.
+Explain your reasoning process clearly, including:
+- How you're interpreting the question
+- What key factors you're considering
+- What sources or knowledge you're drawing from
+- How you're arriving at your conclusions
 
-Format your response as:
-THINKING:
-[Your step-by-step reasoning here]
+Provide only your reasoning process here - not the final answer yet."""
+                )
+            ]
 
-RESPONSE:
-[Your final response here]"""
+        # Step 2: Prepare messages for the actual response
+        if reasoning_prompt:
+            response_messages = messages + [
+                ChatMessage(
+                    role=ChatRole.USER,
+                    content=f"""Please consider this guidance when responding:
+
+{reasoning_prompt}
+
+Provide a clear, well-reasoned response addressing the user's question directly."""
+                )
+            ]
+        else:
+            response_messages = messages + [
+                ChatMessage(
+                    role=ChatRole.USER,
+                    content="""Please provide a clear, well-reasoned response to the user's question."""
                 )
             ]
         
@@ -64,142 +80,84 @@ RESPONSE:
         if state:
             state.step_status = "in_progress"
             state.step_details = "AI model analyzing and reasoning through the problem..."
-        
-        # Stream the full response with reasoning
-        full_content = ""
-        thinking_section = ""
-        final_response = ""
-        in_thinking_section = False
-        in_response_section = False
-        
+
+        # Step 1: Get reasoning process (non-streaming for clarity)
+        reasoning_content = ""
+
+        yield {
+            "type": "reasoning_start",
+            "timestamp": datetime.now().isoformat(),
+            "message": "AI is thinking through the problem..."
+        }
+
         try:
-            async for chunk in self.llm_client.chat_stream(thinking_messages, **kwargs): # type: ignore
-                full_content += chunk
-                
-                # Check if we've entered the thinking section
-                if "THINKING:" in full_content and not in_thinking_section:
-                    in_thinking_section = True
-                    yield {
-                        "type": "reasoning_start",
-                        "timestamp": datetime.now().isoformat(),
-                        "message": "AI is thinking through the problem..."
-                    }
-                
-                # Check if we've entered the response section
-                if "RESPONSE:" in full_content and not in_response_section:
-                    in_response_section = True
-                    
-                    # Extract and parse the thinking section
-                    thinking_start = full_content.find("THINKING:") + len("THINKING:")
-                    response_start = full_content.find("RESPONSE:")
-                    thinking_section = full_content[thinking_start:response_start].strip()
-                    
-                    # Parse reasoning steps
-                    reasoning_steps = self._parse_reasoning_steps(thinking_section)
-                    self.current_reasoning = thinking_section
-                    self.reasoning_steps = reasoning_steps
-                    
-                    # Update state with reasoning
-                    if state:
-                        state.llm_reasoning = thinking_section
-                        state.reasoning_steps = reasoning_steps
-                        state.reasoning_complete = True
-                    
-                    yield {
-                        "type": "reasoning_complete",
-                        "reasoning": thinking_section,
-                        "reasoning_steps": reasoning_steps
-                    }
-                    
-                    yield {
-                        "type": "response_start",
-                        "message": "Generating response..."
-                    }
-                
-                # Stream response content if we're in the response section
-                if in_response_section:
-                    response_start_idx = full_content.find("RESPONSE:") + len("RESPONSE:")
-                    current_response = full_content[response_start_idx:].strip()
-                    
-                    # Only yield new content
-                    if len(current_response) > len(final_response):
-                        new_content = current_response[len(final_response):]
-                        final_response = current_response
-                        
-                        yield {
-                            "type": "content",
-                            "content": new_content,
-                            "accumulated_content": final_response
-                        }
+            # Get reasoning first (non-streaming to capture complete reasoning)
+            reasoning_response = await self.llm_client.chat(reasoning_messages, **kwargs)
+            reasoning_content = reasoning_response.content
+
+            # Parse reasoning steps
+            reasoning_steps = self._parse_reasoning_steps(reasoning_content)
+            self.current_reasoning = reasoning_content
+            self.reasoning_steps = reasoning_steps
+
+            # Update state with reasoning
+            if state:
+                state.llm_reasoning = reasoning_content
+                state.reasoning_steps = reasoning_steps
+                state.reasoning_complete = True
+
+            yield {
+                "type": "reasoning_complete",
+                "reasoning": reasoning_content,
+                "reasoning_steps": reasoning_steps
+            }
+
+            # Step 2: Now stream the actual response
+            yield {
+                "type": "response_start",
+                "message": "Generating response..."
+            }
+
+            response_content = ""
+            async for chunk in self.llm_client.chat_stream(response_messages, **kwargs): # type: ignore
+                response_content += chunk
+
+                # Stream content directly as it comes
+                yield {
+                    "type": "content",
+                    "content": chunk,
+                    "accumulated_content": response_content
+                }
                         
         except Exception as e:
             # Handle network errors gracefully
             import logging
             logging.error(f"Streaming LLM error: {e}")
-            # If we have partial content, try to extract what we can
-            if full_content:
-                # Try to extract thinking and response sections from partial content
-                if "THINKING:" in full_content:
-                    thinking_start = full_content.find("THINKING:") + len("THINKING:")
-                    if "RESPONSE:" in full_content:
-                        response_start = full_content.find("RESPONSE:")
-                        thinking_section = full_content[thinking_start:response_start].strip()
-                        response_section = full_content[response_start + len("RESPONSE:"):].strip()
-                    else:
-                        thinking_section = full_content[thinking_start:].strip()
-                        response_section = ""
-                    
-                    # Yield what we have
-                    if thinking_section:
-                        reasoning_steps = self._parse_reasoning_steps(thinking_section)
-                        self.current_reasoning = thinking_section
-                        self.reasoning_steps = reasoning_steps
-                        
-                        yield {
-                            "type": "reasoning_start",
-                            "timestamp": datetime.now().isoformat(),
-                            "message": "AI is thinking through the problem..."
-                        }
-                        
-                        for i, step in enumerate(reasoning_steps):
-                            yield {
-                                "type": "reasoning_step",
-                                "step_number": i + 1,
-                                "total_steps": len(reasoning_steps),
-                                "content": step,
-                                "timestamp": datetime.now().isoformat()
-                            }
-                        
-                        yield {
-                            "type": "reasoning_complete",
-                            "full_reasoning": thinking_section,
-                            "timestamp": datetime.now().isoformat()
-                        }
-                    
-                    if response_section:
-                        yield {
-                            "type": "content",
-                            "content": response_section,
-                            "accumulated_content": response_section,
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        
-                        yield {
-                            "type": "completion",
-                            "full_content": full_content,
-                            "reasoning": thinking_section,
-                            "reasoning_steps": reasoning_steps if 'reasoning_steps' in locals() else [],
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        return
+            # If we have partial content, yield it
+            if 'response_content' in locals() and response_content:
+                yield {
+                    "type": "content",
+                    "content": response_content,
+                    "accumulated_content": response_content,
+                    "timestamp": datetime.now().isoformat()
+                }
+
+                yield {
+                    "type": "completion",
+                    "full_content": response_content,
+                    "reasoning": reasoning_content,
+                    "reasoning_steps": getattr(self, 'reasoning_steps', []),
+                    "timestamp": datetime.now().isoformat()
+                }
+                return
             # Re-raise the original exception if we couldn't handle it
             raise
-        
+
         # Final completion
         yield {
             "type": "completion",
-            "full_content": final_response,
-            "reasoning": thinking_section,
+            "full_content": response_content,
+            "reasoning": reasoning_content,
             "reasoning_steps": self.reasoning_steps
         }
 
@@ -213,86 +171,92 @@ RESPONSE:
         """
         Chat with the LLM while capturing its reasoning process.
         """
-        # Step 1: Get the LLM to think through the problem
+        # Step 1: Get the LLM's reasoning process first
         if reasoning_prompt:
-            thinking_messages = messages + [
+            reasoning_messages = messages + [
                 ChatMessage(
-                    role=ChatRole.USER, 
-                    content=f"""Before providing your final response, please think through this step by step:
+                    role=ChatRole.USER,
+                    content=f"""Before responding to the user, please think through your reasoning process step by step. Consider this guidance:
 
 {reasoning_prompt}
 
-Structure your thinking process clearly, explaining your reasoning for each step. Then provide your final response.
+Explain your reasoning process clearly, including:
+- How you're interpreting the question
+- What key factors you're considering
+- What sources or knowledge you're drawing from
+- How you're arriving at your conclusions
 
-Format your response as:
-THINKING:
-[Your step-by-step reasoning here]
-
-RESPONSE:
-[Your final response here]"""
+Provide only your reasoning process here - not the final answer yet."""
                 )
             ]
         else:
-            thinking_messages = messages + [
+            reasoning_messages = messages + [
                 ChatMessage(
-                    role=ChatRole.USER, 
-                    content="""Before providing your final response, please think through this step by step.
+                    role=ChatRole.USER,
+                    content="""Before responding to the user, please think through your reasoning process step by step.
 
-Structure your thinking process clearly, explaining your reasoning for each step. Then provide your final response.
+Explain your reasoning process clearly, including:
+- How you're interpreting the question
+- What key factors you're considering
+- What sources or knowledge you're drawing from
+- How you're arriving at your conclusions
 
-Format your response as:
-THINKING:
-[Your step-by-step reasoning here]
-
-RESPONSE:
-[Your final response here]"""
+Provide only your reasoning process here - not the final answer yet."""
                 )
             ]
-        
+
+        # Step 2: Prepare messages for the actual response
+        if reasoning_prompt:
+            response_messages = messages + [
+                ChatMessage(
+                    role=ChatRole.USER,
+                    content=f"""Please consider this guidance when responding:
+
+{reasoning_prompt}
+
+Provide a clear, well-reasoned response addressing the user's question directly."""
+                )
+            ]
+        else:
+            response_messages = messages + [
+                ChatMessage(
+                    role=ChatRole.USER,
+                    content="""Please provide a clear, well-reasoned response to the user's question."""
+                )
+            ]
+
         # Update state to show we're getting LLM reasoning
         if state:
             state.step_status = "in_progress"
             state.step_details = "AI model analyzing and reasoning through the problem..."
-        
-        # Get the full response with reasoning
-        full_response = await self.llm_client.chat(thinking_messages, **kwargs)
-        
-        # Parse the thinking and response sections
-        content = full_response.content
-        thinking_section = ""
-        final_response = ""
-        
-        if "THINKING:" in content and "RESPONSE:" in content:
-            # Extract thinking section
-            thinking_start = content.find("THINKING:") + len("THINKING:")
-            response_start = content.find("RESPONSE:")
-            thinking_section = content[thinking_start:response_start].strip()
-            
-            # Extract final response
-            final_response = content[response_start + len("RESPONSE:"):].strip()
-        else:
-            # Fallback if format isn't followed
-            final_response = content
-            thinking_section = "The AI model processed this request."
-        
-        # Store reasoning for streaming
-        self.current_reasoning = thinking_section
-        self.reasoning_steps = self._parse_reasoning_steps(thinking_section)
-        
-        # Update state with reasoning
+
+        # Get reasoning first
+        reasoning_response = await self.llm_client.chat(reasoning_messages, **kwargs)
+        reasoning_content = reasoning_response.content
+
+        # Parse reasoning steps
+        reasoning_steps = self._parse_reasoning_steps(reasoning_content)
+        self.current_reasoning = reasoning_content
+        self.reasoning_steps = reasoning_steps
+
+        # Get the actual response
+        response = await self.llm_client.chat(response_messages, **kwargs)
+        content = response.content
+
+        # Update state
         if state:
-            state.llm_reasoning = thinking_section
-            state.reasoning_steps = self.reasoning_steps
-            state.step_details = "AI model completed reasoning process"
-        
-        # Return the final response
+            state.llm_reasoning = reasoning_content
+            state.reasoning_steps = reasoning_steps
+            state.step_details = "AI model completed processing"
+
+        # Return the response with reasoning metadata
         return ChatMessage(
             role=ChatRole.ASSISTANT,
-            content=final_response,
+            content=content,
             metadata={
-                **full_response.metadata,
-                "reasoning": thinking_section,
-                "reasoning_steps": self.reasoning_steps
+                **response.metadata,
+                "reasoning": reasoning_content,
+                "reasoning_steps": reasoning_steps
             }
         )
     

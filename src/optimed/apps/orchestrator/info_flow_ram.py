@@ -1089,18 +1089,8 @@ Keep queries concise and medical terminology appropriate.
                     session_manager.generate_session_key(state.session_id)
                     print(f"[store_assistant_response] 🔑 Generated new session key for {state.session_id}")
 
-                # Clean up assistant message content before storage
-                # Remove internal reasoning format that breaks API calls
+                # Use the assistant message content as-is
                 clean_content = state.llm_response.content
-                if clean_content and "THINKING:" in clean_content:
-                    # Extract only the response part, removing THINKING section
-                    if "RESPONSE:" in clean_content:
-                        clean_content = clean_content.split("RESPONSE:")[-1].strip()
-                    elif "\n\n" in clean_content and clean_content.startswith("THINKING:"):
-                        # If no RESPONSE marker, take content after first double newline
-                        parts = clean_content.split("\n\n", 1)
-                        if len(parts) > 1:
-                            clean_content = parts[1].strip()
 
                 print(f"[store_assistant_response] 🧹 Cleaned content: {len(clean_content)} chars (was {len(state.llm_response.content)} chars)")
 
@@ -1147,23 +1137,21 @@ Keep queries concise and medical terminology appropriate.
 
                 # Build prompt for situation
                 situation_prompt = f"""
-                Generate a CONCISE SBAR Situation summary (max 3-4 bullet points).
+                Generate a VERY CONCISE SBAR Situation summary (maximum 2-3 short bullet points).
 
                 USER QUERY: {state.user_prompt}
 
-                FOCUS: Current patient status and immediate concerns.
+                Include ONLY the most critical:
+                • Chief complaint
+                • Current symptoms
+                • Immediate concerns
 
-                Include ONLY:
-                • Chief complaint and onset
-                • Key vital signs (if abnormal)
-                • Current symptoms (most important)
-                • Immediate concerns requiring attention
-
-                Format: Short bullet points. No headers. Be clinical and direct.
+                MANDATORY: Cite page numbers for any document references: "According to [Document], page X"
+                Format: Very short bullet points. No headers or explanations.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR situation summaries. Focus on current patient status and immediate concerns. Use previous conversation history when relevant. Do not make up information, only use the information provided. If you cannot find information, say so.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR situation summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: 'According to [Document], page X'. Be extremely brief - no explanations or elaboration.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1219,23 +1207,21 @@ Keep queries concise and medical terminology appropriate.
 
                 # Build prompt for background
                 background_prompt = f"""
-                Generate a CONCISE SBAR Background summary (max 3-4 bullet points).
+                Generate a VERY CONCISE SBAR Background summary (maximum 2-3 short bullet points).
 
                 USER QUERY: {state.user_prompt}
 
-                FOCUS: Essential patient history relevant to current situation.
+                Include ONLY the most relevant:
+                • Key medical history
+                • Critical medications
+                • Important allergies
 
-                Include ONLY:
-                • Relevant medical history/comorbidities
-                • Current medications (key ones)
-                • Known allergies
-                • Recent significant events/treatments
-
-                Format: Short bullet points. No headers. Be clinical and direct.
+                MANDATORY: Cite page numbers for any document references: "According to [Document], page X"
+                Format: Very short bullet points. No headers or explanations.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR background summaries. Focus on relevant patient history and context. Use previous conversation history when relevant. Do not make up information, only use the information provided. If you cannot find information, say so.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR background summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: 'According to [Document], page X'. Be extremely brief - no explanations or elaboration.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1291,23 +1277,21 @@ Keep queries concise and medical terminology appropriate.
 
                 # Build prompt for assessment
                 assessment_prompt = f"""
-                Generate a CONCISE SBAR Assessment summary (max 3-4 bullet points).
+                Generate a VERY CONCISE SBAR Assessment summary (maximum 2-3 short bullet points).
 
                 USER QUERY: {state.user_prompt}
 
-                FOCUS: Clinical interpretation and professional judgment.
+                Include ONLY the most important:
+                • Clinical impression
+                • Key findings
+                • Risk level
 
-                Include ONLY:
-                • Primary clinical impression/working diagnosis
-                • Key clinical findings analysis
-                • Risk level/severity assessment
-                • Most likely differential diagnoses (if relevant)
-
-                Format: Short bullet points. No headers. Be clinical and direct.
+                MANDATORY: Cite page numbers for any document references: "According to [Document], page X"
+                Format: Very short bullet points. No headers or explanations.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR assessment summaries. Focus on clinical analysis and professional interpretation. Use previous conversation history when relevant. Do not make up information, only use the information provided. If you cannot find information, say so.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR assessment summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: 'According to [Document], page X'. Be extremely brief - no explanations or elaboration.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1363,24 +1347,22 @@ Keep queries concise and medical terminology appropriate.
 
                 # Build prompt for recommendation
                 recommendation_prompt = f"""
-                Generate a CONCISE SBAR Recommendation summary (max 3-4 bullet points).
+                Generate a VERY CONCISE SBAR Recommendation summary (maximum 2-3 short bullet points).
 
                 USER QUERY: {state.user_prompt}
 
-                FOCUS: Essential next steps and actions.
+                Include ONLY the most essential:
+                • Urgent interventions
+                • Key monitoring
+                • Follow-up needs
 
-                Include ONLY:
-                • Most urgent intervention needed
-                • Key diagnostic tests/monitoring
-                • Important follow-up care
-                • Specialist consultation (if needed)
-
-                Format: Short bullet points. No headers. Be clinical and direct.
-                IMPORTANT: Educational information only. Refer complex decisions to healthcare providers.
+                MANDATORY: Cite page numbers for any document references: "According to [Document], page X"
+                Format: Very short bullet points. No headers or explanations.
+                IMPORTANT: Educational information only - refer complex decisions to healthcare providers.
                 """
 
                 messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a healthcare professional creating SBAR recommendation summaries. Focus on actionable next steps while providing education, not specific treatments. Use previous conversation history when relevant. Do not make up information, only use the information provided. If you cannot find information, say so.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR recommendation summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: 'According to [Document], page X'. Be extremely brief - no explanations or elaboration.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1611,16 +1593,8 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                         print(f"[provide_information]   {i+1}. SKIPPED - Empty content")
                         continue
 
-                    # Clean up any remaining THINKING: format in assistant messages
+                    # Use message content as-is
                     content = msg.content
-                    if msg.role == ChatRole.ASSISTANT and "THINKING:" in content:
-                        print(f"[provide_information]   {i+1}. CLEANING - Removing THINKING format")
-                        if "RESPONSE:" in content:
-                            content = content.split("RESPONSE:")[-1].strip()
-                        elif "\n\n" in content and content.startswith("THINKING:"):
-                            parts = content.split("\n\n", 1)
-                            if len(parts) > 1:
-                                content = parts[1].strip()
 
                     # Truncate very long messages
                     content = content[:1000] + "..." if len(content) > 1000 else content
@@ -1678,15 +1652,8 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                         if not msg.content or not msg.content.strip():
                             continue
 
-                        # Clean content similar to before
+                        # Use message content as-is
                         content = msg.content
-                        if msg.role == ChatRole.ASSISTANT and "THINKING:" in content:
-                            if "RESPONSE:" in content:
-                                content = content.split("RESPONSE:")[-1].strip()
-                            elif "\n\n" in content and content.startswith("THINKING:"):
-                                parts = content.split("\n\n", 1)
-                                if len(parts) > 1:
-                                    content = parts[1].strip()
 
                         # Truncate if too long
                         content = content[:300] + "..." if len(content) > 300 else content
