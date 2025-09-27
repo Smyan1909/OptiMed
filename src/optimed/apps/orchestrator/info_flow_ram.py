@@ -1986,7 +1986,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 state.query_classification = label
 
                 # Determine if this should use SBAR flow (big picture queries)
-                sbar_query_types = ["summary", "comparative", "reasoning", "temporal-trend", "guideline"]
+                sbar_query_types = ["summary"]
                 state.is_sbar_flow = label in sbar_query_types
 
                 print(f"[classify_query_intent] SBAR flow: {state.is_sbar_flow}")
