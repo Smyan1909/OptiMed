@@ -58,7 +58,6 @@ class ImageServiceImpl(ImageService):
         # Create image domain object
         image = DICOMImage(
             image_id=image_id,
-            patient_id=request.patient_id or metadata.patient_id,
             user_id=request.user_id,
             filename=request.filename,
             file_size=len(request.file_content),
@@ -69,7 +68,7 @@ class ImageServiceImpl(ImageService):
             uploaded_at=datetime.now(timezone.utc)
         )
         
-        # Store the image record
+        # Store the image record (GDPR-compliant: no patient_id stored)
         await self._image_repository.save_image(image)
         
         try:
@@ -86,7 +85,6 @@ class ImageServiceImpl(ImageService):
             # Update image with storage path and ready status
             updated_image = DICOMImage(
                 image_id=image.image_id,
-                patient_id=image.patient_id,
                 user_id=image.user_id,
                 filename=image.filename,
                 file_size=image.file_size,
@@ -106,7 +104,6 @@ class ImageServiceImpl(ImageService):
             # Update status to error
             error_image = DICOMImage(
                 image_id=image.image_id,
-                patient_id=image.patient_id,
                 user_id=image.user_id,
                 filename=image.filename,
                 file_size=image.file_size,
@@ -209,7 +206,6 @@ class ImageServiceImpl(ImageService):
                 embedding_metadata = {
                     'type': 'dicom',
                     'image_id': image.image_id,
-                    'patient_id': image.patient_id,
                     'user_id': image.user_id,
                     'modality': image.metadata.modality.value if image.metadata.modality else None,
                     'body_part': image.metadata.body_part_examined,

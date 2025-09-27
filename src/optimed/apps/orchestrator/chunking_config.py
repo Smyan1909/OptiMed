@@ -21,6 +21,8 @@ STRATEGY_REGISTRY: dict[str, str] = {
     "document": "NarrativeV1",
     "csv_row": "NarrativeV1",
     "pdf": "NarrativeV1",
+    "pdf_document": "NarrativeV1",  # Support for PDF document chunks
+    "xml_document": "NarrativeV1",  # Support for XML document chunks
 
     # bundling stage
     "bundle": "TimeBundleV1",

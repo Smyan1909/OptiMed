@@ -339,15 +339,18 @@ export async function fetchPatient(id: string): Promise<PatientDetail> {
 
 function getSessionHeaders(excludeContentType = false): Record<string, string> {
   const headers: Record<string, string> = {};
-  
+
   if (!excludeContentType) {
     headers['Content-Type'] = 'application/json';
   }
-  
+
   if (typeof window !== 'undefined') {
     const sessionId = localStorage.getItem('session_id');
     if (sessionId) {
       headers['X-Session-ID'] = sessionId;
+      console.log('[API] Using session ID from localStorage:', sessionId);
+    } else {
+      console.warn('[API] No session ID found in localStorage');
     }
 
     // Attach the current UI locale as Accept-Language for backend language handling
@@ -361,8 +364,31 @@ function getSessionHeaders(excludeContentType = false): Record<string, string> {
       }
     } catch {}
   }
-  
+
   return headers;
+}
+
+// Encryption utilities
+async function makeEncryptedRequest(url: string, options: RequestInit): Promise<Response> {
+  try {
+    const { makeEncryptedRequest: encrypt } = await import('@/lib/encryption');
+    const sessionId = typeof window !== 'undefined' ? localStorage.getItem('session_id') : null;
+    return await encrypt(url, options, sessionId || undefined);
+  } catch (error) {
+    console.warn('Encryption not available, making unencrypted request:', error);
+    return fetch(url, options);
+  }
+}
+
+async function handleEncryptedResponse(response: Response): Promise<any> {
+  try {
+    const { handleEncryptedResponse: decrypt } = await import('@/lib/encryption');
+    const sessionId = typeof window !== 'undefined' ? localStorage.getItem('session_id') : null;
+    return await decrypt(response, sessionId || undefined);
+  } catch (error) {
+    console.warn('Decryption not available, handling as regular response:', error);
+    return response.json();
+  }
 }
 
 export async function clearPatientChatHistory(patientId: string): Promise<void> {
@@ -688,6 +714,318 @@ export async function lookupTerm(request: LookupRequest): Promise<LookupResponse
   if (!res.ok) {
     const errorText = await res.text();
     throw new Error(`Lookup failed: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+// PDF Document Types
+export type PDFDocument = {
+  document_id: string;
+  filename: string;
+  file_size: number;
+  status: 'UPLOADED' | 'PROCESSING' | 'READY' | 'ERROR';
+  uploaded_at: string;
+  processed_at?: string;
+  patient_id?: string;
+  metadata?: {
+    title?: string;
+    author?: string;
+    subject?: string;
+    page_count?: number;
+  };
+  processing_info?: {
+    extracted_text_length: number;
+    chunk_count: number;
+    extraction_method: string;
+  };
+};
+
+export type PDFUploadResponse = {
+  document_id: string;
+  filename: string;
+  file_size: number;
+  status: string;
+  uploaded_at: string;
+  patient_id?: string;
+};
+
+export type PDFListResponse = {
+  documents: PDFDocument[];
+  total_count: number;
+  patient_specific_count: number;
+  general_count: number;
+};
+
+// XML Document Types
+export type XMLDocument = {
+  document_id: string;
+  filename: string;
+  file_size: number;
+  status: 'UPLOADED' | 'PROCESSING' | 'READY' | 'ERROR';
+  uploaded_at: string;
+  processed_at?: string;
+  patient_id?: string;
+  document_type?: string;
+  metadata?: {
+    title?: string;
+    root_element?: string;
+    namespace?: string;
+    document_type?: string;
+    section_count?: number;
+    entry_count?: number;
+  };
+  processing_info?: {
+    parsing_success?: boolean;
+    structure_extraction_success?: boolean;
+    section_count?: number;
+    detected_format?: string;
+    error_message?: string;
+  };
+};
+
+export type XMLUploadResponse = {
+  document_id: string;
+  filename: string;
+  file_size: number;
+  status: string;
+  uploaded_at: string;
+  patient_id?: string;
+  document_type?: string;
+};
+
+export type XMLListResponse = {
+  documents: XMLDocument[];
+  total_count: number;
+  patient_specific_count: number;
+  general_count: number;
+  medical_document_count: number;
+};
+
+// PDF Document API Functions
+export async function uploadPDFDocument(file: File, patientId?: string, chatSessionId?: string): Promise<PDFUploadResponse> {
+  console.log('[API] uploadPDFDocument called with:', { patientId, chatSessionId });
+
+  const formData = new FormData();
+  formData.append('file', file);
+  if (patientId) {
+    console.log('[API] Adding patient_id:', patientId);
+    formData.append('patient_id', patientId);
+  }
+  if (chatSessionId) {
+    console.log('[API] Adding chat_session_id:', chatSessionId);
+    formData.append('chat_session_id', chatSessionId);
+  } else {
+    console.log('[API] No chat_session_id provided');
+  }
+
+  const res = await fetch('/api/documents/upload', {
+    method: 'POST',
+    headers: getSessionHeaders(true), // Excludes Content-Type for FormData
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`PDF upload failed: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function listPDFDocuments(patientId?: string, chatSessionId?: string): Promise<PDFListResponse> {
+  const params = new URLSearchParams();
+  if (patientId) {
+    params.set('patient_id', patientId);
+  }
+  if (chatSessionId) {
+    params.set('chat_session_id', chatSessionId);
+  }
+
+  const url = params.toString() ? `/api/documents?${params}` : '/api/documents';
+
+  const res = await fetch(url, {
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to list PDF documents: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function getPDFDocument(documentId: string): Promise<PDFDocument> {
+  const res = await fetch(`/api/documents/${encodeURIComponent(documentId)}`, {
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to get PDF document: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function deletePDFDocument(documentId: string, patientId?: string, chatSessionId?: string): Promise<{ message: string }> {
+  console.log('[API] deletePDFDocument called with:', { documentId, patientId, chatSessionId });
+
+  const headers = getSessionHeaders();
+  console.log('[API] Delete request headers:', headers);
+
+  // Add query parameters if provided
+  const params = new URLSearchParams();
+  if (patientId) {
+    params.set('patient_id', patientId);
+  }
+  if (chatSessionId) {
+    params.set('chat_session_id', chatSessionId);
+  }
+
+  const url = `/api/documents/${encodeURIComponent(documentId)}${params.toString() ? '?' + params.toString() : ''}`;
+  console.log('[API] Delete request URL:', url);
+
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: headers,
+  });
+
+  console.log('[API] Delete response status:', res.status);
+  console.log('[API] Delete response headers:', Object.fromEntries(res.headers.entries()));
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error('[API] Delete failed with error:', errorText);
+    throw new Error(`Failed to delete PDF document: ${res.status} - ${errorText}`);
+  }
+
+  const responseData = await res.json();
+  console.log('[API] Delete response data:', responseData);
+  return responseData;
+}
+
+// XML Document API Functions
+export async function uploadXMLDocument(file: File, patientId?: string, chatSessionId?: string): Promise<XMLUploadResponse> {
+  console.log('[API] uploadXMLDocument called with:', { patientId, chatSessionId });
+
+  const formData = new FormData();
+  formData.append('file', file);
+  if (patientId) {
+    console.log('[API] Adding patient_id:', patientId);
+    formData.append('patient_id', patientId);
+  }
+  if (chatSessionId) {
+    console.log('[API] Adding chat_session_id:', chatSessionId);
+    formData.append('chat_session_id', chatSessionId);
+  }
+
+  const res = await fetch('/api/documents/upload-xml', {
+    method: 'POST',
+    headers: getSessionHeaders(true), // Exclude Content-Type for FormData
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`XML upload failed: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function listXMLDocuments(patientId?: string, chatSessionId?: string): Promise<XMLListResponse> {
+  const params = new URLSearchParams();
+  if (patientId) {
+    params.set('patient_id', patientId);
+  }
+  if (chatSessionId) {
+    params.set('chat_session_id', chatSessionId);
+  }
+
+  const url = `/api/documents/xml${params.toString() ? '?' + params.toString() : ''}`;
+  const res = await fetch(url, {
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to list XML documents: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function getXMLDocument(documentId: string): Promise<XMLDocument> {
+  const res = await fetch(`/api/documents/xml/${encodeURIComponent(documentId)}`, {
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to get XML document: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function deleteXMLDocument(documentId: string, patientId?: string, chatSessionId?: string): Promise<{ message: string }> {
+  console.log('[API] deleteXMLDocument called with:', { documentId, patientId, chatSessionId });
+
+  const headers = getSessionHeaders();
+  console.log('[API] Delete request headers:', headers);
+
+  // Add query parameters if provided
+  const params = new URLSearchParams();
+  if (patientId) {
+    params.set('patient_id', patientId);
+  }
+  if (chatSessionId) {
+    params.set('chat_session_id', chatSessionId);
+  }
+
+  const url = `/api/documents/xml/${encodeURIComponent(documentId)}${params.toString() ? '?' + params.toString() : ''}`;
+  console.log('[API] Delete request URL:', url);
+
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: headers,
+  });
+
+  console.log('[API] Delete response status:', res.status);
+  console.log('[API] Delete response headers:', Object.fromEntries(res.headers.entries()));
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error('[API] Delete failed with error:', errorText);
+    throw new Error(`Failed to delete XML document: ${res.status} - ${errorText}`);
+  }
+
+  const responseData = await res.json();
+  console.log('[API] Delete response data:', responseData);
+  return responseData;
+}
+
+// Encryption API functions
+export async function setupSessionEncryption(sessionId: string): Promise<boolean> {
+  try {
+    const { getEncryptionClient } = await import('@/lib/encryption');
+    const encryptionClient = getEncryptionClient();
+    return await encryptionClient.setupSessionEncryption(sessionId);
+  } catch (error) {
+    console.error('Failed to setup session encryption:', error);
+    return false;
+  }
+}
+
+export async function getServerPublicKey(): Promise<any> {
+  const res = await fetch('/api/encryption/server-public-key', {
+    headers: getSessionHeaders()
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to get server public key');
   }
 
   return res.json();

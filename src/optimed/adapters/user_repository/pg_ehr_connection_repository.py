@@ -82,7 +82,7 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
                             refresh_token TEXT,
                             token_expires_at TIMESTAMP WITH TIME ZONE,
                             scope TEXT,
-                            patient_context VARCHAR(255),
+                            -- patient_context removed for GDPR compliance
                             is_active BOOLEAN DEFAULT TRUE,
                             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                             updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -177,14 +177,14 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
                 INSERT INTO user_ehr_connections (
                     connection_id, user_id, provider_type, fhir_server_url, client_id,
                     credentials, access_token, refresh_token, token_expires_at,
-                    scope, patient_context, is_active, created_at, updated_at, expires_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                    scope, is_active, created_at, updated_at, expires_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             """, 
                 connection.connection_id, connection.user_id, connection.provider_type,
                 connection.fhir_server_url, connection.client_id,
                 json.dumps(connection.credentials), connection.access_token,
                 connection.refresh_token, connection.token_expires_at,
-                connection.scope, connection.patient_context, connection.is_active,
+                connection.scope, connection.is_active,
                 connection.created_at, connection.updated_at, connection.expires_at
             )
             return connection

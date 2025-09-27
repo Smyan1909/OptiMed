@@ -108,7 +108,7 @@ class UserEHRConnectionService:
             "access_token": credentials.get("access_token"),
             "refresh_token": credentials.get("refresh_token"),
             "token_expires_at": expires_at,
-            "patient_context": credentials.get("patient"),  # SMART patient context
+            # patient_context removed for GDPR compliance
             "is_active": True,
             "expires_at": expires_at,
             "updated_at": datetime.now(timezone.utc)        })

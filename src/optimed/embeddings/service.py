@@ -1,10 +1,7 @@
 from __future__ import annotations
-import os 
-import json 
-import datetime as dt
-from typing import Sequence, Any
+import os
+from typing import Any
 from dotenv import load_dotenv
-from optimed.embeddings.minilm import embed          # multilingual e5 with kind prefixes
 from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
 
 load_dotenv()
@@ -20,35 +17,14 @@ async def embed_and_store(
     metadata: dict[str, Any] | None = None,
 ) -> str:
     """
-    Embed `text` and upsert into the embeddings table.
-
-    Returns the row's UUID (primary key).
+    GDPR-compliant: No database storage to prevent PHI persistence.
+    
+    This function now returns a mock UUID for backward compatibility
+    but does not store any data in the database.
     """
-    # Prepare content for embedding (always use string for embedding)
-    embed_text = text if isinstance(text, str) else json.dumps(text)
+    print(f"[GDPR] embed_and_store blocked for namespace={namespace}, object_type={object_type}, object_id={object_id}")
     
-    # run embed model (sync or async) — passages for stored content
-    vec: Sequence[float] = await embed(embed_text, "passage")
-
-    key = f"{namespace}:{object_type}:{object_id}"
-    
-    # Ensure content is always a valid JSON object for database storage
-    if isinstance(text, str):
-        content = {"text": text}  # Wrap plain text in JSON object
-    else:
-        content = text
-    
-    row_uuid = await _VECTOR_STORE.upsert(
-        embedding_id=key,
-        embedding=vec,
-        object_type=object_type,
-        object_id=object_id,
-        content=content,  # This will now always be a dict, which gets JSON serialized
-        metadata={
-            **(metadata or {}),
-            "namespace": namespace,
-            "object_type": object_type,
-            "ingested_at": dt.datetime.utcnow().isoformat(),
-        },
-    )
-    return row_uuid
+    # GDPR Compliance: Do not store any PHI data in the database
+    # Return a mock UUID for backward compatibility
+    import uuid
+    return str(uuid.uuid4())

@@ -2,13 +2,14 @@
 
 import { useState, useEffect, FormEvent, useRef } from "react";
 import { useUser } from '@/contexts/UserContext';
-import { Download, Image as ImageIcon, ExternalLink } from 'lucide-react';
-import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse } from '@/lib/api';
+import { Download, Image as ImageIcon, ExternalLink, Paperclip, FileText, X } from 'lucide-react';
+import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse, uploadPDFDocument, listPDFDocuments, deletePDFDocument, PDFDocument, uploadXMLDocument, listXMLDocuments, deleteXMLDocument, XMLDocument } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
 import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
 import { ReasoningViewer } from "./ReasoningViewer";
 import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCards";
+import { SBARSummaryCards } from "./SBARSummaryCards";
 import { useLayoutEffect } from "react";
 import ModeSelector from "./ModeSelector";
 import { useTranslations, useLocale } from 'next-intl';
@@ -52,6 +53,13 @@ interface DifferentialDiagnosis {
   supporting_evidence: string[];
 }
 
+interface SBARResults {
+  situation?: string;
+  background?: string;
+  assessment?: string;
+  recommendation?: string;
+}
+
 interface Message {
   sender: "user" | "system";
   text: string;
@@ -61,6 +69,7 @@ interface Message {
   reasoningSteps?: string[];
   reasoning?: string;
   differentialDiagnoses?: DifferentialDiagnosis[];
+  sbarResults?: SBARResults;
 }
 
 interface ChatBoxProps {
@@ -688,7 +697,7 @@ const formatTimestamp = (timestamp: string | number): string => {
   }
 };
 
-export default function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
+export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxProps) {
   const t = useTranslations('chatBox');
   const locale = useLocale();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -696,9 +705,38 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   const [infoRetrievalMode, setInfoRetrievalMode] = useState("post_meet");
   const [defaultPrompt, setDefaultPrompt] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // PDF upload state
+  const [uploadedPDFs, setUploadedPDFs] = useState<PDFDocument[]>([]);
+  const [isUploadingPDF, setIsUploadingPDF] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [forceRefresh, setForceRefresh] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // XML upload state
+  const [uploadedXMLs, setUploadedXMLs] = useState<XMLDocument[]>([]);
+  const [isUploadingXML, setIsUploadingXML] = useState(false);
+  const xmlFileInputRef = useRef<HTMLInputElement>(null);
   
   // Check if info mode selection is enabled
   const isInfoModeEnabled = process.env.NEXT_PUBLIC_INFO_MODE === 'false';
+
+  // Use provided sessionId or generate one
+  const [sessionId] = useState(() => {
+    if (propSessionId) return propSessionId;
+
+    if (typeof window !== 'undefined') {
+      const key = `chat_session_${mode}_${patientId || 'general'}`;
+      let existing = localStorage.getItem(key);
+      if (!existing) {
+        existing = `${mode}_${patientId || 'general'}_${Date.now()}`;
+        localStorage.setItem(key, existing);
+      }
+      return existing;
+    }
+    return `${mode}_${patientId || 'general'}_${Date.now()}`;
+  });
+
   const {
     isStreaming,
     currentStep,
@@ -714,23 +752,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     progress,
     startStream,
     stopStream,
-  } = useStreamingChat();
-
-  // Use provided sessionId or generate one
-  const [sessionId] = useState(() => {
-    if (propSessionId) return propSessionId;
-    
-    if (typeof window !== 'undefined') {
-      const key = `chat_session_${mode}_${patientId || 'general'}`;
-      let existing = localStorage.getItem(key);
-      if (!existing) {
-        existing = `${mode}_${patientId || 'general'}_${Date.now()}`;
-        localStorage.setItem(key, existing);
-      }
-      return existing;
-    }
-    return `${mode}_${patientId || 'general'}_${Date.now()}`;
-  });
+  } = useStreamingChat(sessionId);
   
   const { user } = useUser();
 
@@ -784,12 +806,111 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   // Use propSessionId if provided, otherwise use generated sessionId
   const currentSessionId = propSessionId || sessionId;
 
-  // Load chat history on component mount or session change
+  // Debug effect to track PDF state changes
+  useEffect(() => {
+    console.log('[ChatBox] uploadedPDFs state changed:', {
+      count: uploadedPDFs.length,
+      pdfs: uploadedPDFs.map(pdf => ({ name: pdf.filename, status: pdf.status }))
+    });
+  }, [uploadedPDFs]);
+
+  // Debug effect to track XML state changes
+  useEffect(() => {
+    console.log('[ChatBox] uploadedXMLs state changed:', {
+      count: uploadedXMLs.length,
+      xmls: uploadedXMLs.map(xml => ({ name: xml.filename, status: xml.status, type: xml.document_type }))
+    });
+  }, [uploadedXMLs]);
+
+  // Load PDF documents for the current session context
+  const loadPDFs = async () => {
+    try {
+      console.log('[ChatBox] Loading PDFs for session:', { patientId, currentSessionId });
+
+      // PDFs are now session-based, so we get PDFs for the current session
+      // The patientId parameter filters to patient-specific PDFs when a patient is selected
+      const pdfList = await listPDFDocuments(patientId, currentSessionId);
+
+      console.log('[ChatBox] Raw API response:', pdfList);
+
+      const newDocs = pdfList.documents || [];
+
+      console.log(`[ChatBox] Parsed ${newDocs.length} PDFs for session (patient: ${patientId || 'general'})`);
+      console.log('[ChatBox] PDF details:', newDocs.map(pdf => ({
+        id: pdf.document_id,
+        name: pdf.filename,
+        status: pdf.status,
+        patient_id: pdf.patient_id
+      })));
+
+      // Update the state and log the change
+      setUploadedPDFs(prevPDFs => {
+        console.log('[ChatBox] Previous PDF count:', prevPDFs.length);
+        console.log('[ChatBox] New PDF count:', newDocs.length);
+        console.log('[ChatBox] PDF count changed:', prevPDFs.length !== newDocs.length);
+        return newDocs;
+      });
+
+      // Force refresh counter update to trigger re-renders
+      setForceRefresh(prev => prev + 1);
+
+    } catch (error) {
+      console.error('[ChatBox] Failed to load PDFs:', error);
+    }
+  };
+
+  // Load XML documents for the current session context
+  const loadXMLs = async () => {
+    try {
+      console.log('[ChatBox] Loading XMLs for session:', { patientId, currentSessionId });
+
+      // XMLs are now session-based, so we get XMLs for the current session
+      // The patientId parameter filters to patient-specific XMLs when a patient is selected
+      const xmlList = await listXMLDocuments(patientId, currentSessionId);
+
+      console.log('[ChatBox] Raw XML API response:', xmlList);
+
+      const newDocs = xmlList.documents || [];
+
+      console.log(`[ChatBox] Parsed ${newDocs.length} XMLs for session (patient: ${patientId || 'general'})`);
+      console.log('[ChatBox] XML details:', newDocs.map(xml => ({
+        id: xml.document_id,
+        name: xml.filename,
+        status: xml.status,
+        patient_id: xml.patient_id,
+        type: xml.document_type
+      })));
+
+      // Update the state and log the change
+      setUploadedXMLs(prevXMLs => {
+        console.log('[ChatBox] Previous XML count:', prevXMLs.length);
+        console.log('[ChatBox] New XML count:', newDocs.length);
+        console.log('[ChatBox] XML count changed:', prevXMLs.length !== newDocs.length);
+        return newDocs;
+      });
+
+      // Force refresh counter update to trigger re-renders
+      setForceRefresh(prev => prev + 1);
+
+    } catch (error) {
+      console.error('[ChatBox] Failed to load XMLs:', error);
+    }
+  };
+
+  // GDPR-compliant: No chat history loading to prevent PHI storage
   useEffect(() => {
   const loadHistory = async () => {
     try {
-      console.log(`Loading history for session: ${currentSessionId}, patient: ${patientId}`);
+      console.log(`[GDPR] Chat history loading disabled for session: ${currentSessionId}, patient: ${patientId}`);
       
+      // GDPR Compliance: Do not load chat history with PHI
+      // Return empty messages array to maintain UI compatibility
+      const data = { messages: [], gdpr_compliant: true };
+      console.log('🔍 [GDPR] No chat history loaded (compliant mode)');
+      
+      // GDPR Compliance: Always use empty messages array
+      // Note: Chat history loading is disabled for GDPR compliance
+      console.log('🔍 [GDPR] Chat history loading disabled - using empty messages array');
       const response = await fetch('/api/chat-history', {
         method: 'POST',
         headers: getAuthHeaders(),
@@ -874,7 +995,61 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                 type: typeof msg.differential_diagnoses
               });
             }
-            
+
+            // Handle SBAR results (both old format and new JSON cards format)
+            if (msg.sbar_results && typeof msg.sbar_results === 'object') {
+              console.log(`📋 Processing SBAR results for message ${index}:`, msg.sbar_results);
+              formattedMessage.sbarResults = {
+                situation: msg.sbar_results.situation || undefined,
+                background: msg.sbar_results.background || undefined,
+                assessment: msg.sbar_results.assessment || undefined,
+                recommendation: msg.sbar_results.recommendation || undefined
+              };
+            } else {
+              // Check if the main content is a JSON SBAR cards response
+              console.log(`🔍 Checking message ${index} text for SBAR JSON:`, msg.text?.substring(0, 100));
+              try {
+                // Trim the text and check if it looks like JSON
+                const trimmedText = msg.text?.trim();
+                if (trimmedText && trimmedText.startsWith('{') && trimmedText.endsWith('}')) {
+                  const parsedContent = JSON.parse(trimmedText);
+                  console.log(`🧪 Parsed JSON for message ${index}:`, parsedContent);
+
+                  if (parsedContent.type === 'sbar_cards' && parsedContent.components) {
+                    console.log(`📋 Processing JSON SBAR cards for message ${index}:`, parsedContent);
+                    formattedMessage.sbarResults = {
+                      situation: parsedContent.components.situation?.content || undefined,
+                      background: parsedContent.components.background?.content || undefined,
+                      assessment: parsedContent.components.assessment?.content || undefined,
+                      recommendation: parsedContent.components.recommendation?.content || undefined
+                    };
+                    // Clear the content so we don't display the raw JSON
+                    formattedMessage.text = '';
+                    console.log(`✅ Successfully processed SBAR cards, cleared text`);
+                  } else {
+                    console.log(`📄 JSON parsed but not SBAR cards format for message ${index}:`, {
+                      type: parsedContent.type,
+                      hasComponents: !!parsedContent.components
+                    });
+                  }
+                } else {
+                  console.log(`📄 Message ${index} text doesn't look like JSON:`, {
+                    startsWith: trimmedText?.startsWith('{'),
+                    endsWith: trimmedText?.endsWith('}'),
+                    length: trimmedText?.length
+                  });
+                }
+              } catch (e: any) {
+                // Not JSON or not SBAR cards format, continue normally
+                console.log(`📄 Failed to parse JSON for message ${index}:`, {
+                  hasSBAR: !!msg.sbar_results,
+                  type: typeof msg.sbar_results,
+                  parseError: e.message,
+                  textPreview: msg.text?.substring(0, 50)
+                });
+              }
+            }
+
             return formattedMessage;
           });
           
@@ -910,6 +1085,8 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     // Only load if we have a patient ID for diagnosis mode or if it's general chat
     if ((mode === 'diagnose' && patientId) || mode === 'chat') {
       loadHistory();
+      loadPDFs();
+      loadXMLs();
     }
   }, [currentSessionId, patientId, mode]);
 
@@ -958,14 +1135,42 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
           hasReasoning: !!reasoningText
         });
         
-        const newMessage = { 
-          sender: "system" as const, 
-          text: finalResponse,
+        // Check if finalResponse is SBAR JSON format and parse it
+        let messageText = finalResponse;
+        let sbarResults = undefined;
+
+        try {
+          const trimmedText = finalResponse?.trim();
+          if (trimmedText && trimmedText.startsWith('{') && trimmedText.endsWith('}')) {
+            const parsedContent = JSON.parse(trimmedText);
+            console.log(`🧪 Parsed streaming JSON:`, parsedContent);
+
+            if (parsedContent.type === 'sbar_cards' && parsedContent.components) {
+              console.log(`📋 Processing streaming SBAR cards:`, parsedContent);
+              sbarResults = {
+                situation: parsedContent.components.situation?.content || undefined,
+                background: parsedContent.components.background?.content || undefined,
+                assessment: parsedContent.components.assessment?.content || undefined,
+                recommendation: parsedContent.components.recommendation?.content || undefined
+              };
+              // Clear the text so we don't display the raw JSON
+              messageText = '';
+              console.log(`✅ Successfully processed streaming SBAR cards, cleared text`);
+            }
+          }
+        } catch (e: any) {
+          console.log(`📄 Failed to parse streaming JSON:`, e.message);
+        }
+
+        const newMessage = {
+          sender: "system" as const,
+          text: messageText,
           timestamp: new Date().toLocaleTimeString(),
           reasoning: reasoningText,
           reasoningSteps: reasoning,
           generatedImage: formattedGeneratedImage,
-          differentialDiagnoses: streamDifferentialDiagnoses
+          differentialDiagnoses: streamDifferentialDiagnoses,
+          sbarResults: sbarResults
         };
         
         console.log('🔥 Creating new message with data:', {
@@ -1068,7 +1273,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   };
 
   const getEmptyStateText = () => {
-    if (mode === "chat") return "Start chatting with CLARA...";
+    if (mode === "chat") return "CLARA Färdiga Gå!";
     if (mode === "diagnose" && patientId) {
       return "CLARA Färdiga Gå!";
     }
@@ -1088,6 +1293,300 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
 
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   useAutosizeTextArea(textAreaRef, input);
+
+  // PDF upload handlers
+  const handlePDFUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.type !== 'application/pdf') {
+      setUploadError('Please select a PDF file');
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) { // 10MB limit
+      setUploadError('File size must be less than 10MB');
+      return;
+    }
+
+    setIsUploadingPDF(true);
+    setUploadError(null);
+
+    try {
+      console.log('[ChatBox] Upload params:', { patientId, currentSessionId, propSessionId, sessionId });
+      const uploadResponse = await uploadPDFDocument(file, patientId, currentSessionId);
+
+      console.log('[ChatBox] Upload response received:', uploadResponse);
+
+      // Check if upload was successful - API returns document_id on success
+      if (uploadResponse.document_id) {
+        console.log('[ChatBox] Upload successful, refreshing PDF list...');
+
+        // Optimistically add the PDF to the list immediately
+        const newPDF: PDFDocument = {
+          document_id: uploadResponse.document_id,
+          filename: uploadResponse.filename || file.name,
+          file_size: uploadResponse.file_size || file.size,
+          status: (uploadResponse.status as "UPLOADED" | "PROCESSING" | "READY" | "ERROR") || 'PROCESSING',
+          uploaded_at: uploadResponse.uploaded_at || new Date().toISOString(),
+          patient_id: uploadResponse.patient_id || patientId,
+        };
+
+        setUploadedPDFs(prev => {
+          const updated = [...prev, newPDF];
+          console.log('[ChatBox] Optimistically updated PDF list:', updated.length);
+          return updated;
+        });
+
+        // Force refresh the document lists to get server state
+        setTimeout(async () => {
+          console.log('[ChatBox] Refreshing from server...');
+          await loadPDFs();
+          await loadXMLs();
+        }, 1000);
+
+        // Force component re-render by updating refresh counter
+        setForceRefresh(prev => prev + 1);
+
+        setMessages(prev => [
+          ...prev,
+          {
+            sender: 'system',
+            text: `PDF document "${file.name}" uploaded successfully and processed. You can now ask questions about its content. Note: PDF is stored temporarily for this session only.`,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ]);
+
+      } else {
+        console.error('[ChatBox] Upload response missing document_id:', uploadResponse);
+        setUploadError('Upload failed - invalid response from server');
+      }
+    } catch (error: any) {
+      console.error('PDF upload error:', error);
+      setUploadError(error.message || 'Failed to upload PDF');
+    } finally {
+      setIsUploadingPDF(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleXMLUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const validExtensions = ['.xml', '.hl7', '.cda', '.ccda'];
+    const fileExtension = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
+
+    if (!validExtensions.includes(fileExtension)) {
+      setUploadError(`Please select an XML file with one of these extensions: ${validExtensions.join(', ')}`);
+      return;
+    }
+
+    if (file.size > 100 * 1024 * 1024) { // 100MB limit for XML files
+      setUploadError('File size must be less than 100MB');
+      return;
+    }
+
+    setIsUploadingXML(true);
+    setUploadError(null);
+
+    try {
+      console.log('[ChatBox] XML Upload params:', { patientId, currentSessionId, propSessionId, sessionId });
+      const uploadResponse = await uploadXMLDocument(file, patientId, currentSessionId);
+
+      console.log('[ChatBox] XML Upload response received:', uploadResponse);
+
+      // Check if upload was successful - API returns document_id on success
+      if (uploadResponse.document_id) {
+        console.log('[ChatBox] XML Upload successful, refreshing document lists...');
+
+        // Optimistically add the XML to the list immediately
+        const newXML: XMLDocument = {
+          document_id: uploadResponse.document_id,
+          filename: uploadResponse.filename || file.name,
+          file_size: uploadResponse.file_size || file.size,
+          status: (uploadResponse.status as "UPLOADED" | "PROCESSING" | "READY" | "ERROR") || 'PROCESSING',
+          uploaded_at: uploadResponse.uploaded_at || new Date().toISOString(),
+          patient_id: uploadResponse.patient_id || patientId,
+          document_type: uploadResponse.document_type
+        };
+
+        setUploadedXMLs(prev => {
+          const updated = [...prev, newXML];
+          console.log('[ChatBox] Optimistically updated XML list:', updated.length);
+          return updated;
+        });
+
+        // Force refresh the document lists to get server state
+        setTimeout(async () => {
+          console.log('[ChatBox] Refreshing from server...');
+          await loadPDFs();
+          await loadXMLs();
+        }, 1000);
+
+        // Force component re-render by updating refresh counter
+        setForceRefresh(prev => prev + 1);
+
+        const documentTypeText = uploadResponse.document_type ? ` (${uploadResponse.document_type})` : '';
+        setMessages(prev => [
+          ...prev,
+          {
+            sender: 'system',
+            text: `XML document "${file.name}"${documentTypeText} uploaded successfully and processed. You can now ask questions about its content. Note: XML document is stored temporarily for this session only.`,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ]);
+
+      } else {
+        console.error('[ChatBox] XML Upload response missing document_id:', uploadResponse);
+        setUploadError('XML upload failed - invalid response from server');
+      }
+    } catch (error: any) {
+      console.error('XML upload error:', error);
+      setUploadError(error.message || 'Failed to upload XML document');
+    } finally {
+      setIsUploadingXML(false);
+      if (xmlFileInputRef.current) {
+        xmlFileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleDeletePDF = async (documentId: string, filename: string) => {
+    try {
+      console.log('[ChatBox] Attempting to delete PDF:', {
+        documentId,
+        filename,
+        patientId,
+        currentSessionId,
+        propSessionId,
+        sessionId
+      });
+
+      // Show confirmation to user
+      if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
+        return;
+      }
+
+      // Call the delete API with detailed error handling
+      console.log('[ChatBox] Making DELETE request...');
+      const deleteResponse = await deletePDFDocument(documentId, patientId, currentSessionId);
+      console.log('[ChatBox] Delete API call completed successfully:', deleteResponse);
+
+      // Immediately update the local state to reflect the deletion
+      setUploadedPDFs(prev => {
+        const updated = prev.filter(pdf => pdf.document_id !== documentId);
+        console.log('[ChatBox] Local state updated. PDF count after delete:', updated.length);
+        console.log('[ChatBox] Remaining PDFs:', updated.map(pdf => pdf.filename));
+        return updated;
+      });
+
+      // Force component refresh
+      setForceRefresh(prev => prev + 1);
+
+      // Verify deletion by refreshing from server
+      setTimeout(async () => {
+        console.log('[ChatBox] Verifying deletion by refreshing from server...');
+        await loadPDFs();
+        await loadXMLs();
+      }, 500);
+
+      setMessages(prev => [
+        ...prev,
+        {
+          sender: 'system',
+          text: `PDF document "${filename}" has been removed.`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+
+    } catch (error: any) {
+      console.error('[ChatBox] PDF delete error:', error);
+      console.error('[ChatBox] Error details:', {
+        message: error.message,
+        stack: error.stack,
+        status: error.status || 'unknown'
+      });
+
+      setUploadError(error.message || 'Failed to delete PDF');
+
+      // Don't refresh on error - let user see what happened
+      console.log('[ChatBox] Delete failed, NOT refreshing list to preserve current state');
+    }
+  };
+
+  const handleDeleteXML = async (documentId: string, filename: string) => {
+    try {
+      console.log('[ChatBox] Attempting to delete XML:', {
+        documentId,
+        filename,
+        patientId,
+        currentSessionId,
+        propSessionId,
+        sessionId
+      });
+
+      // Show confirmation to user
+      if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
+        return;
+      }
+
+      // Call the delete API with detailed error handling
+      console.log('[ChatBox] Making DELETE request for XML...');
+      const deleteResponse = await deleteXMLDocument(documentId, patientId, currentSessionId);
+      console.log('[ChatBox] Delete XML API call completed successfully:', deleteResponse);
+
+      // Immediately update the local state to reflect the deletion
+      setUploadedXMLs(prev => {
+        const updated = prev.filter(xml => xml.document_id !== documentId);
+        console.log('[ChatBox] Local XML state updated. XML count after delete:', updated.length);
+        console.log('[ChatBox] Remaining XMLs:', updated.map(xml => xml.filename));
+        return updated;
+      });
+
+      // Force component refresh
+      setForceRefresh(prev => prev + 1);
+
+      // Verify deletion by refreshing from server
+      setTimeout(async () => {
+        console.log('[ChatBox] Verifying XML deletion by refreshing from server...');
+        await loadPDFs();
+        await loadXMLs();
+      }, 500);
+
+      setMessages(prev => [
+        ...prev,
+        {
+          sender: 'system',
+          text: `XML document "${filename}" has been removed.`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+
+    } catch (error: any) {
+      console.error('[ChatBox] XML delete error:', error);
+      console.error('[ChatBox] XML Error details:', {
+        message: error.message,
+        stack: error.stack,
+        status: error.status || 'unknown'
+      });
+
+      setUploadError(error.message || 'Failed to delete XML document');
+
+      // Don't refresh on error - let user see what happened
+      console.log('[ChatBox] XML Delete failed, NOT refreshing list to preserve current state');
+    }
+  };
+
+  const triggerFileUpload = () => {
+    fileInputRef.current?.click();
+  };
+
+  const triggerXMLUpload = () => {
+    xmlFileInputRef.current?.click();
+  };
 
   const markdownComponents = {
     // Links
@@ -1175,7 +1674,7 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
   return (
     <div className="flex-1 flex flex-col items-center justify-center min-h-0 h-full w-full relative bg-gray-50">
       {/* Chat area with scrollable messages */}
-      <div className="flex-1 w-full flex justify-center overflow-y-auto min-h-0 pt-4 pb-[180px]">
+      <div className="flex-1 w-full flex justify-center overflow-y-auto min-h-0 pt-4 pb-[160px]">
         <div className="w-full max-w-4xl px-4 space-y-3">
           {/* Messages */}
           {messages.length === 0 && !isStreaming && (
@@ -1208,7 +1707,20 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
                   </div>
                 )}
 
-                {msg.sender === 'system' && msg.reasoningSteps && (msg.reasoning || msg.reasoningSteps?.length > 0) && (
+                {msg.sender === 'system' && msg.sbarResults && (
+                  <div className="mt-3">
+                    <SBARSummaryCards
+                      sbarResults={msg.sbarResults}
+                      isLoading={msg.loading}
+                      reasoning={msg.reasoning}
+                      reasoningSteps={msg.reasoningSteps}
+                      patientId={patientId}
+                      sessionId={sessionId}
+                    />
+                  </div>
+                )}
+
+                {msg.sender === 'system' && msg.reasoningSteps && (msg.reasoning || msg.reasoningSteps?.length > 0) && !msg.sbarResults && (
                   <div className="mt-3">
                     <ReasoningViewer
                       reasoning={msg.reasoning || ''}
@@ -1266,61 +1778,235 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
           {/* Auto-scroll anchor */}
           <div ref={messagesEndRef} />
           {/* Spacer to ensure last message is visible above input bar */}
-          <div style={{ height: 120 }} aria-hidden="true" />
+          <div style={{ height: 60 }} aria-hidden="true" />
         </div>
       </div>
 
-      {/* Absolutely positioned, centered input bar within the chat pane */}
-      <div className="absolute bottom-0 left-0 right-0 px-4 z-20 pointer-events-none flex justify-center">
-        <div className="w-full max-w-4xl border border-gray-300 bg-white/80 backdrop-blur-md shadow-xl rounded-2xl pointer-events-auto">
-          <form onSubmit={sendMessage} className="flex gap-3 p-4">
-            <textarea
-              ref={textAreaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={getPlaceholderText()}
-              className="flex-1 resize-none overflow-y-auto border border-gray-200 bg-white/70 placeholder-gray-500
-                        text-gray-900 rounded-2xl px-3 py-1.5 focus:outline-none
-                        focus:ring-2 focus:ring-blue-400 focus:border-blue-400 font-medium text-sm shadow-sm"
-              disabled={isStreaming}
-              rows={1}
-              style={{ minHeight: 40, maxHeight: 240 }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  sendMessage(e as any);
-                }
-              }}
-            />
-            <div className="flex flex-col gap-2 shrink-0">
-              <button
-                type="submit"
-                disabled={!input.trim() || isStreaming}
-                className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isStreaming ? t('buttons.analyzing') : (
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
-                  </svg>
-                )}
-              </button>
-              {isStreaming && (
+      {/* Centered ChatGPT-style input bar */}
+      <div className="absolute bottom-4 left-0 right-0 px-4 z-20 pointer-events-none flex justify-center">
+        <div className="w-full max-w-3xl pointer-events-auto">
+          {/* Upload Error Display */}
+          {uploadError && (
+            <div className="mb-2">
+              <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                <X className="h-4 w-4" />
+                <span>{uploadError}</span>
                 <button
                   type="button"
-                  onClick={stopStream}
-                  className="px-4 py-2 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors"
+                  onClick={() => setUploadError(null)}
+                  className="ml-auto text-red-500 hover:text-red-700"
                 >
-                  {t('buttons.stop')}
+                  <X className="h-4 w-4" />
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* ChatGPT-style text input */}
+          <div className="border border-gray-300 bg-white shadow-lg rounded-2xl">
+            <form onSubmit={sendMessage} className="flex items-end gap-2 px-4 py-2">
+              <textarea
+                ref={textAreaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={getPlaceholderText()}
+                className="flex-1 resize-none overflow-hidden border-0 bg-transparent placeholder-gray-400
+                          text-gray-900 focus:outline-none text-base leading-relaxed max-h-32"
+                disabled={isStreaming}
+                rows={1}
+                style={{ minHeight: '24px' }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage(e as any);
+                  }
+                }}
+              />
+              <div className="flex items-center gap-1 pb-1">
+                <button
+                  type="submit"
+                  disabled={!input.trim() || isStreaming}
+                  className="p-1.5 bg-black text-white rounded-full hover:bg-gray-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  {isStreaming ? (
+                    <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                    </svg>
+                  )}
+                </button>
+                {isStreaming && (
+                  <button
+                    type="button"
+                    onClick={stopStream}
+                    className="p-1.5 bg-gray-600 text-white rounded-full hover:bg-gray-700 transition-colors"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 6h12v12H6z" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+
+          {/* Hidden file inputs */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,application/pdf"
+            onChange={handlePDFUpload}
+            className="hidden"
+          />
+          <input
+            ref={xmlFileInputRef}
+            type="file"
+            accept=".xml,.hl7,.cda,.ccda,application/xml,text/xml"
+            onChange={handleXMLUpload}
+            className="hidden"
+          />
+        </div>
+      </div>
+
+      {/* Separate Document Library - Top Right Corner */}
+      <div className="absolute top-4 right-4 z-20 w-64 pointer-events-auto" key={`docs-${forceRefresh}-${uploadedPDFs.length}-${uploadedXMLs.length}`}>
+        <div className="flex flex-col gap-1.5">
+          {/* Document Library - Ultra Compact */}
+          <div className="border border-gray-300 bg-white shadow-sm rounded-lg">
+            <div className="px-2 py-1.5 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium text-gray-700 flex items-center gap-1">
+                  <FileText className="h-3 w-3 text-blue-600" />
+                  Documents ({uploadedPDFs.length + uploadedXMLs.length})
+                </div>
+                {(uploadedPDFs.length + uploadedXMLs.length) > 0 && (
+                  <div className="text-xs text-gray-500">
+                    {uploadedPDFs.filter(pdf => pdf.status === 'READY').length + uploadedXMLs.filter(xml => xml.status === 'READY').length} ready
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="max-h-24 overflow-y-auto">
+              {(uploadedPDFs.length + uploadedXMLs.length) > 0 ? (
+                <div className="p-1.5 space-y-1">
+                  {/* PDF Documents */}
+                  {uploadedPDFs.map((pdf) => (
+                    <div key={`pdf-${pdf.document_id}`} className="flex items-center justify-between p-1 bg-gray-50 rounded text-xs">
+                      <div className="flex items-center gap-1 flex-1 min-w-0">
+                        <FileText className="h-2.5 w-2.5 text-blue-600 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-gray-900 truncate" title={pdf.filename}>
+                            {pdf.filename}
+                          </div>
+                          <div className="text-gray-500 text-xs">
+                            {(pdf.file_size / 1024).toFixed(0)}KB
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className={`w-2 h-2 rounded-full ${
+                          pdf.status === 'READY' ? 'bg-green-500' :
+                          pdf.status === 'PROCESSING' ? 'bg-yellow-500' :
+                          pdf.status === 'ERROR' ? 'bg-red-500' :
+                          'bg-gray-400'
+                        }`} title={pdf.status}></span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePDF(pdf.document_id, pdf.filename)}
+                          className="p-0.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                          title={`Remove ${pdf.filename}`}
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* XML Documents */}
+                  {uploadedXMLs.map((xml) => (
+                    <div key={`xml-${xml.document_id}`} className="flex items-center justify-between p-1 bg-green-50 rounded text-xs">
+                      <div className="flex items-center gap-1 flex-1 min-w-0">
+                        <FileText className="h-2.5 w-2.5 text-green-600 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-gray-900 truncate" title={xml.filename}>
+                            {xml.filename}
+                          </div>
+                          <div className="text-gray-500 text-xs">
+                            {(xml.file_size / 1024).toFixed(0)}KB
+                            {xml.document_type && ` • ${xml.document_type}`}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className={`w-2 h-2 rounded-full ${
+                          xml.status === 'READY' ? 'bg-green-500' :
+                          xml.status === 'PROCESSING' ? 'bg-yellow-500' :
+                          xml.status === 'ERROR' ? 'bg-red-500' :
+                          'bg-gray-400'
+                        }`} title={xml.status}></span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteXML(xml.document_id, xml.filename)}
+                          className="p-0.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                          title={`Remove ${xml.filename}`}
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-2 text-gray-500">
+                  <FileText className="h-3 w-3 mx-auto mb-1 text-gray-300" />
+                  <div className="text-xs">No documents</div>
+                </div>
               )}
             </div>
-          </form>
+          </div>
+
+          {/* Upload Buttons */}
+          <div className="flex gap-1.5">
+            {/* PDF Upload Button */}
+            <button
+              type="button"
+              onClick={triggerFileUpload}
+              disabled={isStreaming || isUploadingPDF}
+              className="flex-1 px-2 py-1.5 bg-blue-100 text-blue-700 font-medium rounded-lg hover:bg-blue-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 border border-blue-300 shadow-sm text-xs"
+              title="Upload PDF document"
+            >
+              {isUploadingPDF ? (
+                <div className="animate-spin h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full" />
+              ) : (
+                <FileText className="h-3 w-3" />
+              )}
+              PDF
+            </button>
+
+            {/* XML Upload Button */}
+            <button
+              type="button"
+              onClick={triggerXMLUpload}
+              disabled={isStreaming || isUploadingXML}
+              className="flex-1 px-2 py-1.5 bg-green-100 text-green-700 font-medium rounded-lg hover:bg-green-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 border border-green-300 shadow-sm text-xs"
+              title="Upload XML document (HL7, CDA, FHIR, or generic XML)"
+            >
+              {isUploadingXML ? (
+                <div className="animate-spin h-3 w-3 border-2 border-green-600 border-t-transparent rounded-full" />
+              ) : (
+                <FileText className="h-3 w-3" />
+              )}
+              XML
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Right-side mode selector - only show if info mode is enabled and we're in diagnose mode */}
       {isInfoModeEnabled && mode === "diagnose" && (
-        <div className="absolute right-4 bottom-4 z-30 pointer-events-auto">
+        <div className="absolute right-4 top-40 z-30 pointer-events-auto">
           <div className="p-3 border border-gray-300 bg-white/90 backdrop-blur-md shadow-xl rounded-xl">
             <ModeSelector
               selectedMode={infoRetrievalMode}
@@ -1334,3 +2020,5 @@ export default function ChatBox({ mode, patientId, sessionId: propSessionId }: C
     </div>
   );
 }
+
+export { ChatBox as default };

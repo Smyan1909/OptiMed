@@ -16,9 +16,13 @@ from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, He
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from optimed.core.domain import PatientContext, User, UserSession, UserEHRConnection, UserRole, UserStatus, ImageGenerationRequest, DataSource, ChatRole, ChatMessage
+from optimed.core.domain.pdf_document import PDFListResponse
+from optimed.core.domain.xml_document import XMLListResponse
 from optimed.core.ports import FHIRRepository
 from optimed.apps.orchestrator.factory import create_app_dependencies
 from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalEntryType
+from optimed.adapters.security.encryption_service import get_encryption_service, get_phi_redactor
+from optimed.adapters.security.e2e_encryption_middleware import E2EEncryptionMiddleware, create_session_with_encryption
 
 
 from pydantic import BaseModel
@@ -39,14 +43,15 @@ _image_generation_service: _Any = None
 _generated_image_repo: _Any = None
 _journal_llm_service: _Any = None
 _web_search_service: _Any = None
+_pdf_service: _Any = None
+_xml_service: _Any = None
 
- 
 
 _dependencies_ready: asyncio.Event = asyncio.Event()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service
+    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service
     try:
         (
             _engine,
@@ -61,7 +66,9 @@ async def lifespan(app: FastAPI):
             _generated_image_repo,
             _journal_llm_service,
             _web_search_service,
-        ) = create_app_dependencies()
+            _pdf_service,
+            _xml_service,
+        ) = await create_app_dependencies()
         _dependencies_ready.set()
         print("[startup] Dependencies initialized")
         yield
@@ -77,6 +84,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True, lifespan=lifespan)
 
+# Add End-to-End Encryption middleware first (now supports streaming)
+app.add_middleware(E2EEncryptionMiddleware, encrypt_responses=True, encrypt_requests=True)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","),
@@ -84,6 +94,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# GDPR Compliance Middleware
+@app.middleware("http")
+async def gdpr_logging_middleware(request: Request, call_next):
+    """Middleware to redact PHI from logs and add GDPR compliance headers."""
+    # Log request without PHI
+    phi_redactor = get_phi_redactor()
+    safe_path = phi_redactor.redact_text(request.url.path)
+    safe_query = phi_redactor.redact_text(str(request.query_params))
+    
+    print(f"[GDPR] Request: {request.method} {safe_path} - Query: {safe_query}")
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Add GDPR compliance headers
+    response.headers["X-GDPR-Compliant"] = "true"
+    response.headers["X-PHI-Storage"] = "disabled"
+    response.headers["X-Data-Retention"] = "session-only"
+    
+    return response
 class JournalEntryRequest(BaseModel):
     patient_id: str
     title: str
@@ -377,11 +408,15 @@ async def get_current_user(
         return None
     
 
-async def get_user_context(user: Optional[User] = Depends(get_current_user)) -> dict:
+async def get_user_context(
+    user: Optional[User] = Depends(get_current_user),
+    x_session_id: str = Header(None, alias="X-Session-ID")
+) -> dict:
     """Dependency to fetch user context."""
     return {
         "user_id": user.user_id if user else None,
-        "user": user
+        "user": user,
+        "session_id": x_session_id
     }
 
 async def get_user_fhir_repository(user_ctx: dict = Depends(get_user_context)) -> FHIRRepository:
@@ -398,12 +433,12 @@ async def get_user_fhir_repository(user_ctx: dict = Depends(get_user_context)) -
                 provider_type="smart_fhir"
             )
             if user_repo:
-                print(f"[API] ✅ Using SMART FHIR repository for user {current_user.username}")
+                print(f"[API] SUCCESS: Using SMART FHIR repository for user {current_user.username}")
                 return user_repo
             else:
-                print(f"[DEBUG] ❌ create_fhir_repository returned None for user {current_user.username}")
+                print(f"[DEBUG] ERROR: create_fhir_repository returned None for user {current_user.username}")
         except Exception as e:
-            print(f"[API] ❌ Failed to create SMART FHIR repo for user {current_user.username}: {e}")
+            print(f"[API] ERROR: Failed to create SMART FHIR repo for user {current_user.username}: {e}")
     else:
         print("[DEBUG] No current user found, using default repository")
     
@@ -536,6 +571,66 @@ async def get_session_participants(
     except Exception as e:
         print(f"[API] Error getting session participants: {e}")
         raise HTTPException(status_code=500, detail="Could not get session participants")
+
+
+# Encryption and Key Exchange Endpoints
+
+class KeyExchangeRequest(BaseModel):
+    session_id: str
+    client_public_key: Optional[str] = None
+
+class KeyExchangeResponse(BaseModel):
+    session_id: str
+    server_public_key: str
+    encrypted_session_key: Optional[str] = None
+    encrypted: bool
+    version: str
+
+@app.post("/encryption/key-exchange", response_model=KeyExchangeResponse)
+async def setup_session_encryption(
+    request: KeyExchangeRequest,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Setup end-to-end encryption for a session with key exchange."""
+    try:
+        current_user = user_ctx.get("user")
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        # Create encrypted session
+        result = create_session_with_encryption(
+            request.session_id,
+            request.client_public_key
+        )
+
+        return KeyExchangeResponse(
+            session_id=result["session_id"],
+            server_public_key=result["server_public_key"],
+            encrypted_session_key=result.get("encrypted_session_key"),
+            encrypted=result["encrypted"] == "true",
+            version=result["version"]
+        )
+
+    except Exception as e:
+        print(f"[API] Key exchange error: {e}")
+        raise HTTPException(status_code=500, detail="Key exchange failed")
+
+@app.get("/encryption/server-public-key")
+async def get_server_public_key():
+    """Get server's public key for encryption key exchange."""
+    try:
+        encryption_service = get_encryption_service()
+        public_key_pem = encryption_service.get_public_key_pem()
+
+        return {
+            "public_key": public_key_pem,
+            "key_format": "PEM",
+            "algorithm": "RSA-2048",
+            "usage": "key_exchange"
+        }
+    except Exception as e:
+        print(f"[API] Error getting server public key: {e}")
+        raise HTTPException(status_code=500, detail="Could not retrieve server public key")
 
 
 @app.get("/status/repository")
@@ -1052,35 +1147,15 @@ async def diagnose(
 async def get_chat_history(
     request: dict,
 ):
-    """Get chat history for a patient/session."""
+    """GDPR-compliant: No chat history available to prevent PHI storage."""
     patient_id = request.get("patient_id")
     session_id = request.get("session_id")
     mode = request.get("mode", "diagnose")
     
-    print(f"[API] Loading chat history for patient_id={patient_id}, session_id={session_id}, mode={mode}")
+    print(f"[GDPR] Chat history request blocked for patient_id={patient_id}, session_id={session_id}, mode={mode}")
     
-    try:
-        if patient_id:
-            # Get patient-specific history with session filter
-            history_data = await _engine.vector_store.get_chat_history(
-                patient_id=str(patient_id), 
-                session_id=session_id,
-                limit=50
-            )
-        else:
-            # Get general chat history
-            history_data = await _engine.vector_store.get_chat_history(
-                patient_id="general_chat", 
-                session_id=session_id,
-                limit=50
-            )
-        
-        print(f"[API] Returning {len(history_data)} chat history messages")
-        return {"messages": history_data}
-        
-    except Exception as e:
-        print(f"[API] Error loading chat history: {e}")
-        return {"messages": []}
+    # GDPR Compliance: Return empty history to prevent PHI exposure
+    return {"messages": [], "total": 0, "gdpr_compliant": True}
 
 @app.get(
     "/patients/{patient_id}",
@@ -1200,14 +1275,37 @@ async def get_patient(
                 adverse_events_sources=pctx.adverse_events_sources
     )
 
-@app.delete("/patients/{patient_id}/chat-history", summary="Delete patient by ID")
+@app.delete("/patients/{patient_id}/chat-history", summary="GDPR-compliant: No chat history to clear")
 async def clear_patient_chat_history(patient_id: str = Path(..., description="The patient ID")):
-    try:
+    """GDPR-compliant: No chat history stored, so nothing to clear."""
+    print(f"[GDPR] Chat history clear request blocked for patient_id={patient_id}")
+    return {"message": "No chat history stored (GDPR compliant)", "gdpr_compliant": True}
 
-        await _vector_store.clear_chat_history(patient_id)
-        return {"message": f"Chat history cleared for patient {patient_id}"}
+@app.get("/analytics/user-metrics", summary="Get GDPR-safe user metrics")
+async def get_user_metrics(
+    user_id: str = Query(..., description="User ID"),
+    days: int = Query(30, description="Number of days to analyze"),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Get GDPR-safe user metrics for analytics."""
+    try:
+        # Ensure user can only access their own metrics
+        if user_id != user_ctx.get("user_id"):
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Get metrics from user repository
+        metrics = await _user_repo.get_user_metrics(user_id, days)
+        
+        return {
+            "user_id": user_id,
+            "metrics": metrics,
+            "gdpr_compliant": True,
+            "note": "No PHI data included in metrics"
+        }
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not clear chat history: {e}")
+        print(f"[get_user_metrics] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Could not retrieve metrics: {e}")
 
 async def _event_stream(patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[str, None]:
     """Stream events from the diagnostic engine."""
@@ -1361,9 +1459,23 @@ async def diagnose_stream(
                 yield "event: error\n"
                 yield f"data: {json.dumps(error_data)}\n\n"
             
-            return StreamingResponse(error_stream(), media_type="text/event-stream")
+            response = StreamingResponse(
+                error_stream(), 
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "Transfer-Encoding": "chunked"
+                }
+            )
+            
+            # Explicitly remove Content-Length header to prevent mismatch
+            if "content-length" in response.headers:
+                del response.headers["content-length"]
+            
+            return response
     
-    return StreamingResponse(
+    response = StreamingResponse(
         _event_stream(
             patient=patient_ctx,
             user_prompt=req.user_prompt, 
@@ -1380,9 +1492,16 @@ async def diagnose_stream(
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "*",
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Expose-Headers": "*"
+            "Access-Control-Expose-Headers": "*",
+            "Transfer-Encoding": "chunked"  # Use chunked encoding instead of Content-Length
         }
     )
+    
+    # Explicitly remove Content-Length header to prevent mismatch
+    if "content-length" in response.headers:
+        del response.headers["content-length"]
+    
+    return response
 
 
 @app.post("/chat/stream")
@@ -1405,7 +1524,7 @@ async def chat_stream(
         except Exception as e:
             print(f"Could not fetch patient {req.patient_id}: {e}")
     
-    return StreamingResponse(
+    response = StreamingResponse(
         _event_stream(
             patient=patient_ctx,
             user_prompt=req.user_prompt, 
@@ -1419,8 +1538,15 @@ async def chat_stream(
             "Connection": "keep-alive",
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "*",
+            "Transfer-Encoding": "chunked"  # Use chunked encoding instead of Content-Length
         }
     )
+    
+    # Explicitly remove Content-Length header to prevent mismatch
+    if "content-length" in response.headers:
+        del response.headers["content-length"]
+    
+    return response
 
 @app.post("/chat", response_model=dict)
 async def chat(
@@ -2609,3 +2735,493 @@ async def lookup_term(
     except Exception as e:
         print(f"[Lookup] Error: {e}")
         raise HTTPException(status_code=500, detail="Lookup failed")
+
+
+# PDF Document Upload and Management Endpoints
+
+class PDFUploadResponse(BaseModel):
+    document_id: str
+    filename: str
+    file_size: int
+    status: str
+    uploaded_at: str
+    patient_id: Optional[str] = None
+
+
+class XMLUploadResponse(BaseModel):
+    document_id: str
+    filename: str
+    file_size: int
+    status: str
+    uploaded_at: str
+    patient_id: Optional[str] = None
+    document_type: Optional[str] = None
+
+
+@app.post("/documents/upload", response_model=PDFUploadResponse)
+async def upload_pdf_document(
+    request: Request,
+    file: UploadFile = File(...),
+    patient_id: Optional[str] = Form(None),
+    chat_session_id: Optional[str] = Form(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Upload a PDF document file."""
+    print("=" * 50)
+    print("PDF UPLOAD ENDPOINT HIT WITH NEW CODE!")
+    print(f"[PDF Upload] Raw form data - chat_session_id: {chat_session_id}, patient_id: {patient_id}")
+    print("=" * 50)
+
+    # Get session ID from user context
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    try:
+        # Validate file type
+        if not file.filename or not file.filename.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+        # Check file size (10MB limit)
+        if file.size and file.size > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File size must be less than 10MB")
+
+        # Read file content
+        file_content = await file.read()
+
+        # Use chat_session_id if provided, otherwise fall back to auth session_id
+        effective_session_id = chat_session_id or session_id
+
+        print(f"[PDF Upload] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, filename: {file.filename}, patient_id: {patient_id}")
+
+        # Process upload using memory service
+        pdf_document = await _pdf_service.upload_document(
+            user_id=user.user_id,
+            session_id=effective_session_id,
+            filename=file.filename,
+            content=file_content,
+            patient_id=patient_id
+        )
+
+        print(f"[PDF Upload] Success - document_id: {pdf_document.document_id}, status: {pdf_document.status}")
+
+        return PDFUploadResponse(
+            document_id=pdf_document.document_id,
+            filename=pdf_document.filename,
+            file_size=pdf_document.file_size,
+            status=pdf_document.status.value,
+            uploaded_at=pdf_document.uploaded_at.isoformat(),
+            patient_id=pdf_document.patient_id
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"[PDF Upload] Error: {e}")
+        raise HTTPException(status_code=500, detail="PDF upload failed")
+
+
+# XML Document List and Get Endpoints (must come before generic /documents routes)
+@app.get("/documents/xml", response_model=XMLListResponse)
+async def list_xml_documents(
+    request: Request,
+    patient_id: Optional[str] = Query(None),
+    chat_session_id: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """List XML documents for the user session."""
+    await _dependencies_ready.wait()
+
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # Use chat_session_id if provided, otherwise fall back to auth session_id
+    effective_session_id = chat_session_id or session_id
+
+    try:
+        print(f"[XML List] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, patient_id: {patient_id}")
+
+        # Get documents for current session (filtered by patient_id)
+        documents = await _xml_service.list_documents(
+            user_id=user.user_id,
+            session_id=effective_session_id,
+            patient_id=patient_id
+        )
+
+        # Separate counts
+        total_count = len(documents)
+        patient_specific_count = len([doc for doc in documents if doc.patient_id])
+        general_count = total_count - patient_specific_count
+        medical_document_count = len([doc for doc in documents if doc.is_medical_document()])
+
+        return XMLListResponse(
+            documents=documents,
+            total_count=total_count,
+            patient_specific_count=patient_specific_count,
+            general_count=general_count,
+            medical_document_count=medical_document_count
+        )
+
+    except Exception as e:
+        print(f"[XML List] Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list XML documents")
+
+
+@app.get("/documents/xml/{document_id}")
+async def get_xml_document(
+    request: Request,
+    document_id: str = Path(...),
+    patient_id: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Get a specific XML document."""
+    await _dependencies_ready.wait()
+
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    try:
+        document = await _xml_service.get_document(
+            document_id=document_id,
+            user_id=user.user_id,
+            session_id=session_id,
+            patient_id=patient_id
+        )
+
+        if not document:
+            raise HTTPException(status_code=404, detail="XML document not found")
+
+        return {
+            "document_id": document.document_id,
+            "filename": document.filename,
+            "file_size": document.file_size,
+            "status": document.status.value,
+            "uploaded_at": document.uploaded_at.isoformat(),
+            "updated_at": document.updated_at.isoformat() if document.updated_at else None,
+            "patient_id": document.patient_id,
+            "document_type": document.get_document_type(),
+            "metadata": {
+                "title": document.metadata.title,
+                "root_element": document.metadata.root_element,
+                "namespace": document.metadata.namespace,
+                "document_type": document.metadata.document_type,
+                "section_count": document.metadata.section_count,
+                "entry_count": document.metadata.entry_count
+            } if document.metadata else None,
+            "processing_info": {
+                "parsing_success": document.processing_info.parsing_success,
+                "structure_extraction_success": document.processing_info.structure_extraction_success,
+                "section_count": document.processing_info.section_count,
+                "detected_format": document.processing_info.detected_format,
+                "error_message": document.processing_info.error_message
+            } if document.processing_info else None
+        }
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"[XML Get] Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get XML document")
+
+
+# PDF Document List and Get Endpoints
+@app.get("/documents", response_model=PDFListResponse)
+async def list_pdf_documents(
+    request: Request,
+    patient_id: Optional[str] = Query(None),
+    chat_session_id: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """List PDF documents for the current session."""
+    print(f"[PDF List] Raw query params - chat_session_id: {chat_session_id}, patient_id: {patient_id}")
+
+    # Get session ID from user context
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    try:
+        # Use chat_session_id if provided, otherwise fall back to auth session_id
+        effective_session_id = chat_session_id or session_id
+
+        print(f"[PDF List] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, patient_id: {patient_id}")
+
+        # Get documents for current session (filtered by patient_id)
+        documents = await _pdf_service.list_documents(
+            user_id=user.user_id,
+            session_id=effective_session_id,
+            patient_id=patient_id
+        )
+
+        print(f"[PDF List] Found {len(documents)} documents")
+        for doc in documents:
+            print(f"[PDF List] Document: {doc.filename} (status: {doc.status}, patient_id: {doc.patient_id})")
+
+        # Separate patient-specific and general documents
+        patient_docs = [doc for doc in documents if doc.patient_id is not None]
+        general_docs = [doc for doc in documents if doc.patient_id is None]
+
+        return PDFListResponse(
+            documents=list(documents),
+            total_count=len(documents),
+            patient_specific_count=len(patient_docs),
+            general_count=len(general_docs)
+        )
+
+    except Exception as e:
+        print(f"[PDF List] Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list PDF documents")
+
+
+@app.get("/documents/{document_id}")
+async def get_pdf_document(
+    request: Request,
+    document_id: str = Path(...),
+    patient_id: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Get a specific PDF document."""
+    # Get session ID from user context
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    try:
+        document = await _pdf_service.get_document(
+            document_id=document_id,
+            user_id=user.user_id,
+            session_id=session_id,
+            patient_id=patient_id
+        )
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        return {
+            "document_id": document.document_id,
+            "filename": document.filename,
+            "file_size": document.file_size,
+            "status": document.status.value,
+            "uploaded_at": document.uploaded_at.isoformat(),
+            "updated_at": document.updated_at.isoformat() if document.updated_at else None,
+            "patient_id": document.patient_id,
+            "metadata": {
+                "title": document.metadata.title,
+                "page_count": document.metadata.page_count,
+                "author": document.metadata.author
+            } if document.metadata else None,
+            "processing_info": {
+                "text_extraction_success": document.processing_info.text_extraction_success,
+                "page_count": document.processing_info.page_count,
+                "error_message": document.processing_info.error_message
+            } if document.processing_info else None
+        }
+
+    except Exception as e:
+        print(f"[PDF Get] Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get PDF document")
+
+
+@app.delete("/documents/{document_id}")
+async def delete_pdf_document(
+    request: Request,
+    document_id: str = Path(...),
+    patient_id: Optional[str] = Query(None),
+    chat_session_id: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Delete a PDF document."""
+    # Get session ID from user context
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # Use chat_session_id if provided, otherwise fall back to auth session_id (same as upload)
+    effective_session_id = chat_session_id or session_id
+
+    try:
+        print("[PDF Delete] Request details:")
+        print(f"  - document_id: {document_id}")
+        print(f"  - user_id: {user.user_id}")
+        print(f"  - auth_session_id: {session_id}")
+        print(f"  - chat_session_id: {chat_session_id}")
+        print(f"  - effective_session_id: {effective_session_id}")
+        print(f"  - patient_id: {patient_id}")
+
+        print("[PDF Delete] Before deletion - showing all sessions:")
+        _pdf_service.debug_all_sessions()
+
+        success = await _pdf_service.delete_document(
+            document_id=document_id,
+            user_id=user.user_id,
+            session_id=effective_session_id,
+            patient_id=patient_id
+        )
+
+        print(f"[PDF Delete] Delete operation returned: {success}")
+
+        print("[PDF Delete] After deletion - showing all sessions:")
+        _pdf_service.debug_all_sessions()
+
+        if success:
+            return {"message": "Document deleted successfully"}
+        else:
+            print("[PDF Delete] Document not found, returning 404")
+            raise HTTPException(status_code=404, detail="Document not found")
+
+    except HTTPException as he:
+        # Re-raise HTTP exceptions as-is
+        print(f"[PDF Delete] HTTP Exception: {he.status_code} - {he.detail}")
+        raise he
+    except Exception as e:
+        print(f"[PDF Delete] Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to delete PDF document")
+
+
+# XML Document Upload and Management Endpoints
+
+@app.post("/documents/upload-xml", response_model=XMLUploadResponse)
+async def upload_xml_document(
+    request: Request,
+    file: UploadFile = File(...),
+    patient_id: Optional[str] = Form(None),
+    chat_session_id: Optional[str] = Form(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Upload and process an XML document."""
+    await _dependencies_ready.wait()
+
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # Validate file type
+    valid_extensions = ['.xml', '.hl7', '.cda', '.ccda']
+    if not file.filename or not any(file.filename.lower().endswith(ext) for ext in valid_extensions):
+        raise HTTPException(status_code=400, detail=f"File must have one of these extensions: {', '.join(valid_extensions)}")
+
+    # Use chat_session_id if provided, otherwise fall back to auth session_id
+    effective_session_id = chat_session_id or session_id
+
+    try:
+        # Read file content
+        content = await file.read()
+
+        print(f"[XML Upload] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, filename: {file.filename}, patient_id: {patient_id}")
+
+        # Process upload using memory service
+        xml_document = await _xml_service.upload_document(
+            user_id=user.user_id,
+            session_id=effective_session_id,
+            filename=file.filename,
+            content=content,
+            patient_id=patient_id
+        )
+
+        return XMLUploadResponse(
+            document_id=xml_document.document_id,
+            filename=xml_document.filename,
+            file_size=xml_document.file_size,
+            status=xml_document.status.value,
+            uploaded_at=xml_document.uploaded_at.isoformat(),
+            patient_id=xml_document.patient_id,
+            document_type=xml_document.get_document_type()
+        )
+
+    except Exception as e:
+        print(f"[XML Upload] Error: {e}")
+        raise HTTPException(status_code=500, detail="XML upload failed")
+
+
+@app.delete("/documents/xml/{document_id}")
+async def delete_xml_document(
+    request: Request,
+    document_id: str = Path(...),
+    patient_id: Optional[str] = Query(None),
+    chat_session_id: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Delete an XML document."""
+    await _dependencies_ready.wait()
+
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # Use chat_session_id if provided, otherwise fall back to auth session_id (same as upload)
+    effective_session_id = chat_session_id or session_id
+
+    try:
+        print("[XML Delete] Request details:")
+        print(f"  - document_id: {document_id}")
+        print(f"  - user_id: {user.user_id}")
+        print(f"  - auth_session_id: {session_id}")
+        print(f"  - chat_session_id: {chat_session_id}")
+        print(f"  - effective_session_id: {effective_session_id}")
+        print(f"  - patient_id: {patient_id}")
+
+        print("[XML Delete] Before deletion - showing all sessions:")
+        _xml_service.debug_all_sessions()
+
+        success = await _xml_service.delete_document(
+            document_id=document_id,
+            user_id=user.user_id,
+            session_id=effective_session_id,
+            patient_id=patient_id
+        )
+
+        print(f"[XML Delete] Delete operation returned: {success}")
+
+        print("[XML Delete] After deletion - showing all sessions:")
+        _xml_service.debug_all_sessions()
+
+        if success:
+            return {"message": "XML document deleted successfully"}
+        else:
+            print("[XML Delete] Document not found, returning 404")
+            raise HTTPException(status_code=404, detail="XML document not found")
+
+    except HTTPException as he:
+        # Re-raise HTTP exceptions as-is
+        print(f"[XML Delete] HTTP Exception: {he.status_code} - {he.detail}")
+        raise he
+    except Exception as e:
+        print(f"[XML Delete] Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to delete XML document")
