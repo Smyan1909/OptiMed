@@ -28,8 +28,8 @@ class XMLChunkMetadata:
     section_title: Optional[str] = None
     chunk_type: str = "content"  # content, header, section, entry, narrative
     semantic_context: Optional[str] = None
-    overlap_with: List[str] = None
-    attributes: Dict[str, str] = None
+    overlap_with: Optional[List[str]] = None
+    attributes: Optional[Dict[str, str]] = None
 
     def __post_init__(self):
         if self.overlap_with is None:
@@ -66,7 +66,7 @@ class XMLSemanticChunker:
         self,
         extracted_text: str,
         document_id: str,
-        metadata: Dict[str, Any] = None
+        metadata: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
         Backwards compatibility method for RAG system integration.
@@ -153,7 +153,7 @@ class XMLSemanticChunker:
         xml_content: bytes,
         document_id: str,
         document_type: str = 'generic-xml',
-        metadata: Dict[str, Any] = None
+        metadata: Optional[Dict[str, Any]] = None
     ) -> List[XMLSemanticChunk]:
         """
         Chunk XML document using structure-aware semantic analysis.

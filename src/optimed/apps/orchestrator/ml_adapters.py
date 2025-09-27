@@ -198,6 +198,9 @@ class MultilingualCrossEncoder:
                 return []
 
             # Get raw scores with proper batch size
+            if self._model is None:
+                print("[MultilingualCrossEncoder] Model not loaded")
+                return []
             actual_batch_size = min(len(batch_texts), 4)  # Conservative GPU batch size
             raw_scores = self._model.predict(
                 batch_texts,
@@ -339,7 +342,7 @@ class MultilingualZeroShotClassifier:
             return "diagnostic"
 
         # Try to use the actual model if available
-        if self._ensure_loaded():
+        if self._ensure_loaded() and self._model is not None:
             try:
                 result = self._model(text, candidate_labels)
                 return result['labels'][0]  # Return highest confidence label

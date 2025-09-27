@@ -3128,7 +3128,7 @@ async def upload_xml_document(
 
     # Validate file type
     valid_extensions = ['.xml', '.hl7', '.cda', '.ccda']
-    if not any(file.filename.lower().endswith(ext) for ext in valid_extensions):
+    if not file.filename or not any(file.filename.lower().endswith(ext) for ext in valid_extensions):
         raise HTTPException(status_code=400, detail=f"File must have one of these extensions: {', '.join(valid_extensions)}")
 
     # Use chat_session_id if provided, otherwise fall back to auth session_id

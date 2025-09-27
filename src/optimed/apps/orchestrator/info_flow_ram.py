@@ -327,7 +327,6 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 # Get PDF documents for the current session (patient-specific or general)
                 pdf_documents = await self._pdf_service.get_documents_for_context(
                     user_id=state.user_id,
-                    session_id=state.session_id,
                     patient_id=state.patient_id
                 )
 
@@ -1496,25 +1495,25 @@ Keep queries concise and medical terminology appropriate.
                     "components": {
                         "situation": {
                             "title": "Situation",
-                            "content": sbar_results.get("situation", "Content generation failed").strip() or "Content generation failed",
+                            "content": (sbar_results.get("situation") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "info-circle",
                             "color": "blue"
                         },
                         "background": {
                             "title": "Background",
-                            "content": sbar_results.get("background", "Content generation failed").strip() or "Content generation failed",
+                            "content": (sbar_results.get("background") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "history",
                             "color": "green"
                         },
                         "assessment": {
                             "title": "Assessment",
-                            "content": sbar_results.get("assessment", "Content generation failed").strip() or "Content generation failed",
+                            "content": (sbar_results.get("assessment") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "stethoscope",
                             "color": "orange"
                         },
                         "recommendation": {
                             "title": "Recommendation",
-                            "content": sbar_results.get("recommendation", "Content generation failed").strip() or "Content generation failed",
+                            "content": (sbar_results.get("recommendation") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "lightbulb",
                             "color": "purple"
                         }
@@ -2475,7 +2474,7 @@ Content:
         print(f"[_chunk_xml_documents] Created {len(records)} records from {len(xml_documents)} XML documents")
 
         # Simple conversion to chunks without complex chunking strategy to avoid breaking PDF flow
-        chunks = []
+        chunks: List[Chunk] = []
         for record in records:
             # Apply basic PHI redaction
             redactor = SimplePhiRedactor()
@@ -2508,7 +2507,7 @@ Content:
         # Split on section headers (lines with --- markers)
         sections = []
         lines = text.split('\n')
-        current_section = []
+        current_section: List[str] = []
 
         for line in lines:
             line_stripped = line.strip()
@@ -2628,7 +2627,7 @@ Content:
 
     # removed: LLM-based cross scoring and gating replaced with sentence-transformers adapters
 
-    def _compute_dynamic_n(self, query: str, scores: list[float], pre_classification: str = None) -> int:
+    def _compute_dynamic_n(self, query: str, scores: list[float], pre_classification: Optional[str] = None) -> int:
         if not scores:
             return N_MIN
         diffs = [scores[i] - scores[i+1] for i in range(len(scores)-1)]

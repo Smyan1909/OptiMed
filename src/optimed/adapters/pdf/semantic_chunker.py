@@ -25,7 +25,7 @@ class ChunkMetadata:
     section_title: Optional[str] = None
     chunk_type: str = "content"  # content, header, table, list, conclusion
     semantic_context: Optional[str] = None
-    overlap_with: List[str] = None
+    overlap_with: Optional[List[str]] = None
 
     def __post_init__(self):
         if self.overlap_with is None:
@@ -42,7 +42,7 @@ class SemanticChunk:
     @property
     def token_count(self) -> int:
         """Estimate token count (rough approximation)."""
-        return len(self.text.split()) * 1.3  # ~1.3 tokens per word for English
+        return int(len(self.text.split()) * 1.3)  # ~1.3 tokens per word for English
 
 
 class SemanticPDFChunker:
@@ -113,7 +113,7 @@ class SemanticPDFChunker:
         self,
         text: str,
         document_id: str,
-        metadata: Dict[str, Any] = None
+        metadata: Optional[Dict[str, Any]] = None
     ) -> List[SemanticChunk]:
         """
         Chunk PDF text using semantic awareness for medical documents.
@@ -191,7 +191,7 @@ class SemanticPDFChunker:
                     is_header = True
                     header_type = "section_header"
 
-            if is_header and current_section["content"].strip():
+            if is_header and current_section.get("content", "").strip():
                 # Save current section and start new one
                 current_section["end_pos"] = current_pos
                 sections.append(current_section)
@@ -202,12 +202,12 @@ class SemanticPDFChunker:
                     "type": header_type
                 }
             else:
-                current_section["content"] += line + '\n'
+                current_section["content"] = (current_section.get("content", "") + line + '\n')
 
             current_pos += len(line) + 1
 
         # Add final section
-        if current_section["content"].strip():
+        if current_section.get("content", "").strip():
             current_section["end_pos"] = current_pos
             sections.append(current_section)
 
@@ -244,7 +244,7 @@ class SemanticPDFChunker:
         metadata: Dict[str, Any]
     ) -> List[SemanticChunk]:
         """Chunk medical section content with context preservation."""
-        chunks = []
+        chunks: List[SemanticChunk] = []
 
         # Split by paragraphs first to maintain medical context
         paragraphs = re.split(r'\n\s*\n', content)
@@ -310,7 +310,7 @@ class SemanticPDFChunker:
         metadata: Dict[str, Any]
     ) -> List[SemanticChunk]:
         """Chunk general content with sentence-aware splitting."""
-        chunks = []
+        chunks: List[SemanticChunk] = []
 
         # Split into sentences for better semantic coherence
         sentences = re.split(r'(?<=[.!?])\s+', content)

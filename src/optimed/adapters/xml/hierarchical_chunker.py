@@ -63,7 +63,7 @@ class HierarchicalXMLChunker:
             'notes': ['note', 'narrative', 'comment', 'report', 'summary']
         }
 
-    def chunk_xml_document(self, xml_content: str, document_metadata: Dict[str, Any] = None) -> List[XMLChunk]:
+    def chunk_xml_document(self, xml_content: str, document_metadata: Optional[Dict[str, Any]] = None) -> List[XMLChunk]:
         """
         Chunk XML document using hierarchical structure-aware strategy.
 
@@ -320,7 +320,7 @@ class HierarchicalXMLChunker:
         # Split on double newlines (section boundaries)
         sections = content.split('\n\n')
 
-        chunks = []
+        chunks: List[XMLChunk] = []
         current_chunk = []
         current_size = 0
 
@@ -361,7 +361,7 @@ class HierarchicalXMLChunker:
 
         return chunks if chunks else [large_chunk]
 
-    def chunk_extracted_text(self, extracted_text: str, document_metadata: Dict[str, Any] = None) -> List[XMLChunk]:
+    def chunk_extracted_text(self, extracted_text: str, document_metadata: Optional[Dict[str, Any]] = None) -> List[XMLChunk]:
         """
         Chunk already-extracted XML text using semantic boundaries.
 
@@ -426,7 +426,7 @@ class HierarchicalXMLChunker:
 
         # Split on section headers (lines that look like headers)
         lines = text.split('\n')
-        current_section = []
+        current_section: List[str] = []
         current_title = None
 
         for line in lines:
@@ -539,7 +539,7 @@ class HierarchicalXMLChunker:
                 paragraphs.append(' '.join(current_para))
 
         # Group paragraphs into optimally-sized chunks
-        chunks = []
+        chunks: List[XMLChunk] = []
         current_chunk = []
         current_size = 0
 

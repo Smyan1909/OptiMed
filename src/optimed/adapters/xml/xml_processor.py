@@ -1,5 +1,5 @@
 import lxml.etree as etree
-from typing import Dict, Any
+from typing import Dict, Any, cast
 from datetime import datetime
 import re
 from optimed.core.ports import XMLProcessor
@@ -372,7 +372,7 @@ class LibXML2Processor(XMLProcessor):
             result['@text'] = element.text.strip()
 
         # Process children
-        children = {}
+        children: Dict[str, Any] = {}
         for child in element:
             child_tag = child.tag
             child_data = self._xml_to_dict(child)
@@ -380,7 +380,7 @@ class LibXML2Processor(XMLProcessor):
             if child_tag in children:
                 if not isinstance(children[child_tag], list):
                     children[child_tag] = [children[child_tag]]
-                children[child_tag].append(child_data)
+                cast(list, children[child_tag]).append(child_data)
             else:
                 children[child_tag] = child_data
 
