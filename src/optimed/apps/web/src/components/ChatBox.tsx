@@ -1273,7 +1273,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
   };
 
   const getEmptyStateText = () => {
-    if (mode === "chat") return "Start chatting with CLARA...";
+    if (mode === "chat") return "CLARA Färdiga Gå!";
     if (mode === "diagnose" && patientId) {
       return "CLARA Färdiga Gå!";
     }

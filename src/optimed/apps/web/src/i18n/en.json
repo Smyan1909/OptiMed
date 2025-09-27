@@ -414,7 +414,8 @@
   },
   "chatPage": {
     "generalChat": "General Chat",
-    "aiUser": "AI User"
+    "aiUser": "AI User",
+    "newSession": "New Session"
   },
   "chatBox": {
     "placeholder": {

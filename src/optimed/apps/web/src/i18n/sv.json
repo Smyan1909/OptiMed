@@ -414,7 +414,8 @@
   },
   "chatPage": {
     "generalChat": "Allmän chat",
-    "aiUser": "AI-användare"
+    "aiUser": "AI-användare",
+    "newSession": "Ny session"
   },
   "chatBox": {
     "placeholder": {
