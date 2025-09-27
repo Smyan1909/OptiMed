@@ -3,6 +3,7 @@ from .mixins import FrozenModel
 from .enums import ImageStatus  # Reusing existing status enum
 from typing import Optional, Dict, List, Any
 from datetime import datetime
+from pydantic import Field
 
 
 class XMLMetadata(FrozenModel):
