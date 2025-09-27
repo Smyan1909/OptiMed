@@ -187,7 +187,7 @@ class EncryptionService:
             )
 
             # Encrypt session key with client's public key
-            encrypted_key = client_public_key.encrypt(
+            encrypted_key = client_public_key.encrypt( # type: ignore
                 session_key,
                 padding.OAEP(
                     mgf=padding.MGF1(algorithm=hashes.SHA256()),
