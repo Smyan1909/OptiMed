@@ -99,7 +99,7 @@ export const LookupPanel: React.FC<LookupPanelProps> = ({ term, onClose, patient
                   em: ({ children }: any) => <em className="italic text-gray-700">{children}</em>,
                 }}
               >
-                {result.text || 'No information found.'}
+                {result.summary || 'No information found.'}
               </ReactMarkdown>
             </div>
 
@@ -109,7 +109,9 @@ export const LookupPanel: React.FC<LookupPanelProps> = ({ term, onClose, patient
                 <div className="space-y-1">
                   {result.sources.map((source, index) => (
                     <div key={index} className="text-xs text-gray-500">
-                      • {source}
+                      • <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 underline">
+                          {source.title}
+                        </a>
                     </div>
                   ))}
                 </div>

@@ -503,21 +503,47 @@ async def create_new_session(
     user_ctx: dict = Depends(get_user_context)
 ):
     """Create a new chat session."""
-    
+
     user_id = user_ctx.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID required")
-    
+
     try:
+        # Clean up all existing sessions for this user before creating a new one
+        print(f"[Session Create] Cleaning up existing sessions for user: {user_id}")
+
+        # Clean up PDF documents for all sessions of this user
+        if hasattr(_pdf_service, 'sessions'):
+            sessions_to_cleanup = []
+            for session_key in _pdf_service.sessions.keys():
+                if user_id in session_key:
+                    sessions_to_cleanup.append(session_key)
+
+            for session_key in sessions_to_cleanup:
+                await _pdf_service.cleanup_session(session_key)
+                print(f"[Session Create] Cleaned up PDF session: {session_key}")
+
+        # Clean up XML documents for all sessions of this user
+        if hasattr(_xml_service, 'sessions'):
+            sessions_to_cleanup = []
+            for session_key in _xml_service.sessions.keys():
+                if user_id in session_key:
+                    sessions_to_cleanup.append(session_key)
+
+            for session_key in sessions_to_cleanup:
+                await _xml_service.cleanup_session(session_key)
+                print(f"[Session Create] Cleaned up XML session: {session_key}")
+
         session_id = await _engine.vector_store.create_chat_session(
             user_id=user_id,
             patient_id=request.patient_id,
             mode=request.mode,
             session_title=request.session_title
         )
-        
+
+        print(f"[Session Create] Created new session: {session_id} for user: {user_id}")
         return {"session_id": session_id, "message": "Session created successfully"}
-        
+
     except Exception as e:
         print(f"[API] Error creating session: {e}")
         raise HTTPException(status_code=500, detail="Could not create session")
@@ -2798,14 +2824,18 @@ async def upload_pdf_document(
 
         print(f"[PDF Upload] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, filename: {file.filename}, patient_id: {patient_id}")
 
-        # Process upload using memory service
-        pdf_document = await _pdf_service.upload_document(
+        # Create upload request
+        from optimed.core.domain.pdf_document import PDFUploadRequest
+        upload_request = PDFUploadRequest(
             user_id=user.user_id,
             session_id=effective_session_id,
             filename=file.filename,
-            content=file_content,
+            file_content=file_content,
             patient_id=patient_id
         )
+
+        # Process upload using memory service
+        pdf_document = await _pdf_service.upload_document(upload_request)
 
         print(f"[PDF Upload] Success - document_id: {pdf_document.document_id}, status: {pdf_document.status}")
 
@@ -3140,7 +3170,7 @@ async def upload_xml_document(
 
         print(f"[XML Upload] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, filename: {file.filename}, patient_id: {patient_id}")
 
-        # Process upload using memory service
+        # Process upload using memory service (XML service uses individual parameters)
         xml_document = await _xml_service.upload_document(
             user_id=user.user_id,
             session_id=effective_session_id,

@@ -86,14 +86,13 @@ class MemoryPDFService(PDFService):
             # Generate document ID
             document_id = str(uuid.uuid4())
             print(f"[MemoryPDFService] Starting upload for document_id: {document_id}")
-            print(f"[MemoryPDFService] Upload params - user_id: {upload_request.user_id}, filename: {upload_request.filename}, patient_id: {upload_request.patient_id}")
+            print(f"[MemoryPDFService] Upload params - user_id: {upload_request.user_id}, session_id: {upload_request.session_id}, filename: {upload_request.filename}, patient_id: {upload_request.patient_id}")
 
-            # Use default session for memory storage (no session_id in the protocol)
-            session_id = "default"  # Internal session management
-            session_key = self._get_session_key(upload_request.user_id, session_id, upload_request.patient_id)
+            # Use the provided session_id instead of hardcoded default
+            session_key = self._get_session_key(upload_request.user_id, upload_request.session_id, upload_request.patient_id)
             print(f"[MemoryPDFService] Generated session key for upload: {session_key}")
 
-            session_data = self._get_or_create_session(upload_request.user_id, session_id, upload_request.patient_id)
+            session_data = self._get_or_create_session(upload_request.user_id, upload_request.session_id, upload_request.patient_id)
 
             # Store raw content
             session_data.raw_content[document_id] = upload_request.file_content
@@ -219,13 +218,19 @@ class MemoryPDFService(PDFService):
 
         return pdf_list
 
-    async def delete_document(self, document_id: str, user_id: str) -> None:
+    async def delete_document(self, document_id: str, user_id: str, session_id: str = None, patient_id: str = None) -> bool:
         """Delete a PDF document by its ID."""
-        print(f"[MemoryPDFService] Delete request - document_id: {document_id}, user_id: {user_id}")
+        print(f"[MemoryPDFService] Delete request - document_id: {document_id}, user_id: {user_id}, session_id: {session_id}, patient_id: {patient_id}")
 
-        # Search through all sessions for this user to find and delete the document
-        for session_key, session_data in self.sessions.items():
-            if user_id in session_key:
+        if session_id:
+            # If session_id is provided, look in that specific session
+            session_key = self._get_session_key(user_id, session_id, patient_id)
+            print(f"[MemoryPDFService] Generated session key: {session_key}")
+
+            if session_key in self.sessions:
+                session_data = self.sessions[session_key]
+                print(f"[MemoryPDFService] Available PDF documents in session: {list(session_data.pdfs.keys())}")
+
                 if document_id in session_data.pdfs:
                     print(f"[MemoryPDFService] Found PDF in session: {session_key}")
                     print(f"[MemoryPDFService] Deleting PDF document: {document_id}")
@@ -238,9 +243,32 @@ class MemoryPDFService(PDFService):
 
                     session_data.update_access_time()
                     print(f"[MemoryPDFService] Document {document_id} deleted successfully")
-                    return
+                    return True
+                else:
+                    print(f"[MemoryPDFService] PDF document not found in session: {document_id}")
+            else:
+                print(f"[MemoryPDFService] Session not found: {session_key}")
+        else:
+            # Fallback: Search through all sessions for this user (original behavior)
+            print(f"[MemoryPDFService] No session_id provided, searching all sessions for user: {user_id}")
+            for session_key, session_data in self.sessions.items():
+                if user_id in session_key:
+                    if document_id in session_data.pdfs:
+                        print(f"[MemoryPDFService] Found PDF in session: {session_key}")
+                        print(f"[MemoryPDFService] Deleting PDF document: {document_id}")
+                        del session_data.pdfs[document_id]
+
+                        # Also delete raw content if it exists
+                        if document_id in session_data.raw_content:
+                            print(f"[MemoryPDFService] Deleting raw content: {document_id}")
+                            del session_data.raw_content[document_id]
+
+                        session_data.update_access_time()
+                        print(f"[MemoryPDFService] Document {document_id} deleted successfully")
+                        return True
 
         print(f"[MemoryPDFService] WARNING: PDF document not found: {document_id}")
+        return False
 
     async def get_documents_for_context(self, user_id: str, patient_id: Optional[str] = None) -> Sequence[PDFDocument]:
         """Get PDF documents relevant for the current context (patient-specific or general)."""
