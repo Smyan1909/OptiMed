@@ -182,6 +182,15 @@ class FlowState(BaseModel):
     timeline_results: Optional[List[Dict[str, Any]]] = None  # Final timeline bubbles
     timeline_retrieval_cache: Optional[Dict[str, Any]] = None
 
+    # Note generation flow fields
+    is_note_generation_flow: bool = False
+    note_template: Optional[Any] = None  # NoteTemplate object
+    note_generation_id: Optional[str] = None
+    note_context_prompt: Optional[str] = None
+    note_sections: Dict[str, str] = Field(default_factory=dict)
+    note_final_content: Optional[str] = None
+    note_sources: List[str] = Field(default_factory=list)
+
 
 class LangGraphRAMInformationEngine(DiagnosticEngine):
     """Concrete engine that streams or returns full result."""
@@ -1910,6 +1919,243 @@ Return only the content in markdown format, no preamble.
 
         # ==================== END TIMELINE FLOW NODES ====================
 
+        # ==================== NOTE GENERATION FLOW NODES ====================
+
+        @streaming_step("generate_note_section")
+        async def generate_note_section(state: FlowState) -> FlowState:
+            """
+            Generate content for note sections using template + retrieval.
+            Reuses existing retrieved chunks from state.
+            """
+            try:
+                if not state.note_template:
+                    print("[generate_note_section] ⚠️ No template found")
+                    return state
+
+                print(f"[generate_note_section] Generating sections for template: {state.note_template.name}")
+
+                # Get template structure
+                template = state.note_template
+                fields = template.template_structure.get("fields", [])
+
+                # Use existing retrieved chunks (already in state from retrieval step)
+                chunks_text = "\n\n".join([
+                    f"[Source {i+1}]\n{chunk}"
+                    for i, chunk in enumerate(state.retrieved_chunks[:15])
+                ])
+
+                # Include conversation history if requested
+                conversation_context = ""
+                if state.chat_history:
+                    recent_turns = state.chat_history[-10:]  # Last 10 messages
+                    conversation_context = "\n\n=== Recent Conversation ===\n"
+                    for msg in recent_turns:
+                        from optimed.core.domain import ChatRole
+                        role = "User" if msg.role == ChatRole.USER else "Assistant"
+                        conversation_context += f"{role}: {msg.content}\n"
+
+                # Add user's context prompt if provided
+                additional_context = ""
+                if state.note_context_prompt:
+                    additional_context = f"\n\n=== Additional Context ===\n{state.note_context_prompt}\n"
+
+                # Detect language
+                from optimed.core.lang import detect_language_code
+                lang_code = detect_language_code(state.user_prompt)
+                lang_name = "Swedish" if lang_code == "sv" else "English"
+
+                # Build system prompt for note generation
+                note_system_prompt = f"""You are a medical documentation assistant generating a clinical note in {lang_name}.
+
+Template: {template.name}
+Type: {template.template_type.value}
+
+Your task is to fill in the template sections based on the provided clinical information.
+
+Guidelines:
+- Use ONLY information from the provided sources
+- Preserve all EHR source links in format [EHR Source](URL)
+- Be concise and clinically relevant
+- Use medical terminology appropriate for {lang_name}
+- If information is not available for a section, write "Information not available" or "Uppgifter saknas"
+- Maintain professional medical documentation style
+- Include relevant timestamps when available
+
+Generate content for each section separately, using the provided clinical data and conversation context."""
+
+                # Generate each section
+                sections = {}
+                for i, field in enumerate(fields):
+                    field_name = field["name"]
+                    field_label = field.get("label", field_name)
+                    field_description = field.get("description", "")
+
+                    print(f"[generate_note_section] Generating: {field_label} ({i+1}/{len(fields)})")
+
+                    # Update progress for this section
+                    state.step_details = f"Generating section {i+1}/{len(fields)}: {field_label}"
+                    state.progress_percentage = 30 + ((i+1) / len(fields) * 40)  # Progress from 30% to 70%
+
+                    # Emit progress update for this section if callback exists
+                    if hasattr(state, 'stream_callback') and state.stream_callback:
+                        try:
+                            await state.stream_callback({
+                                "type": "status",
+                                "step": "generate_note_section",
+                                "description": f"Generating section {i+1}/{len(fields)}: {field_label}",
+                                "status": "in_progress",
+                                "progress": state.progress_percentage,
+                                "timestamp": datetime.now().isoformat()
+                            })
+                        except Exception as callback_err:
+                            print(f"[generate_note_section] Failed to emit progress: {callback_err}")
+
+                    # Build section-specific prompt
+                    section_prompt = f"""Based on the clinical information below, generate content for this section:
+
+Section: {field_label}
+{f"Description: {field_description}" if field_description else ""}
+
+Clinical Information:
+{chunks_text}
+{conversation_context}
+{additional_context}
+
+Generate the content for "{field_label}" section now:"""
+
+                    # Call LLM for this section
+                    from optimed.core.domain import ChatMessage, ChatRole
+                    messages = [
+                        ChatMessage(role=ChatRole.SYSTEM, content=note_system_prompt),
+                        ChatMessage(role=ChatRole.USER, content=section_prompt)
+                    ]
+
+                    section_response = await self._llm.chat(messages)
+                    section_content = section_response.content.strip()
+
+                    sections[field_name] = section_content
+                    print(f"[generate_note_section] ✓ Generated {field_label}: {len(section_content)} chars")
+
+                # Format complete note
+                final_content = f"# {template.name}\n\n"
+                for field in fields:
+                    field_name = field["name"]
+                    field_label = field.get("label", field_name)
+                    section_content = sections.get(field_name, "")
+                    final_content += f"## {field_label}\n{section_content}\n\n"
+
+                # Extract sources from retrieved chunks
+                import re
+                sources = []
+                for chunk in state.retrieved_chunks[:15]:
+                    # Extract EHR source links from chunk content
+                    links = re.findall(r'\[EHR[^\]]*\]\((https?://[^\)]+)\)', chunk)
+                    sources.extend(links)
+
+                sources = list(set(sources))  # Remove duplicates
+
+                if sources:
+                    final_content += f"\n\n## Sources\n"
+                    for i, source in enumerate(sources[:10], 1):
+                        final_content += f"{i}. {source}\n"
+
+                # Update state
+                state.note_sections = sections
+                state.note_final_content = final_content
+                state.note_sources = sources
+
+                print(f"[generate_note_section] ✓ Complete note generated: {len(final_content)} chars, {len(sources)} sources")
+
+                return state
+
+            except Exception as e:
+                print(f"[generate_note_section] ❌ Error: {e}")
+                import traceback
+                traceback.print_exc()
+                return state
+
+        @streaming_step("format_note_response")
+        async def format_note_response(state: FlowState) -> FlowState:
+            """
+            Format the final note response for streaming to frontend.
+            Returns as JSON structure for frontend rendering.
+            """
+            try:
+                print("[format_note_response] Formatting note for response")
+
+                if not state.note_final_content:
+                    print("[format_note_response] ⚠️ No note content to format")
+                    print(f"[format_note_response] Debug: note_sections={len(state.note_sections)} sections")
+                    print(f"[format_note_response] Debug: retrieved_chunks={len(state.retrieved_chunks)} chunks")
+
+                    # Create error response
+                    from optimed.core.domain import ChatMessage, ChatRole
+                    error_response = {
+                        "type": "error",
+                        "message": "Note generation failed to produce content. Please try again."
+                    }
+                    state.llm_response = ChatMessage(
+                        role=ChatRole.ASSISTANT,
+                        content=json.dumps(error_response, ensure_ascii=False)
+                    )
+                    return state
+
+                # Create structured response
+                note_response = {
+                    "type": "generated_note",
+                    "generation_id": state.note_generation_id,
+                    "template_name": state.note_template.name if state.note_template else "",
+                    "template_type": state.note_template.template_type.value if state.note_template else "",
+                    "language": state.note_template.language if state.note_template else "en",
+                    "content": state.note_final_content,
+                    "sections": state.note_sections,
+                    "sources": state.note_sources,
+                    "metadata": {
+                        "chunks_used": len(state.retrieved_chunks),
+                        "conversation_turns": len(state.chat_history),
+                        "word_count": len(state.note_final_content.split())
+                    }
+                }
+
+                # Set as LLM response (will be streamed to frontend)
+                from optimed.core.domain import ChatMessage, ChatRole
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content=json.dumps(note_response, ensure_ascii=False)
+                )
+
+                print("[format_note_response] ✓ Note response formatted and ready")
+
+                return state
+
+            except Exception as e:
+                print(f"[format_note_response] ❌ Error: {e}")
+                import traceback
+                traceback.print_exc()
+                return state
+
+        @streaming_step("store_note_metadata")
+        async def store_note_metadata(state: FlowState) -> FlowState:
+            """Store note generation metadata only (GDPR-safe, no content)."""
+            try:
+                print("[store_note_metadata] Recording generation metadata")
+
+                if not state.note_generation_id:
+                    print("[store_note_metadata] ⚠️ No generation_id")
+                    return state
+
+                # The metadata update is handled by the NoteGenerator adapter
+                # through the API layer. This node is just for flow completion.
+                print(f"[store_note_metadata] ✓ Metadata recorded for {state.note_generation_id}")
+
+                return state
+
+            except Exception as e:
+                print(f"[store_note_metadata] ❌ Error: {e}")
+                return state
+
+        # ==================== END NOTE GENERATION FLOW NODES ====================
+
         @streaming_step("provide_information")
         async def provide_information(state: FlowState) -> FlowState:
             print("[provide_information] 🎯 Starting information provision")
@@ -2414,6 +2660,10 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_node("retrieve_timeline_chunks", retrieve_timeline_chunks)
         _builder.add_node("generate_timeline_bubbles", generate_timeline_bubbles)
         _builder.add_node("merge_timeline_results", merge_timeline_results)
+        # Note generation flow nodes
+        _builder.add_node("generate_note_section", generate_note_section)
+        _builder.add_node("format_note_response", format_note_response)
+        _builder.add_node("store_note_metadata", store_note_metadata)
         _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
         _builder.add_node("perform_web_search", perform_web_search)
         _builder.add_node("provide_information", provide_information)
@@ -2498,9 +2748,16 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_edge("generate_timeline_bubbles", "merge_timeline_results")
         _builder.add_edge("merge_timeline_results", "store_assistant_response")
 
-        # Route after chunk retrieval: check if SBAR or Timeline flow
+        # Note generation flow edges - sequential processing
+        _builder.add_edge("generate_note_section", "format_note_response")
+        _builder.add_edge("format_note_response", "store_note_metadata")
+        _builder.add_edge("store_note_metadata", "store_assistant_response")
+
+        # Route after chunk retrieval: check flow type
         def route_after_chunks(state):
-            if hasattr(state, 'is_timeline_flow') and state.is_timeline_flow:
+            if hasattr(state, 'is_note_generation_flow') and state.is_note_generation_flow:
+                return "generate_note_section"
+            elif hasattr(state, 'is_timeline_flow') and state.is_timeline_flow:
                 return "extract_timeline_events"
             elif hasattr(state, 'is_sbar_flow') and state.is_sbar_flow:
                 return "sbar_parallel_dispatcher"
@@ -2513,6 +2770,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
             "intelligent_retrieve_chunks",
             route_after_chunks,
             {
+                "generate_note_section": "generate_note_section",
                 "extract_timeline_events": "extract_timeline_events",
                 "sbar_parallel_dispatcher": "sbar_parallel_dispatcher",
                 "intelligent_retrieve_chunks": "intelligent_retrieve_chunks",
@@ -3169,7 +3427,7 @@ Content:
             return self._to_output(data.model_dump())
         return self._to_output(data)
 
-    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "info_retrieval", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
+    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "info_retrieval", user_id: str | None = None, session_id: str | None = None, is_note_generation_flow: bool = False, note_template: Any = None, note_generation_id: str | None = None, note_context_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Return an async generator that yields chunks as they stream from the graph."""
 
         async def _stream_generator():
@@ -3203,7 +3461,11 @@ Content:
                     "user_id": user_id,
                     "session_id": session_id_final,
                     "should_stream_response": True,  # Indicate we want streaming
-                    "stream_callback": stream_callback  # Pass the callback
+                    "stream_callback": stream_callback,  # Pass the callback
+                    "is_note_generation_flow": is_note_generation_flow,
+                    "note_template": note_template,
+                    "note_generation_id": note_generation_id,
+                    "note_context_prompt": note_context_prompt
                 }
             else:
                 initial_input = {
@@ -3213,7 +3475,11 @@ Content:
                     "user_id": user_id,
                     "session_id": session_id_final,
                     "should_stream_response": True,  # Indicate we want streaming
-                    "stream_callback": stream_callback  # Pass the callback
+                    "stream_callback": stream_callback,  # Pass the callback
+                    "is_note_generation_flow": is_note_generation_flow,
+                    "note_template": note_template,
+                    "note_generation_id": note_generation_id,
+                    "note_context_prompt": note_context_prompt
                 }
 
             graph_task = None
@@ -3231,11 +3497,13 @@ Content:
                             if isinstance(node_output, dict):
                                 current_state = node_output
                                 
-                                # Handle status updates (non-streaming steps)
-                                if (previous_state is None or 
+                                # Handle status updates (including progress within steps)
+                                if (previous_state is None or
                                     current_state.get("current_step") != previous_state.get("current_step") or
-                                    current_state.get("step_status") != previous_state.get("step_status")):
-                                    
+                                    current_state.get("step_status") != previous_state.get("step_status") or
+                                    current_state.get("step_details") != previous_state.get("step_details") or
+                                    current_state.get("progress_percentage") != previous_state.get("progress_percentage")):
+
                                     status_update = {
                                         "type": "status",
                                         "step": current_state.get("current_step", ""),
@@ -3244,9 +3512,9 @@ Content:
                                         "progress": current_state.get("progress_percentage", 0.0),
                                         "timestamp": datetime.now().isoformat()
                                     }
-                                    
+
                                     # Add special flags for important events
-                                
+
                                     await chunk_queue.put(status_update)
                                 
 
@@ -3283,7 +3551,18 @@ Content:
                     final_response_content = ""
                     if previous_state and previous_state.get("llm_response"):
                         final_response_content = previous_state["llm_response"].content if hasattr(previous_state["llm_response"], 'content') else str(previous_state["llm_response"])
-                    
+
+                    print(f"[run_stream] 🎯 Emitting completion event")
+                    print(f"[run_stream] 📦 final_response length: {len(final_response_content)} chars")
+                    if final_response_content:
+                        try:
+                            parsed = json.loads(final_response_content)
+                            print(f"[run_stream] 📋 Response type: {parsed.get('type')}")
+                            if parsed.get('type') == 'generated_note':
+                                print(f"[run_stream] ✅ Note content length: {len(parsed.get('content', ''))} chars")
+                        except:
+                            print(f"[run_stream] ⚠️ Response is not JSON")
+
                     completion_update = {
                         "type": "completion",
                         "status": "completed",
@@ -3299,9 +3578,12 @@ Content:
                         completion_update["reasoning_steps"] = previous_state.get("reasoning_steps", [])
                     
 
-                    
+
+                    print(f"[run_stream] 🚀 Putting completion event in queue")
                     await chunk_queue.put(completion_update)
+                    print(f"[run_stream] 🏁 Putting end signal in queue")
                     await chunk_queue.put(None)  # Signal end of stream
+                    print(f"[run_stream] ✅ Stream generation complete")
                 
                 # Start graph processing
                 graph_task = asyncio.create_task(run_graph())

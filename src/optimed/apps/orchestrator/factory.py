@@ -28,6 +28,8 @@ from optimed.core.domain import UserEHRConnection
 from datetime import datetime, timezone
 from dotenv import load_dotenv # type: ignore
 from optimed.adapters.security.session_cleanup import initialize_cleanup_service
+from optimed.adapters.note_templates import PGTemplateRepository, TemplateServiceAdapter, NoteGeneratorAdapter
+from optimed.core.ports import TemplateRepository, TemplateService, NoteGenerator
 
 
 def create_smart_fhir_repository() -> SMARTFHIRRepository:
@@ -71,7 +73,10 @@ async def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
                                                       LLMClient,
                                                       TavilyWebSearchService,
                                                       PDFService,
-                                                      XMLService]:
+                                                      XMLService,
+                                                      TemplateRepository,
+                                                      TemplateService,
+                                                      NoteGenerator]:
     """Factory function to wire up all application dependencies."""
 
     # Load environment variables from .env file
@@ -156,6 +161,13 @@ async def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
     await cleanup_service.start_cleanup_service()
     print("GDPR compliance services initialized")
 
+    # Note template adapters (GDPR-compliant, no content storage)
+    print("Initializing note template services...")
+    template_repo: TemplateRepository = PGTemplateRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
+    template_service: TemplateService = TemplateServiceAdapter(template_repo=template_repo)
+    note_generator: NoteGenerator = NoteGeneratorAdapter(template_repo=template_repo)
+    print("Note template services initialized")
+
     # Main engine with connection service
     engine: DiagnosticEngine = LangGraphDiagnosticEngine(
         fhir_repo=fhir_repo,
@@ -178,8 +190,14 @@ async def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
         pdf_service=pdf_service,
         xml_service=xml_service,
     )
-    
-    return engine, fhir_repo, vector_store, user_repo, connection_repo, connection_service, create_image_service, image_analysis_engine, image_generation_service, generated_image_repo, journal_client, web_search_service, pdf_service, xml_service
+
+    return (
+        engine, fhir_repo, vector_store, user_repo, connection_repo,
+        connection_service, create_image_service, image_analysis_engine,
+        image_generation_service, generated_image_repo, journal_client,
+        web_search_service, pdf_service, xml_service,
+        template_repo, template_service, note_generator
+    )
 
 
 # Chunking orchestrator factory (for CLI or future wiring)

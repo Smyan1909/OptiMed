@@ -2,6 +2,7 @@
 
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { Header } from '@/components/Header';
+import { TemplateManagement } from '@/components/TemplateManagement';
 import { useState } from "react";
 import { useUser } from '@/contexts/UserContext';
 import { useLocale, useTranslations } from 'next-intl';
@@ -21,7 +22,8 @@ function SettingsContent() {
   const tabs = [
     { id: 'preferences', name: t('tabs.preferences'), icon: '⚙️' },
     { id: 'notifications', name: t('tabs.notifications'), icon: '🔔' },
-    { id: 'security', name: t('tabs.security'), icon: '🔒' }
+    { id: 'security', name: t('tabs.security'), icon: '🔒' },
+    { id: 'templates', name: 'Templates', icon: '📝' }
   ];
 
   if (!user) {
@@ -155,7 +157,7 @@ function SettingsContent() {
               {activeTab === 'security' && (
                 <div className="space-y-6">
                   <h3 className="text-lg font-medium text-gray-900">{t('security.title')}</h3>
-                  
+
                   <div className="space-y-6">
                     <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
                       <div className="flex">
@@ -179,6 +181,11 @@ function SettingsContent() {
                     </div>
                   </div>
                 </div>
+              )}
+
+              {/* Templates Tab */}
+              {activeTab === 'templates' && (
+                <TemplateManagement />
               )}
             </div>
           </div>

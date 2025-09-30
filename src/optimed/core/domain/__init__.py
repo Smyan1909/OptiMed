@@ -5,6 +5,7 @@ from .info import InfoEvent, Notification, CommThread, ChatMessage, WebSearchQue
 from .kpi import KPIEvent, Alert
 from .users import User, UserAction, UserSession, UserEHRConnection
 from .image import DICOMMetadata, ImageDimensions, WindowLevel, DICOMImage, ImagePixelData, ImageUploadRequest, ImageGenerationContext, GeneratedImage, ImageGenerationRequest
+from .note_template import NoteTemplate, NoteGenerationRequest, GeneratedNote, NoteGenerationMetadata
 from .enums import (
     BedStatus,
     EncounterStatus,
@@ -18,7 +19,10 @@ from .enums import (
     ImageModalityType,
     ImageStatus,
     JournalEntryType,
-    GeneratedImagePurpose  # Only import the enum here
+    GeneratedImagePurpose,
+    TemplateType,
+    NoteGenerationStatus,
+    NoteExportMethod,
 )
 
 """OptiMed domain entities (v0).
@@ -34,7 +38,7 @@ __all__ = [
     "BedState",
     "Encounter",
     "JournalEntry",
-    "JournalEntryCreate", 
+    "JournalEntryCreate",
     "JournalEntryUpdate",
     "DataSource",
     # info
@@ -57,6 +61,9 @@ __all__ = [
     "ChatRole",
     "JournalEntryType",
     "GeneratedImagePurpose",
+    "TemplateType",
+    "NoteGenerationStatus",
+    "NoteExportMethod",
     # diagnosis
     "DiagnosisResult",
     "WebSearchInfo",
@@ -82,7 +89,7 @@ __all__ = [
     "ImageGenerationContext",
     "GeneratedImage",
     "ImageGenerationRequest",
-    # web search 
+    # web search
     "WebSearchQuery",
     "WebSearchResult",
     "WebSearchResponse",
@@ -91,4 +98,9 @@ __all__ = [
     "Record",
     "ChunkPolicy",
     "PolicySet",
+    # note templates
+    "NoteTemplate",
+    "NoteGenerationRequest",
+    "GeneratedNote",
+    "NoteGenerationMetadata",
 ]

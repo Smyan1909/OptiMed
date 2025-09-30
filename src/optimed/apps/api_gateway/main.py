@@ -45,13 +45,16 @@ _journal_llm_service: _Any = None
 _web_search_service: _Any = None
 _pdf_service: _Any = None
 _xml_service: _Any = None
+_template_repo: _Any = None
+_template_service: _Any = None
+_note_generator: _Any = None
 
 
 _dependencies_ready: asyncio.Event = asyncio.Event()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service
+    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service, _template_repo, _template_service, _note_generator
     try:
         (
             _engine,
@@ -68,6 +71,9 @@ async def lifespan(app: FastAPI):
             _web_search_service,
             _pdf_service,
             _xml_service,
+            _template_repo,
+            _template_service,
+            _note_generator,
         ) = await create_app_dependencies()
         _dependencies_ready.set()
         print("[startup] Dependencies initialized")
@@ -448,6 +454,32 @@ async def get_user_fhir_repository(user_ctx: dict = Depends(get_user_context)) -
         # Service not initialized yet
         raise HTTPException(status_code=503, detail="Service initializing, please try again shortly")
     return _fhir
+
+
+# Note template dependency getters
+async def get_template_repo():
+    """Dependency to get template repository."""
+    await _dependencies_ready.wait()
+    if _template_repo is None:
+        raise HTTPException(status_code=503, detail="Service initializing, please try again shortly")
+    return _template_repo
+
+
+async def get_template_service():
+    """Dependency to get template service."""
+    await _dependencies_ready.wait()
+    if _template_service is None:
+        raise HTTPException(status_code=503, detail="Service initializing, please try again shortly")
+    return _template_service
+
+
+async def get_note_generator():
+    """Dependency to get note generator."""
+    await _dependencies_ready.wait()
+    if _note_generator is None:
+        raise HTTPException(status_code=503, detail="Service initializing, please try again shortly")
+    return _note_generator
+
 
 # Removed duplicate /health endpoint (was redefining the same route)
 
@@ -3255,3 +3287,301 @@ async def delete_xml_document(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to delete XML document")
+
+
+# ==================== NOTE TEMPLATE ENDPOINTS ====================
+
+class NoteGenerationRequestModel(BaseModel):
+    template_id: str
+    session_id: str
+    patient_id: Optional[str] = None
+    context_prompt: Optional[str] = None
+    include_conversation_history: bool = True
+
+
+@app.post("/templates/upload")
+async def upload_template(
+    file: UploadFile = File(...),
+    name: str = Form(...),
+    language: str = Form(...),
+    template_type: str = Form(...),
+    user_ctx: dict = Depends(get_user_context),
+    template_service = Depends(get_template_service)
+):
+    """Upload and parse a template file (DOCX, PDF, XLSX, TXT)."""
+    try:
+        print(f"[Template Upload] User {user_ctx['user_id']} uploading template: {name}")
+
+        # Read file content
+        content = await file.read()
+
+        # Create template using service
+        from optimed.core.domain import TemplateType
+        template = await template_service.create_template_from_upload(
+            user_id=user_ctx["user_id"],
+            name=name,
+            language=language,
+            template_type=TemplateType(template_type),
+            file_content=content,
+            filename=file.filename
+        )
+
+        print(f"[Template Upload] ✓ Template created: {template.template_id}")
+
+        return {
+            "template_id": template.template_id,
+            "name": template.name,
+            "language": template.language,
+            "template_type": template.template_type.value,
+            "fields": template.template_structure.get("fields", [])
+        }
+
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        print(f"[Template Upload] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to upload template")
+
+
+@app.get("/templates/list")
+async def list_templates(
+    language: Optional[str] = Query(None),
+    template_type: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context),
+    template_repo = Depends(get_template_repo)
+):
+    """List available templates (user + system)."""
+    try:
+        templates = await template_repo.list_templates(
+            user_id=user_ctx["user_id"],
+            include_system=True,
+            language=language,
+            template_type=template_type
+        )
+
+        return {
+            "templates": [
+                {
+                    "template_id": t.template_id,
+                    "name": t.name,
+                    "language": t.language,
+                    "template_type": t.template_type.value,
+                    "is_system_template": t.is_system_template,
+                    "file_format": t.file_format,
+                    "fields": t.template_structure.get("fields", []),
+                    "created_at": t.created_at.isoformat()
+                }
+                for t in templates
+            ]
+        }
+
+    except Exception as e:
+        print(f"[Template List] Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list templates")
+
+
+@app.get("/templates/{template_id}")
+async def get_template(
+    template_id: str,
+    user_ctx: dict = Depends(get_user_context),
+    template_repo = Depends(get_template_repo)
+):
+    """Get template details by ID."""
+    try:
+        template = await template_repo.get_template_by_id(template_id)
+
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        # Check access (user templates are private, system templates are public)
+        if not template.is_system_template and template.user_id != user_ctx["user_id"]:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        return {
+            "template_id": template.template_id,
+            "name": template.name,
+            "language": template.language,
+            "template_type": template.template_type.value,
+            "template_structure": template.template_structure,
+            "is_system_template": template.is_system_template,
+            "file_format": template.file_format,
+            "created_at": template.created_at.isoformat(),
+            "updated_at": template.updated_at.isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Template Get] Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get template")
+
+
+@app.delete("/templates/{template_id}")
+async def delete_template(
+    template_id: str,
+    user_ctx: dict = Depends(get_user_context),
+    template_repo = Depends(get_template_repo)
+):
+    """Delete a user template (system templates cannot be deleted)."""
+    try:
+        template = await template_repo.get_template_by_id(template_id)
+
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        if template.user_id != user_ctx["user_id"]:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        if template.is_system_template:
+            raise HTTPException(status_code=400, detail="Cannot delete system template")
+
+        success = await template_repo.delete_template(template_id)
+
+        return {"success": success}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Template Delete] Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete template")
+
+
+@app.post("/notes/generate/stream")
+async def generate_note_stream(
+    req: NoteGenerationRequestModel,
+    user_ctx: dict = Depends(get_user_context),
+    fhir_repo: FHIRRepository = Depends(get_user_fhir_repository),
+    template_repo = Depends(get_template_repo)
+):
+    """Generate clinical note with streaming (GDPR: content never stored)."""
+    try:
+        print(f"[Note Generate] Starting generation for template {req.template_id}")
+
+        # Get template
+        template = await template_repo.get_template_by_id(req.template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        # Get patient context if provided
+        patient_ctx = None
+        if req.patient_id:
+            try:
+                patient_ctx = await fhir_repo.get_patient(req.patient_id)
+            except Exception as e:
+                print(f"[Note Generate] Warning: Could not fetch patient: {e}")
+
+        # Start metadata tracking
+        import hashlib
+        generation_id = str(uuid.uuid4())
+        from optimed.core.domain import NoteGenerationMetadata, NoteGenerationStatus
+
+        context_hash = None
+        if req.context_prompt:
+            context_hash = hashlib.sha256(req.context_prompt.encode()).hexdigest()
+
+        metadata = NoteGenerationMetadata(
+            generation_id=generation_id,
+            user_id=user_ctx["user_id"],
+            patient_id=req.patient_id,
+            template_id=req.template_id,
+            session_id=req.session_id,
+            template_name=template.name,
+            template_type=template.template_type,
+            language=template.language,
+            status=NoteGenerationStatus.STARTED,
+            context_prompt_hash=context_hash,
+            created_at=datetime.now(timezone.utc)
+        )
+        await template_repo.save_generation_metadata(metadata)
+
+        # Stream generation using orchestrator
+        async def event_stream():
+            try:
+                async for event in _engine.run_stream(
+                    patient=patient_ctx,
+                    user_prompt=req.context_prompt or "Generate clinical note",
+                    user_id=user_ctx["user_id"],
+                    session_id=req.session_id,
+                    is_note_generation_flow=True,
+                    note_template=template,
+                    note_generation_id=generation_id,
+                    note_context_prompt=req.context_prompt
+                ):
+                    # Forward all events to frontend
+                    yield f"data: {json.dumps(event)}\n\n"
+
+                # Update metadata on completion
+                await template_repo.update_generation_metadata(
+                    generation_id=generation_id,
+                    status=NoteGenerationStatus.COMPLETED
+                )
+
+            except Exception as e:
+                error_event = {"type": "error", "message": str(e)}
+                yield f"data: {json.dumps(error_event)}\n\n"
+
+                await template_repo.update_generation_metadata(
+                    generation_id=generation_id,
+                    status=NoteGenerationStatus.ERROR,
+                    error_message=str(e)
+                )
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive"
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Note Generate] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to generate note")
+
+
+@app.get("/notes/metadata/history")
+async def get_generation_history(
+    patient_id: Optional[str] = Query(None),
+    limit: int = Query(50, le=100),
+    user_ctx: dict = Depends(get_user_context),
+    template_repo = Depends(get_template_repo)
+):
+    """Get generation metadata history (GDPR: no actual note content)."""
+    try:
+        history = await template_repo.get_generation_history(
+            user_id=user_ctx["user_id"],
+            patient_id=patient_id,
+            limit=limit
+        )
+
+        return {
+            "history": [
+                {
+                    "generation_id": h.generation_id,
+                    "template_name": h.template_name,
+                    "template_type": h.template_type.value,
+                    "language": h.language,
+                    "status": h.status.value,
+                    "patient_id": h.patient_id,
+                    "chunks_used_count": h.chunks_used_count,
+                    "conversation_turns_included": h.conversation_turns_included,
+                    "export_method": h.export_method.value if h.export_method else None,
+                    "created_at": h.created_at.isoformat(),
+                    "completed_at": h.completed_at.isoformat() if h.completed_at else None,
+                    "duration_seconds": h.duration_seconds
+                }
+                for h in history
+            ]
+        }
+
+    except Exception as e:
+        print(f"[Note History] Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get history")

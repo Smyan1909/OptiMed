@@ -2,7 +2,7 @@
 
 import { useState, useEffect, FormEvent, useRef } from "react";
 import { useUser } from '@/contexts/UserContext';
-import { Download, Image as ImageIcon, ExternalLink, Paperclip, FileText, X } from 'lucide-react';
+import { Download, Image as ImageIcon, ExternalLink, Paperclip, FileText, X, FileEdit } from 'lucide-react';
 import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse, uploadPDFDocument, listPDFDocuments, deletePDFDocument, PDFDocument, uploadXMLDocument, listXMLDocuments, deleteXMLDocument, XMLDocument } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
 import { useStreamingChat } from "@/hooks/useStreamingChat";
@@ -11,6 +11,7 @@ import { ReasoningViewer } from "./ReasoningViewer";
 import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCards";
 import { SBARSummaryCards } from "./SBARSummaryCards";
 import { TimelineView } from "./TimelineView";
+import { NoteGenerationDialog } from "./NoteGenerationDialog";
 import { useLayoutEffect } from "react";
 import ModeSelector from "./ModeSelector";
 import { useTranslations, useLocale } from 'next-intl';
@@ -731,7 +732,10 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
   const [uploadedXMLs, setUploadedXMLs] = useState<XMLDocument[]>([]);
   const [isUploadingXML, setIsUploadingXML] = useState(false);
   const xmlFileInputRef = useRef<HTMLInputElement>(null);
-  
+
+  // Note generation state
+  const [noteGenerationDialogOpen, setNoteGenerationDialogOpen] = useState(false);
+
   // Check if info mode selection is enabled
   const isInfoModeEnabled = process.env.NEXT_PUBLIC_INFO_MODE === 'false';
 
@@ -2061,6 +2065,42 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           </div>
         </div>
       )}
+
+      {/* Generate Note Button - Show when there's conversation history */}
+      {messages.length > 0 && !isStreaming && (
+        <div className="absolute left-4 bottom-24 z-20 pointer-events-auto">
+          <button
+            onClick={() => setNoteGenerationDialogOpen(true)}
+            className="flex items-center gap-2 px-4 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-all shadow-lg hover:shadow-xl"
+            title="Generate clinical note from conversation"
+          >
+            <FileEdit className="h-5 w-5" />
+            <span>Generate Note</span>
+          </button>
+        </div>
+      )}
+
+      {/* Note Generation Dialog */}
+      <NoteGenerationDialog
+        open={noteGenerationDialogOpen}
+        onOpenChange={setNoteGenerationDialogOpen}
+        patientId={patientId}
+        sessionId={sessionId}
+        onNoteGenerated={(noteContent) => {
+          // Add the generated note to messages as confirmation
+          setMessages((prev) => [
+            ...prev,
+            {
+              sender: "system",
+              text: "✅ Note generated and copied to clipboard successfully!",
+              timestamp: new Date().toLocaleTimeString(locale, {
+                hour: '2-digit',
+                minute: '2-digit'
+              }),
+            },
+          ]);
+        }}
+      />
     </div>
   );
 }

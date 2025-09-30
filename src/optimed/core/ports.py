@@ -26,7 +26,15 @@ from optimed.core.domain import (
     SessionParticipant,
     JournalEntry,
     JournalEntryCreate,
-    JournalEntryUpdate )
+    JournalEntryUpdate,
+    NoteTemplate,
+    NoteGenerationRequest,
+    GeneratedNote,
+    NoteGenerationMetadata,
+    TemplateType,
+    NoteGenerationStatus,
+    NoteExportMethod,
+)
 
 from optimed.core.domain.pdf_document import PDFDocument, PDFUploadRequest, PDFMetadata
 from optimed.core.domain.xml_document import XMLDocument, XMLMetadata
@@ -285,7 +293,7 @@ class DiagnosticEngine(Protocol):
         """Return the top diagnosis (v0) or ranked list (v1)."""
         ...
 
-    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
+    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None, note_template: NoteTemplate | None = None, note_generation_id: str | None = None, note_context_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Run the diagnostic engine with streaming support."""
         ...
 
@@ -864,5 +872,146 @@ class XMLService(Protocol):
         patient_id: Optional[str] = None
     ) -> None:
         """Clean up XML documents for a specific user session."""
+        ...
+
+
+# ==================== NOTE TEMPLATE PROTOCOLS ====================
+
+class TemplateRepository(Protocol):
+    """Repository for note template persistence."""
+
+    async def create_template(self, template: NoteTemplate) -> NoteTemplate:
+        """Create a new template."""
+        ...
+
+    async def get_template_by_id(self, template_id: str) -> Optional[NoteTemplate]:
+        """Get template by ID."""
+        ...
+
+    async def list_templates(
+        self,
+        user_id: str,
+        include_system: bool = True,
+        language: Optional[str] = None,
+        template_type: Optional[str] = None
+    ) -> List[NoteTemplate]:
+        """List templates available to user."""
+        ...
+
+    async def update_template(self, template: NoteTemplate) -> NoteTemplate:
+        """Update existing template."""
+        ...
+
+    async def delete_template(self, template_id: str) -> bool:
+        """Delete template (user templates only)."""
+        ...
+
+    async def save_generation_metadata(
+        self, metadata: NoteGenerationMetadata
+    ) -> None:
+        """Save generation metadata (GDPR-safe, no content)."""
+        ...
+
+    async def update_generation_metadata(
+        self,
+        generation_id: str,
+        status: NoteGenerationStatus,
+        export_method: Optional[NoteExportMethod] = None,
+        error_message: Optional[str] = None
+    ) -> None:
+        """Update generation metadata status."""
+        ...
+
+    async def get_generation_history(
+        self,
+        user_id: str,
+        patient_id: Optional[str] = None,
+        limit: int = 50
+    ) -> List[NoteGenerationMetadata]:
+        """Get metadata history (no actual note content)."""
+        ...
+
+
+class TemplateService(Protocol):
+    """Service for template management and parsing."""
+
+    async def parse_uploaded_file(
+        self,
+        file_content: bytes,
+        filename: str,
+        file_type: str
+    ) -> Dict[str, Any]:
+        """Parse uploaded template file to structured format."""
+        ...
+
+    async def validate_template_structure(
+        self, structure: Dict[str, Any]
+    ) -> bool:
+        """Validate template structure format."""
+        ...
+
+    async def get_system_templates(
+        self, language: Optional[str] = None
+    ) -> List[NoteTemplate]:
+        """Get pre-defined system templates."""
+        ...
+
+    async def create_template_from_upload(
+        self,
+        user_id: str,
+        name: str,
+        language: str,
+        template_type: TemplateType,
+        file_content: bytes,
+        filename: str
+    ) -> NoteTemplate:
+        """Parse uploaded file and create template."""
+        ...
+
+
+class NoteGenerator(Protocol):
+    """Service for generating clinical notes from context."""
+
+    async def generate_note_streaming(
+        self,
+        request: NoteGenerationRequest,
+        patient_context: Optional[PatientContext],
+        conversation_history: List[ChatMessage],
+        template: NoteTemplate,
+        user: User
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Generate note content using LLM + retrieval.
+        Streams progress updates and final ephemeral content.
+        Records metadata only (no content persistence).
+
+        Yields:
+            Dict with:
+            - type: 'progress' | 'section' | 'complete' | 'error'
+            - data: progress info or section content
+        """
+        ...
+
+    async def start_generation_metadata(
+        self,
+        request: NoteGenerationRequest,
+        template: NoteTemplate
+    ) -> str:
+        """
+        Start generation and create metadata record.
+        Returns generation_id.
+        """
+        ...
+
+    async def complete_generation_metadata(
+        self,
+        generation_id: str,
+        status: NoteGenerationStatus,
+        export_method: Optional[NoteExportMethod] = None,
+        chunks_count: int = 0,
+        conversation_turns: int = 0,
+        error_message: Optional[str] = None
+    ) -> None:
+        """Complete generation metadata (no content saved)."""
         ...
 

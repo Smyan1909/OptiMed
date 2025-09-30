@@ -100,6 +100,10 @@ class StreamingStatus:
             "retrieve_timeline_chunks": "Retrieving medical records for each timeline event from patient history...",
             "generate_timeline_bubbles": "Generating timeline explanations with clinical findings and citations...",
             "merge_timeline_results": "Formatting timeline for display with temporal sequence...",
+            # Note generation flow descriptions
+            "generate_note_section": f"Generating clinical note sections using template: {getattr(self.state, 'note_template', {}).name if hasattr(getattr(self.state, 'note_template', None), 'name') else 'Unknown'}...",
+            "format_note_response": "Formatting generated note for final review and export...",
+            "store_note_metadata": "Recording note generation metadata (GDPR-compliant, no content stored)...",
         }
 
         return descriptions.get(step_lower, f"Starting {self.step_name}...")
@@ -215,10 +219,34 @@ class StreamingStatus:
             return "User message stored in chat history"
         
         elif step_lower == "store_assistant_response":
-            reasoning_stored = hasattr(self.state, 'llm_reasoning') and getattr(self.state, 'llm_reasoning', '') # type: ignore 
+            reasoning_stored = hasattr(self.state, 'llm_reasoning') and getattr(self.state, 'llm_reasoning', '') # type: ignore
             image_stored = hasattr(self.state, 'generated_image') and getattr(self.state, 'generated_image', None)
             return f"AI response saved to chat history{' with reasoning' if reasoning_stored else ''}{' and image' if image_stored else ''}"
-        
+
+        # Note generation flow completions
+        elif step_lower == "generate_note_section":
+            note_sections = getattr(self.state, 'note_sections', {})
+            note_content = getattr(self.state, 'note_final_content', '')
+            if note_content:
+                return f"Generated {len(note_sections)} note sections - Total: {len(note_content)} characters"
+            else:
+                return "Note section generation completed"
+
+        elif step_lower == "format_note_response":
+            note_content = getattr(self.state, 'note_final_content', '')
+            note_sources = getattr(self.state, 'note_sources', [])
+            if note_content:
+                return f"Note formatted for review - {len(note_content)} characters with {len(note_sources)} citations"
+            else:
+                return "Note formatting completed"
+
+        elif step_lower == "store_note_metadata":
+            generation_id = getattr(self.state, 'note_generation_id', None)
+            if generation_id:
+                return f"Metadata stored for generation ID: {generation_id[:8]}..."
+            else:
+                return "Note metadata stored successfully"
+
         # Fallback
         return f"Completed {self.step_name}"
 
