@@ -95,8 +95,13 @@ class StreamingStatus:
             "evaluate_query_complexity": "Determining if the user query requires full processing or can be answered directly",
             "evaluate_icd_parsing_need": "Analyzing if differential diagnoses should be generated for this patient case",
             "parse_icd": "Computing differential diagnoses with confidence scores using Bayesian analysis...",
+            # Timeline flow descriptions
+            "extract_timeline_events": "Analyzing medical history to identify key temporal events and time periods...",
+            "retrieve_timeline_chunks": "Retrieving medical records for each timeline event from patient history...",
+            "generate_timeline_bubbles": "Generating timeline explanations with clinical findings and citations...",
+            "merge_timeline_results": "Formatting timeline for display with temporal sequence...",
         }
-        
+
         return descriptions.get(step_lower, f"Starting {self.step_name}...")
     
     def _get_completed_description(self, step_lower: str) -> str:

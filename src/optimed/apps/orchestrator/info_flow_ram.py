@@ -174,7 +174,13 @@ class FlowState(BaseModel):
 
     # SBAR retrieval cache for performance optimization
     sbar_retrieval_cache: Optional[Dict[str, Any]] = None
-    
+
+    # Timeline flow fields
+    is_timeline_flow: bool = False
+    timeline_events: Optional[List[Dict[str, Any]]] = None  # Generated timeline events
+    timeline_chunks: Optional[Dict[str, List[str]]] = None  # Chunks per event
+    timeline_results: Optional[List[Dict[str, Any]]] = None  # Final timeline bubbles
+    timeline_retrieval_cache: Optional[Dict[str, Any]] = None
 
 
 class LangGraphRAMInformationEngine(DiagnosticEngine):
@@ -886,6 +892,63 @@ Keep queries concise and medical terminology appropriate.
                 }
                 return fallback_queries.get(sbar_component, ["medical information"])
 
+        async def _generate_timeline_queries(state: FlowState, event_description: str, time_period: str) -> List[str]:
+            """Generate focused temporal queries for each timeline event."""
+            try:
+                print(f"[_generate_timeline_queries] Generating queries for event: '{event_description}' at '{time_period}'")
+
+                prompt = f"""
+Based on this user request: "{state.user_prompt}"
+
+Generate 2-3 specific search queries to find information about this medical event:
+Event: {event_description}
+Time Period: {time_period}
+
+Focus on:
+- What happened at this specific time
+- Clinical findings and observations from this period
+- Treatments, medications, or interventions during this time
+- Results or outcomes from this time period
+
+Return only the queries, one per line, without numbers or bullets.
+Keep queries concise and focused on the temporal aspect.
+"""
+
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist generating temporal search queries for timeline events."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                response = await self._llm.chat(messages)
+
+                # Parse response into individual queries
+                queries = []
+                for line in response.content.strip().split('\n'):
+                    query = line.strip()
+                    if query and not query.startswith(('1.', '2.', '3.', '-', '•')):
+                        queries.append(query)
+
+                if len(queries) < 2:
+                    # Fallback queries if LLM didn't generate enough
+                    fallback = [
+                        f"{event_description} at {time_period}",
+                        f"clinical findings {time_period}",
+                        f"treatment during {time_period}"
+                    ]
+                    queries.extend(fallback[:3-len(queries)])
+
+                print(f"[_generate_timeline_queries] Generated {len(queries)} queries: {queries}")
+                return queries[:3]  # Limit to 3 queries
+
+            except Exception as e:
+                print(f"[_generate_timeline_queries] Error generating queries: {e}")
+                # Return fallback queries
+                return [
+                    f"{event_description} {time_period}",
+                    f"medical events {time_period}",
+                    f"clinical findings {time_period}"
+                ]
+
         @streaming_step("retrieve_situation_chunks")
         async def retrieve_situation_chunks(state: FlowState) -> FlowState:
             """Retrieve chunks focused on current patient situation (fast SBAR version)."""
@@ -1570,6 +1633,283 @@ Keep queries concise and medical terminology appropriate.
 
             return state
 
+        # ==================== TIMELINE FLOW NODES ====================
+
+        @streaming_step("extract_timeline_events")
+        async def extract_timeline_events(state: FlowState) -> FlowState:
+            """Extract key temporal events from user query and chat history."""
+            try:
+                print("[extract_timeline_events] Analyzing query for temporal events")
+
+                # Include chat history context for better event extraction
+                recent_history = state.chat_history[-10:] if state.chat_history else []
+                history_context = "\n".join([f"{msg.role.value}: {msg.content[:100]}" for msg in recent_history]) if recent_history else "No previous context"
+
+                prompt = f"""
+Based on this user request: "{state.user_prompt}"
+
+Previous conversation context:
+{history_context}
+
+Identify 4-6 key temporal events or time periods from the patient's medical history that are relevant to this request.
+
+For each event, provide:
+1. A brief title/description (5-10 words)
+2. The time period (e.g., "March 2024", "Initial visit", "Day 3", "2 weeks ago", etc.)
+3. 2-3 keywords to focus the search
+
+Format your response as JSON:
+[
+  {{"title": "Event title", "time_period": "Time reference", "keywords": ["keyword1", "keyword2"]}},
+  ...
+]
+
+Return ONLY the JSON array, no additional text.
+"""
+
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist extracting temporal events from medical histories. Always respond with valid JSON only."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                response = await self._llm.chat(messages)
+
+                # Parse JSON response
+                try:
+                    events = json.loads(response.content.strip())
+                    if not isinstance(events, list) or len(events) == 0:
+                        raise ValueError("No events extracted")
+
+                    # Limit to 6 events max
+                    state.timeline_events = events[:6]
+                    print(f"[extract_timeline_events] Extracted {len(state.timeline_events)} timeline events")
+
+                except json.JSONDecodeError as e:
+                    print(f"[extract_timeline_events] JSON parse error: {e}, using fallback events")
+                    # Fallback: create simple temporal events
+                    state.timeline_events = [
+                        {"title": "Initial presentation", "time_period": "First visit", "keywords": ["initial", "presentation", "symptoms"]},
+                        {"title": "Diagnostic workup", "time_period": "Early phase", "keywords": ["tests", "diagnosis", "findings"]},
+                        {"title": "Treatment initiation", "time_period": "Treatment start", "keywords": ["treatment", "medication", "intervention"]},
+                        {"title": "Current status", "time_period": "Recent", "keywords": ["current", "latest", "recent"]}
+                    ]
+
+            except Exception as e:
+                print(f"[extract_timeline_events] Error: {e}")
+                # Fallback events
+                state.timeline_events = [
+                    {"title": "Medical history overview", "time_period": "Historical", "keywords": ["history", "background"]},
+                    {"title": "Recent developments", "time_period": "Recent", "keywords": ["recent", "current", "latest"]}
+                ]
+
+            # Initialize storage for chunks
+            state.timeline_chunks = {}
+            return state
+
+        @streaming_step("retrieve_timeline_chunks")
+        async def retrieve_timeline_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks for each timeline event sequentially."""
+            try:
+                print("[retrieve_timeline_chunks] Starting retrieval for timeline events")
+
+                if not state.timeline_events:
+                    print("[retrieve_timeline_chunks] No timeline events to retrieve")
+                    return state
+
+                state.timeline_chunks = {}
+
+                # Retrieve chunks for each event sequentially
+                for idx, event in enumerate(state.timeline_events):
+                    event_id = f"event_{idx}"
+                    title = event.get("title", "Unknown event")
+                    time_period = event.get("time_period", "Unknown time")
+
+                    print(f"[retrieve_timeline_chunks] Retrieving chunks for: {title} ({time_period})")
+
+                    # Generate queries for this event
+                    queries = await _generate_timeline_queries(state, title, time_period)
+
+                    # Use fast retrieval (same as SBAR)
+                    chunks = await _fast_sbar_retrieve(state, f"timeline_{idx}", queries)
+
+                    # Store chunks for this event
+                    state.timeline_chunks[event_id] = chunks[:8]  # Limit to 8 chunks per event
+                    print(f"[retrieve_timeline_chunks] Retrieved {len(state.timeline_chunks[event_id])} chunks for {title}")
+
+                print(f"[retrieve_timeline_chunks] Retrieved chunks for {len(state.timeline_chunks)} events")
+
+            except Exception as e:
+                print(f"[retrieve_timeline_chunks] Error: {e}")
+                state.timeline_chunks = {}
+
+            return state
+
+        @streaming_step("generate_timeline_bubbles")
+        async def generate_timeline_bubbles(state: FlowState) -> FlowState:
+            """Generate timeline bubble content for each event."""
+            try:
+                print("[generate_timeline_bubbles] Generating timeline content")
+
+                if not state.timeline_events:
+                    print("[generate_timeline_bubbles] No timeline events to generate")
+                    return state
+
+                state.timeline_results = []
+
+                # Include chat history context
+                recent_history = state.chat_history[-10:] if state.chat_history else []
+
+                # Define icon mapping
+                icon_mapping = {
+                    0: "calendar",
+                    1: "clock",
+                    2: "activity",
+                    3: "trending-up",
+                    4: "alert-circle",
+                    5: "file-text"
+                }
+
+                # Define color mapping
+                color_mapping = {
+                    0: "blue",
+                    1: "green",
+                    2: "orange",
+                    3: "purple",
+                    4: "red",
+                    5: "blue"
+                }
+
+                # Generate content for each event
+                for idx, event in enumerate(state.timeline_events):
+                    event_id = f"event_{idx}"
+                    title = event.get("title", "Unknown event")
+                    time_period = event.get("time_period", "Unknown time")
+                    chunks = state.timeline_chunks.get(event_id, [])
+
+                    print(f"[generate_timeline_bubbles] Generating content for: {title}")
+
+                    # Citation format
+                    citation_format = "Use **page X** format"
+
+                    # Build chunks context
+                    chunks_text = "\n\n---\n\n".join(chunks) if chunks else "No specific information available"
+
+                    # Build chat history context
+                    history_text = "\n".join([f"{msg.role.value}: {msg.content[:200]}" for msg in recent_history]) if recent_history else ""
+
+                    prompt = f"""
+Generate a VERY CONCISE explanation (2-3 short bullet points) for this timeline event.
+
+Event: {title}
+Time Period: {time_period}
+User Query: {state.user_prompt}
+
+Clinical Information:
+{chunks_text}
+
+Previous conversation (for context):
+{history_text}
+
+Focus on:
+- What happened during this time period
+- Key clinical findings or observations
+- Relevant treatments or interventions
+
+IMPORTANT:
+- Keep it VERY brief (2-3 bullet points max)
+- Include citations using {citation_format}
+- Preserve any EHR source links from the clinical information
+- Use professional medical language
+
+Return only the content in markdown format, no preamble.
+"""
+
+                    messages = [
+                        ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE timeline explanations (2-3 bullet points max).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief."),
+                        ChatMessage(role=ChatRole.USER, content=prompt)
+                    ]
+
+                    # Generate content
+                    response = await self._llm.chat(messages)
+                    content = response.content.strip()
+
+                    # Create timeline event result
+                    timeline_event = {
+                        "timestamp": time_period,
+                        "title": title,
+                        "content": content,
+                        "icon": icon_mapping.get(idx, "calendar"),
+                        "color": color_mapping.get(idx, "blue")
+                    }
+
+                    state.timeline_results.append(timeline_event)
+                    print(f"[generate_timeline_bubbles] Generated content for {title}: {len(content)} chars")
+
+                print(f"[generate_timeline_bubbles] Generated {len(state.timeline_results)} timeline bubbles")
+
+            except Exception as e:
+                print(f"[generate_timeline_bubbles] Error: {e}")
+                state.timeline_results = []
+
+            return state
+
+        @streaming_step("merge_timeline_results")
+        async def merge_timeline_results(state: FlowState) -> FlowState:
+            """Merge timeline results and format as JSON for frontend."""
+            try:
+                print("[merge_timeline_results] Merging timeline results")
+
+                if not state.timeline_results or len(state.timeline_results) == 0:
+                    print("[merge_timeline_results] No timeline results available")
+                    state.llm_response = ChatMessage(
+                        role=ChatRole.ASSISTANT,
+                        content="Error: No timeline results were generated"
+                    )
+                    return state
+
+                # Add conversation context metadata
+                conversation_context = {
+                    "session_id": state.session_id,
+                    "user_prompt": state.user_prompt,
+                    "timestamp": str(int(time.time() * 1000)),
+                    "has_history": bool(state.chat_history)
+                }
+
+                # Create structured timeline response for frontend
+                structured_timeline = {
+                    "type": "timeline_view",
+                    "context": conversation_context,
+                    "events": state.timeline_results
+                }
+
+                # Create JSON response
+                json_response = json.dumps(structured_timeline, indent=2)
+
+                # Store as chat message
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content=json_response
+                )
+
+                print(f"[merge_timeline_results] Created timeline response with {len(state.timeline_results)} events: {len(json_response)} chars")
+
+            except Exception as e:
+                print(f"[merge_timeline_results] Error: {e}")
+                # Fallback response
+                fallback_timeline = {
+                    "type": "timeline_view",
+                    "error": str(e),
+                    "events": []
+                }
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content=json.dumps(fallback_timeline, indent=2)
+                )
+
+            return state
+
+        # ==================== END TIMELINE FLOW NODES ====================
+
         @streaming_step("provide_information")
         async def provide_information(state: FlowState) -> FlowState:
             print("[provide_information] 🎯 Starting information provision")
@@ -1990,7 +2330,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 # Use the existing classifier
                 classifier = self._zero_shot_classifier
                 label = classifier.classify_query(state.user_prompt, [
-                    "lookup", "temporal-trend", "comparative", "reasoning", "summary", "guideline"
+                    "lookup", "temporal-trend", "comparative", "reasoning", "summary", "guideline", "timeline"
                 ])
 
                 print(f"[classify_query_intent] Query classified as: {label}")
@@ -2004,14 +2344,25 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 
                 print(f"[classify_query_intent] SBAR flow: {state.is_sbar_flow}")
 
+                # Determine if this should use Timeline flow (temporal sequence queries)
+                timeline_query_types = ["timeline", "temporal-trend"]
+                state.is_timeline_flow = label in timeline_query_types
+
+                print(f"[classify_query_intent] Timeline flow: {state.is_timeline_flow}")
+
                 # Initialize SBAR cache if using SBAR flow
                 if state.is_sbar_flow:
                     state.sbar_retrieval_cache = {}
+
+                # Initialize Timeline cache if using Timeline flow
+                if state.is_timeline_flow:
+                    state.timeline_retrieval_cache = {}
 
             except Exception as e:
                 print(f"[classify_query_intent] Classification failed: {e}, defaulting to regular flow")
                 state.query_classification = "lookup"  # Default fallback
                 state.is_sbar_flow = False
+                state.is_timeline_flow = False
 
             return state
 
@@ -2058,6 +2409,11 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_node("generate_sbar_recommendation", generate_sbar_recommendation)
         _builder.add_node("merge_sbar_results", merge_sbar_results)
         _builder.add_node("sbar_parallel_dispatcher", sbar_parallel_dispatcher)
+        # Timeline flow nodes
+        _builder.add_node("extract_timeline_events", extract_timeline_events)
+        _builder.add_node("retrieve_timeline_chunks", retrieve_timeline_chunks)
+        _builder.add_node("generate_timeline_bubbles", generate_timeline_bubbles)
+        _builder.add_node("merge_timeline_results", merge_timeline_results)
         _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
         _builder.add_node("perform_web_search", perform_web_search)
         _builder.add_node("provide_information", provide_information)
@@ -2136,9 +2492,17 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         # SBAR merge to store response (skip web search for now in SBAR flow)
         _builder.add_edge("merge_sbar_results", "store_assistant_response")
 
-        # Route after chunk retrieval: check if SBAR flow
+        # Timeline flow edges - sequential processing
+        _builder.add_edge("extract_timeline_events", "retrieve_timeline_chunks")
+        _builder.add_edge("retrieve_timeline_chunks", "generate_timeline_bubbles")
+        _builder.add_edge("generate_timeline_bubbles", "merge_timeline_results")
+        _builder.add_edge("merge_timeline_results", "store_assistant_response")
+
+        # Route after chunk retrieval: check if SBAR or Timeline flow
         def route_after_chunks(state):
-            if hasattr(state, 'is_sbar_flow') and state.is_sbar_flow:
+            if hasattr(state, 'is_timeline_flow') and state.is_timeline_flow:
+                return "extract_timeline_events"
+            elif hasattr(state, 'is_sbar_flow') and state.is_sbar_flow:
                 return "sbar_parallel_dispatcher"
             elif hasattr(state, 'needs_refinement') and state.needs_refinement:
                 return "intelligent_retrieve_chunks"
@@ -2149,6 +2513,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
             "intelligent_retrieve_chunks",
             route_after_chunks,
             {
+                "extract_timeline_events": "extract_timeline_events",
                 "sbar_parallel_dispatcher": "sbar_parallel_dispatcher",
                 "intelligent_retrieve_chunks": "intelligent_retrieve_chunks",
                 "evaluate_web_search_need": "evaluate_web_search_need"

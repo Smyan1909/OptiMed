@@ -10,6 +10,7 @@ import { StreamingProgress } from "./StreamingProgress";
 import { ReasoningViewer } from "./ReasoningViewer";
 import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCards";
 import { SBARSummaryCards } from "./SBARSummaryCards";
+import { TimelineView } from "./TimelineView";
 import { useLayoutEffect } from "react";
 import ModeSelector from "./ModeSelector";
 import { useTranslations, useLocale } from 'next-intl';
@@ -60,6 +61,18 @@ interface SBARResults {
   recommendation?: string;
 }
 
+interface TimelineEvent {
+  timestamp: string;
+  title: string;
+  content: string;
+  icon: string;
+  color: string;
+}
+
+interface TimelineResults {
+  events: TimelineEvent[];
+}
+
 interface Message {
   sender: "user" | "system";
   text: string;
@@ -70,6 +83,7 @@ interface Message {
   reasoning?: string;
   differentialDiagnoses?: DifferentialDiagnosis[];
   sbarResults?: SBARResults;
+  timelineResults?: TimelineResults;
 }
 
 interface ChatBoxProps {
@@ -1026,10 +1040,19 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                     // Clear the content so we don't display the raw JSON
                     formattedMessage.text = '';
                     console.log(`✅ Successfully processed SBAR cards, cleared text`);
+                  } else if (parsedContent.type === 'timeline_view' && parsedContent.events) {
+                    console.log(`📅 Processing JSON Timeline for message ${index}:`, parsedContent);
+                    formattedMessage.timelineResults = {
+                      events: parsedContent.events
+                    };
+                    // Clear the content so we don't display the raw JSON
+                    formattedMessage.text = '';
+                    console.log(`✅ Successfully processed Timeline, cleared text`);
                   } else {
-                    console.log(`📄 JSON parsed but not SBAR cards format for message ${index}:`, {
+                    console.log(`📄 JSON parsed but not SBAR cards or Timeline format for message ${index}:`, {
                       type: parsedContent.type,
-                      hasComponents: !!parsedContent.components
+                      hasComponents: !!parsedContent.components,
+                      hasEvents: !!parsedContent.events
                     });
                   }
                 } else {
@@ -1135,9 +1158,10 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           hasReasoning: !!reasoningText
         });
         
-        // Check if finalResponse is SBAR JSON format and parse it
+        // Check if finalResponse is SBAR or Timeline JSON format and parse it
         let messageText = finalResponse;
         let sbarResults = undefined;
+        let timelineResults = undefined;
 
         try {
           const trimmedText = finalResponse?.trim();
@@ -1156,6 +1180,14 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
               // Clear the text so we don't display the raw JSON
               messageText = '';
               console.log(`✅ Successfully processed streaming SBAR cards, cleared text`);
+            } else if (parsedContent.type === 'timeline_view' && parsedContent.events) {
+              console.log(`📅 Processing streaming Timeline:`, parsedContent);
+              timelineResults = {
+                events: parsedContent.events
+              };
+              // Clear the text so we don't display the raw JSON
+              messageText = '';
+              console.log(`✅ Successfully processed streaming Timeline, cleared text`);
             }
           }
         } catch (e: any) {
@@ -1170,7 +1202,8 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           reasoningSteps: reasoning,
           generatedImage: formattedGeneratedImage,
           differentialDiagnoses: streamDifferentialDiagnoses,
-          sbarResults: sbarResults
+          sbarResults: sbarResults,
+          timelineResults: timelineResults
         };
         
         console.log('🔥 Creating new message with data:', {
@@ -1720,7 +1753,18 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                   </div>
                 )}
 
-                {msg.sender === 'system' && msg.reasoningSteps && (msg.reasoning || msg.reasoningSteps?.length > 0) && !msg.sbarResults && (
+                {msg.sender === 'system' && msg.timelineResults && (
+                  <div className="mt-3">
+                    <TimelineView
+                      events={msg.timelineResults.events}
+                      isLoading={msg.loading}
+                      patientId={patientId}
+                      sessionId={sessionId}
+                    />
+                  </div>
+                )}
+
+                {msg.sender === 'system' && msg.reasoningSteps && (msg.reasoning || msg.reasoningSteps?.length > 0) && !msg.sbarResults && !msg.timelineResults && (
                   <div className="mt-3">
                     <ReasoningViewer
                       reasoning={msg.reasoning || ''}
