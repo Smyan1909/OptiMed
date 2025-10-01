@@ -17,7 +17,7 @@ interface GeneratedImage {
 }
 
 interface StreamingUpdate {
-  type: 'status' | 'reasoning' | 'reasoning_complete' | 'response_chunk' | 'completion' | 'error' | 'differential_diagnosis_progress';
+  type: 'status' | 'reasoning' | 'reasoning_complete' | 'response_chunk' | 'completion' | 'error' | 'differential_diagnosis_progress' | 'note_generation_progress';
   step?: string;
   description?: string;
   message?: string;
@@ -34,6 +34,10 @@ interface StreamingUpdate {
   // New fields for differential diagnosis progress
   diagnosis_name?: string;
   details?: string;
+  // New fields for note generation progress
+  template_type?: string;
+  template_name?: string;
+  note_generation_step?: string;
 }
 
 interface StreamingState {
@@ -55,6 +59,13 @@ interface StreamingState {
     currentStep: string;
     details: string;
   };
+  // New fields for note generation progress
+  noteGenerationProgress: {
+    isGenerating: boolean;
+    templateType: string;
+    templateName: string;
+    currentStep: string;
+  };
 }
 
 export const useStreamingChat = (sessionId?: string) => {
@@ -75,6 +86,12 @@ export const useStreamingChat = (sessionId?: string) => {
       currentDiagnosis: '',
       currentStep: '',
       details: ''
+    },
+    noteGenerationProgress: {
+      isGenerating: false,
+      templateType: '',
+      templateName: '',
+      currentStep: ''
     }
   });
 
@@ -215,20 +232,26 @@ export const useStreamingChat = (sessionId?: string) => {
               currentStep: '',
               details: ''
             },
+            noteGenerationProgress: {
+              isGenerating: false,
+              templateType: '',
+              templateName: '',
+              currentStep: ''
+            },
             updates: newUpdates
           };
 
         case 'differential_diagnosis_progress':
           console.log('🩺 Differential diagnosis progress received:', update);
           console.log('🩺 Current diagnosis:', update.diagnosis_name, 'Step:', update.step, 'Details:', update.details);
-          
+
           // Check if this is a completion update
-          const isCompleting = update.step?.toLowerCase().includes('complete') || 
-                              update.step?.toLowerCase().includes('finished') || 
+          const isCompleting = update.step?.toLowerCase().includes('complete') ||
+                              update.step?.toLowerCase().includes('finished') ||
                               update.diagnosis_name?.toLowerCase().includes('complete');
-          
+
           console.log('🩺 Is completing?', isCompleting);
-          
+
           return {
             ...prev,
             differentialDiagnosisProgress: {
@@ -239,6 +262,29 @@ export const useStreamingChat = (sessionId?: string) => {
             },
             currentStep: isCompleting ? 'Differential Diagnoses Complete' : 'Computing Differential Diagnoses',
             currentDescription: `${isCompleting ? 'Completed: ' : 'Analyzing '}${update.diagnosis_name}: ${update.step}${update.details ? ' - ' + update.details : ''}`,
+            updates: newUpdates
+          };
+
+        case 'note_generation_progress':
+          console.log('📝 Note generation progress received:', update);
+          console.log('📝 Template:', update.template_name, 'Type:', update.template_type, 'Step:', update.note_generation_step);
+
+          // Check if note generation is complete
+          const isNoteComplete = update.note_generation_step?.toLowerCase().includes('complete') ||
+                                 update.note_generation_step?.toLowerCase().includes('finished');
+
+          console.log('📝 Is note complete?', isNoteComplete);
+
+          return {
+            ...prev,
+            noteGenerationProgress: {
+              isGenerating: !isNoteComplete,
+              templateType: update.template_type || prev.noteGenerationProgress.templateType,
+              templateName: update.template_name || prev.noteGenerationProgress.templateName,
+              currentStep: update.note_generation_step || update.step || ''
+            },
+            currentStep: isNoteComplete ? 'Note Generation Complete' : 'Generating Clinical Note',
+            currentDescription: update.description || `Generating ${update.template_type || 'clinical'} note...`,
             updates: newUpdates
           };
 
@@ -299,6 +345,12 @@ export const useStreamingChat = (sessionId?: string) => {
         currentDiagnosis: '',
         currentStep: '',
         details: ''
+      },
+      noteGenerationProgress: {
+        isGenerating: false,
+        templateType: '',
+        templateName: '',
+        currentStep: ''
       }
     });
 
@@ -428,10 +480,11 @@ export const useStreamingChat = (sessionId?: string) => {
     currentReasoning: state.currentReasoning,
     generatedImage: state.generatedImage,
     differentialDiagnosisProgress: state.differentialDiagnosisProgress,
-    
+    noteGenerationProgress: state.noteGenerationProgress,
+
     // Additional state
     streamDifferentialDiagnoses,
-    
+
     // Functions
     startStream,
     stopStream,

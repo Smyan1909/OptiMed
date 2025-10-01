@@ -101,6 +101,7 @@ class StreamingStatus:
             "generate_timeline_bubbles": "Generating timeline explanations with clinical findings and citations...",
             "merge_timeline_results": "Formatting timeline for display with temporal sequence...",
             # Note generation flow descriptions
+            "load_note_template": f"Loading clinical note template ({getattr(self.state, 'note_template_type_preference', 'journal entry')})...",
             "generate_note_section": f"Generating clinical note sections using template: {getattr(self.state, 'note_template', {}).name if hasattr(getattr(self.state, 'note_template', None), 'name') else 'Unknown'}...",
             "format_note_response": "Formatting generated note for final review and export...",
             "store_note_metadata": "Recording note generation metadata (GDPR-compliant, no content stored)...",
@@ -224,6 +225,13 @@ class StreamingStatus:
             return f"AI response saved to chat history{' with reasoning' if reasoning_stored else ''}{' and image' if image_stored else ''}"
 
         # Note generation flow completions
+        elif step_lower == "load_note_template":
+            note_template = getattr(self.state, 'note_template', None)
+            if note_template and hasattr(note_template, 'name'):
+                return f"Loaded template: {note_template.name} ({note_template.template_type.value})"
+            else:
+                return "Template loaded successfully"
+
         elif step_lower == "generate_note_section":
             note_sections = getattr(self.state, 'note_sections', {})
             note_content = getattr(self.state, 'note_final_content', '')

@@ -25,6 +25,7 @@ interface NoteGenerationDialogProps {
   patientId?: string;
   sessionId: string;
   onNoteGenerated?: (noteContent: string) => void;
+  initialNote?: string | null;
 }
 
 export function NoteGenerationDialog({
@@ -33,6 +34,7 @@ export function NoteGenerationDialog({
   patientId,
   sessionId,
   onNoteGenerated,
+  initialNote,
 }: NoteGenerationDialogProps) {
   const { user } = useUser();
   const [step, setStep] = useState<'template' | 'context' | 'generating' | 'editing'>('template');
@@ -45,6 +47,16 @@ export function NoteGenerationDialog({
   const [error, setError] = useState<string | null>(null);
   const [generationProgress, setGenerationProgress] = useState<string>('');
   const [filterLanguage, setFilterLanguage] = useState<string>('all');
+
+  // Handle auto-generated note (from natural language prompt)
+  useEffect(() => {
+    if (open && initialNote) {
+      console.log('📝 Auto-generated note detected, skipping to editing step');
+      setGeneratedNote(initialNote);
+      setEditedNote(initialNote);
+      setStep('editing');
+    }
+  }, [open, initialNote]);
 
   useEffect(() => {
     if (open && step === 'template') {

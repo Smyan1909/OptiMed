@@ -8,7 +8,7 @@ import time
 import math
 import asyncio
 from typing import List, Any, Union, AsyncGenerator, Optional, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
@@ -185,6 +185,7 @@ class FlowState(BaseModel):
     # Note generation flow fields
     is_note_generation_flow: bool = False
     note_template: Optional[Any] = None  # NoteTemplate object
+    note_template_type_preference: Optional[str] = None  # For auto-selected templates
     note_generation_id: Optional[str] = None
     note_context_prompt: Optional[str] = None
     note_sections: Dict[str, str] = Field(default_factory=dict)
@@ -1921,6 +1922,104 @@ Return only the content in markdown format, no preamble.
 
         # ==================== NOTE GENERATION FLOW NODES ====================
 
+        @streaming_step("load_note_template")
+        async def load_note_template(state: FlowState) -> FlowState:
+            """Load system template if note generation was auto-triggered."""
+            try:
+                # If template already set (from button), skip
+                if state.note_template:
+                    print(f"[load_note_template] Template already set: {state.note_template.name}")
+                    return state
+
+                # If no preference set, can't load template
+                if not state.note_template_type_preference:
+                    print("[load_note_template] ⚠️ No template type preference set")
+                    return state
+
+                print(f"[load_note_template] Loading system template of type: {state.note_template_type_preference}")
+
+                # Get template repository from engine
+                # We need to access it from the engine's dependencies
+                # For now, we'll use a simple in-memory approach
+                from optimed.core.domain import NoteTemplate, TemplateType
+
+                # Detect language
+                from optimed.core.lang import detect_language_code
+                lang_code = detect_language_code(state.user_prompt)
+
+                # Map to system template
+                template_configs = {
+                    "sbar": {
+                        "sv": ("SBAR", "sbar", {"fields": [
+                            {"name": "situation", "label": "Situation", "type": "text"},
+                            {"name": "bakgrund", "label": "Bakgrund", "type": "text"},
+                            {"name": "aktuellt_tillstand", "label": "Aktuellt tillstånd", "type": "text"},
+                            {"name": "rekommendation", "label": "Rekommendation", "type": "text"}
+                        ]}),
+                        "en": ("SBAR", "sbar", {"fields": [
+                            {"name": "situation", "label": "Situation", "type": "text"},
+                            {"name": "background", "label": "Background", "type": "text"},
+                            {"name": "assessment", "label": "Assessment", "type": "text"},
+                            {"name": "recommendation", "label": "Recommendation", "type": "text"}
+                        ]})
+                    },
+                    "soap": {
+                        "en": ("SOAP Note", "soap", {"fields": [
+                            {"name": "subjective", "label": "Subjective", "type": "text"},
+                            {"name": "objective", "label": "Objective", "type": "text"},
+                            {"name": "assessment", "label": "Assessment", "type": "text"},
+                            {"name": "plan", "label": "Plan", "type": "text"}
+                        ]})
+                    },
+                    "journal_entry": {
+                        "sv": ("Journalanteckning", "journal_entry", {"fields": [
+                            {"name": "anamnes", "label": "Anamnes", "type": "text"},
+                            {"name": "status", "label": "Status", "type": "text"},
+                            {"name": "bedomning", "label": "Bedömning", "type": "text"},
+                            {"name": "atgard", "label": "Åtgärd", "type": "text"},
+                            {"name": "plan", "label": "Plan", "type": "text"}
+                        ]})
+                    }
+                }
+
+                # Get config
+                template_type = state.note_template_type_preference
+                config = template_configs.get(template_type, {}).get(lang_code)
+
+                if not config:
+                    # Fallback to English or SBAR
+                    config = template_configs.get(template_type, {}).get("en")
+                    if not config:
+                        config = template_configs["sbar"]["en"]
+
+                name, type_str, structure = config
+
+                # Create temporary template
+                import uuid
+                state.note_template = NoteTemplate(
+                    template_id=str(uuid.uuid4()),
+                    user_id="system",
+                    name=name,
+                    language=lang_code,
+                    template_type=TemplateType(type_str),
+                    template_structure=structure,
+                    is_system_template=True,
+                    file_format="json",
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc)
+                )
+
+                state.note_generation_id = str(uuid.uuid4())
+
+                print(f"[load_note_template] ✓ Loaded template: {name} ({type_str}, {lang_code})")
+
+            except Exception as e:
+                print(f"[load_note_template] ❌ Error: {e}")
+                import traceback
+                traceback.print_exc()
+
+            return state
+
         @streaming_step("generate_note_section")
         async def generate_note_section(state: FlowState) -> FlowState:
             """
@@ -1972,16 +2071,17 @@ Type: {template.template_type.value}
 
 Your task is to fill in the template sections based on the provided clinical information.
 
-Guidelines:
-- Use ONLY information from the provided sources
-- Preserve all EHR source links in format [EHR Source](URL)
-- Be concise and clinically relevant
+CRITICAL GUIDELINES:
+- Be CONCISE and FOCUSED - include only essential clinical information
+- Do NOT include source references, citations, or document names (write directly from the information)
 - Use medical terminology appropriate for {lang_name}
 - If information is not available for a section, write "Information not available" or "Uppgifter saknas"
 - Maintain professional medical documentation style
 - Include relevant timestamps when available
+- Avoid unnecessary elaboration or repetition between sections
+- Write in clear, direct clinical language without filler words
 
-Generate content for each section separately, using the provided clinical data and conversation context."""
+Generate content for each section separately with only the necessary clinical facts."""
 
                 # Generate each section
                 sections = {}
@@ -2044,27 +2144,12 @@ Generate the content for "{field_label}" section now:"""
                     section_content = sections.get(field_name, "")
                     final_content += f"## {field_label}\n{section_content}\n\n"
 
-                # Extract sources from retrieved chunks
-                import re
-                sources = []
-                for chunk in state.retrieved_chunks[:15]:
-                    # Extract EHR source links from chunk content
-                    links = re.findall(r'\[EHR[^\]]*\]\((https?://[^\)]+)\)', chunk)
-                    sources.extend(links)
-
-                sources = list(set(sources))  # Remove duplicates
-
-                if sources:
-                    final_content += f"\n\n## Sources\n"
-                    for i, source in enumerate(sources[:10], 1):
-                        final_content += f"{i}. {source}\n"
-
-                # Update state
+                # Update state (no sources needed)
                 state.note_sections = sections
                 state.note_final_content = final_content
-                state.note_sources = sources
+                state.note_sources = []
 
-                print(f"[generate_note_section] ✓ Complete note generated: {len(final_content)} chars, {len(sources)} sources")
+                print(f"[generate_note_section] ✓ Complete note generated: {len(final_content)} chars")
 
                 return state
 
@@ -2569,20 +2654,58 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 
         @streaming_step("classify_query_intent")
         async def classify_query_intent(state: FlowState) -> FlowState:
-            """Classify the query to determine if it should use SBAR flow or regular flow."""
+            """Classify the query to determine flow type including note generation."""
             try:
                 print(f"[classify_query_intent] Classifying query: '{state.user_prompt[:100]}...'")
+
+                # Skip classification if already in note generation flow
+                if hasattr(state, 'is_note_generation_flow') and state.is_note_generation_flow:
+                    print(f"[classify_query_intent] Already in note generation flow, skipping classification")
+                    return state
 
                 # Use the existing classifier
                 classifier = self._zero_shot_classifier
                 label = classifier.classify_query(state.user_prompt, [
-                    "lookup", "temporal-trend", "comparative", "reasoning", "summary", "guideline", "timeline"
+                    "lookup", "temporal-trend", "comparative", "reasoning", "summary", "guideline", "timeline", "note_generation", "discharge_summary"
                 ])
 
                 print(f"[classify_query_intent] Query classified as: {label}")
 
                 # Store classification in state
                 state.query_classification = label
+
+                # Check for note generation intent (high precision)
+                if label == "note_generation" or label == "discharge_summary":
+                    print(f"[classify_query_intent] Note generation detected!")
+                    state.is_note_generation_flow = True
+
+                    # Determine template type from query content
+                    query_lower = state.user_prompt.lower()
+
+                    # Template detection with keywords
+                    if any(word in query_lower for word in ["sbar", "situation", "bakgrund", "background"]):
+                        template_type = "sbar"
+                    elif any(word in query_lower for word in ["soap", "subjective", "objective", "assessment", "plan"]):
+                        template_type = "soap"
+                    elif any(word in query_lower for word in ["remiss", "referral", "refer"]):
+                        template_type = "referral"
+                    elif any(word in query_lower for word in ["journal", "progress", "anteckning"]):
+                        template_type = "journal_entry"
+                    elif any(word in query_lower for word in ["consultation", "konsultation"]):
+                        template_type = "consultation"
+                    else:
+                        # Default to SBAR for general note requests
+                        template_type = "sbar"
+
+                    print(f"[classify_query_intent] Auto-selected template type: {template_type}")
+
+                    # Store template type preference for later retrieval
+                    state.note_template_type_preference = template_type
+
+                    # Don't set SBAR or timeline flows
+                    state.is_sbar_flow = False
+                    state.is_timeline_flow = False
+                    return state
 
                 # Determine if this should use SBAR flow (big picture queries)
                 sbar_query_types = ["summary"]
@@ -2609,6 +2732,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 state.query_classification = "lookup"  # Default fallback
                 state.is_sbar_flow = False
                 state.is_timeline_flow = False
+                state.is_note_generation_flow = False
 
             return state
 
@@ -2661,6 +2785,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_node("generate_timeline_bubbles", generate_timeline_bubbles)
         _builder.add_node("merge_timeline_results", merge_timeline_results)
         # Note generation flow nodes
+        _builder.add_node("load_note_template", load_note_template)
         _builder.add_node("generate_note_section", generate_note_section)
         _builder.add_node("format_note_response", format_note_response)
         _builder.add_node("store_note_metadata", store_note_metadata)
@@ -2749,6 +2874,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_edge("merge_timeline_results", "store_assistant_response")
 
         # Note generation flow edges - sequential processing
+        _builder.add_edge("load_note_template", "generate_note_section")
         _builder.add_edge("generate_note_section", "format_note_response")
         _builder.add_edge("format_note_response", "store_note_metadata")
         _builder.add_edge("store_note_metadata", "store_assistant_response")
@@ -2756,7 +2882,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         # Route after chunk retrieval: check flow type
         def route_after_chunks(state):
             if hasattr(state, 'is_note_generation_flow') and state.is_note_generation_flow:
-                return "generate_note_section"
+                return "load_note_template"
             elif hasattr(state, 'is_timeline_flow') and state.is_timeline_flow:
                 return "extract_timeline_events"
             elif hasattr(state, 'is_sbar_flow') and state.is_sbar_flow:
@@ -2770,7 +2896,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
             "intelligent_retrieve_chunks",
             route_after_chunks,
             {
-                "generate_note_section": "generate_note_section",
+                "load_note_template": "load_note_template",
                 "extract_timeline_events": "extract_timeline_events",
                 "sbar_parallel_dispatcher": "sbar_parallel_dispatcher",
                 "intelligent_retrieve_chunks": "intelligent_retrieve_chunks",
