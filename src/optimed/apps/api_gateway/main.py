@@ -23,6 +23,10 @@ from optimed.apps.orchestrator.factory import create_app_dependencies
 from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalEntryType
 from optimed.adapters.security.encryption_service import get_encryption_service, get_phi_redactor
 from optimed.adapters.security.e2e_encryption_middleware import E2EEncryptionMiddleware, create_session_with_encryption
+from optimed.adapters.security.auth_middleware import AuthenticationMiddleware, require_authenticated_user, get_authenticated_user_context
+from optimed.adapters.security.rate_limiter import RateLimitMiddleware
+from optimed.adapters.security.rls_middleware import RLSMiddleware
+from optimed.adapters.middleware.audit_logger import AuditLoggingMiddleware
 
 
 from pydantic import BaseModel
@@ -48,13 +52,14 @@ _xml_service: _Any = None
 _template_repo: _Any = None
 _template_service: _Any = None
 _note_generator: _Any = None
+_audit_repo: _Any = None
 
 
 _dependencies_ready: asyncio.Event = asyncio.Event()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service, _template_repo, _template_service, _note_generator
+    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service, _template_repo, _template_service, _note_generator, _audit_repo
     try:
         (
             _engine,
@@ -74,7 +79,13 @@ async def lifespan(app: FastAPI):
             _template_repo,
             _template_service,
             _note_generator,
+            _audit_repo,
         ) = await create_app_dependencies()
+
+        # Store repositories in app state for middleware access
+        app.state._user_repo = _user_repo
+        app.state._audit_repo = _audit_repo
+
         _dependencies_ready.set()
         print("[startup] Dependencies initialized")
         yield
@@ -100,6 +111,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add Security and Audit Middlewares
+# Order matters: outer -> inner execution
+# 1. Rate limiting (check limits before auth)
+app.add_middleware(RateLimitMiddleware)
+
+# 2. Authentication & origin validation
+app.add_middleware(AuthenticationMiddleware)
+
+# 3. RLS context (requires authenticated user)
+app.add_middleware(RLSMiddleware)
+
+# 4. Audit logging (logs authenticated requests with user context)
+app.add_middleware(AuditLoggingMiddleware)
 
 # GDPR Compliance Middleware
 @app.middleware("http")

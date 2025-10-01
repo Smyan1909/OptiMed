@@ -1015,3 +1015,107 @@ class NoteGenerator(Protocol):
         """Complete generation metadata (no content saved)."""
         ...
 
+
+# ==================== AUDIT LOGGING PROTOCOLS ====================
+
+class AuditRepository(Protocol):
+    """Repository for GDPR-compliant audit logging."""
+
+    async def log_api_request(
+        self,
+        session_id: Optional[str],
+        user_id: Optional[str],
+        endpoint: str,
+        method: str,
+        status_code: int,
+        latency_ms: int,
+        request_category: str,
+        error_message: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Log API request for audit trail."""
+        ...
+
+    async def log_data_access(
+        self,
+        session_id: Optional[str],
+        user_id: str,
+        access_type: str,
+        resource_type: str,
+        resource_count: int = 1,
+        data_source: str = "application",
+        lawful_basis: str = "care_delivery",
+        purpose_of_use: str = "clinical_decision_support",
+        access_duration_ms: Optional[int] = None
+    ) -> None:
+        """Log data access for GDPR compliance."""
+        ...
+
+    async def log_data_flow(
+        self,
+        session_id: Optional[str],
+        flow_id: str,
+        source_system: str,
+        source_type: str,
+        destination_system: str,
+        destination_type: str,
+        transformations: List[str],
+        data_quality_score: Optional[float] = None
+    ) -> None:
+        """Log data lineage/flow for compliance tracking."""
+        ...
+
+    async def log_prompt_category(
+        self,
+        user_id: str,
+        session_id: Optional[str],
+        prompt_hash: str,
+        category: str,
+        model_used: Optional[str] = None,
+        response_tokens: Optional[int] = None,
+        latency_ms: Optional[int] = None
+    ) -> None:
+        """Log prompt category (NOT actual content) for usage analytics."""
+        ...
+
+    async def log_compliance_event(
+        self,
+        event_type: str,
+        compliance_framework: str,
+        session_id: Optional[str],
+        user_id: str,
+        patient_id_hash: Optional[str] = None,
+        data_categories: Optional[List[str]] = None,
+        processing_purposes: Optional[List[str]] = None,
+        compliance_status: str = "compliant",
+        additional_context: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Log compliance-related events (GDPR, HIPAA, etc.)."""
+        ...
+
+    async def log_usage_metric(
+        self,
+        metric_type: str,
+        metric_name: str,
+        value: int,
+        unit: str = "count",
+        dimensions: Optional[Dict[str, Any]] = None,
+        tenant_id: Optional[str] = None
+    ) -> None:
+        """Log system usage metric."""
+        ...
+
+    async def get_user_audit_trail(
+        self,
+        user_id: str,
+        from_date: Optional[Any] = None,
+        to_date: Optional[Any] = None,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Get audit trail for a user (admin function)."""
+        ...
+
+    async def close(self) -> None:
+        """Close connections and cleanup resources."""
+        ...
+

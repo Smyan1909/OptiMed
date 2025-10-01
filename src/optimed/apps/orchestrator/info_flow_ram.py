@@ -18,7 +18,7 @@ from optimed.core.domain.pdf_document import PDFDocument
 from optimed.core.domain.xml_document import XMLDocument
 from optimed.core.lang import detect_language_code
 
-from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, PDFService, XMLService
+from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, PDFService, XMLService, AuditRepository
 
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
 
@@ -206,6 +206,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                  zero_shot_classifier: MultilingualZeroShotClassifier,
                  pdf_service: Optional[PDFService] = None,
                  xml_service: Optional[XMLService] = None,
+                 audit_repo: Optional[AuditRepository] = None,
                  default_prompt: str = "Provide the most likely diagnosis"):
         self._fhir = fhir_repo
         self._vec = vector_store
@@ -217,8 +218,9 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         self._web_search = web_search_service
         self._pdf_service = pdf_service
         self._xml_service = xml_service
+        self._audit_repo = audit_repo
         self._default_prompt = default_prompt
-        
+
         # ML models for intelligent retrieval
         self._cross_encoder = cross_encoder
         self._zero_shot_classifier = zero_shot_classifier
@@ -226,6 +228,40 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         self._compiled_graph = self._build_graph()
         # Use global session memory that persists across instances
         self._session_memory = _GLOBAL_SESSION_MEMORY
+
+    async def _log_data_lineage(
+        self,
+        session_id: Optional[str],
+        flow_id: str,
+        source_system: str,
+        source_type: str,
+        destination_system: str,
+        destination_type: str,
+        transformations: List[str],
+        data_quality_score: Optional[float] = None
+    ) -> None:
+        """
+        Safely log data lineage without breaking the flow.
+
+        This is a fire-and-forget logging operation - failures are logged but don't propagate.
+        """
+        if not self._audit_repo:
+            return  # Audit logging not configured
+
+        try:
+            await self._audit_repo.log_data_flow(
+                session_id=session_id,
+                flow_id=flow_id,
+                source_system=source_system,
+                source_type=source_type,
+                destination_system=destination_system,
+                destination_type=destination_type,
+                transformations=transformations,
+                data_quality_score=data_quality_score
+            )
+        except Exception as e:
+            # Never fail the flow due to logging errors
+            print(f"[DATA_LINEAGE] Error logging data flow: {e}")
 
     async def _run_parallel_cross_encoder_operations(self, state: FlowState, chunks: list[dict[str, Any]], initial_indices: list[int], query_vecs: list[list[float]]) -> tuple[list[tuple[int, float]], list[int], list[float]]:
         """Run all cross-encoder operations in parallel for maximum efficiency.
@@ -597,11 +633,24 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 # Combine all chunks
                 all_chunks = produced + journal_chunks + pdf_chunks + xml_chunks
                 print(f"[intelligent_retrieve_chunks] Total chunks produced: {len(all_chunks)} (patient: {len(produced)}, journal: {len(journal_chunks)}, pdf: {len(pdf_chunks)}, xml: {len(xml_chunks)})")
-                
+
+                # Log data lineage: FHIR/PDF/XML → Chunking
+                if all_chunks:
+                    await self._log_data_lineage(
+                        session_id=state.session_id,
+                        flow_id=str(uuid.uuid4()),
+                        source_system="fhir_server" if produced else ("document_upload" if (pdf_chunks or xml_chunks) else "journal"),
+                        source_type="Patient" if produced else ("PDFDocument" if pdf_chunks else ("XMLDocument" if xml_chunks else "JournalEntry")),
+                        destination_system="chunking_orchestrator",
+                        destination_type="Chunk",
+                        transformations=["policy_driven_chunking", "phi_redaction"],
+                        data_quality_score=1.0 if all_chunks else 0.0
+                    )
+
                 # Log chunk details (GDPR-safe)
                 for i, chunk in enumerate(all_chunks):
                     print(f"[intelligent_retrieve_chunks] Chunk {i+1}: type={chunk.resource_type}, id={chunk.id}, length={len(chunk.text)} chars")
-                
+
                 # Adapt to local chunk dicts
                 chunks: list[dict[str, Any]] = [{
                     "id": c.id,
@@ -629,6 +678,19 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 for i, vec in enumerate(chunk_vecs):
                     chunks[i]["embedding"] = vec
                 print(f"[intelligent_retrieve_chunks] Successfully embedded {len(chunk_vecs)} chunks")
+
+                # Log data lineage: Chunks → Embeddings
+                if chunk_vecs:
+                    await self._log_data_lineage(
+                        session_id=state.session_id,
+                        flow_id=str(uuid.uuid4()),
+                        source_system="chunking_orchestrator",
+                        source_type="Chunk",
+                        destination_system="embedding_service",
+                        destination_type="VectorEmbedding",
+                        transformations=["sentence_transformer_minilm", "normalization"],
+                        data_quality_score=1.0
+                    )
 
                 # 3) Query variants
                 print("[intelligent_retrieve_chunks] Generating query variants...")
@@ -764,6 +826,30 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     chunk_type = chunks[idx]["data_type"]
                     chunk_length = len(cast(str, chunks[idx]["content"]))
                     print(f"[intelligent_retrieve_chunks]   {i+1}. Chunk {idx} ({chunk_type}): {chunk_length} chars")
+
+                # Log data lineage: Embeddings → Retrieval (bi-encoder + cross-encoder + MMR + gating)
+                if final_selected:
+                    # Calculate data quality score based on retrieval metrics
+                    avg_gate_score = sum(gate_scores) / len(gate_scores) if gate_scores else 0.0
+                    selection_rate = len(final_selected) / len(chunks) if chunks else 0.0
+                    quality_score = (avg_gate_score + selection_rate) / 2  # Average of gate score and selection rate
+
+                    await self._log_data_lineage(
+                        session_id=state.session_id,
+                        flow_id=str(uuid.uuid4()),
+                        source_system="embedding_service",
+                        source_type="VectorEmbedding",
+                        destination_system="retrieval_engine",
+                        destination_type="RetrievedContext",
+                        transformations=[
+                            "bi_encoder_similarity",
+                            "cross_encoder_reranking",
+                            "mmr_diversification",
+                            "binary_gating",
+                            f"dynamic_n_selection_{len(final_selected)}"
+                        ],
+                        data_quality_score=min(1.0, max(0.0, quality_score))
+                    )
 
                 # Set state variables early so streaming decorator can access them
                 state.retrieved_chunks = [cast(str, chunks[i]["content"]) for i in final_selected]
