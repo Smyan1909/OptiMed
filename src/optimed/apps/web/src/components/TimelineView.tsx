@@ -208,7 +208,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       {/* Header */}
       <div className="flex items-center gap-3 mb-4">
         <Clock className="h-6 w-6 text-blue-600" />
-        <h3 className="text-xl font-semibold text-gray-900">Medical Timeline</h3>
+        <h3 className="text-xl font-semibold text-gray-900">{t('title')}</h3>
       </div>
 
       {/* Timeline container */}
@@ -248,7 +248,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                     {isLoading && !hasContent ? (
                       <div className="flex items-center justify-center py-4">
                         <div className="animate-pulse text-sm text-gray-500">
-                          Loading event details...
+                          {t('loadingDetails')}
                         </div>
                       </div>
                     ) : hasContent ? (
@@ -261,7 +261,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                       />
                     ) : (
                       <div className="text-sm text-gray-400 italic py-2">
-                        No details available for this event
+                        {t('noDetails')}
                       </div>
                     )}
                   </CardContent>
@@ -277,7 +277,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         <p className="text-sm text-blue-700 flex items-start leading-relaxed">
           <Clock className="h-4 w-4 inline mr-3 flex-shrink-0 mt-0.5" />
           <span>
-            <strong>Timeline View</strong> displays key medical events in chronological order with relevant clinical information from patient records.
+            <strong>{t('viewTitle')}</strong> {t('viewDescription')}
           </span>
         </p>
       </div>

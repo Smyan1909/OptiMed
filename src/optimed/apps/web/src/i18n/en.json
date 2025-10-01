@@ -761,6 +761,13 @@
   },
   "back" : {
     "toPatients": "Back to Patients"
+  },
+  "timeline": {
+    "title": "Medical Timeline",
+    "loadingDetails": "Loading event details...",
+    "noDetails": "No details available for this event",
+    "viewTitle": "Timeline View",
+    "viewDescription": "displays key medical events in chronological order with relevant clinical information from patient records."
   }
 }
 

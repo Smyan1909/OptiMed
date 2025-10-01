@@ -44,6 +44,19 @@ class PGAuditRepository:
         """Create SHA256 hash of sensitive data for logging."""
         return hashlib.sha256(data.encode()).hexdigest()
 
+    def _to_uuid(self, value: Optional[str]) -> Optional[uuid.UUID]:
+        """
+        Convert string to UUID, handling both valid UUIDs and arbitrary strings.
+        For non-UUID strings, generates a deterministic UUID from the string hash.
+        """
+        if not value:
+            return None
+        try:
+            return uuid.UUID(value)
+        except (ValueError, AttributeError):
+            # Generate deterministic UUID from string using namespace UUID
+            return uuid.uuid5(uuid.NAMESPACE_DNS, value)
+
     def _redact_phi(self, data: Any) -> Any:
         """Redact PHI from data before logging."""
         if isinstance(data, str):
@@ -89,17 +102,20 @@ class PGAuditRepository:
                 await conn.execute("""
                     INSERT INTO data_access_logs (
                         session_id, user_id, access_type, resource_type,
-                        resource_identifier, data_source, access_method,
+                        resource_count, data_source, access_method,
+                        lawful_basis, purpose_of_use,
                         access_duration_ms, access_granted, accessed_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
                 """,
-                    uuid.UUID(session_id) if session_id else None,
-                    user_id,
+                    self._to_uuid(session_id),
+                    self._to_uuid(user_id),
                     request_category,
                     "api_endpoint",
-                    f"{method} {endpoint}",
+                    1,  # resource_count (1 request = 1 resource accessed)
                     "api_gateway",
                     method,
+                    "legitimate_interest",  # lawful_basis - GDPR Article 6(1)(f)
+                    "healthcare_delivery",  # purpose_of_use
                     latency_ms,
                     status_code < 400  # access_granted if not error
                 )
@@ -124,7 +140,9 @@ class PGAuditRepository:
                 )
 
         except Exception as e:
+            import traceback
             print(f"[AUDIT] Error logging API request: {e}")
+            print(f"[AUDIT] Full traceback: {traceback.format_exc()}")
             # Don't fail the request if logging fails
 
     async def log_data_access(
@@ -164,8 +182,8 @@ class PGAuditRepository:
                         purpose_of_use, access_duration_ms, accessed_at
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
                 """,
-                    uuid.UUID(session_id) if session_id else None,
-                    user_id,
+                    self._to_uuid(session_id),
+                    self._to_uuid(user_id),
                     access_type,
                     resource_type,
                     resource_count,
@@ -208,18 +226,19 @@ class PGAuditRepository:
             async with pool.acquire() as conn:
                 await conn.execute("""
                     INSERT INTO data_lineage (
-                        session_id, data_flow_id, source_system, source_type,
-                        destination_system, destination_type, transformation_applied,
-                        data_quality_score, processing_timestamp
+                        session_id, source_system, source_resource_id,
+                        destination_system, destination_resource_id,
+                        transformation_type, transformation_details,
+                        quality_score, created_at
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
                 """,
-                    uuid.UUID(session_id) if session_id else None,
-                    uuid.UUID(flow_id) if flow_id else uuid.uuid4(),
+                    self._to_uuid(session_id),
                     source_system,
-                    source_type,
+                    source_type,  # Use as source_resource_id
                     destination_system,
-                    destination_type,
-                    transformations,
+                    destination_type,  # Use as destination_resource_id
+                    ', '.join(transformations) if transformations else 'none',  # Single transformation_type
+                    json.dumps({"transformations": transformations, "flow_id": flow_id}),  # Details as JSONB
                     data_quality_score
                 )
 
@@ -315,7 +334,7 @@ class PGAuditRepository:
                 """,
                     event_type,
                     compliance_framework,
-                    uuid.UUID(session_id) if session_id else None,
+                    self._to_uuid(session_id),
                     user_id,
                     patient_id_hash,
                     data_categories or [],
@@ -363,7 +382,7 @@ class PGAuditRepository:
                     value,
                     unit,
                     json.dumps(safe_dimensions),
-                    uuid.UUID(tenant_id) if tenant_id else None
+                    self._to_uuid(tenant_id)
                 )
 
         except Exception as e:

@@ -753,6 +753,13 @@
   },
   "back" : {
     "toPatients": "Tillbaka till patientsida"
+  },
+  "timeline": {
+    "title": "Medicinsk tidslinje",
+    "loadingDetails": "Laddar händelsedetaljer...",
+    "noDetails": "Inga detaljer tillgängliga för denna händelse",
+    "viewTitle": "Tidslinjevy",
+    "viewDescription": "visar viktiga medicinska händelser i kronologisk ordning med relevant klinisk information från patientjournaler."
   }
 }
 
