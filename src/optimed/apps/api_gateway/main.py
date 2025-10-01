@@ -27,6 +27,7 @@ from optimed.adapters.security.auth_middleware import AuthenticationMiddleware, 
 from optimed.adapters.security.rate_limiter import RateLimitMiddleware
 from optimed.adapters.security.rls_middleware import RLSMiddleware
 from optimed.adapters.middleware.audit_logger import AuditLoggingMiddleware
+from optimed.apps.api_gateway.gdpr_endpoints import gdpr_router
 
 
 from pydantic import BaseModel
@@ -100,6 +101,9 @@ async def lifespan(app: FastAPI):
         pass
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True, lifespan=lifespan)
+
+# Register GDPR Data Subject Rights endpoints (GDPR Articles 15-22)
+app.include_router(gdpr_router)
 
 # Add End-to-End Encryption middleware first (now supports streaming)
 app.add_middleware(E2EEncryptionMiddleware, encrypt_responses=True, encrypt_requests=True)
@@ -847,13 +851,32 @@ async def initiate_ehr_login(req: EHRLoginRequest):
 
 @app.get("/patients", response_model=list[PatientOut], summary="Search patients")
 async def search_patients(
+    request: Request,
     q: str = Query("", alias="q"),
     fhir_repo: FHIRRepository = Depends(get_user_fhir_repository)
 ):
-    
+
     try:
         # Use the user-specific repository instead of the global _fhir
-        domain_objs = await fhir_repo.search_patients(q)  
+        domain_objs = await fhir_repo.search_patients(q)
+
+        # GDPR compliance event logging (Article 30 - Records of Processing Activities)
+        try:
+            user = getattr(request.state, 'user', None)
+            session_id = getattr(request.state, 'session_id', None)
+
+            await _audit_repo.log_compliance_event(
+                event_type="patient_data_access",
+                compliance_framework="GDPR",
+                session_id=session_id,
+                user_id=user.user_id if user else "anonymous",
+                data_categories=["health_data", "personal_identifiers"],
+                processing_purposes=["clinical_decision_support", "patient_search"],
+                lawful_basis="Article 6(1)(c) - Legal obligation (healthcare delivery)",
+                compliance_status="compliant"
+            )
+        except Exception as log_error:
+            print(f"[COMPLIANCE] Error logging patient access: {log_error}")  
         
         return [
             PatientOut(
@@ -1219,6 +1242,23 @@ async def diagnose(
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Patient not found: {e}")
 
+    # GDPR compliance event logging (Article 30 - Records of Processing Activities)
+    try:
+        import hashlib
+        await _audit_repo.log_compliance_event(
+            event_type="ai_diagnosis_request",
+            compliance_framework="GDPR",
+            session_id=req.session_id or user_ctx.get("session_id"),
+            user_id=user_id,
+            patient_id_hash=hashlib.sha256(str(req.patient_id).encode()).hexdigest() if req.patient_id else None,
+            data_categories=["health_data", "diagnostic_data", "ai_generated_content"],
+            processing_purposes=["clinical_decision_support", "ai_diagnosis", "healthcare_delivery"],
+            lawful_basis="Article 6(1)(c) - Legal obligation, Article 9(2)(h) - Medical diagnosis",
+            compliance_status="compliant"
+        )
+    except Exception as log_error:
+        print(f"[COMPLIANCE] Error logging diagnosis request: {log_error}")
+
     result = await _engine.run(patient_ctx, req.user_prompt, chat_mode=req.chat_mode, user_id=user_id, session_id=req.session_id)
     if hasattr(result, 'model_dump'):
         return result.model_dump()
@@ -1555,16 +1595,33 @@ async def diagnose_stream(
             # Explicitly remove Content-Length header to prevent mismatch
             if "content-length" in response.headers:
                 del response.headers["content-length"]
-            
+
             return response
-    
+
+    # GDPR compliance event logging (Article 30 - Records of Processing Activities)
+    try:
+        import hashlib
+        await _audit_repo.log_compliance_event(
+            event_type="ai_diagnosis_stream",
+            compliance_framework="GDPR",
+            session_id=req.session_id or user_ctx.get("session_id"),
+            user_id=user_id,
+            patient_id_hash=hashlib.sha256(str(req.patient_id).encode()).hexdigest() if req.patient_id else None,
+            data_categories=["health_data", "diagnostic_data", "ai_generated_content"],
+            processing_purposes=["clinical_decision_support", "ai_diagnosis", "real_time_streaming"],
+            lawful_basis="Article 6(1)(c) - Legal obligation, Article 9(2)(h) - Medical diagnosis",
+            compliance_status="compliant"
+        )
+    except Exception as log_error:
+        print(f"[COMPLIANCE] Error logging diagnosis stream: {log_error}")
+
     response = StreamingResponse(
         _event_stream(
             patient=patient_ctx,
-            user_prompt=req.user_prompt, 
+            user_prompt=req.user_prompt,
             chat_mode=req.chat_mode,
             diagnostic_mode=req.diagnostic_mode,  # Add this parameter
-            user_id=user_id, 
+            user_id=user_id,
             session_id=req.session_id
         ), 
         media_type="text/event-stream",
@@ -1606,13 +1663,30 @@ async def chat_stream(
             patient_ctx = await fhir_repo.get_patient(req.patient_id)
         except Exception as e:
             print(f"Could not fetch patient {req.patient_id}: {e}")
-    
+
+    # GDPR compliance event logging (Article 30 - Records of Processing Activities)
+    try:
+        import hashlib
+        await _audit_repo.log_compliance_event(
+            event_type="ai_chat_stream",
+            compliance_framework="GDPR",
+            session_id=req.session_id or user_ctx.get("session_id"),
+            user_id=user_id,
+            patient_id_hash=hashlib.sha256(str(req.patient_id).encode()).hexdigest() if req.patient_id else None,
+            data_categories=["health_data", "ai_generated_content"] if patient_ctx else ["ai_generated_content"],
+            processing_purposes=["clinical_decision_support", "conversational_ai", "real_time_streaming"],
+            lawful_basis="Article 6(1)(c) - Legal obligation" if patient_ctx else "Article 6(1)(a) - Consent",
+            compliance_status="compliant"
+        )
+    except Exception as log_error:
+        print(f"[COMPLIANCE] Error logging chat stream: {log_error}")
+
     response = StreamingResponse(
         _event_stream(
             patient=patient_ctx,
-            user_prompt=req.user_prompt, 
+            user_prompt=req.user_prompt,
             chat_mode=True,  # Always true for chat
-            user_id=user_id, 
+            user_id=user_id,
             session_id=req.session_id
         ), 
         media_type="text/event-stream",
@@ -1652,7 +1726,24 @@ async def chat(
         except Exception as e:
             # Log the error but continue with general chat
             print(f"Could not fetch patient {req.patient_id}: {e}")
-    
+
+    # GDPR compliance event logging (Article 30 - Records of Processing Activities)
+    try:
+        import hashlib
+        await _audit_repo.log_compliance_event(
+            event_type="ai_chat_request",
+            compliance_framework="GDPR",
+            session_id=req.session_id or user_ctx.get("session_id"),
+            user_id=user_id,
+            patient_id_hash=hashlib.sha256(str(req.patient_id).encode()).hexdigest() if req.patient_id else None,
+            data_categories=["health_data", "ai_generated_content"] if patient_ctx else ["ai_generated_content"],
+            processing_purposes=["clinical_decision_support", "conversational_ai", "healthcare_assistance"],
+            lawful_basis="Article 6(1)(c) - Legal obligation" if patient_ctx else "Article 6(1)(a) - Consent",
+            compliance_status="compliant"
+        )
+    except Exception as log_error:
+        print(f"[COMPLIANCE] Error logging chat request: {log_error}")
+
     # Create a mock patient context for general chat
     if not patient_ctx:
         result = await _engine.run(user_prompt=req.user_prompt, chat_mode=req.chat_mode, user_id=user_id, session_id=req.session_id)
@@ -1821,7 +1912,24 @@ async def upload_dicom_image(
             processed_at=dicom_image.processed_at,
             storage_path=dicom_image.storage_path
         )
-        
+
+        # GDPR compliance event logging (Article 30 - Records of Processing Activities)
+        try:
+            import hashlib
+            await _audit_repo.log_compliance_event(
+                event_type="dicom_image_upload",
+                compliance_framework="GDPR",
+                session_id=session_id,
+                user_id=user.user_id,
+                patient_id_hash=hashlib.sha256(patient_id.encode()).hexdigest() if patient_id else None,
+                data_categories=["medical_imaging", "diagnostic_data", "health_data"],
+                processing_purposes=["clinical_decision_support", "diagnostic_analysis", "medical_imaging"],
+                lawful_basis="Article 6(1)(c) - Legal obligation (healthcare delivery), Article 9(2)(h) - Medical diagnosis",
+                compliance_status="compliant"
+            )
+        except Exception as log_error:
+            print(f"[COMPLIANCE] Error logging DICOM upload: {log_error}")
+
         return DICOMUploadResponse(
             image_id=dicom_image.image_id,
             message="DICOM image uploaded successfully",
@@ -2895,6 +3003,23 @@ async def upload_pdf_document(
         pdf_document = await _pdf_service.upload_document(upload_request)
 
         print(f"[PDF Upload] Success - document_id: {pdf_document.document_id}, status: {pdf_document.status}")
+
+        # GDPR compliance event logging (Article 30)
+        try:
+            import hashlib
+            await _audit_repo.log_compliance_event(
+                event_type="document_upload",
+                compliance_framework="GDPR",
+                session_id=session_id,
+                user_id=user.user_id,
+                patient_id_hash=hashlib.sha256(patient_id.encode()).hexdigest() if patient_id else None,
+                data_categories=["health_documents", "clinical_reports"],
+                processing_purposes=["clinical_decision_support", "document_analysis"],
+                lawful_basis="Article 6(1)(c) - Legal obligation",
+                compliance_status="compliant"
+            )
+        except Exception as log_error:
+            print(f"[COMPLIANCE] Error logging document upload: {log_error}")
 
         return PDFUploadResponse(
             document_id=pdf_document.document_id,

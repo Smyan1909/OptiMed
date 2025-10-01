@@ -277,5 +277,27 @@ class AuthenticationMiddleware:
                 })
                 return
 
+            # Attach user to request state for audit logging (GDPR compliance)
+            try:
+                # Extract session_id from headers
+                x_session_id = None
+                for header_name, header_value in scope.get("headers", []):
+                    if header_name == b"x-session-id":
+                        x_session_id = header_value.decode()
+                        break
+
+                # Fetch and attach user if session exists
+                if x_session_id and hasattr(request.app.state, '_user_repo'):
+                    user_repo = request.app.state._user_repo
+                    session = await user_repo.get_active_session(x_session_id)
+                    if session:
+                        user = await user_repo.get_user_by_id(session.user_id)
+                        if user:
+                            request.state.user = user
+                            request.state.session_id = x_session_id
+            except Exception as e:
+                # Don't fail the request if user attachment fails
+                print(f"[AUTH] Error attaching user to request: {e}")
+
         # Continue to next middleware/route
         await self.app(scope, receive, send)
