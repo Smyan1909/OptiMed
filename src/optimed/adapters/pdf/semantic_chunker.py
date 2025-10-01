@@ -109,6 +109,43 @@ class SemanticPDFChunker:
             r'\n(?=\s*[A-Z]\.\s)', # Letter sections
         ]
 
+    def _extract_page_numbers_from_text(self, text: str) -> Dict[int, int]:
+        """
+        Extract page number mappings from text containing page markers like '--- Page X ---'.
+
+        Returns:
+            Dictionary mapping character position to page number
+        """
+        page_positions = {}
+        page_pattern = r'---\s*Page\s+(\d+)\s*---'
+
+        for match in re.finditer(page_pattern, text, re.IGNORECASE):
+            page_num = int(match.group(1))
+            position = match.start()
+            page_positions[position] = page_num
+
+        return page_positions
+
+    def _get_page_number_for_position(self, position: int, page_positions: Dict[int, int]) -> int:
+        """
+        Get the page number for a given character position in the text.
+
+        Args:
+            position: Character position in the text
+            page_positions: Dictionary mapping positions to page numbers
+
+        Returns:
+            Page number (defaults to 1 if no markers found)
+        """
+        if not page_positions:
+            return 1
+
+        # Find the last page marker before this position
+        relevant_pages = [page_num for pos, page_num in page_positions.items() if pos <= position]
+        if relevant_pages:
+            return max(relevant_pages)
+        return 1
+
     def chunk_pdf_text(
         self,
         text: str,
@@ -129,6 +166,9 @@ class SemanticPDFChunker:
         if not text or not text.strip():
             return []
 
+        # Step 0: Extract page positions from text
+        page_positions = self._extract_page_numbers_from_text(text)
+
         # Step 1: Detect document structure
         sections = self._detect_document_structure(text)
 
@@ -141,7 +181,9 @@ class SemanticPDFChunker:
                 section,
                 document_id,
                 previous_context,
-                metadata or {}
+                metadata or {},
+                page_positions,
+                text
             )
             chunks.extend(section_chunks)
 
@@ -221,7 +263,9 @@ class SemanticPDFChunker:
         section: Dict[str, Any],
         document_id: str,
         previous_context: str,
-        metadata: Dict[str, Any]
+        metadata: Dict[str, Any],
+        page_positions: Dict[int, int],
+        full_text: str
     ) -> List[SemanticChunk]:
         """Chunk a single section with semantic awareness."""
         content = section["content"].strip()
@@ -232,9 +276,9 @@ class SemanticPDFChunker:
 
         # For medical sections, try to preserve semantic boundaries
         if section.get("type") == "medical_section":
-            chunks = self._chunk_medical_section(content, section, document_id, previous_context, metadata)
+            chunks = self._chunk_medical_section(content, section, document_id, previous_context, metadata, page_positions, full_text)
         else:
-            chunks = self._chunk_general_content(content, section, document_id, previous_context, metadata)
+            chunks = self._chunk_general_content(content, section, document_id, previous_context, metadata, page_positions, full_text)
 
         return chunks
 
@@ -244,7 +288,9 @@ class SemanticPDFChunker:
         section: Dict[str, Any],
         document_id: str,
         previous_context: str,
-        metadata: Dict[str, Any]
+        metadata: Dict[str, Any],
+        page_positions: Dict[int, int],
+        full_text: str
     ) -> List[SemanticChunk]:
         """Chunk medical section content with context preservation."""
         chunks: List[SemanticChunk] = []
@@ -252,6 +298,7 @@ class SemanticPDFChunker:
         # Split by paragraphs first to maintain medical context
         paragraphs = re.split(r'\n\s*\n', content)
         current_chunk = ""
+        current_chunk_start_pos = section.get("start_pos", 0)  # Track position in full text
 
         for paragraph in paragraphs:
             paragraph = paragraph.strip()
@@ -267,11 +314,16 @@ class SemanticPDFChunker:
             else:
                 # Create chunk from current content
                 if current_chunk:
+                    # Calculate page numbers based on position in full text
+                    chunk_end_pos = current_chunk_start_pos + len(current_chunk)
+                    start_page = self._get_page_number_for_position(current_chunk_start_pos, page_positions)
+                    end_page = self._get_page_number_for_position(chunk_end_pos, page_positions)
+
                     chunk_metadata = ChunkMetadata(
                         chunk_id=f"{document_id}_chunk_{len(chunks)}",
                         document_id=document_id,
-                        start_page=1,  # TODO: Track actual page numbers
-                        end_page=1,
+                        start_page=start_page,
+                        end_page=end_page,
                         section_title=section.get("title"),
                         chunk_type=section.get("type", "content"),
                         semantic_context=previous_context if chunks == 0 and previous_context else None
@@ -282,16 +334,24 @@ class SemanticPDFChunker:
                         metadata=chunk_metadata
                     ))
 
+                    # Update position for next chunk
+                    current_chunk_start_pos = chunk_end_pos
+
                 # Start new chunk with current paragraph
                 current_chunk = paragraph
 
         # Add final chunk
         if current_chunk:
+            # Calculate page numbers for final chunk
+            chunk_end_pos = current_chunk_start_pos + len(current_chunk)
+            start_page = self._get_page_number_for_position(current_chunk_start_pos, page_positions)
+            end_page = self._get_page_number_for_position(chunk_end_pos, page_positions)
+
             chunk_metadata = ChunkMetadata(
                 chunk_id=f"{document_id}_chunk_{len(chunks)}",
                 document_id=document_id,
-                start_page=1,
-                end_page=1,
+                start_page=start_page,
+                end_page=end_page,
                 section_title=section.get("title"),
                 chunk_type=section.get("type", "content"),
                 semantic_context=previous_context if len(chunks) == 0 and previous_context else None
@@ -310,7 +370,9 @@ class SemanticPDFChunker:
         section: Dict[str, Any],
         document_id: str,
         previous_context: str,
-        metadata: Dict[str, Any]
+        metadata: Dict[str, Any],
+        page_positions: Dict[int, int],
+        full_text: str
     ) -> List[SemanticChunk]:
         """Chunk general content with sentence-aware splitting."""
         chunks: List[SemanticChunk] = []
@@ -318,6 +380,7 @@ class SemanticPDFChunker:
         # Split into sentences for better semantic coherence
         sentences = re.split(r'(?<=[.!?])\s+', content)
         current_chunk = ""
+        current_chunk_start_pos = section.get("start_pos", 0)  # Track position in full text
 
         for sentence in sentences:
             sentence = sentence.strip()
@@ -332,11 +395,16 @@ class SemanticPDFChunker:
             else:
                 # Create chunk
                 if current_chunk:
+                    # Calculate page numbers based on position in full text
+                    chunk_end_pos = current_chunk_start_pos + len(current_chunk)
+                    start_page = self._get_page_number_for_position(current_chunk_start_pos, page_positions)
+                    end_page = self._get_page_number_for_position(chunk_end_pos, page_positions)
+
                     chunk_metadata = ChunkMetadata(
                         chunk_id=f"{document_id}_chunk_{len(chunks)}",
                         document_id=document_id,
-                        start_page=1,
-                        end_page=1,
+                        start_page=start_page,
+                        end_page=end_page,
                         section_title=section.get("title"),
                         chunk_type=section.get("type", "content"),
                         semantic_context=previous_context if len(chunks) == 0 and previous_context else None
@@ -347,15 +415,23 @@ class SemanticPDFChunker:
                         metadata=chunk_metadata
                     ))
 
+                    # Update position for next chunk
+                    current_chunk_start_pos = chunk_end_pos
+
                 current_chunk = sentence
 
         # Add final chunk
         if current_chunk:
+            # Calculate page numbers for final chunk
+            chunk_end_pos = current_chunk_start_pos + len(current_chunk)
+            start_page = self._get_page_number_for_position(current_chunk_start_pos, page_positions)
+            end_page = self._get_page_number_for_position(chunk_end_pos, page_positions)
+
             chunk_metadata = ChunkMetadata(
                 chunk_id=f"{document_id}_chunk_{len(chunks)}",
                 document_id=document_id,
-                start_page=1,
-                end_page=1,
+                start_page=start_page,
+                end_page=end_page,
                 section_title=section.get("title"),
                 chunk_type=section.get("type", "content"),
                 semantic_context=previous_context if len(chunks) == 0 and previous_context else None

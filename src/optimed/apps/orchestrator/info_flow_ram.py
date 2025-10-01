@@ -159,6 +159,7 @@ class FlowState(BaseModel):
 
     # SBAR flow fields
     query_classification: Optional[str] = None
+    classification_query: Optional[str] = None  # Contextualized query for classification
     is_sbar_flow: bool = False
 
     # Separate fields for each SBAR component to avoid concurrent updates
@@ -228,6 +229,33 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         self._compiled_graph = self._build_graph()
         # Use global session memory that persists across instances
         self._session_memory = _GLOBAL_SESSION_MEMORY
+
+    def _get_language_policy_message(self, state: FlowState) -> ChatMessage:
+        """
+        Create language policy system message based on detected language.
+        Detects language from current query + recent chat history for better accuracy.
+        """
+        try:
+            from optimed.core.lang import detect_language_code
+
+            # Detect from current query + recent history for better accuracy
+            detection_text = state.user_prompt
+            if state.chat_history and len(state.chat_history) > 0:
+                last_user_msgs = [msg.content for msg in state.chat_history[-3:] if msg.role == ChatRole.USER]
+                if last_user_msgs:
+                    detection_text = " ".join(last_user_msgs[-2:] + [state.user_prompt])
+
+            active_lang = detect_language_code(detection_text or "")
+        except Exception:
+            active_lang = "en"
+
+        return ChatMessage(
+            role=ChatRole.SYSTEM,
+            content=(
+                f"Language policy: Respond in '{active_lang}'. Use clinically appropriate terminology in this language. "
+                f"If citing or quoting sources in another language, translate faithfully and include the original term in parentheses if relevant."
+            )
+        )
 
     async def _log_data_lineage(
         self,
@@ -1320,6 +1348,7 @@ Keep queries concise and focused on the temporal aspect.
                 """
 
                 messages = [
+                    self._get_language_policy_message(state),
                     ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR situation summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
                 ]
 
@@ -1402,6 +1431,7 @@ Keep queries concise and focused on the temporal aspect.
                 """
 
                 messages = [
+                    self._get_language_policy_message(state),
                     ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR background summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
                 ]
 
@@ -1484,6 +1514,7 @@ Keep queries concise and focused on the temporal aspect.
                 """
 
                 messages = [
+                    self._get_language_policy_message(state),
                     ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR assessment summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
                 ]
 
@@ -1567,6 +1598,7 @@ Keep queries concise and focused on the temporal aspect.
                 """
 
                 messages = [
+                    self._get_language_policy_message(state),
                     ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR recommendation summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
                 ]
 
@@ -1921,6 +1953,7 @@ Return only the content in markdown format, no preamble.
 """
 
                     messages = [
+                        self._get_language_policy_message(state),
                         ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE timeline explanations (2-3 bullet points max).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief."),
                         ChatMessage(role=ChatRole.USER, content=prompt)
                     ]
@@ -2339,18 +2372,7 @@ Generate the content for "{field_label}" section now:"""
             messages = [SYSTEM_MSG_INFO_RELAY]
 
             # Language policy system message (answer in user's prompt language)
-            try:
-                from optimed.core.lang import detect_language_code  # local import to avoid cycles
-                active_lang = detect_language_code(state.user_prompt or "")
-            except Exception:
-                active_lang = "en"
-            language_system_msg = ChatMessage(
-                role=ChatRole.SYSTEM,
-                content=(
-                    f"Language policy: Respond in '{active_lang}'. Use clinically appropriate terminology in this language. "
-                    f"If citing or quoting sources in another language, translate faithfully and, if relevant, include the original term in parentheses."
-                )
-            )
+            language_system_msg = self._get_language_policy_message(state)
             messages.insert(0, language_system_msg)
 
             # For direct path (simple queries), use a simplified system message
@@ -2738,6 +2760,60 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 
             return state
 
+        @streaming_step("contextualize_query_for_classification")
+        async def contextualize_query_for_classification(state: FlowState) -> FlowState:
+            """
+            Use LLM to intelligently add conversation context to query for better classification.
+            Only runs if chat history exists.
+            """
+            try:
+                if not state.chat_history or len(state.chat_history) < 2:
+                    # No context needed for first message
+                    state.classification_query = state.user_prompt
+                    print(f"[contextualize_query] No history - using original query")
+                    return state
+
+                # Get recent conversation context (last 5 messages)
+                recent_messages = state.chat_history[-5:]
+                history_text = "\n".join([
+                    f"{msg.role.value}: {msg.content[:300]}"
+                    for msg in recent_messages
+                ])
+
+                # Use LLM to create classification-optimized query
+                prompt = f"""Given this conversation history and the user's latest query, create a single reformulated query that includes necessary context for intent classification.
+
+Conversation history:
+{history_text}
+
+User's current query: "{state.user_prompt}"
+
+Task: If the current query references previous context (e.g., "yes", "show timeline", "that one"), reformulate it to be self-contained. If it's already clear, return it unchanged.
+
+Examples:
+- "yes" after "Would you like a timeline?" → "Show me a timeline view"
+- "timeline please" → "Show me a timeline view"
+- "What medications is the patient on?" → "What medications is the patient on?" (unchanged)
+
+Return ONLY the reformulated query, nothing else."""
+
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="You reformulate user queries to include conversation context for better intent classification. Return only the reformulated query."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                response = await self._llm.chat(messages)
+                state.classification_query = response.content.strip()
+
+                print(f"[contextualize_query] Original: '{state.user_prompt}'")
+                print(f"[contextualize_query] Contextualized: '{state.classification_query}'")
+
+            except Exception as e:
+                print(f"[contextualize_query] Error: {e}, using original query")
+                state.classification_query = state.user_prompt
+
+            return state
+
         @streaming_step("classify_query_intent")
         async def classify_query_intent(state: FlowState) -> FlowState:
             """Classify the query to determine flow type including note generation."""
@@ -2749,9 +2825,14 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                     print(f"[classify_query_intent] Already in note generation flow, skipping classification")
                     return state
 
+                # Use contextualized query if available (from contextualize_query_for_classification node)
+                query_to_classify = getattr(state, 'classification_query', state.user_prompt)
+
+                print(f"[classify_query_intent] Classifying: '{query_to_classify[:100]}...'")
+
                 # Use the existing classifier
                 classifier = self._zero_shot_classifier
-                label = classifier.classify_query(state.user_prompt, [
+                label = classifier.classify_query(query_to_classify, [
                     "lookup", "temporal-trend", "comparative", "reasoning", "summary", "guideline", "timeline", "note_generation", "discharge_summary"
                 ])
 
@@ -2805,6 +2886,11 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 
                 print(f"[classify_query_intent] Timeline flow: {state.is_timeline_flow}")
 
+                # Override DIRECT routing if SBAR or Timeline flow is detected
+                if state.is_sbar_flow or state.is_timeline_flow:
+                    state.requires_full_processing = True
+                    print(f"[classify_query_intent] ⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, Timeline: {state.is_timeline_flow})")
+
                 # Initialize SBAR cache if using SBAR flow
                 if state.is_sbar_flow:
                     state.sbar_retrieval_cache = {}
@@ -2823,8 +2909,24 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
             return state
 
         def requires_full_processing(state: FlowState) -> bool:
-            """Conditional function to determine if full processing is needed."""
-            return getattr(state, 'requires_full_processing', True)
+            """
+            Conditional function to determine if full processing is needed.
+
+            Returns True if:
+            - Query complexity evaluation marked it as needing full processing, OR
+            - SBAR flow is detected (needs specialized retrieval), OR
+            - Timeline flow is detected (needs specialized retrieval)
+            """
+            base_requirement = getattr(state, 'requires_full_processing', True)
+            is_sbar = getattr(state, 'is_sbar_flow', False)
+            is_timeline = getattr(state, 'is_timeline_flow', False)
+
+            # Override DIRECT routing if SBAR or Timeline flow is detected
+            if is_sbar or is_timeline:
+                print(f"[requires_full_processing] Overriding DIRECT - SBAR: {is_sbar}, Timeline: {is_timeline}")
+                return True
+
+            return base_requirement
 
         def is_sbar_flow(state: FlowState) -> bool:
             """Conditional function to determine if SBAR flow should be used."""
@@ -2846,6 +2948,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
         _builder.add_node("check_patient", check_patient_exists)  # New decision node
         _builder.add_node("load_user_context", load_user_context)  # Load user context if available
         _builder.add_node("evaluate_query_complexity", evaluate_query_complexity)
+        _builder.add_node("contextualize_query_for_classification", contextualize_query_for_classification)
         _builder.add_node("classify_query_intent", classify_query_intent)
         _builder.add_node("store_user_message", store_user_message)
         _builder.add_node("load_current_session_history", load_current_session_history)
@@ -2884,7 +2987,8 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 
         # Add edges for user context loading and classification
         _builder.add_edge("load_user_context", "evaluate_query_complexity")
-        _builder.add_edge("evaluate_query_complexity", "classify_query_intent")
+        _builder.add_edge("evaluate_query_complexity", "contextualize_query_for_classification")
+        _builder.add_edge("contextualize_query_for_classification", "classify_query_intent")
         _builder.add_edge("classify_query_intent", "store_user_message")
         _builder.add_edge("store_user_message", "load_current_session_history")
         # Branch based on query complexity
