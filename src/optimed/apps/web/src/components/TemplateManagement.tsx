@@ -18,12 +18,13 @@ import {
 } from '@/lib/api';
 
 export function TemplateManagement() {
-  const { user, encryptPayload } = useUser();
+  const { user } = useUser();
   const [templates, setTemplates] = useState<NoteTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<NoteTemplate | null>(null);
   const [filterLanguage, setFilterLanguage] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
@@ -267,19 +268,32 @@ export function TemplateManagement() {
                 <span className="text-xs text-gray-500">
                   {new Date(template.created_at).toLocaleDateString()}
                 </span>
-                {!template.is_system_template && (
+                <div className="flex gap-2">
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => {
                       setSelectedTemplate(template);
-                      setDeleteDialogOpen(true);
+                      setViewDialogOpen(true);
                     }}
-                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                    className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
                   >
-                    Delete
+                    View
                   </Button>
-                )}
+                  {!template.is_system_template && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedTemplate(template);
+                        setDeleteDialogOpen(true);
+                      }}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                    >
+                      Delete
+                    </Button>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -413,6 +427,72 @@ export function TemplateManagement() {
               className="bg-blue-600 hover:bg-blue-700"
             >
               {uploading ? 'Uploading...' : 'Upload'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Template Dialog */}
+      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+        <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-3">
+              <span className="text-2xl">{getTemplateIcon(selectedTemplate?.template_type || 'custom')}</span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <Badge className={`text-xs font-semibold ${getLanguageColor(selectedTemplate?.language || 'en')}`}>
+                    {getLanguageBadge(selectedTemplate?.language || 'en')}
+                  </Badge>
+                  <span>{selectedTemplate?.name}</span>
+                </div>
+              </div>
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-1">
+                <span className="text-sm text-gray-600">
+                  <span className="font-medium">Type:</span> {selectedTemplate?.template_type}, {' '}
+                  <span className="font-medium">Format:</span> {selectedTemplate?.file_format.toUpperCase()}, {' '}
+                  <span className="font-medium">Created:</span> {selectedTemplate ? new Date(selectedTemplate.created_at).toLocaleDateString() : ''}
+                </span>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4">
+            <h4 className="text-sm font-semibold text-gray-900 mb-3">Template Fields</h4>
+            {selectedTemplate?.template_structure?.fields && selectedTemplate.template_structure.fields.length > 0 ? (
+              <div className="space-y-3">
+                {selectedTemplate.template_structure.fields.map((field: any, index: number) => (
+                  <div key={index} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-medium text-gray-900">{field.label || field.name}</span>
+                          <Badge variant="outline" className="text-xs">
+                            {field.type || 'text'}
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-gray-600 font-mono bg-white px-2 py-1 rounded border border-gray-200">
+                          {field.name}
+                        </div>
+                        {field.description && (
+                          <p className="text-xs text-gray-500 mt-2">{field.description}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                <p>No fields defined in this template</p>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewDialogOpen(false)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

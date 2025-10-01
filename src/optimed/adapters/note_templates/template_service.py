@@ -40,38 +40,47 @@ class TemplateServiceAdapter:
             return await self._parse_text(file_content)
 
     async def _parse_text(self, content: bytes) -> Dict[str, Any]:
-        """Parse plain text template."""
+        """Parse plain text template using heuristic analysis."""
         try:
             text = content.decode("utf-8")
         except UnicodeDecodeError:
             text = content.decode("latin-1")
 
-        # Extract sections based on common patterns
-        fields = self._extract_sections_from_text(text)
+        # Extract sections using heuristic patterns (language-agnostic)
+        fields = self._extract_sections_by_heuristics(text)
 
         return {"fields": fields}
 
     async def _parse_docx(self, content: bytes) -> Dict[str, Any]:
         """
-        Parse Word document template.
+        Parse Word document template using structural analysis.
 
-        Future: Use python-docx for proper parsing.
-        For now: Convert to text and extract sections.
+        Detects sections based on document structure (headings, bold text)
+        rather than hardcoded section names. Language-agnostic.
         """
         try:
-            # Try basic python-docx if available
+            # Try python-docx for structural analysis
             try:
                 import docx
                 import io
 
                 doc = docx.Document(io.BytesIO(content))
+                fields = self._extract_sections_from_docx_structure(doc)
+
+                # If structural extraction found fields, use those
+                if fields:
+                    return {"fields": fields}
+
+                # Otherwise fall back to text extraction
                 text = "\n".join([para.text for para in doc.paragraphs])
+                fields = self._extract_sections_by_heuristics(text)
+                return {"fields": fields}
+
             except ImportError:
                 # Fallback: Just decode as text (not ideal but functional)
                 text = content.decode("utf-8", errors="ignore")
-
-            fields = self._extract_sections_from_text(text)
-            return {"fields": fields}
+                fields = self._extract_sections_by_heuristics(text)
+                return {"fields": fields}
 
         except Exception as e:
             print(f"[TemplateService] Error parsing DOCX: {e}")
@@ -80,25 +89,46 @@ class TemplateServiceAdapter:
 
     async def _parse_pdf(self, content: bytes) -> Dict[str, Any]:
         """
-        Parse PDF template.
+        Parse PDF template using PyMuPDF with structural analysis.
 
-        Future: Use pdfplumber for proper extraction.
-        For now: Basic text extraction.
+        Uses font size and formatting to detect section headers.
+        Language-agnostic approach.
         """
         try:
-            # Try pdfplumber if available
+            # Use PyMuPDF (fitz) for PDF text extraction with formatting info
             try:
-                import pdfplumber
-                import io
+                import fitz  # PyMuPDF
 
-                with pdfplumber.open(io.BytesIO(content)) as pdf:
-                    text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+                # Open PDF from bytes
+                doc = fitz.open(stream=content, filetype="pdf")
+
+                # Try structural extraction first
+                fields = self._extract_sections_from_pdf_structure(doc)
+                doc.close()
+
+                # If structural extraction found fields, use those
+                if fields:
+                    return {"fields": fields}
+
+                # Otherwise fall back to heuristic text analysis
+                doc = fitz.open(stream=content, filetype="pdf")
+                text_parts = []
+                for page_num in range(len(doc)):
+                    page = doc.load_page(page_num)
+                    page_text = page.get_text()
+                    if page_text.strip():
+                        text_parts.append(page_text)
+                doc.close()
+
+                text = "\n".join(text_parts)
+                fields = self._extract_sections_by_heuristics(text)
+                return {"fields": fields}
+
             except ImportError:
                 # Fallback: Decode as text (very basic)
                 text = content.decode("utf-8", errors="ignore")
-
-            fields = self._extract_sections_from_text(text)
-            return {"fields": fields}
+                fields = self._extract_sections_by_heuristics(text)
+                return {"fields": fields}
 
         except Exception as e:
             print(f"[TemplateService] Error parsing PDF: {e}")
@@ -158,43 +188,178 @@ class TemplateServiceAdapter:
                 ]
             }
 
-    def _extract_sections_from_text(self, text: str) -> List[Dict[str, str]]:
-        """Extract sections from text based on common medical note patterns."""
+    def _extract_sections_from_docx_structure(self, doc) -> List[Dict[str, str]]:
+        """
+        Extract sections from DOCX based on document structure.
+
+        Language-agnostic: Detects headers based on:
+        - Paragraph styles (Heading 1, Heading 2, etc.)
+        - Bold formatting
+        - Short paragraphs followed by content
+        """
         fields = []
+        seen_headers = set()
 
-        # Common patterns for section headers (case insensitive)
-        patterns = [
-            # SOAP
-            (r"^Subjective[:|\s]", "subjective", "Subjective"),
-            (r"^Objective[:|\s]", "objective", "Objective"),
-            (r"^Assessment[:|\s]", "assessment", "Assessment"),
-            (r"^Plan[:|\s]", "plan", "Plan"),
-            # Swedish
-            (r"^Anamnes[:|\s]", "anamnes", "Anamnes"),
-            (r"^Status[:|\s]", "status", "Status"),
-            (r"^Bedömning[:|\s]", "bedomning", "Bedömning"),
-            (r"^Åtgärd[:|\s]", "atgard", "Åtgärd"),
-            # SBAR
-            (r"^Situation[:|\s]", "situation", "Situation"),
-            (r"^Background[:|\s]", "background", "Background"),
-            (r"^Bakgrund[:|\s]", "bakgrund", "Bakgrund"),
-            # Generic
-            (r"^History[:|\s]", "history", "History"),
-            (r"^Findings[:|\s]", "findings", "Findings"),
-            (r"^Recommendations[:|\s]", "recommendations", "Recommendations"),
-        ]
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if not text:
+                continue
 
-        found_sections = set()
-        for pattern, field_name, field_label in patterns:
-            if re.search(pattern, text, re.MULTILINE | re.IGNORECASE):
-                if field_name not in found_sections:
+            # Check if this is a heading based on style
+            is_heading = False
+            if para.style.name.startswith('Heading'):
+                is_heading = True
+            # Check if paragraph is bold (all runs are bold)
+            elif para.runs and all(run.bold for run in para.runs if run.text.strip()):
+                is_heading = True
+            # Check for short lines ending with colon (likely headers)
+            elif len(text) < 100 and text.endswith(':'):
+                is_heading = True
+
+            if is_heading:
+                # Create field name from the header text
+                field_name = self._sanitize_field_name(text)
+                field_label = text.rstrip(':').strip()
+
+                if field_name and field_name not in seen_headers:
                     fields.append({
                         "name": field_name,
                         "label": field_label,
                         "type": "text",
                         "description": f"Section for {field_label}"
                     })
-                    found_sections.add(field_name)
+                    seen_headers.add(field_name)
+
+        return fields
+
+    def _extract_sections_from_pdf_structure(self, doc) -> List[Dict[str, str]]:
+        """
+        Extract sections from PDF based on font formatting.
+
+        Language-agnostic: Detects headers based on:
+        - Larger font sizes
+        - Bold text
+        - Short lines with distinct formatting
+        """
+        fields = []
+        seen_headers = set()
+
+        # Collect font size statistics to determine what's "large"
+        font_sizes = []
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            blocks = page.get_text("dict")["blocks"]
+
+            for block in blocks:
+                if "lines" in block:
+                    for line in block["lines"]:
+                        for span in line["spans"]:
+                            font_sizes.append(span["size"])
+
+        if not font_sizes:
+            return []
+
+        # Calculate average and threshold for "heading" font size
+        avg_size = sum(font_sizes) / len(font_sizes)
+        heading_threshold = avg_size * 1.1  # 10% larger than average
+
+        # Extract headers
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            blocks = page.get_text("dict")["blocks"]
+
+            for block in blocks:
+                if "lines" not in block:
+                    continue
+
+                for line in block["lines"]:
+                    # Get line text
+                    line_text = "".join([span["text"] for span in line["spans"]]).strip()
+                    if not line_text or len(line_text) > 150:  # Skip very long lines
+                        continue
+
+                    # Check if line has heading characteristics
+                    is_heading = False
+                    for span in line["spans"]:
+                        # Check font size
+                        if span["size"] >= heading_threshold:
+                            is_heading = True
+                        # Check bold
+                        if "bold" in span["font"].lower():
+                            is_heading = True
+
+                    # Also check for colon endings
+                    if line_text.endswith(':'):
+                        is_heading = True
+
+                    if is_heading:
+                        field_name = self._sanitize_field_name(line_text)
+                        field_label = line_text.rstrip(':').strip()
+
+                        if field_name and field_name not in seen_headers:
+                            fields.append({
+                                "name": field_name,
+                                "label": field_label,
+                                "type": "text",
+                                "description": f"Section for {field_label}"
+                            })
+                            seen_headers.add(field_name)
+
+        return fields
+
+    def _extract_sections_by_heuristics(self, text: str) -> List[Dict[str, str]]:
+        """
+        Extract sections from plain text using heuristic patterns.
+
+        Language-agnostic: Detects headers based on:
+        - Lines ending with ':'
+        - Short lines (< 80 chars) in TITLE CASE or ALL CAPS
+        - Lines with numbering (1., 2., etc.)
+        - Blank lines separating sections
+        """
+        fields = []
+        seen_headers = set()
+        lines = text.split('\n')
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            is_header = False
+
+            # Pattern 1: Lines ending with colon
+            if stripped.endswith(':') and len(stripped) < 100:
+                is_header = True
+
+            # Pattern 2: Short lines that are ALL CAPS or Title Case
+            elif len(stripped) < 80:
+                # Check if TITLE CASE (most words start with capital)
+                words = stripped.split()
+                if words:
+                    capitalized_words = sum(1 for w in words if w and w[0].isupper())
+                    if capitalized_words / len(words) >= 0.6:  # 60% of words capitalized
+                        is_header = True
+                    # Check if ALL CAPS
+                    elif stripped.isupper() and len(stripped) > 3:
+                        is_header = True
+
+            # Pattern 3: Numbered sections (1., 2., A., etc.)
+            elif re.match(r'^[\d\w]+\.[\s)]', stripped) and len(stripped) < 100:
+                is_header = True
+
+            if is_header:
+                field_name = self._sanitize_field_name(stripped)
+                field_label = stripped.rstrip(':').strip()
+
+                if field_name and field_name not in seen_headers:
+                    fields.append({
+                        "name": field_name,
+                        "label": field_label,
+                        "type": "text",
+                        "description": f"Section for {field_label}"
+                    })
+                    seen_headers.add(field_name)
 
         # If no sections found, create generic fields
         if not fields:
@@ -205,6 +370,30 @@ class TemplateServiceAdapter:
             ]
 
         return fields
+
+    def _sanitize_field_name(self, text: str) -> str:
+        """
+        Convert header text to valid field name.
+
+        Examples:
+        - "Patient Information:" -> "patient_information"
+        - "Bedömning" -> "bedomning"
+        - "1. Chief Complaint" -> "chief_complaint"
+        """
+        # Remove common prefixes (numbers, bullets)
+        text = re.sub(r'^[\d\w]+\.[\s)]', '', text)
+        # Remove colons and special chars
+        text = text.rstrip(':').strip()
+        # Replace Swedish characters
+        text = text.replace('å', 'a').replace('ä', 'a').replace('ö', 'o')
+        text = text.replace('Å', 'A').replace('Ä', 'A').replace('Ö', 'O')
+        # Convert to lowercase and replace spaces/special chars with underscore
+        text = re.sub(r'[^\w\s]', '', text)
+        text = re.sub(r'\s+', '_', text.lower())
+        # Remove leading/trailing underscores
+        text = text.strip('_')
+
+        return text
 
     async def validate_template_structure(self, structure: Dict[str, Any]) -> bool:
         """Validate template structure format."""

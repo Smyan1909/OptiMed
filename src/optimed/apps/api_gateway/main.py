@@ -3370,7 +3370,7 @@ async def list_templates(
                     "template_type": t.template_type.value,
                     "is_system_template": t.is_system_template,
                     "file_format": t.file_format,
-                    "fields": t.template_structure.get("fields", []),
+                    "template_structure": t.template_structure if isinstance(t.template_structure, dict) else {},
                     "created_at": t.created_at.isoformat()
                 }
                 for t in templates
