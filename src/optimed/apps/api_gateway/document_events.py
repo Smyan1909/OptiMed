@@ -36,7 +36,7 @@ class DocumentEventBroadcaster:
     async def subscribe(self, user_id: str) -> asyncio.Queue:
         """Subscribe to events for a user."""
         async with self._lock:
-            queue = asyncio.Queue(maxsize=100)
+            queue: asyncio.Queue = asyncio.Queue(maxsize=100)
 
             if user_id not in self._subscribers:
                 self._subscribers[user_id] = set()

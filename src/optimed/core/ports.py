@@ -803,7 +803,7 @@ class PDFService(Protocol):
         """List all PDF documents associated with a patient."""
         ...
 
-    async def delete_document(self, document_id: str, user_id: str) -> None:
+    async def delete_document(self, document_id: str, user_id: str, session_id: Optional[str] = None, patient_id: Optional[str] = None) -> bool:
         """Delete a PDF document by its ID."""
         ...
 
@@ -971,7 +971,7 @@ class TemplateService(Protocol):
 class NoteGenerator(Protocol):
     """Service for generating clinical notes from context."""
 
-    async def generate_note_streaming(
+    def generate_note_streaming(
         self,
         request: NoteGenerationRequest,
         patient_context: Optional[PatientContext],

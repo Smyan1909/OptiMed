@@ -413,7 +413,7 @@ class PGAuditRepository:
                     FROM data_access_logs
                     WHERE user_id = $1
                 """
-                params = [user_id]
+                params: list[Any] = [user_id]
 
                 if from_date:
                     query += " AND accessed_at >= $2"

@@ -216,7 +216,7 @@ class MemoryPDFService(PDFService):
 
         return pdf_list
 
-    async def delete_document(self, document_id: str, user_id: str, session_id: str = None, patient_id: str = None) -> bool:
+    async def delete_document(self, document_id: str, user_id: str, session_id: Optional[str] = None, patient_id: Optional[str] = None) -> bool:
         """Delete a PDF document by its ID."""
         logger.info(f"Delete request - document_id: {sanitize_document_id(document_id)}, user_id: {sanitize_user_id(user_id)}, session_id: {sanitize_session_id(session_id) if session_id else 'None'}, patient_id: {sanitize_patient_id(patient_id) if patient_id else 'None'}")
 

@@ -105,7 +105,7 @@ class StreamingStatus:
             "merge_timeline_results": "Formatting timeline for display with temporal sequence...",
             # Note generation flow descriptions
             "load_note_template": f"Loading clinical note template ({getattr(self.state, 'note_template_type_preference', 'journal entry')})...",
-            "generate_note_section": f"Generating clinical note sections using template: {getattr(self.state, 'note_template', {}).name if hasattr(getattr(self.state, 'note_template', None), 'name') else 'Unknown'}...",
+            "generate_note_section": f"Generating clinical note sections using template: {getattr(getattr(self.state, 'note_template', None), 'name', 'Unknown') if getattr(self.state, 'note_template', None) else 'Unknown'}...",
             "format_note_response": "Formatting generated note for final review and export...",
             "store_note_metadata": "Recording note generation metadata (GDPR-compliant, no content stored)...",
         }

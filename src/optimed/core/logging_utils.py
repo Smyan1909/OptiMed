@@ -126,7 +126,7 @@ def log_error(logger: logging.Logger, operation: str, error: Exception, **kwargs
     sanitized = {}
     for key, value in kwargs.items():
         if any(sensitive in key.lower() for sensitive in ['user_id', 'patient_id', 'session_id', 'document_id']):
-            sanitized[key] = sanitize_id(str(value) if value else None, key.split('_')[0])
+            sanitized[key] = sanitize_id(str(value) if value else "", key.split('_')[0])
         else:
             sanitized[key] = value
 

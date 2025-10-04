@@ -4007,7 +4007,6 @@ async def generate_note_stream(
                     user_prompt=req.context_prompt or "Generate clinical note",
                     user_id=user_ctx["user_id"],
                     session_id=req.session_id,
-                    is_note_generation_flow=True,
                     note_template=template,
                     note_generation_id=generation_id,
                     note_context_prompt=req.context_prompt

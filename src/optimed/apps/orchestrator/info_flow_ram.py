@@ -1916,7 +1916,7 @@ Return ONLY the JSON array, no additional text.
                     event_id = f"event_{idx}"
                     title = event.get("title", "Unknown event")
                     time_period = event.get("time_period", "Unknown time")
-                    chunks = state.timeline_chunks.get(event_id, [])
+                    chunks = state.timeline_chunks.get(event_id, []) if state.timeline_chunks else []
 
                     logger.info(f"Generating content for: {title}")
 
@@ -3753,10 +3753,13 @@ Content:
             return self._to_output(data.model_dump())
         return self._to_output(data)
 
-    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "info_retrieval", user_id: str | None = None, session_id: str | None = None, is_note_generation_flow: bool = False, note_template: Any = None, note_generation_id: str | None = None, note_context_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
+    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "info_retrieval", user_id: str | None = None, session_id: str | None = None, note_template: NoteTemplate | None = None, note_generation_id: str | None = None, note_context_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Return an async generator that yields chunks as they stream from the graph."""
 
         async def _stream_generator():
+            # Derive is_note_generation_flow from note_template parameter
+            is_note_generation_flow = note_template is not None
+
             if user_id:
                 session_id_final = await self.get_or_create_session(
                     user_id=user_id,
