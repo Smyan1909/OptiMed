@@ -7,7 +7,7 @@ from optimed.core.domain import UserEHRConnection, User
 from optimed.core.ports import UserEHRConnectionRepository, AuthenticationProvider, FHIRRepository
 from optimed.adapters.smart_fhir.auth_provider import SMARTAuthProvider
 from optimed.adapters.smart_fhir.repository import SMARTFHIRRepository
-from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_session_id, log_error
+from optimed.core.logging_utils import get_logger, sanitize_user_id, log_error
 
 logger = get_logger(__name__)
 
@@ -132,15 +132,15 @@ class UserEHRConnectionService:
             return None
 
         if not connection.access_token:
-            logger.warning(f"Connection has no access token")
+            logger.warning("Connection has no access token")
             return None
 
-        logger.info(f"Found connection with access token")
+        logger.info("Found connection with access token")
 
         # Check if we already have a repository for this connection
         if connection.connection_id in self._active_repositories:
             repo = self._active_repositories[connection.connection_id]
-            logger.info(f"Reusing existing repository for connection")
+            logger.info("Reusing existing repository for connection")
             return repo
         
         # Create new repository based on provider type

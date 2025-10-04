@@ -9,7 +9,6 @@ import logging
 import sys
 import hashlib
 from typing import Any, Optional
-from pathlib import Path
 
 # GDPR-compliant logging configuration
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

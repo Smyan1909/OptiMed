@@ -92,8 +92,7 @@ class MemoryPDFService(PDFService):
             logger.info(f"Upload params - user_id: {sanitize_user_id(upload_request.user_id)}, session_id: {sanitize_session_id(upload_request.session_id)}, filename: {upload_request.filename}, patient_id: {sanitize_patient_id(upload_request.patient_id) if upload_request.patient_id else 'None'}")
 
             # Use the provided session_id instead of hardcoded default
-            session_key = self._get_session_key(upload_request.user_id, upload_request.session_id, upload_request.patient_id)
-            logger.info(f"Generated session key for upload")
+            logger.info("Generated session key for upload")
 
             session_data = self._get_or_create_session(upload_request.user_id, upload_request.session_id, upload_request.patient_id)
 
@@ -104,7 +103,7 @@ class MemoryPDFService(PDFService):
             # Extract metadata and text
             logger.info("Extracting metadata...")
             metadata = await self.pdf_processor.extract_metadata(upload_request.file_content)
-            logger.info(f"Metadata extraction complete")
+            logger.info("Metadata extraction complete")
 
             logger.info("Extracting text...")
             extracted_text = await self.pdf_processor.extract_text(upload_request.file_content)
@@ -170,7 +169,7 @@ class MemoryPDFService(PDFService):
                 updated_at=datetime.now(timezone.utc)
             )
 
-            session_data = self._get_or_create_session(upload_request.user_id, session_id, upload_request.patient_id)
+            session_data = self._get_or_create_session(upload_request.user_id, upload_request.session_id, upload_request.patient_id)
             session_data.pdfs[error_doc.document_id] = error_doc
 
             return error_doc
@@ -229,7 +228,7 @@ class MemoryPDFService(PDFService):
                 session_data = self.sessions[session_key]
 
                 if document_id in session_data.pdfs:
-                    logger.info(f"Deleting PDF document")
+                    logger.info("Deleting PDF document")
                     del session_data.pdfs[document_id]
 
                     # Also delete raw content if it exists
@@ -297,7 +296,7 @@ class MemoryPDFService(PDFService):
         """List all PDF documents for a session (internal method)."""
         logger.info(f"List request - user_id: {sanitize_user_id(user_id)}, session_id: {sanitize_session_id(session_id)}, patient_id: {sanitize_patient_id(patient_id) if patient_id else 'None'}")
 
-        session_key = self._get_session_key(user_id, session_id, patient_id)
+        _session_key = self._get_session_key(user_id, session_id, patient_id)
 
         session_data = self._get_or_create_session(user_id, session_id, patient_id)
         pdf_list = list(session_data.pdfs.values())

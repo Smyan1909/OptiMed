@@ -133,7 +133,7 @@ class StabilityAIClient(ImageGenerationService):
 
             logger.info(f"Image generation evaluation - Should generate: {should_generate}")
             if should_generate:
-                logger.info(f"Generated image prompt for medical illustration")
+                logger.info("Generated image prompt for medical illustration")
             else:
                 logger.info(f"Image generation not needed: {data.get('reason', 'Not specified')}")
 

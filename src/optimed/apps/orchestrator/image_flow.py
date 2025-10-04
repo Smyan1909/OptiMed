@@ -7,7 +7,7 @@ from optimed.core.domain import PatientContext, ImagePixelData, DICOMMetadata
 from optimed.core.ports import LLMClient, FHIRRepository, VectorStore, ImageEmbeddingService, ImageAnalysisEngine, UserRepository
 from optimed.adapters.anthropic_claude.client import AnthropicClaudeClient
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
-from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, sanitize_session_id, log_error
+from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, log_error
 
 logger = get_logger(__name__)
 

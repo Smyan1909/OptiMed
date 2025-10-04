@@ -35,8 +35,7 @@ from optimed.core.logging_utils import (
     sanitize_patient_id,
     sanitize_session_id,
     sanitize_document_id,
-    log_error,
-    log_operation
+    log_error
 )
 
 from pydantic import BaseModel
@@ -863,7 +862,7 @@ async def initiate_ehr_login(req: EHRLoginRequest):
         
         authorization_url = f"{auth_url}?{urlencode(auth_params)}"
 
-        logger.info(f"[DEBUG] Authorization URL generated successfully")
+        logger.info("[DEBUG] Authorization URL generated successfully")
 
         return EHRLoginResponse(
             authorization_url=authorization_url,
@@ -1060,7 +1059,7 @@ async def complete_ehr_login(
         # Get the temporary session data
         session_data = await _connection_repo.get_ehr_login_session(connection_id)
         if not session_data:
-            logger.error(f"[ERROR] Login session expired")
+            logger.error("[ERROR] Login session expired")
             frontend_url = f"{frontend_base}/login?error=Login session expired"
             return RedirectResponse(url=frontend_url, status_code=302)
         
@@ -1190,7 +1189,7 @@ async def exchange_code_for_token(code: str, client_id: str, redirect_uri: str, 
         base_url = fhir_server_url.replace("/fhir", "")
         token_url = f"{base_url.rstrip('/')}/auth/token"
 
-    logger.info(f"[DEBUG] Token URL generated successfully")
+    logger.info("[DEBUG] Token URL generated successfully")
 
     token_data = {
         "grant_type": "authorization_code",
@@ -1501,7 +1500,7 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
             
             elif update.get("type") == "differential_diagnosis_progress":
                 # Handle differential diagnosis progress updates
-                logger.info(f"[DEBUG] API Gateway received differential diagnosis progress")
+                logger.info("[DEBUG] API Gateway received differential diagnosis progress")
                 diagnosis_progress_data = {
                     "type": "differential_diagnosis_progress",
                     "diagnosis_name": update.get("diagnosis_name", ""),
@@ -1510,7 +1509,7 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
                     "message": update.get("message", ""),
                     "timestamp": update.get("timestamp", datetime.now().isoformat())
                 }
-                logger.info(f"[DEBUG] Emitting diagnosis progress data")
+                logger.info("[DEBUG] Emitting diagnosis progress data")
                 yield f"data: {json.dumps(diagnosis_progress_data)}\n\n"
             
             elif update.get("type") == "response_chunk":
@@ -2012,7 +2011,7 @@ async def list_user_dicom_images(request: Request):
                     processed_at=img.processed_at,
                     storage_path=img.storage_path
                 ))
-            except Exception as e:
+            except Exception:
                 logger.error(f"[ERROR] Failed to serialize image - doc: {sanitize_document_id(img.image_id)}")
                 # Skip this image and continue with others
                 continue
@@ -2430,8 +2429,8 @@ Patient Information:
 - Current Medications: {', '.join([f"{k}: {v}" for k, v in list(patient.medications.items())[:5]])}
 - Active Diagnoses: {', '.join([f"{k}: {v}" for k, v in list(patient.diagnoses.items())[:3]])}
 """
-            except Exception as e:
-                logger.warning(f"[Warning] Could not fetch patient context")
+            except Exception:
+                logger.warning("[Warning] Could not fetch patient context")
                 patient_context = ""
         
         # Define entry type contexts and templates
@@ -2810,7 +2809,7 @@ async def get_image_generation_status(
         }
         
     except Exception as e:
-        logger.error(f"Error checking image generation status")
+        logger.error("Error checking image generation status")
         return {
             "enabled": True,
             "available": False,
@@ -2933,8 +2932,8 @@ async def lookup_term(
 
             if llm_resp and llm_resp.content and len(llm_resp.content.strip()) > 0:
                 summary_text = llm_resp.content.strip()
-        except Exception as e:
-            logger.warning(f"[Lookup] Structured summary generation failed, using default summary")
+        except Exception:
+            logger.warning("[Lookup] Structured summary generation failed, using default summary")
 
         return LookupResponse(
             term=term,
@@ -3034,11 +3033,9 @@ async def get_upload_context(
 
     user_id = user_ctx.get("user_id")
     session_id = user_ctx.get("session_id")
-    user = user_ctx.get("user")
 
-    # Debug: Log all headers
-    headers_dict = dict(request.headers)
-    logger.info(f"[DEBUG] upload-context - Headers received")
+    # Debug: Log headers
+    logger.info("[DEBUG] upload-context - Headers received")
     logger.info(f"[DEBUG] upload-context - user: {sanitize_user_id(user_id) if user_id else "none"}, session: {sanitize_session_id(session_id) if session_id else "none"}")
 
     if not user_id:
@@ -3056,7 +3053,7 @@ async def get_upload_context(
 
         if sessions and len(sessions) > 0:
             most_recent_session = sessions[0]
-            logger.info(f"[INFO] upload-context - Returning most recent session from DB")
+            logger.info("[INFO] upload-context - Returning most recent session from DB")
             return UploadContextResponse(
                 patient_id=most_recent_session.patient_id,
                 chat_session_id=most_recent_session.session_id
@@ -3411,7 +3408,7 @@ async def document_events_stream(
     Uses same streaming approach as /chat/stream.
     """
     try:
-        logger.info(f"[DocEvents] SSE request received")
+        logger.info("[DocEvents] SSE request received")
 
         session_id = user_ctx.get("session_id")
         if not session_id:
@@ -3629,7 +3626,7 @@ async def cleanup_session_documents(
             try:
                 await _pdf_service.delete_document(doc.document_id, user.user_id, session_id)
                 deleted_pdfs += 1
-            except Exception as e:
+            except Exception:
                 logger.error(f"[Cleanup] Failed to delete PDF {sanitize_document_id(doc.document_id)}")
 
         deleted_xmls = 0
@@ -3637,7 +3634,7 @@ async def cleanup_session_documents(
             try:
                 await _xml_service.delete_document(doc.document_id, user.user_id, session_id)
                 deleted_xmls += 1
-            except Exception as e:
+            except Exception:
                 logger.error(f"[Cleanup] Failed to delete XML {sanitize_document_id(doc.document_id)}")
 
         logger.info(f"[Cleanup] Cleaned up {deleted_pdfs} PDFs and {deleted_xmls} XMLs from auth session")
@@ -3834,7 +3831,7 @@ async def upload_template(
             filename=file.filename
         )
 
-        logger.info(f"[Template Upload] Template created successfully")
+        logger.info("[Template Upload] Template created successfully")
 
         return {
             "template_id": template.template_id,
@@ -3965,7 +3962,7 @@ async def generate_note_stream(
 ):
     """Generate clinical note with streaming (GDPR: content never stored)."""
     try:
-        logger.info(f"[Note Generate] Starting generation for template")
+        logger.info("[Note Generate] Starting generation for template")
 
         # Get template
         template = await template_repo.get_template_by_id(req.template_id)
@@ -3977,8 +3974,8 @@ async def generate_note_stream(
         if req.patient_id:
             try:
                 patient_ctx = await fhir_repo.get_patient(req.patient_id)
-            except Exception as e:
-                logger.warning(f"[Note Generate] Warning: Could not fetch patient")
+            except Exception:
+                logger.warning("[Note Generate] Warning: Could not fetch patient")
 
         # Start metadata tracking
         import hashlib

@@ -825,7 +825,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                                     },
                                 )
                                 if existing_entry:
-                                    logger.info(f"Skipping already stored journal entry")
+                                    logger.info("Skipping already stored journal entry")
                                     continue
                             except Exception as e:
                                 log_error(logger, "journal_entry_existence_check", e)
@@ -1830,7 +1830,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                             )
                             
                             state.prelim_diagnosis_name = diagnosis_name  # Store for streaming updates
-                            logger.info(f"Preparing Bayesian confidence calculation for diagnosis")
+                            logger.info("Preparing Bayesian confidence calculation for diagnosis")
                             
                             # Create async task for Bayesian confidence calculation
                             # Pass the batch_priors dict so it can use pre-computed values
@@ -2015,7 +2015,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                         "details": details,
                         "timestamp": datetime.now().isoformat()
                     }
-                    logger.info(f"Calling stream_callback with update")
+                    logger.info("Calling stream_callback with update")
                     await state.stream_callback(update)
                     logger.info("Successfully emitted differential diagnosis progress")
                 except Exception as e:
@@ -2163,7 +2163,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                     return prob_evidence_given_disease
                     
                 else:
-                    logger.warning(f"Could not parse sensitivity/specificity from likelihood text")
+                    logger.warning("Could not parse sensitivity/specificity from likelihood text")
                     # Fallback to moderate values
                     return 0.5
                     
@@ -2334,7 +2334,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 diagnosis_list = ", ".join(diagnoses)
                 combined_search_query = f"epidemiology prevalence incidence rates {diagnosis_list} population statistics medical literature"
                 
-                logger.info(f"Combined search query generated")
+                logger.info("Combined search query generated")
                 
                 # Perform single web search for all diagnoses
                 try:
@@ -2486,7 +2486,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
             # Use defaults for remaining diagnoses to save time
             for diagnosis in diagnoses[3:]:
                 priors[diagnosis] = 0.03
-                logger.info(f"Using default prior: 0.030")
+                logger.info("Using default prior: 0.030")
             
             return priors
 

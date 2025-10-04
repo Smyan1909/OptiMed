@@ -4,7 +4,6 @@ Test script to verify that user IDs are being properly captured in audit logs.
 import asyncio
 import os
 import sys
-from datetime import datetime, timedelta
 
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))

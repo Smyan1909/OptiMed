@@ -7,7 +7,7 @@ from optimed.core.domain import User, UserSession, UserAction, UserRole, UserSta
 from optimed.core.ports import UserRepository
 import hashlib
 import uuid
-from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, sanitize_session_id, log_error
+from optimed.core.logging_utils import get_logger, log_error
 
 logger = get_logger(__name__)
 

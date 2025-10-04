@@ -10,9 +10,8 @@ import time
 from typing import Dict, Tuple, Optional
 from collections import defaultdict
 from fastapi import Request, HTTPException
-from datetime import datetime, timezone
 import asyncio
-from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_session_id, log_error
+from optimed.core.logging_utils import get_logger, log_error
 
 logger = get_logger(__name__)
 

@@ -10,7 +10,7 @@ import uuid
 import json
 import hashlib
 from typing import Optional, Dict, Any, List
-from datetime import datetime, timezone
+from datetime import datetime
 from optimed.adapters.security.encryption_service import get_phi_redactor
 from optimed.core.logging_utils import get_logger, log_error
 
@@ -98,7 +98,6 @@ class PGAuditRepository:
 
         try:
             # Redact PHI from error message and metadata
-            safe_error = self._redact_phi(error_message) if error_message else None
             safe_metadata = self._redact_phi(metadata) if metadata else {}
 
             async with pool.acquire() as conn:

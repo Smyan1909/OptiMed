@@ -9,7 +9,7 @@ import uuid
 from typing import Optional
 from fastapi import Request
 import asyncpg
-from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_session_id, log_error
+from optimed.core.logging_utils import get_logger, log_error
 
 logger = get_logger(__name__)
 

@@ -127,7 +127,7 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
                                 "error": str(e)
                             }
                         )
-                    except:
+                    except Exception:
                         pass
                 # Continue with original request if decryption fails
         
@@ -209,7 +209,7 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
                                 "error": str(e)
                             }
                         )
-                    except:
+                    except Exception:
                         pass
                 # Return original response if encryption fails
         

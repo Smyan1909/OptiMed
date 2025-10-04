@@ -29,7 +29,6 @@ from optimed.core.domain import (
     JournalEntryUpdate,
     NoteTemplate,
     NoteGenerationRequest,
-    GeneratedNote,
     NoteGenerationMetadata,
     TemplateType,
     NoteGenerationStatus,

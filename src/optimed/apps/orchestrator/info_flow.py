@@ -22,7 +22,7 @@ from optimed.apps.orchestrator.connection_service import UserEHRConnectionServic
 from optimed.embeddings.minilm import embed
 from optimed.embeddings.service import embed_and_store
 import re
-from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, sanitize_session_id, log_error
+from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, log_error
 
 logger = get_logger(__name__)
 

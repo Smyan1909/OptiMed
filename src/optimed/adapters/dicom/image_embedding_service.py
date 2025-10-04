@@ -142,8 +142,8 @@ class DICOMImageEmbeddingService(ImageEmbeddingService):
                     if feature_len > 0:
                         embedding[1:feature_len+1] = char_features[:feature_len]
 
-            except Exception as inner_e:
-                logger.warning(f"Character frequency extraction failed for metadata embedding, using length feature only")
+            except Exception:
+                logger.warning("Character frequency extraction failed for metadata embedding, using length feature only")
                 # Just use length feature if character analysis fails
                 pass
             

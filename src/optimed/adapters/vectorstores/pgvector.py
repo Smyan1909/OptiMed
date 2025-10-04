@@ -10,7 +10,7 @@ import os
 import faiss
 import numpy as np
 from optimed.adapters.kms.crypto_service import EnvelopeEncryption, EphemeralCacheService, KMSConfig
-from optimed.core.logging_utils import get_logger, sanitize_patient_id, sanitize_session_id, log_error
+from optimed.core.logging_utils import get_logger, sanitize_session_id, log_error
 
 logger = get_logger(__name__)
 
@@ -358,7 +358,7 @@ class PGVectorAdapter(VectorStore):
         """GDPR-compliant chat history: returns empty list to prevent PHI storage."""
         # GDPR Compliance: Chat history with PHI must not be stored or retrieved
         # This prevents any PHI from being persisted in the database
-        logger.info(f"Chat history access blocked (GDPR compliance)")
+        logger.info("Chat history access blocked (GDPR compliance)")
 
         # Return empty list to maintain API compatibility
         return []

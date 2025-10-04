@@ -6,7 +6,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 
 from optimed.core.domain import NoteTemplate, TemplateType
-from optimed.core.ports import TemplateService, TemplateRepository
+from optimed.core.ports import TemplateRepository
 from optimed.core.logging_utils import get_logger, log_error
 
 logger = get_logger(__name__)

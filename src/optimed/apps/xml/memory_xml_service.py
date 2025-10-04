@@ -95,7 +95,7 @@ class MemoryXMLService(XMLService):
             logger.info(f"Upload params - user_id: {sanitize_user_id(user_id)}, session_id: {sanitize_session_id(session_id)}, patient_id: {sanitize_patient_id(patient_id) if patient_id else 'None'}")
 
             # Get session data
-            session_key = self._get_session_key(user_id, session_id, patient_id)
+            _session_key = self._get_session_key(user_id, session_id, patient_id)
 
             session_data = self._get_or_create_session(user_id, session_id, patient_id)
 
@@ -214,7 +214,7 @@ class MemoryXMLService(XMLService):
         """List all XML documents for a session."""
         logger.info(f"List request - user_id: {sanitize_user_id(user_id)}, session_id: {sanitize_session_id(session_id)}, patient_id: {sanitize_patient_id(patient_id) if patient_id else 'None'}")
 
-        session_key = self._get_session_key(user_id, session_id, patient_id)
+        _session_key = self._get_session_key(user_id, session_id, patient_id)
 
         session_data = self._get_or_create_session(user_id, session_id, patient_id)
         xml_list = list(session_data.xml_documents.values())
@@ -233,7 +233,7 @@ class MemoryXMLService(XMLService):
         """Delete an XML document from memory."""
         logger.info(f"Delete request - document_id: {sanitize_document_id(document_id)}, user_id: {sanitize_user_id(user_id)}, session_id: {sanitize_session_id(session_id)}, patient_id: {sanitize_patient_id(patient_id) if patient_id else 'None'}")
 
-        session_key = self._get_session_key(user_id, session_id, patient_id)
+        _session_key = self._get_session_key(user_id, session_id, patient_id)
 
         session_data = self._get_or_create_session(user_id, session_id, patient_id)
 

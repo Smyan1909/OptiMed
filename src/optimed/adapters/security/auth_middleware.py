@@ -6,12 +6,12 @@ Ensures only authenticated users can access protected endpoints.
 """
 
 import os
-from typing import Optional, List
+from typing import Optional
 from fastapi import Request, HTTPException, Header, Depends
 from optimed.core.domain import User
 from optimed.core.ports import UserRepository
 from datetime import datetime, timezone
-from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_session_id, log_error
+from optimed.core.logging_utils import get_logger, log_error
 
 logger = get_logger(__name__)
 

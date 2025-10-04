@@ -8,7 +8,6 @@ Usage:
 import os
 import asyncio
 import asyncpg
-from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -41,7 +40,7 @@ async def check_audit_tables():
         print("[X] Error: PGVECTOR_DSN or DATABASE_URL not found in environment")
         return
 
-    print(f"[*] Connecting to database...")
+    print("[*] Connecting to database...")
 
     try:
         conn = await asyncpg.connect(dsn)
@@ -104,7 +103,7 @@ async def check_audit_tables():
                 if timestamp_col:
                     try:
                         latest = await conn.fetchval(f"SELECT MAX({timestamp_col}) FROM {table}")
-                    except:
+                    except Exception:
                         latest = "N/A"
 
                 table_stats.append([

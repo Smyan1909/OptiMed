@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import uuid
 from typing import AsyncGenerator, Dict, Any, Optional, List
 from datetime import datetime, timezone
 
-from optimed.core.ports import NoteGenerator, TemplateRepository
+from optimed.core.ports import TemplateRepository
 from optimed.core.domain import (
     NoteGenerationRequest,
-    GeneratedNote,
     NoteGenerationMetadata,
     NoteTemplate,
     PatientContext,

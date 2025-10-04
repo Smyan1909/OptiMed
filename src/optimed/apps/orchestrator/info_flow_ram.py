@@ -2774,7 +2774,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 if not state.chat_history or len(state.chat_history) < 2:
                     # No context needed for first message
                     state.classification_query = state.user_prompt
-                    logger.info(f"No history - using original query")
+                    logger.info("No history - using original query")
                     return state
 
                 # Get recent conversation context (last 5 messages)
@@ -2826,7 +2826,7 @@ Return ONLY the reformulated query, nothing else."""
 
                 # Skip classification if already in note generation flow
                 if hasattr(state, 'is_note_generation_flow') and state.is_note_generation_flow:
-                    logger.info(f"Already in note generation flow, skipping classification")
+                    logger.info("Already in note generation flow, skipping classification")
                     return state
 
                 # Use contextualized query if available (from contextualize_query_for_classification node)
@@ -2847,7 +2847,7 @@ Return ONLY the reformulated query, nothing else."""
 
                 # Check for note generation intent (high precision)
                 if label == "note_generation" or label == "discharge_summary":
-                    logger.info(f"Note generation detected!")
+                    logger.info("Note generation detected!")
                     state.is_note_generation_flow = True
 
                     # Determine template type from query content
@@ -3878,7 +3878,7 @@ Content:
                     if previous_state and previous_state.get("llm_response"):
                         final_response_content = previous_state["llm_response"].content if hasattr(previous_state["llm_response"], 'content') else str(previous_state["llm_response"])
 
-                    logger.info(f"🎯 Emitting completion event")
+                    logger.info("🎯 Emitting completion event")
                     logger.info(f"📦 final_response length: {len(final_response_content)} chars")
                     if final_response_content:
                         try:
@@ -3886,8 +3886,8 @@ Content:
                             logger.info(f"📋 Response type: {parsed.get('type')}")
                             if parsed.get('type') == 'generated_note':
                                 logger.info(f"✅ Note content length: {len(parsed.get('content', ''))} chars")
-                        except:
-                            logger.info(f"⚠️ Response is not JSON")
+                        except Exception:
+                            logger.info("⚠️ Response is not JSON")
 
                     completion_update = {
                         "type": "completion",
@@ -3905,11 +3905,11 @@ Content:
                     
 
 
-                    logger.info(f"🚀 Putting completion event in queue")
+                    logger.info("🚀 Putting completion event in queue")
                     await chunk_queue.put(completion_update)
-                    logger.info(f"🏁 Putting end signal in queue")
+                    logger.info("🏁 Putting end signal in queue")
                     await chunk_queue.put(None)  # Signal end of stream
-                    logger.info(f"✅ Stream generation complete")
+                    logger.info("✅ Stream generation complete")
                 
                 # Start graph processing
                 graph_task = asyncio.create_task(run_graph())
