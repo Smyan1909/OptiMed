@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
-from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, JournalEntry, Chunk
+from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, JournalEntry, Chunk, NoteTemplate
 from optimed.core.domain.pdf_document import PDFDocument
 from optimed.core.domain.xml_document import XMLDocument
 from optimed.core.lang import detect_language_code
@@ -2064,7 +2064,7 @@ Return only the content in markdown format, no preamble.
                 # Get template repository from engine
                 # We need to access it from the engine's dependencies
                 # For now, we'll use a simple in-memory approach
-                from optimed.core.domain import NoteTemplate, TemplateType
+                from optimed.core.domain import TemplateType
 
                 # Detect language
                 from optimed.core.lang import detect_language_code
