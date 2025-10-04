@@ -3329,6 +3329,12 @@ Content:
                 if chunk.metadata.section_title:
                     doc_header += f"Section: {chunk.metadata.section_title}\n"
 
+                # Include page numbers for citation
+                if chunk.metadata.start_page == chunk.metadata.end_page:
+                    doc_header += f"Page: {chunk.metadata.start_page}\n"
+                else:
+                    doc_header += f"Pages: {chunk.metadata.start_page}-{chunk.metadata.end_page}\n"
+
                 doc_header += f"Chunk {i+1}/{len(semantic_chunks)}\n---\n"
 
                 full_text = doc_header + chunk.text
