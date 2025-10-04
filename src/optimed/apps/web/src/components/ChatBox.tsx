@@ -15,6 +15,7 @@ import { NoteGenerationDialog } from "./NoteGenerationDialog";
 import { useLayoutEffect } from "react";
 import ModeSelector from "./ModeSelector";
 import { useTranslations, useLocale } from 'next-intl';
+import { sanitizeUserId, sanitizePatientId, sanitizeSessionId, sanitizeDocumentId, logInfo, logError, logWarning } from '@/lib/logger';
 
 export interface GeneratedImageInfo {
   image_generated: boolean;
@@ -531,9 +532,7 @@ const GeneratedImageDisplay = ({ imageInfo }: { imageInfo: GeneratedImageInfo })
 
   // DEBUG: Log what we received
   useEffect(() => {
-    console.log('🖼️ GeneratedImageDisplay received:', imageInfo);
-    console.log(' Image generated?', imageInfo.image_generated);
-    console.log('Image ID?', imageInfo.image_id);
+    logInfo(`🖼️ GeneratedImageDisplay received - image_generated: ${imageInfo.image_generated}, image_id: ${imageInfo.image_id ? sanitizeDocumentId(imageInfo.image_id) : 'none'}`);
   }, [imageInfo]);
 
   // Load image with proper headers
@@ -541,22 +540,22 @@ const GeneratedImageDisplay = ({ imageInfo }: { imageInfo: GeneratedImageInfo })
     if (imageInfo.image_generated && imageInfo.image_id) {
       const loadImageWithHeaders = async () => {
         try {
-          console.log('Loading image with headers:', imageInfo.image_id);
+          logInfo(`Loading image with headers - image_id: ${sanitizeDocumentId(imageInfo.image_id!)}`);
           const response = await fetch(`/api/images/generated/${imageInfo.image_id}`, {
             headers: getAuthHeaders()
           });
-          
+
           if (response.ok) {
             const blob = await response.blob();
             const url = URL.createObjectURL(blob);
             setImageUrl(url);
-            console.log('Image loaded successfully');
+            logInfo('Image loaded successfully');
           } else {
-            console.error('Failed to load image:', response.status, response.statusText);
+            logError(`Failed to load image: ${response.status} ${response.statusText}`);
             setImageError(true);
           }
         } catch (error) {
-          console.error('Error loading image:', error);
+          logError('Error loading image', error as Error);
           setImageError(true);
         } finally {
           setImageLoading(false);
@@ -577,7 +576,7 @@ const GeneratedImageDisplay = ({ imageInfo }: { imageInfo: GeneratedImageInfo })
   }, [imageUrl]);
 
   if (!imageInfo.image_generated || !imageInfo.image_id) {
-    console.log('🚫 Not displaying image - image_generated:', imageInfo.image_generated, 'image_id:', imageInfo.image_id);
+    logInfo(`🚫 Not displaying image - image_generated: ${imageInfo.image_generated}, image_id: ${imageInfo.image_id ? sanitizeDocumentId(imageInfo.image_id) : 'none'}`);
     return null;
   }
 
@@ -585,7 +584,7 @@ const GeneratedImageDisplay = ({ imageInfo }: { imageInfo: GeneratedImageInfo })
     try {
       await downloadGeneratedImage(imageInfo.image_id!, `generated_${imageInfo.image_id}.png`);
     } catch (error) {
-      console.error('Error downloading image:', error);
+      logError('Error downloading image', error as Error);
       alert('Failed to download image');
     }
   };
@@ -595,18 +594,18 @@ const GeneratedImageDisplay = ({ imageInfo }: { imageInfo: GeneratedImageInfo })
       const imageUrl = await getGeneratedImageUrl(imageInfo.image_id!);
       window.open(imageUrl, '_blank');
     } catch (error) {
-      console.error('Error opening image:', error);
+      logError('Error opening image', error as Error);
       alert('Failed to open image');
     }
   };
 
   const handleImageLoad = () => {
-    console.log('✅ Image displayed successfully');
+    logInfo('✅ Image displayed successfully');
     setImageError(false);
   };
 
   const handleImageError = (e: any) => {
-    console.error('❌ Failed to display image:', e);
+    logError('❌ Failed to display image', e);
     setImageError(true);
   };
 
@@ -631,7 +630,7 @@ const GeneratedImageDisplay = ({ imageInfo }: { imageInfo: GeneratedImageInfo })
             <p className="text-xs text-gray-500 mb-2">Image ID: {imageInfo.image_id}</p>
             <button
               onClick={() => {
-                console.log('🔄 Retrying image load');
+                logInfo('🔄 Retrying image load');
                 setImageError(false);
                 setImageLoading(true);
                 // Trigger re-load by updating a dependency
@@ -701,13 +700,13 @@ const formatTimestamp = (timestamp: string | number): string => {
     
     // Check if the date is valid
     if (isNaN(date.getTime())) {
-      console.warn('Invalid timestamp:', timestamp);
+      logWarning(`Invalid timestamp: ${timestamp}`);
       return new Date().toLocaleTimeString();
     }
-    
+
     return date.toLocaleTimeString();
   } catch (error) {
-    console.error('Error formatting timestamp:', error, timestamp);
+    logError(`Error formatting timestamp: ${timestamp}`, error as Error);
     return new Date().toLocaleTimeString();
   }
 };
@@ -802,7 +801,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
   // Auto-scroll when differential diagnosis computation starts
   useEffect(() => {
     if (differentialDiagnosisProgress?.isComputing) {
-      console.log('🔄 Differential diagnosis computation started - auto-scrolling');
+      logInfo('🔄 Differential diagnosis computation started - auto-scrolling');
       scrollToBottom();
     }
   }, [differentialDiagnosisProgress?.isComputing]);
@@ -810,7 +809,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
   // Auto-scroll when differential diagnosis progress updates
   useEffect(() => {
     if (differentialDiagnosisProgress?.currentDiagnosis || differentialDiagnosisProgress?.currentStep) {
-      console.log('🔄 Differential diagnosis progress updated - auto-scrolling');
+      logInfo('🔄 Differential diagnosis progress updated - auto-scrolling');
       scrollToBottom();
     }
   }, [differentialDiagnosisProgress?.currentDiagnosis, differentialDiagnosisProgress?.currentStep]);
@@ -828,30 +827,24 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
   // Debug effect to track PDF state changes
   useEffect(() => {
-    console.log('[ChatBox] uploadedPDFs state changed:', {
-      count: uploadedPDFs.length,
-      pdfs: uploadedPDFs.map(pdf => ({ name: pdf.filename, status: pdf.status }))
-    });
+    logInfo(`[ChatBox] uploadedPDFs state changed - count: ${uploadedPDFs.length}, pdfs: ${uploadedPDFs.map(pdf => `${pdf.filename}(${pdf.status})`).join(', ')}`);
   }, [uploadedPDFs]);
 
   // Debug effect to track XML state changes
   useEffect(() => {
-    console.log('[ChatBox] uploadedXMLs state changed:', {
-      count: uploadedXMLs.length,
-      xmls: uploadedXMLs.map(xml => ({ name: xml.filename, status: xml.status, type: xml.document_type }))
-    });
+    logInfo(`[ChatBox] uploadedXMLs state changed - count: ${uploadedXMLs.length}, xmls: ${uploadedXMLs.map(xml => `${xml.filename}(${xml.status},${xml.document_type})`).join(', ')}`);
   }, [uploadedXMLs]);
 
   // Load PDF documents for the current session context
   const loadPDFs = useCallback(async () => {
     try {
-      console.log('[ChatBox] Loading PDFs for session:', { patientId, currentSessionId });
+      logInfo(`[ChatBox] Loading PDFs for session - patientId: ${sanitizePatientId(patientId || null)}, sessionId: ${sanitizeSessionId(currentSessionId)}`);
 
       // PDFs are now session-based, so we get PDFs for the current session
       // The patientId parameter filters to patient-specific PDFs when a patient is selected
       const pdfList = await listPDFDocuments(patientId, currentSessionId);
 
-      console.log('[ChatBox] Raw API response:', pdfList);
+      logInfo(`[ChatBox] Raw API response - document count: ${pdfList.documents?.length || 0}`);
 
       const allDocs = pdfList.documents || [];
 
@@ -861,24 +854,17 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         const uploadedAt = new Date(doc.uploaded_at).getTime();
         const isNew = uploadedAt >= sessionStartTime.current;
         if (!isNew) {
-          console.log(`[ChatBox] Filtering out old PDF: ${doc.filename} (uploaded before session start)`);
+          logInfo(`[ChatBox] Filtering out old PDF: ${doc.filename} (uploaded before session start)`);
         }
         return isNew;
       });
 
-      console.log(`[ChatBox] Parsed ${newDocs.length} PDFs for session (patient: ${patientId || 'general'}) - filtered from ${allDocs.length} total`);
-      console.log('[ChatBox] PDF details:', newDocs.map(pdf => ({
-        id: pdf.document_id,
-        name: pdf.filename,
-        status: pdf.status,
-        patient_id: pdf.patient_id
-      })));
+      logInfo(`[ChatBox] Parsed ${newDocs.length} PDFs for session (patient: ${sanitizePatientId(patientId || null)}) - filtered from ${allDocs.length} total`);
+      logInfo(`[ChatBox] PDF details - files: ${newDocs.map(pdf => `${pdf.filename}(${pdf.status})`).join(', ')}`);
 
       // Update the state and log the change
       setUploadedPDFs(prevPDFs => {
-        console.log('[ChatBox] Previous PDF count:', prevPDFs.length);
-        console.log('[ChatBox] New PDF count:', newDocs.length);
-        console.log('[ChatBox] PDF count changed:', prevPDFs.length !== newDocs.length);
+        logInfo(`[ChatBox] Previous PDF count: ${prevPDFs.length}, New PDF count: ${newDocs.length}, Changed: ${prevPDFs.length !== newDocs.length}`);
         return newDocs;
       });
 
@@ -886,20 +872,20 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
       setForceRefresh(prev => prev + 1);
 
     } catch (error) {
-      console.error('[ChatBox] Failed to load PDFs:', error);
+      logError('[ChatBox] Failed to load PDFs', error as Error);
     }
   }, [patientId, currentSessionId]);
 
   // Load XML documents for the current session context
   const loadXMLs = useCallback(async () => {
     try {
-      console.log('[ChatBox] Loading XMLs for session:', { patientId, currentSessionId });
+      logInfo(`[ChatBox] Loading XMLs for session - patientId: ${sanitizePatientId(patientId || null)}, sessionId: ${sanitizeSessionId(currentSessionId)}`);
 
       // XMLs are now session-based, so we get XMLs for the current session
       // The patientId parameter filters to patient-specific XMLs when a patient is selected
       const xmlList = await listXMLDocuments(patientId, currentSessionId);
 
-      console.log('[ChatBox] Raw XML API response:', xmlList);
+      logInfo(`[ChatBox] Raw XML API response - document count: ${xmlList.documents?.length || 0}`);
 
       const allDocs = xmlList.documents || [];
 
@@ -909,25 +895,17 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         const uploadedAt = new Date(doc.uploaded_at).getTime();
         const isNew = uploadedAt >= sessionStartTime.current;
         if (!isNew) {
-          console.log(`[ChatBox] Filtering out old XML: ${doc.filename} (uploaded before session start)`);
+          logInfo(`[ChatBox] Filtering out old XML: ${doc.filename} (uploaded before session start)`);
         }
         return isNew;
       });
 
-      console.log(`[ChatBox] Parsed ${newDocs.length} XMLs for session (patient: ${patientId || 'general'}) - filtered from ${allDocs.length} total`);
-      console.log('[ChatBox] XML details:', newDocs.map(xml => ({
-        id: xml.document_id,
-        name: xml.filename,
-        status: xml.status,
-        patient_id: xml.patient_id,
-        type: xml.document_type
-      })));
+      logInfo(`[ChatBox] Parsed ${newDocs.length} XMLs for session (patient: ${sanitizePatientId(patientId || null)}) - filtered from ${allDocs.length} total`);
+      logInfo(`[ChatBox] XML details - files: ${newDocs.map(xml => `${xml.filename}(${xml.status},${xml.document_type})`).join(', ')}`);
 
       // Update the state and log the change
       setUploadedXMLs(prevXMLs => {
-        console.log('[ChatBox] Previous XML count:', prevXMLs.length);
-        console.log('[ChatBox] New XML count:', newDocs.length);
-        console.log('[ChatBox] XML count changed:', prevXMLs.length !== newDocs.length);
+        logInfo(`[ChatBox] Previous XML count: ${prevXMLs.length}, New XML count: ${newDocs.length}, Changed: ${prevXMLs.length !== newDocs.length}`);
         return newDocs;
       });
 
@@ -935,7 +913,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
       setForceRefresh(prev => prev + 1);
 
     } catch (error) {
-      console.error('[ChatBox] Failed to load XMLs:', error);
+      logError('[ChatBox] Failed to load XMLs', error as Error);
     }
   }, [patientId, currentSessionId]);
 
@@ -944,7 +922,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
   // Reset session start time when session changes
   useEffect(() => {
-    console.log('[ChatBox] Session changed, resetting session start time and clearing documents');
+    logInfo(`[ChatBox] Session changed, resetting session start time and clearing documents - sessionId: ${sanitizeSessionId(currentSessionId)}`);
     sessionStartTime.current = Date.now();
     setUploadedPDFs([]);
     setUploadedXMLs([]);
@@ -952,11 +930,11 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     // Clean up old documents from backend auth session
     const cleanup = async () => {
       try {
-        console.log('[ChatBox] Calling backend to cleanup old documents from auth session');
+        logInfo('[ChatBox] Calling backend to cleanup old documents from auth session');
         const result = await cleanupSessionDocuments();
-        console.log(`[ChatBox] Backend cleanup complete: ${result.deleted_pdfs} PDFs, ${result.deleted_xmls} XMLs deleted`);
+        logInfo(`[ChatBox] Backend cleanup complete: ${result.deleted_pdfs} PDFs, ${result.deleted_xmls} XMLs deleted`);
       } catch (error) {
-        console.error('[ChatBox] Backend cleanup failed:', error);
+        logError('[ChatBox] Backend cleanup failed', error as Error);
         // Don't fail the session start if cleanup fails
       }
     };
@@ -968,16 +946,16 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
   useEffect(() => {
   const loadHistory = async () => {
     try {
-      console.log(`[GDPR] Chat history loading disabled for session: ${currentSessionId}, patient: ${patientId}`);
-      
+      logInfo(`[GDPR] Chat history loading disabled for session - sessionId: ${sanitizeSessionId(currentSessionId)}, patientId: ${sanitizePatientId(patientId || null)}`);
+
       // GDPR Compliance: Do not load chat history with PHI
       // Return empty messages array to maintain UI compatibility
       const data = { messages: [], gdpr_compliant: true };
-      console.log('🔍 [GDPR] No chat history loaded (compliant mode)');
-      
+      logInfo('🔍 [GDPR] No chat history loaded (compliant mode)');
+
       // GDPR Compliance: Always use empty messages array
       // Note: Chat history loading is disabled for GDPR compliance
-      console.log('🔍 [GDPR] Chat history loading disabled - using empty messages array');
+      logInfo('🔍 [GDPR] Chat history loading disabled - using empty messages array');
       const response = await fetch('/api/chat-history', {
         method: 'POST',
         headers: getAuthHeaders(),
@@ -990,17 +968,11 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
       
       if (response.ok) {
         const data = await response.json();
-        console.log('🔍 Raw chat history data received:', data);
-        
+        logInfo(`🔍 Raw chat history data received - message count: ${data.messages?.length || 0}`);
+
         if (data.messages && data.messages.length > 0) {
           const formattedMessages = data.messages.map((msg: any, index: number) => {
-            console.log(`🔍 Processing message ${index}:`, {
-              role: msg.role,
-              hasDifferential: !!msg.differential_diagnoses,
-              differentialCount: msg.differential_diagnoses?.length || 0,
-              hasReasoning: !!(msg.reasoning || msg.reasoning_steps?.length),
-              reasoningStepsCount: msg.reasoning_steps?.length || 0
-            });
+            logInfo(`🔍 Processing message ${index} - role: ${msg.role}, hasDifferential: ${!!msg.differential_diagnoses}, differentialCount: ${msg.differential_diagnoses?.length || 0}, hasReasoning: ${!!(msg.reasoning || msg.reasoning_steps?.length)}, reasoningStepsCount: ${msg.reasoning_steps?.length || 0}`);
 
             const formattedMessage: Message = {
               sender: msg.role === 'user' ? 'user' : 'system',
@@ -1010,38 +982,35 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
             
             // Add reasoning from multiple possible sources
             if (msg.reasoning || (msg.reasoning_steps && msg.reasoning_steps.length > 0)) {
-              console.log('🧠 Found reasoning in chat history for message', index, ':', {
-                reasoning: !!msg.reasoning,
-                reasoningSteps: msg.reasoning_steps?.length || 0
-              });
-              
+              logInfo(`🧠 Found reasoning in chat history for message ${index} - reasoning: ${!!msg.reasoning}, reasoningSteps: ${msg.reasoning_steps?.length || 0}`);
+
               formattedMessage.reasoning = msg.reasoning || (msg.reasoning_steps ? msg.reasoning_steps.join('\n') : '');
               formattedMessage.reasoningSteps = msg.reasoning_steps || [];
             }
-            
+
             // Add generated image info if present
             if (msg.generated_image && msg.generated_image.image_generated) {
               formattedMessage.generatedImage = msg.generated_image;
-              console.log('📸 Found image in chat history for message', index, ':', msg.generated_image.image_id);
+              logInfo(`📸 Found image in chat history for message ${index} - image_id: ${sanitizeDocumentId(msg.generated_image.image_id)}`);
             }
 
             // Enhanced differential diagnoses loading - more lenient validation
             if (msg.differential_diagnoses && Array.isArray(msg.differential_diagnoses)) {
-              console.log(`🩺 Processing differential diagnoses for message ${index}:`, msg.differential_diagnoses);
-              
+              logInfo(`🩺 Processing differential diagnoses for message ${index} - count: ${msg.differential_diagnoses.length}`);
+
               // More lenient validation - only require essential fields
               const validDiagnoses = msg.differential_diagnoses.filter((diff: any) => {
-                const isValid = diff && 
-                  typeof diff === 'object' && 
-                  diff.diagnosis_name && 
+                const isValid = diff &&
+                  typeof diff === 'object' &&
+                  diff.diagnosis_name &&
                   (diff.confidence !== undefined && diff.confidence !== null);
-                
+
                 if (!isValid) {
-                  console.warn(`🚫 Invalid diagnosis in message ${index}:`, diff);
+                  logWarning(`🚫 Invalid diagnosis in message ${index} - diagnosis_name: ${diff?.diagnosis_name || 'missing'}, confidence: ${diff?.confidence}`);
                 }
                 return isValid;
               });
-              
+
               if (validDiagnoses.length > 0) {
                 // Ensure all required fields have defaults
                 formattedMessage.differentialDiagnoses = validDiagnoses.map((diff: any) => ({
@@ -1051,21 +1020,17 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                   reasoning: diff.reasoning || 'No reasoning provided',
                   supporting_evidence: Array.isArray(diff.supporting_evidence) ? diff.supporting_evidence : []
                 }));
-                
+
               } else {
-                console.warn('🚫 No valid differential diagnoses found for message', index, ':', msg.differential_diagnoses);
+                logWarning(`🚫 No valid differential diagnoses found for message ${index} - total count: ${msg.differential_diagnoses.length}`);
               }
             } else {
-              console.log(`📄 No differential diagnoses for message ${index}:`, {
-                hasDifferential: !!msg.differential_diagnoses,
-                isArray: Array.isArray(msg.differential_diagnoses),
-                type: typeof msg.differential_diagnoses
-              });
+              logInfo(`📄 No differential diagnoses for message ${index} - hasDifferential: ${!!msg.differential_diagnoses}, isArray: ${Array.isArray(msg.differential_diagnoses)}, type: ${typeof msg.differential_diagnoses}`);
             }
 
             // Handle SBAR results (both old format and new JSON cards format)
             if (msg.sbar_results && typeof msg.sbar_results === 'object') {
-              console.log(`📋 Processing SBAR results for message ${index}:`, msg.sbar_results);
+              logInfo(`📋 Processing SBAR results for message ${index}`);
               formattedMessage.sbarResults = {
                 situation: msg.sbar_results.situation || undefined,
                 background: msg.sbar_results.background || undefined,
@@ -1074,16 +1039,16 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
               };
             } else {
               // Check if the main content is a JSON SBAR cards response
-              console.log(`🔍 Checking message ${index} text for SBAR JSON:`, msg.text?.substring(0, 100));
+              logInfo(`🔍 Checking message ${index} text for SBAR JSON - preview: ${msg.text?.substring(0, 100)}`);
               try {
                 // Trim the text and check if it looks like JSON
                 const trimmedText = msg.text?.trim();
                 if (trimmedText && trimmedText.startsWith('{') && trimmedText.endsWith('}')) {
                   const parsedContent = JSON.parse(trimmedText);
-                  console.log(`🧪 Parsed JSON for message ${index}:`, parsedContent);
+                  logInfo(`🧪 Parsed JSON for message ${index} - type: ${parsedContent.type}`);
 
                   if (parsedContent.type === 'sbar_cards' && parsedContent.components) {
-                    console.log(`📋 Processing JSON SBAR cards for message ${index}:`, parsedContent);
+                    logInfo(`📋 Processing JSON SBAR cards for message ${index}`);
                     formattedMessage.sbarResults = {
                       situation: parsedContent.components.situation?.content || undefined,
                       background: parsedContent.components.background?.content || undefined,
@@ -1092,37 +1057,24 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                     };
                     // Clear the content so we don't display the raw JSON
                     formattedMessage.text = '';
-                    console.log(`✅ Successfully processed SBAR cards, cleared text`);
+                    logInfo(`✅ Successfully processed SBAR cards, cleared text`);
                   } else if (parsedContent.type === 'timeline_view' && parsedContent.events) {
-                    console.log(`📅 Processing JSON Timeline for message ${index}:`, parsedContent);
+                    logInfo(`📅 Processing JSON Timeline for message ${index}`);
                     formattedMessage.timelineResults = {
                       events: parsedContent.events
                     };
                     // Clear the content so we don't display the raw JSON
                     formattedMessage.text = '';
-                    console.log(`✅ Successfully processed Timeline, cleared text`);
+                    logInfo(`✅ Successfully processed Timeline, cleared text`);
                   } else {
-                    console.log(`📄 JSON parsed but not SBAR cards or Timeline format for message ${index}:`, {
-                      type: parsedContent.type,
-                      hasComponents: !!parsedContent.components,
-                      hasEvents: !!parsedContent.events
-                    });
+                    logInfo(`📄 JSON parsed but not SBAR cards or Timeline format for message ${index} - type: ${parsedContent.type}, hasComponents: ${!!parsedContent.components}, hasEvents: ${!!parsedContent.events}`);
                   }
                 } else {
-                  console.log(`📄 Message ${index} text doesn't look like JSON:`, {
-                    startsWith: trimmedText?.startsWith('{'),
-                    endsWith: trimmedText?.endsWith('}'),
-                    length: trimmedText?.length
-                  });
+                  logInfo(`📄 Message ${index} text doesn't look like JSON - startsWith: ${trimmedText?.startsWith('{')}, endsWith: ${trimmedText?.endsWith('}')}, length: ${trimmedText?.length}`);
                 }
               } catch (e: any) {
                 // Not JSON or not SBAR cards format, continue normally
-                console.log(`📄 Failed to parse JSON for message ${index}:`, {
-                  hasSBAR: !!msg.sbar_results,
-                  type: typeof msg.sbar_results,
-                  parseError: e.message,
-                  textPreview: msg.text?.substring(0, 50)
-                });
+                logInfo(`📄 Failed to parse JSON for message ${index} - hasSBAR: ${!!msg.sbar_results}, type: ${typeof msg.sbar_results}, parseError: ${e.message}, textPreview: ${msg.text?.substring(0, 50)}`);
               }
             }
 
@@ -1130,31 +1082,26 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           });
           
           setMessages(formattedMessages);
-          
+
           // Enhanced logging
-          const messagesWithReasoning = formattedMessages.filter((msg: Message) => 
+          const messagesWithReasoning = formattedMessages.filter((msg: Message) =>
             msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)
           );
-          const messagesWithDifferentials = formattedMessages.filter((msg: Message) => 
+          const messagesWithDifferentials = formattedMessages.filter((msg: Message) =>
             msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0
           );
-          const messagesWithBoth = formattedMessages.filter((msg: Message) => 
-            (msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)) && 
+          const messagesWithBoth = formattedMessages.filter((msg: Message) =>
+            (msg.reasoning || (msg.reasoningSteps && msg.reasoningSteps.length > 0)) &&
             (msg.differentialDiagnoses && msg.differentialDiagnoses.length > 0)
           );
-          
-          console.log(`📊 Chat history loaded successfully:`, {
-            totalMessages: formattedMessages.length,
-            withReasoning: messagesWithReasoning.length,
-            withDifferentials: messagesWithDifferentials.length,
-            withBoth: messagesWithBoth.length
-          });
+
+          logInfo(`📊 Chat history loaded successfully - totalMessages: ${formattedMessages.length}, withReasoning: ${messagesWithReasoning.length}, withDifferentials: ${messagesWithDifferentials.length}, withBoth: ${messagesWithBoth.length}`);
         }
       } else {
-        console.error('Failed to load chat history:', response.status, response.statusText);
+        logError(`Failed to load chat history: ${response.status} ${response.statusText}`);
       }
     } catch (error) {
-      console.error('Failed to load conversation history:', error);
+      logError('Failed to load conversation history', error as Error);
     }
   };
 
@@ -1172,65 +1119,57 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
       return;
     }
 
-    console.log('[ChatBox] Connecting to document events stream...');
+    logInfo('[ChatBox] Connecting to document events stream...');
 
     const sessionId = localStorage.getItem('session_id');
     if (!sessionId) {
-      console.error('[ChatBox] No session ID in localStorage');
+      logError('[ChatBox] No session ID in localStorage');
       return;
     }
 
     const eventSource = new EventSource(`/api/documents/events?session_id=${sessionId}`);
 
     eventSource.onopen = () => {
-      console.log('[ChatBox] Document events connected');
+      logInfo('[ChatBox] Document events connected');
     };
 
     eventSource.onmessage = async (e) => {
       try {
         const data = JSON.parse(e.data);
-        console.log('[ChatBox] Document event:', data);
+        logInfo(`[ChatBox] Document event - type: ${data.type}, filename: ${data.filename}`);
 
         if (data.type === 'uploaded') {
-          console.log(`[ChatBox] Document uploaded: ${data.filename}`);
+          logInfo(`[ChatBox] Document uploaded: ${data.filename}`);
           // Reload documents to show new upload
           await loadPDFs();
           await loadXMLs();
         }
       } catch (err) {
-        console.error('[ChatBox] Event parse error:', err);
+        logError('[ChatBox] Event parse error', err as Error);
       }
     };
 
     eventSource.onerror = (error) => {
-      console.error('[ChatBox] SSE error:', error);
-      console.error('[ChatBox] EventSource readyState:', eventSource.readyState);
-      console.error('[ChatBox] EventSource url:', eventSource.url);
+      logError(`[ChatBox] SSE error - readyState: ${eventSource.readyState}, url: ${eventSource.url}`, error as Error);
       // EventSource auto-reconnects
     };
 
     return () => {
-      console.log('[ChatBox] Closing document events stream');
+      logInfo('[ChatBox] Closing document events stream');
       eventSource.close();
     };
   }, [currentSessionId, patientId, mode, loadPDFs, loadXMLs]);
 
     // Update the final response effect to include differential diagnoses
     useEffect(() => {
-    console.log('📧 Final response effect:', { 
-      finalResponse, 
-      isStreaming, 
-      reasoning, 
-      generatedImage, 
-      streamDifferentialDiagnoses 
-    });
-    
+    logInfo(`📧 Final response effect - hasFinalResponse: ${!!finalResponse}, isStreaming: ${isStreaming}, hasReasoning: ${!!reasoning}, hasImage: ${!!generatedImage}, hasDifferentials: ${!!streamDifferentialDiagnoses}`);
+
     if (finalResponse && !isStreaming) {
-      console.log('✅ Adding final response to messages with reasoning:', reasoning);
+      logInfo(`✅ Adding final response to messages - reasoning steps: ${reasoning?.length || 0}`);
       setMessages((prev) => {
         const lastMessage = prev[prev.length - 1];
         if (lastMessage && lastMessage.sender === "system" && lastMessage.text === finalResponse) {
-          console.log('⚠️ Duplicate message prevented');
+          logInfo('⚠️ Duplicate message prevented');
           return prev;
         }
         
@@ -1244,21 +1183,17 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
             generation_metadata: generatedImage.metadata || {},
             model_info: {}
           };
-          console.log('🖼️ Including generated image in message:', formattedGeneratedImage);
+          logInfo(`🖼️ Including generated image in message - image_id: ${sanitizeDocumentId(generatedImage.image_id)}`);
         }
-        
+
         // Log differential diagnoses being added
         if (streamDifferentialDiagnoses && streamDifferentialDiagnoses.length > 0) {
-          console.log('🩺 Including differential diagnoses in message:', streamDifferentialDiagnoses);
+          logInfo(`🩺 Including differential diagnoses in message - count: ${streamDifferentialDiagnoses.length}`);
         }
-        
+
         // CRITICAL FIX: Ensure reasoning is properly formatted
         const reasoningText = reasoning && reasoning.length > 0 ? reasoning.join('\n') : '';
-        console.log('🧠 Final reasoning for message:', {
-          reasoningArray: reasoning,
-          reasoningText: reasoningText,
-          hasReasoning: !!reasoningText
-        });
+        logInfo(`🧠 Final reasoning for message - hasArray: ${!!reasoning}, textLength: ${reasoningText.length}, hasReasoning: ${!!reasoningText}`);
         
         // Check if finalResponse is SBAR, Timeline, or Generated Note JSON format and parse it
         let messageText = finalResponse;
@@ -1269,24 +1204,19 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           const trimmedText = finalResponse?.trim();
           if (trimmedText && trimmedText.startsWith('{') && trimmedText.endsWith('}')) {
             const parsedContent = JSON.parse(trimmedText);
-            console.log(`🧪 Parsed streaming JSON:`, parsedContent);
+            logInfo(`🧪 Parsed streaming JSON - type: ${parsedContent.type}`);
 
             if (parsedContent.type === 'generated_note' && parsedContent.content) {
-              console.log(`📝 [NOTE DETECTION] Processing generated note:`, {
-                type: parsedContent.type,
-                templateName: parsedContent.template_name,
-                contentLength: parsedContent.content.length,
-                generation_id: parsedContent.generation_id
-              });
+              logInfo(`📝 [NOTE DETECTION] Processing generated note - type: ${parsedContent.type}, templateName: ${parsedContent.template_name}, contentLength: ${parsedContent.content.length}, generation_id: ${parsedContent.generation_id}`);
               // Store the note content and open the dialog
-              console.log(`📝 [NOTE DETECTION] Setting autoGeneratedNote and opening dialog`);
+              logInfo(`📝 [NOTE DETECTION] Setting autoGeneratedNote and opening dialog`);
               setAutoGeneratedNote(parsedContent.content);
               setNoteGenerationDialogOpen(true);
               // Show a user-friendly message instead of raw JSON
               messageText = `✅ Generated ${parsedContent.template_name || 'clinical note'} - opening editor...`;
-              console.log(`✅ [NOTE DETECTION] Successfully processed generated note, dialog should open`);
+              logInfo(`✅ [NOTE DETECTION] Successfully processed generated note, dialog should open`);
             } else if (parsedContent.type === 'sbar_cards' && parsedContent.components) {
-              console.log(`📋 Processing streaming SBAR cards:`, parsedContent);
+              logInfo(`📋 Processing streaming SBAR cards`);
               sbarResults = {
                 situation: parsedContent.components.situation?.content || undefined,
                 background: parsedContent.components.background?.content || undefined,
@@ -1295,19 +1225,19 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
               };
               // Clear the text so we don't display the raw JSON
               messageText = '';
-              console.log(`✅ Successfully processed streaming SBAR cards, cleared text`);
+              logInfo(`✅ Successfully processed streaming SBAR cards, cleared text`);
             } else if (parsedContent.type === 'timeline_view' && parsedContent.events) {
-              console.log(`📅 Processing streaming Timeline:`, parsedContent);
+              logInfo(`📅 Processing streaming Timeline`);
               timelineResults = {
                 events: parsedContent.events
               };
               // Clear the text so we don't display the raw JSON
               messageText = '';
-              console.log(`✅ Successfully processed streaming Timeline, cleared text`);
+              logInfo(`✅ Successfully processed streaming Timeline, cleared text`);
             }
           }
         } catch (e: any) {
-          console.log(`📄 Failed to parse streaming JSON:`, e.message);
+          logInfo(`📄 Failed to parse streaming JSON: ${e.message}`);
         }
 
         const newMessage = {
@@ -1321,12 +1251,8 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           sbarResults: sbarResults,
           timelineResults: timelineResults
         };
-        
-        console.log('🔥 Creating new message with data:', {
-          hasReasoning: !!(newMessage.reasoning || (newMessage.reasoningSteps && newMessage.reasoningSteps.length > 0)),
-          hasDifferential: !!(newMessage.differentialDiagnoses && newMessage.differentialDiagnoses.length > 0),
-          hasImage: !!newMessage.generatedImage
-        });
+
+        logInfo(`🔥 Creating new message - hasReasoning: ${!!(newMessage.reasoning || (newMessage.reasoningSteps && newMessage.reasoningSteps.length > 0))}, hasDifferential: ${!!(newMessage.differentialDiagnoses && newMessage.differentialDiagnoses.length > 0)}, hasImage: ${!!newMessage.generatedImage}`);
         
         return [
           ...prev,
@@ -1339,11 +1265,11 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
   // Handle streaming errors
   useEffect(() => {
     if (streamError) {
-      console.error('❌ Stream error:', streamError);
+      logError(`❌ Stream error: ${streamError}`);
       setMessages((prev) => [
         ...prev,
-        { 
-          sender: "system", 
+        {
+          sender: "system",
           text: `Error: ${streamError}`,
           timestamp: new Date().toLocaleTimeString()
         }
@@ -1353,14 +1279,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
   // Debug logging to see streaming state
   useEffect(() => {
-    console.log('🖥️ ChatBox streaming state update:', {
-      isStreaming,
-      streamingResponseLength: streamingResponse?.length || 0,
-      streamingResponsePreview: streamingResponse?.substring(0, 50) + '...',
-      hasTrimmedContent: !!(streamingResponse && streamingResponse.trim()),
-      currentStep,
-      progress
-    });
+    logInfo(`🖥️ ChatBox streaming state update - isStreaming: ${isStreaming}, streamingResponseLength: ${streamingResponse?.length || 0}, streamingResponsePreview: ${streamingResponse?.substring(0, 50)}..., hasTrimmedContent: ${!!(streamingResponse && streamingResponse.trim())}, currentStep: ${currentStep}, progress: ${progress}`);
   }, [isStreaming, streamingResponse, currentStep, progress]);
 
   const handleModeChange = (newMode: string, newDefaultPrompt: string) => {
@@ -1397,15 +1316,15 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         session_id: currentSessionId
       };
 
-      console.log('Sending message with diagnostic mode:', payload.diagnostic_mode);
+      logInfo(`Sending message with diagnostic mode: ${payload.diagnostic_mode}`);
       await startStream(endpoint, payload, sessionId || undefined);
 
     } catch (error) {
-      console.error('Streaming error:', error);
+      logError('Streaming error', error as Error);
       setMessages((prev) => [
         ...prev,
-        { 
-          sender: "system", 
+        {
+          sender: "system",
           text: "Error starting analysis. Please try again.",
           timestamp: new Date().toLocaleTimeString()
         },
@@ -1431,11 +1350,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
   useEffect(() => {
     if (streamingResponse) {
-      console.log('🔄 ChatBox: streamingResponse updated:', {
-        length: streamingResponse.length,
-        preview: streamingResponse.slice(0, 100) + '...',
-        isStreaming
-      });
+      logInfo(`🔄 ChatBox: streamingResponse updated - length: ${streamingResponse.length}, preview: ${streamingResponse.slice(0, 100)}..., isStreaming: ${isStreaming}`);
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [streamingResponse]);
@@ -1462,14 +1377,14 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     setUploadError(null);
 
     try {
-      console.log('[ChatBox] Upload params:', { patientId, currentSessionId, propSessionId, sessionId });
+      logInfo(`[ChatBox] Upload params - patientId: ${sanitizePatientId(patientId || null)}, sessionId: ${sanitizeSessionId(currentSessionId)}`);
       const uploadResponse = await uploadPDFDocument(file, patientId, currentSessionId);
 
-      console.log('[ChatBox] Upload response received:', uploadResponse);
+      logInfo(`[ChatBox] Upload response received - document_id: ${uploadResponse.document_id ? sanitizeDocumentId(uploadResponse.document_id) : 'none'}`);
 
       // Check if upload was successful - API returns document_id on success
       if (uploadResponse.document_id) {
-        console.log('[ChatBox] Upload successful, refreshing PDF list...');
+        logInfo('[ChatBox] Upload successful, refreshing PDF list...');
 
         // Optimistically add the PDF to the list immediately
         const newPDF: PDFDocument = {
@@ -1483,13 +1398,13 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
         setUploadedPDFs(prev => {
           const updated = [...prev, newPDF];
-          console.log('[ChatBox] Optimistically updated PDF list:', updated.length);
+          logInfo(`[ChatBox] Optimistically updated PDF list - count: ${updated.length}`);
           return updated;
         });
 
         // Force refresh the document lists to get server state
         setTimeout(async () => {
-          console.log('[ChatBox] Refreshing from server...');
+          logInfo('[ChatBox] Refreshing from server...');
           await loadPDFs();
           await loadXMLs();
         }, 1000);
@@ -1507,11 +1422,11 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         ]);
 
       } else {
-        console.error('[ChatBox] Upload response missing document_id:', uploadResponse);
+        logError(`[ChatBox] Upload response missing document_id`);
         setUploadError('Upload failed - invalid response from server');
       }
     } catch (error: any) {
-      console.error('PDF upload error:', error);
+      logError('PDF upload error', error as Error);
       setUploadError(error.message || 'Failed to upload PDF');
     } finally {
       setIsUploadingPDF(false);
@@ -1542,14 +1457,14 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     setUploadError(null);
 
     try {
-      console.log('[ChatBox] XML Upload params:', { patientId, currentSessionId, propSessionId, sessionId });
+      logInfo(`[ChatBox] XML Upload params - patientId: ${sanitizePatientId(patientId || null)}, sessionId: ${sanitizeSessionId(currentSessionId)}`);
       const uploadResponse = await uploadXMLDocument(file, patientId, currentSessionId);
 
-      console.log('[ChatBox] XML Upload response received:', uploadResponse);
+      logInfo(`[ChatBox] XML Upload response received - document_id: ${uploadResponse.document_id ? sanitizeDocumentId(uploadResponse.document_id) : 'none'}`);
 
       // Check if upload was successful - API returns document_id on success
       if (uploadResponse.document_id) {
-        console.log('[ChatBox] XML Upload successful, refreshing document lists...');
+        logInfo('[ChatBox] XML Upload successful, refreshing document lists...');
 
         // Optimistically add the XML to the list immediately
         const newXML: XMLDocument = {
@@ -1564,13 +1479,13 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
         setUploadedXMLs(prev => {
           const updated = [...prev, newXML];
-          console.log('[ChatBox] Optimistically updated XML list:', updated.length);
+          logInfo(`[ChatBox] Optimistically updated XML list - count: ${updated.length}`);
           return updated;
         });
 
         // Force refresh the document lists to get server state
         setTimeout(async () => {
-          console.log('[ChatBox] Refreshing from server...');
+          logInfo('[ChatBox] Refreshing from server...');
           await loadPDFs();
           await loadXMLs();
         }, 1000);
@@ -1589,11 +1504,11 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         ]);
 
       } else {
-        console.error('[ChatBox] XML Upload response missing document_id:', uploadResponse);
+        logError(`[ChatBox] XML Upload response missing document_id`);
         setUploadError('XML upload failed - invalid response from server');
       }
     } catch (error: any) {
-      console.error('XML upload error:', error);
+      logError('XML upload error', error as Error);
       setUploadError(error.message || 'Failed to upload XML document');
     } finally {
       setIsUploadingXML(false);
@@ -1605,14 +1520,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
   const handleDeletePDF = async (documentId: string, filename: string) => {
     try {
-      console.log('[ChatBox] Attempting to delete PDF:', {
-        documentId,
-        filename,
-        patientId,
-        currentSessionId,
-        propSessionId,
-        sessionId
-      });
+      logInfo(`[ChatBox] Attempting to delete PDF - documentId: ${sanitizeDocumentId(documentId)}, filename: ${filename}, patientId: ${sanitizePatientId(patientId || null)}, sessionId: ${sanitizeSessionId(currentSessionId)}`);
 
       // Show confirmation to user
       if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
@@ -1620,15 +1528,14 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
       }
 
       // Call the delete API with detailed error handling
-      console.log('[ChatBox] Making DELETE request...');
+      logInfo('[ChatBox] Making DELETE request...');
       const deleteResponse = await deletePDFDocument(documentId, patientId, currentSessionId);
-      console.log('[ChatBox] Delete API call completed successfully:', deleteResponse);
+      logInfo('[ChatBox] Delete API call completed successfully');
 
       // Immediately update the local state to reflect the deletion
       setUploadedPDFs(prev => {
         const updated = prev.filter(pdf => pdf.document_id !== documentId);
-        console.log('[ChatBox] Local state updated. PDF count after delete:', updated.length);
-        console.log('[ChatBox] Remaining PDFs:', updated.map(pdf => pdf.filename));
+        logInfo(`[ChatBox] Local state updated. PDF count after delete: ${updated.length}, Remaining PDFs: ${updated.map(pdf => pdf.filename).join(', ')}`);
         return updated;
       });
 
@@ -1637,7 +1544,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
       // Verify deletion by refreshing from server
       setTimeout(async () => {
-        console.log('[ChatBox] Verifying deletion by refreshing from server...');
+        logInfo('[ChatBox] Verifying deletion by refreshing from server...');
         await loadPDFs();
         await loadXMLs();
       }, 500);
@@ -1652,30 +1559,18 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
       ]);
 
     } catch (error: any) {
-      console.error('[ChatBox] PDF delete error:', error);
-      console.error('[ChatBox] Error details:', {
-        message: error.message,
-        stack: error.stack,
-        status: error.status || 'unknown'
-      });
+      logError(`[ChatBox] PDF delete error - message: ${error.message}, status: ${error.status || 'unknown'}`, error as Error);
 
       setUploadError(error.message || 'Failed to delete PDF');
 
       // Don't refresh on error - let user see what happened
-      console.log('[ChatBox] Delete failed, NOT refreshing list to preserve current state');
+      logInfo('[ChatBox] Delete failed, NOT refreshing list to preserve current state');
     }
   };
 
   const handleDeleteXML = async (documentId: string, filename: string) => {
     try {
-      console.log('[ChatBox] Attempting to delete XML:', {
-        documentId,
-        filename,
-        patientId,
-        currentSessionId,
-        propSessionId,
-        sessionId
-      });
+      logInfo(`[ChatBox] Attempting to delete XML - documentId: ${sanitizeDocumentId(documentId)}, filename: ${filename}, patientId: ${sanitizePatientId(patientId || null)}, sessionId: ${sanitizeSessionId(currentSessionId)}`);
 
       // Show confirmation to user
       if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
@@ -1683,15 +1578,14 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
       }
 
       // Call the delete API with detailed error handling
-      console.log('[ChatBox] Making DELETE request for XML...');
+      logInfo('[ChatBox] Making DELETE request for XML...');
       const deleteResponse = await deleteXMLDocument(documentId, patientId, currentSessionId);
-      console.log('[ChatBox] Delete XML API call completed successfully:', deleteResponse);
+      logInfo('[ChatBox] Delete XML API call completed successfully');
 
       // Immediately update the local state to reflect the deletion
       setUploadedXMLs(prev => {
         const updated = prev.filter(xml => xml.document_id !== documentId);
-        console.log('[ChatBox] Local XML state updated. XML count after delete:', updated.length);
-        console.log('[ChatBox] Remaining XMLs:', updated.map(xml => xml.filename));
+        logInfo(`[ChatBox] Local XML state updated. XML count after delete: ${updated.length}, Remaining XMLs: ${updated.map(xml => xml.filename).join(', ')}`);
         return updated;
       });
 
@@ -1700,7 +1594,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
       // Verify deletion by refreshing from server
       setTimeout(async () => {
-        console.log('[ChatBox] Verifying XML deletion by refreshing from server...');
+        logInfo('[ChatBox] Verifying XML deletion by refreshing from server...');
         await loadPDFs();
         await loadXMLs();
       }, 500);
@@ -1715,17 +1609,12 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
       ]);
 
     } catch (error: any) {
-      console.error('[ChatBox] XML delete error:', error);
-      console.error('[ChatBox] XML Error details:', {
-        message: error.message,
-        stack: error.stack,
-        status: error.status || 'unknown'
-      });
+      logError(`[ChatBox] XML delete error - message: ${error.message}, status: ${error.status || 'unknown'}`, error as Error);
 
       setUploadError(error.message || 'Failed to delete XML document');
 
       // Don't refresh on error - let user see what happened
-      console.log('[ChatBox] XML Delete failed, NOT refreshing list to preserve current state');
+      logInfo('[ChatBox] XML Delete failed, NOT refreshing list to preserve current state');
     }
   };
 

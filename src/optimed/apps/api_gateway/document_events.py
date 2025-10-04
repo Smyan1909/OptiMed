@@ -9,6 +9,10 @@ from typing import Dict, Set
 from dataclasses import dataclass
 from datetime import datetime
 
+from optimed.core.logging_utils import get_logger, sanitize_user_id
+
+logger = get_logger(__name__)
+
 
 @dataclass
 class DocumentEvent:
@@ -38,7 +42,7 @@ class DocumentEventBroadcaster:
                 self._subscribers[user_id] = set()
 
             self._subscribers[user_id].add(queue)
-            print(f"[DocEvents] User {user_id} subscribed ({len(self._subscribers[user_id])} connections)")
+            logger.info(f"[DocEvents] User {sanitize_user_id(user_id)} subscribed ({len(self._subscribers[user_id])} connections)")
 
             return queue
 
@@ -51,7 +55,7 @@ class DocumentEventBroadcaster:
                 if not self._subscribers[user_id]:
                     del self._subscribers[user_id]
 
-                print(f"[DocEvents] User {user_id} unsubscribed")
+                logger.info(f"[DocEvents] User {sanitize_user_id(user_id)} unsubscribed")
 
     async def broadcast(self, user_id: str, event: DocumentEvent):
         """Broadcast event to all user's connections."""
@@ -61,7 +65,7 @@ class DocumentEventBroadcaster:
         if not queues:
             return
 
-        print(f"[DocEvents] Broadcasting to {len(queues)} connection(s) for user {user_id}")
+        logger.info(f"[DocEvents] Broadcasting to {len(queues)} connection(s) for user {sanitize_user_id(user_id)}")
 
         dead_queues = []
         for queue in queues:
@@ -70,7 +74,7 @@ class DocumentEventBroadcaster:
             except asyncio.TimeoutError:
                 dead_queues.append(queue)
             except Exception as e:
-                print(f"[DocEvents] Error: {e}")
+                logger.error(f"[DocEvents] Error broadcasting event: {type(e).__name__}")
                 dead_queues.append(queue)
 
         # Cleanup dead queues

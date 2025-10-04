@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@/contexts/UserContext';
 import { Loader2, CheckCircle, XCircle, Hospital } from 'lucide-react';
 import { sendSessionToWatcher } from '@/lib/watcherService';
+import { logError } from '@/lib/logger';
 
 export default function EHRSuccessPage() {
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
@@ -57,7 +58,7 @@ export default function EHRSuccessPage() {
           throw new Error('Failed to fetch user data');
         }
       } catch (error: any) {
-        console.error('EHR success handling error:', error);
+        logError('EHR Success Page: EHR success handling error', error);
         setStatus('error');
         setMessage(`Authentication error: ${error.message}`);
       }

@@ -22,6 +22,9 @@ from optimed.apps.orchestrator.connection_service import UserEHRConnectionServic
 from optimed.embeddings.minilm import embed
 from optimed.embeddings.service import embed_and_store
 import re
+from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, sanitize_session_id, log_error
+
+logger = get_logger(__name__)
 
 
 
@@ -173,9 +176,9 @@ class LangGraphInformationEngine(DiagnosticEngine):
                     )
                     if user_fhir_repo:
                         fhir_repo = user_fhir_repo
-                        print("[fetch_patient] Using user's SMART on FHIR connection")
+                        logger.info("Using user's SMART on FHIR connection")
                 except Exception as e:
-                    print(f"[fetch_patient] Failed to use SMART connection: {e}, falling back to default")
+                    logger.info(f"Failed to use SMART connection: {e}, falling back to default")
             
             state.patient_ctx = await fhir_repo.get_patient(str(state.patient_id))
             return state
@@ -187,9 +190,9 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 try: 
                     state.user_context = await self._user_repo.get_user_by_id(state.user_id)
                     if not state.user_context:
-                        print(f"[load_user_context] No user found with ID {state.user_id}")
+                        logger.info(f"No user found with ID {sanitize_user_id(state.user_id)}")
                 except Exception as e:
-                    print(f"[load_user_context] Error loading user context: {e}")
+                    log_error(logger, "load_user_context", e)
                     state.user_context = None
             
             return state
@@ -214,10 +217,10 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 )
                 
                 state.web_search_performed = needs_search
-                print(f"[web_search] Web search needed: {needs_search}")
+                logger.info(f"Web search needed: {needs_search}")
                 
             except Exception as e:
-                print(f"[web_search] Error evaluating search need: {e}")
+                log_error(logger, "web_search", e)
                 state.web_search_performed = False
             
             return state
@@ -261,10 +264,10 @@ class LangGraphInformationEngine(DiagnosticEngine):
                         for result in search_response.results[:3]
                     ]
                 
-                print(f"[web_search] Found {len(search_response.results)} results")
+                logger.info(f"Found {len(search_response.results)} results")
                 
             except Exception as e:
-                print(f"[web_search] Error performing search: {e}")
+                log_error(logger, "web_search", e)
                 state.web_search_response = None
                 state.retrieved_web = []
             
@@ -284,7 +287,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
             try:
                 # Check if service is available
                 if not await self._image_generation.is_available():
-                    print("[image_generation] Service not available")
+                    logger.info("Service not available")
                     state.image_generation_needed = False
                     return state
                 
@@ -323,12 +326,12 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 state.image_generation_needed = should_generate
                 state.image_generation_prompt = image_prompt or ""
                 
-                print(f"[image_generation] Generation needed: {should_generate}")
+                logger.info(f"Generation needed: {should_generate}")
                 if should_generate:
-                    print(f"[image_generation] Prompt: {image_prompt}")
+                    logger.info(f"Prompt: {image_prompt}")
                 
             except Exception as e:
-                print(f"[image_generation] Error evaluating generation need: {e}")
+                log_error(logger, "image_generation", e)
                 import traceback
                 traceback.print_exc()
                 state.image_generation_needed = False
@@ -362,10 +365,10 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 if self._generated_image_repo and generated_image:
                     await self._generated_image_repo.store_generated_image(generated_image)
 
-                print(f"[image_generation] Successfully generated image: {generated_image.generation_id}") if generated_image else print("[image_generation] No image generated")
+                logger.info(f"Successfully generated image: {generated_image.generation_id}") if generated_image else logger.info("No image generated")
 
             except Exception as e:
-                print(f"[image_generation] Error generating image: {e}")
+                log_error(logger, "image_generation", e)
                 # Don't fail the entire flow for image generation errors
                 state.generated_image = None
             
@@ -378,7 +381,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
         @streaming_step("load_current_session_history")
         async def load_current_session_history(state: FlowState) -> FlowState:
             """Load chat history for the patient if available."""
-            print(f"[load_current_session_history] Loading for patient_id={state.patient_id}, session_id={state.session_id}")
+            logger.info(f"Loading for patient_id={sanitize_patient_id(str(state.patient_id))}, session_id={state.session_id}")
 
             if state.patient_id and state.session_id:
                 try:
@@ -388,7 +391,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                         session_id=state.session_id,
                         limit=20
                     )
-                    print(f"[load_current_session_history] Retrieved {len(history_data)} messages")
+                    logger.info(f"Retrieved {len(history_data)} messages")
 
                     chat_messages = []
                     
@@ -398,12 +401,12 @@ class LangGraphInformationEngine(DiagnosticEngine):
                             content = item.get("content", "")
                             chat_messages.append(ChatMessage(role=role, content=content))
                         except Exception as e:
-                            print(f"[load_current_session_history] Error parsing item: {e}")
+                            log_error(logger, "load_current_session_history", e)
                             continue
                             
                     state.chat_history = chat_messages
                 except Exception as e:
-                    print(f"[load_current_session_history] Error loading chat history: {e}")
+                    log_error(logger, "load_current_session_history", e)
                     state.chat_history = []
             else:
                 try:
@@ -413,7 +416,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                         session_id=state.session_id,
                         limit=20
                     )
-                    print(f"[load_current_session_history] Retrieved {len(history_data)} messages")
+                    logger.info(f"Retrieved {len(history_data)} messages")
 
                     chat_messages = []
                     
@@ -423,12 +426,12 @@ class LangGraphInformationEngine(DiagnosticEngine):
                             content = item.get("content", "")
                             chat_messages.append(ChatMessage(role=role, content=content))
                         except Exception as e:
-                            print(f"[load_current_session_history] Error parsing item: {e}")
+                            log_error(logger, "load_current_session_history", e)
                             continue
                             
                     state.chat_history = chat_messages
                 except Exception as e:
-                    print(f"[load_current_session_history] Error loading chat history: {e}")
+                    log_error(logger, "load_current_session_history", e)
                     state.chat_history = []
 
             return state
@@ -466,10 +469,10 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 needs_cross_session_history = "YES" in response.content.upper()
                 state.needs_cross_session_search = needs_cross_session_history
                 
-                print(f"[cross_session_eval] Cross-session history needed: {needs_cross_session_history} for query: '{state.user_prompt[:50]}...'")
+                logger.info(f"Cross-session history needed: {needs_cross_session_history} for query: '{state.user_prompt[:50]}...'")
                 
             except Exception as e:
-                print(f"[cross_session_eval] Error evaluating cross-session history need: {e}")
+                log_error(logger, "cross_session_eval", e)
                 state.needs_cross_session_search = False
             
             return state
@@ -549,17 +552,17 @@ class LangGraphInformationEngine(DiagnosticEngine):
                         })
                         
                     except Exception as e:
-                        print(f"[cross_session_search] Error parsing history row: {e}")
+                        log_error(logger, "cross_session_search", e)
                         continue
                 
                 # Sort by similarity score and take the most relevant
                 relevant_history.sort(key=lambda x: x.get("similarity_score", 0.0), reverse=True)
                 state.relevant_cross_session_history = relevant_history[:5]  # Keep top 5 most relevant
                 
-                print(f"[cross_session_search] Found {len(state.relevant_cross_session_history)} relevant historical conversations")
+                logger.info(f"Found {len(state.relevant_cross_session_history)} relevant historical conversations")
                 
             except Exception as e:
-                print(f"[cross_session_search] Error searching cross-session history: {e}")
+                log_error(logger, "cross_session_search", e)
                 state.relevant_cross_session_history = []
 
             return state
@@ -583,9 +586,9 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 )
                 
                 if existing_chunks:
-                    print(f"[store_chunks] Patient {patient_id} chunks already exist, checking for new journal entries")
+                    logger.info(f"Patient {sanitize_patient_id(patient_id)} chunks already exist, checking for new journal entries")
                 else:
-                    print(f"[store_chunks] Creating new chunks for patient {patient_id}")
+                    logger.info(f"Creating new chunks for patient {sanitize_patient_id(patient_id)}")
                 
                 patient_data = state.patient_ctx
                 
@@ -995,13 +998,13 @@ class LangGraphInformationEngine(DiagnosticEngine):
                             if user_fhir_repo:
                                 fhir_repo = user_fhir_repo
                         except Exception as e:
-                            print(f"[store_chunks] Failed to use SMART connection for journal: {e}")
+                            logger.info(f"Failed to use SMART connection for journal: {e}")
 
                     # Fetch journal entries for this patient
                     journal_entries = await fhir_repo.get_patient_journal_entries(patient_id)
                     
                     if journal_entries:
-                        print(f"[store_chunks] Found {len(journal_entries)} journal entries for patient {patient_id}")
+                        logger.info(f"Found {len(journal_entries)} journal entries for patient {sanitize_patient_id(patient_id)}")
 
                         # Prepare a reusable embedding for existence checks to avoid duplicates
                         existence_query_vec = await embed("journal entry existence check", "query")
@@ -1020,11 +1023,11 @@ class LangGraphInformationEngine(DiagnosticEngine):
                                     },
                                 )
                                 if existing_entry:
-                                    print(f"[store_chunks] Skipping already stored journal entry {entry.entry_id}")
+                                    logger.info(f"Skipping already stored journal entry {entry.entry_id}")
                                     continue
                                 count += 1
                             except Exception as e:
-                                print(f"[store_chunks] Existence check failed for journal entry {entry.entry_id}: {e}")
+                                logger.info(f"Existence check failed for journal entry {entry.entry_id}: {e}")
                                 # Fall through and attempt to store
                                 pass
                             journal_text = f"""
@@ -1055,18 +1058,18 @@ class LangGraphInformationEngine(DiagnosticEngine):
                                 }
                             )
                         
-                        print(f"[store_chunks] Successfully stored {count} journal entries")
+                        logger.info(f"Successfully stored {count} journal entries")
                     else:
-                        print(f"[store_chunks] No journal entries found for patient {patient_id}")
+                        logger.info(f"No journal entries found for patient {sanitize_patient_id(patient_id)}")
                         
                 except Exception as journal_error:
-                    print(f"[store_chunks] Error fetching/storing journal entries: {journal_error}")
+                    logger.info(f"Error fetching/storing journal entries: {journal_error}")
                     # Continue without journal entries - don't fail the entire process
                 
-                print(f"[store_chunks] Successfully processed chunks for patient {patient_id}")
+                logger.info(f"Successfully processed chunks for patient {sanitize_patient_id(patient_id)}")
                 
             except Exception as e:
-                print(f"[store_chunks] Error storing patient chunks: {e}")
+                log_error(logger, "store_chunks", e)
             
             return state
 
@@ -1339,7 +1342,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 )
                 
             except Exception as e:
-                print(f"[store_user_message] Error: {e}")
+                logger.info(f"Error: {e}")
                 import traceback
                 traceback.print_exc()
             
@@ -1404,7 +1407,7 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 )
                 
             except Exception as e:
-                print(f"[store_assistant_response] Error: {e}")
+                logger.info(f"Error: {e}")
                 import traceback
                 traceback.print_exc()
             
@@ -1730,10 +1733,10 @@ Please reference this generated image in your response when relevant and explain
 
                 state.requires_full_processing = requires_full_processing
                 
-                print(f"[query_complexity] Query: '{state.user_prompt[:50]}...' -> {'FULL_PROCESSING' if requires_full_processing else 'DIRECT'}")
+                logger.info(f"Query: '{state.user_prompt[:50]}...' -> {'FULL_PROCESSING' if requires_full_processing else 'DIRECT'}")
                 
             except Exception as e:
-                print(f"[query_complexity] Error evaluating query complexity: {e}")
+                log_error(logger, "query_complexity", e)
                 # Default to full processing on error to be safe
                 state.requires_full_processing = True
                 
@@ -1923,11 +1926,11 @@ Please reference this generated image in your response when relevant and explain
                     if allow_join_existing:
                         success = await self._vec.add_user_to_session(session_id, user_id)
                         if success:
-                            print(f"[session] User {user_id} joined existing session {session_id}")
+                            logger.info(f"User {sanitize_user_id(user_id)} joined existing session {session_id}")
                         else:
-                            print(f"[session] Failed to add user {user_id} to session {session_id}")
+                            logger.info(f"Failed to add user {sanitize_user_id(user_id)} to session {session_id}")
                     else:
-                        print(f"[session] User {user_id} not allowed to join session {session_id}")
+                        logger.info(f"User {sanitize_user_id(user_id)} not allowed to join session {session_id}")
                         return await self._vec.create_chat_session(user_id, patient_id, mode)
                 
                 return session_id

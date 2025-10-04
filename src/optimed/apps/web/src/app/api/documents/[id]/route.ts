@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logError } from '@/lib/logger';
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -32,7 +33,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
-    console.error('Document delete API error:', error);
+    logError('Document delete API error', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

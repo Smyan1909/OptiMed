@@ -19,6 +19,9 @@ from datetime import datetime, timedelta
 
 from optimed.core.domain import User
 from optimed.adapters.security.auth_middleware import require_authenticated_user
+from optimed.core.logging_utils import get_logger, log_error
+
+logger = get_logger(__name__)
 
 gdpr_router = APIRouter(prefix="/gdpr", tags=["GDPR Compliance"])
 
@@ -92,8 +95,8 @@ async def create_dsar_request(
             lawful_basis=f"GDPR Article {_get_article_number(dsar.request_type)}",
             compliance_status="pending"
         )
-    except Exception as log_error:
-        print(f"[GDPR] Error logging DSAR request: {log_error}")
+    except Exception as e:
+        log_error(logger, "DSAR request logging", e)
 
     # GDPR requires response within 30 days (1 month)
     completion_date = datetime.now() + timedelta(days=30)
@@ -153,7 +156,7 @@ async def get_user_audit_trail(
             limit=limit
         )
     except Exception as e:
-        print(f"[GDPR] Error fetching audit trail: {e}")
+        log_error(logger, "Audit trail fetch", e)
         raise HTTPException(status_code=500, detail="Error fetching audit trail")
 
     # Log compliance event for accessing audit trail
@@ -168,8 +171,8 @@ async def get_user_audit_trail(
             lawful_basis="GDPR Article 15 - Right of Access",
             compliance_status="compliant"
         )
-    except Exception as log_error:
-        print(f"[GDPR] Error logging audit trail access: {log_error}")
+    except Exception as e:
+        log_error(logger, "Audit trail access logging", e)
 
     return AuditTrailResponse(
         user_id=user.user_id,
@@ -273,8 +276,8 @@ async def withdraw_consent(
             lawful_basis="GDPR Article 7(3) - Right to Withdraw Consent",
             compliance_status="compliant"
         )
-    except Exception as log_error:
-        print(f"[GDPR] Error logging consent withdrawal: {log_error}")
+    except Exception as e:
+        log_error(logger, "Consent withdrawal logging", e)
 
     return {
         "status": "consent_withdrawn",

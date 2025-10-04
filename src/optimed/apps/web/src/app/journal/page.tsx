@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { fetchPatient, PatientDetail } from '@/lib/api';
 import JournalList from '@/components/journal/JournalList';
+import { logError } from '@/lib/logger';
 import { Badge } from '@/components/ui/badge';
 import { useTranslations } from 'next-intl';
 import { getSexKey } from '@/lib/codeMapping';
@@ -30,7 +31,7 @@ function JournalPageContent() {
         setPatient(result);
       } catch (err: any) {
         setError(err.message || "Failed to load patient");
-        console.error('Patient load error:', err);
+        logError('Journal Page: Patient load error', err);
       } finally {
         setLoading(false);
       }

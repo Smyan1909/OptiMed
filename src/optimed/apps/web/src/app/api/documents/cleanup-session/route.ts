@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { sanitizeSessionId, logInfo, logError } from '@/lib/logger';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 
@@ -11,7 +12,7 @@ export async function POST(request: NextRequest) {
     }
 
     const backendUrl = `${BACKEND_URL}/documents/cleanup-session`;
-    console.log('[API Route] Cleanup session - Backend URL:', backendUrl);
+    logInfo('Cleanup session: Backend URL configured', { sessionId: sanitizeSessionId(sessionId) });
 
     const response = await fetch(backendUrl, {
       method: 'POST',
@@ -23,7 +24,7 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('[API Route] Backend cleanup failed:', response.status, errorText);
+      logError('Cleanup session: Backend cleanup failed', { status: response.status, error: errorText });
       return NextResponse.json(
         { error: `Backend error: ${errorText}` },
         { status: response.status }
@@ -31,11 +32,11 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await response.json();
-    console.log('[API Route] Cleanup successful:', data);
+    logInfo('Cleanup session: Cleanup successful');
 
     return NextResponse.json(data);
   } catch (error: any) {
-    console.error('[API Route] Cleanup error:', error);
+    logError('Cleanup session: Cleanup error', error);
     return NextResponse.json(
       { error: error.message || 'Internal server error' },
       { status: 500 }

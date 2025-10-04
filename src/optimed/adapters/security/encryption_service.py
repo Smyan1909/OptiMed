@@ -19,8 +19,11 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.fernet import Fernet
 import hashlib
 from dotenv import load_dotenv
+from optimed.core.logging_utils import get_logger, log_error
 
 load_dotenv()
+
+logger = get_logger(__name__)
 
 class EncryptionService:
     """Advanced E2E encryption service using AES-256-GCM with RSA key exchange."""
@@ -80,7 +83,7 @@ class EncryptionService:
 
             return base64.b64encode(encrypted_data).decode('utf-8')
         except Exception as e:
-            print(f"AES-GCM encryption error: {e}")
+            log_error(logger, "AES-GCM encryption", e)
             raise
 
     def encrypt_data(self, data: Dict[str, Any]) -> str:
@@ -114,7 +117,7 @@ class EncryptionService:
             # Parse JSON
             return json.loads(decrypted_data.decode('utf-8'))
         except Exception as e:
-            print(f"AES-GCM decryption error: {e}")
+            log_error(logger, "AES-GCM decryption", e)
             # Fallback to legacy Fernet decryption
             try:
                 return self._decrypt_data_legacy(encrypted_data)
@@ -137,7 +140,7 @@ class EncryptionService:
             encrypted_data = self.fernet.encrypt(text.encode('utf-8'))
             return base64.b64encode(encrypted_data).decode('utf-8')
         except Exception as e:
-            print(f"String encryption error: {e}")
+            log_error(logger, "String encryption", e)
             raise
     
     def decrypt_string(self, encrypted_text: str) -> str:
@@ -147,7 +150,7 @@ class EncryptionService:
             decrypted_data = self.fernet.decrypt(encrypted_bytes)
             return decrypted_data.decode('utf-8')
         except Exception as e:
-            print(f"String decryption error: {e}")
+            log_error(logger, "String decryption", e)
             raise
     
     def hash_sensitive_data(self, data: str) -> str:
@@ -198,7 +201,7 @@ class EncryptionService:
 
             return base64.b64encode(encrypted_key).decode('utf-8')
         except Exception as e:
-            print(f"Session key encryption error: {e}")
+            log_error(logger, "Session key encryption", e)
             raise
 
     def decrypt_session_key_from_client(self, encrypted_session_key: str) -> bytes:
@@ -217,7 +220,7 @@ class EncryptionService:
 
             return session_key
         except Exception as e:
-            print(f"Session key decryption error: {e}")
+            log_error(logger, "Session key decryption", e)
             raise
 
     def get_public_key_pem(self) -> str:
@@ -389,7 +392,7 @@ def encrypt_stream_chunk(chunk: str, session_key: bytes) -> str:
         encrypted_data = iv + encryptor.tag + ciphertext
         return base64.b64encode(encrypted_data).decode('utf-8')
     except Exception as e:
-        print(f"Stream chunk encryption error: {e}")
+        log_error(logger, "Stream chunk encryption", e)
         return chunk  # Return original chunk if encryption fails
 
 def decrypt_stream_chunk(encrypted_chunk: str, session_key: bytes) -> str:
@@ -413,7 +416,7 @@ def decrypt_stream_chunk(encrypted_chunk: str, session_key: bytes) -> str:
         decrypted_data = decryptor.update(ciphertext) + decryptor.finalize()
         return decrypted_data.decode('utf-8')
     except Exception as e:
-        print(f"Stream chunk decryption error: {e}")
+        log_error(logger, "Stream chunk decryption", e)
         return encrypted_chunk  # Return as-is if decryption fails
 
 def redact_for_logging(data: Any) -> Any:

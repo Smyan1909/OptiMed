@@ -10,6 +10,9 @@ from typing import Optional, Callable
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
+from optimed.core.logging_utils import get_logger, log_error
+
+logger = get_logger(__name__)
 
 
 def categorize_endpoint(path: str, method: str) -> str:
@@ -124,9 +127,9 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
                     error_message=error_message,
                     request=request
                 )
-            except Exception as log_error:
+            except Exception as log_err:
                 # Don't fail the request if logging fails
-                print(f"[AUDIT_MIDDLEWARE] Error logging audit trail: {log_error}")
+                log_error(logger, "Error logging audit trail", log_err)
 
         return response
 
@@ -159,7 +162,7 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
         try:
             # Get audit repository from app state
             if not hasattr(request.app.state, "_audit_repo"):
-                print("[AUDIT_MIDDLEWARE] Audit repository not initialized")
+                logger.warning("Audit repository not initialized")
                 return
 
             audit_repo = request.app.state._audit_repo
@@ -210,7 +213,7 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
                 )
 
         except Exception as e:
-            print(f"[AUDIT_MIDDLEWARE] Error in _log_audit_trail: {e}")
+            log_error(logger, "Error in audit trail logging", e)
 
 
 async def log_data_access_from_endpoint(
@@ -270,4 +273,4 @@ async def log_data_access_from_endpoint(
         )
 
     except Exception as e:
-        print(f"[AUDIT] Error logging data access: {e}")
+        log_error(logger, "Error logging data access", e)

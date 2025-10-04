@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { logError } from '@/lib/logger';
 
 export async function POST(
   request: Request,
@@ -31,7 +32,7 @@ export async function POST(
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
-    console.error('Session join API error:', error);
+    logError(`Session join API error: ${error}`);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { getJournalAutocomplete, JournalEntryType } from '@/lib/api';
+import { logError } from '@/lib/logger';
 
 interface UseJournalAutocompleteProps {
   entryType: JournalEntryType;
@@ -49,7 +50,7 @@ export function useJournalAutocomplete({ entryType, onTextChange }: UseJournalAu
         }
       } catch (error) {
         if (!abortControllerRef.current?.signal.aborted) {
-          console.error('Autocomplete error:', error);
+          logError('useJournalAutocomplete: Autocomplete error', error);
           setSuggestion('');
         }
       } finally {

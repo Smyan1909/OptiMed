@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { sanitizePatientId, sanitizeSessionId, logInfo, logError } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
   try {
@@ -17,11 +18,7 @@ export async function GET(request: NextRequest) {
       headers['X-Session-ID'] = sessionId;
     }
 
-    console.log('🔄 [NOTES METADATA API] Fetching generation history:', {
-      patientId,
-      limit,
-      sessionId
-    });
+    logInfo(`[NOTES METADATA API] Fetching generation history: patientId=${sanitizePatientId(patientId)}, limit=${limit}, session=${sanitizeSessionId(sessionId)}`);
 
     // Build query string
     const queryParams = new URLSearchParams();
@@ -31,7 +28,7 @@ export async function GET(request: NextRequest) {
     // Make request to backend
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
     const backendUrl = `${baseUrl}/notes/metadata/history?${queryParams.toString()}`;
-    console.log('🎯 [NOTES METADATA API] Backend URL:', backendUrl);
+    logInfo(`[NOTES METADATA API] Backend URL: ${backendUrl}`);
 
     const response = await fetch(backendUrl, {
       method: 'GET',
@@ -39,7 +36,7 @@ export async function GET(request: NextRequest) {
     });
 
     if (!response.ok) {
-      console.error('❌ [NOTES METADATA API] Backend error:', response.status, response.statusText);
+      logError(`[NOTES METADATA API] Backend error: ${response.status} ${response.statusText}`);
       const errorText = await response.text();
       return new Response(errorText, {
         status: response.status,
@@ -48,7 +45,7 @@ export async function GET(request: NextRequest) {
     }
 
     const data = await response.json();
-    console.log('✅ [NOTES METADATA API] Retrieved', data.history?.length || 0, 'records');
+    logInfo(`[NOTES METADATA API] Retrieved ${data.history?.length || 0} records`);
 
     return new Response(JSON.stringify(data), {
       status: 200,
@@ -56,7 +53,7 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('❌ [NOTES METADATA API] History error:', error);
+    logError(`[NOTES METADATA API] History error: ${error}`);
     return new Response(JSON.stringify({ error: 'Failed to get generation history' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }

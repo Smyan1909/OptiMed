@@ -9,8 +9,11 @@ from datetime import datetime, timezone
 from optimed.core.domain.pdf_document import PDFDocument, PDFMetadata, PDFProcessingInfo, PDFUploadRequest
 from optimed.core.ports import PDFService, PDFProcessor
 from optimed.core.domain import ImageStatus
+from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, sanitize_session_id, sanitize_document_id, log_error
 from typing import Sequence
 import uuid
+
+logger = get_logger(__name__)
 
 
 class SessionPDFData:
@@ -62,7 +65,7 @@ class MemoryPDFService(PDFService):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"Error in PDF cleanup task: {e}")
+                log_error(logger, "PDF cleanup task", e)
 
     def _get_session_key(self, user_id: str, session_id: str, patient_id: Optional[str] = None) -> str:
         """Generate a unique session key."""
@@ -85,27 +88,27 @@ class MemoryPDFService(PDFService):
 
             # Generate document ID
             document_id = str(uuid.uuid4())
-            print(f"[MemoryPDFService] Starting upload for document_id: {document_id}")
-            print(f"[MemoryPDFService] Upload params - user_id: {upload_request.user_id}, session_id: {upload_request.session_id}, filename: {upload_request.filename}, patient_id: {upload_request.patient_id}")
+            logger.info(f"Starting upload for document_id: {sanitize_document_id(document_id)}")
+            logger.info(f"Upload params - user_id: {sanitize_user_id(upload_request.user_id)}, session_id: {sanitize_session_id(upload_request.session_id)}, filename: {upload_request.filename}, patient_id: {sanitize_patient_id(upload_request.patient_id) if upload_request.patient_id else 'None'}")
 
             # Use the provided session_id instead of hardcoded default
             session_key = self._get_session_key(upload_request.user_id, upload_request.session_id, upload_request.patient_id)
-            print(f"[MemoryPDFService] Generated session key for upload: {session_key}")
+            logger.info(f"Generated session key for upload")
 
             session_data = self._get_or_create_session(upload_request.user_id, upload_request.session_id, upload_request.patient_id)
 
             # Store raw content
             session_data.raw_content[document_id] = upload_request.file_content
-            print(f"[MemoryPDFService] Stored raw content ({len(upload_request.file_content)} bytes)")
+            logger.info(f"Stored raw content ({len(upload_request.file_content)} bytes)")
 
             # Extract metadata and text
-            print("[MemoryPDFService] Extracting metadata...")
+            logger.info("Extracting metadata...")
             metadata = await self.pdf_processor.extract_metadata(upload_request.file_content)
-            print(f"[MemoryPDFService] Metadata extraction complete: {metadata}")
+            logger.info(f"Metadata extraction complete")
 
-            print("[MemoryPDFService] Extracting text...")
+            logger.info("Extracting text...")
             extracted_text = await self.pdf_processor.extract_text(upload_request.file_content)
-            print(f"[MemoryPDFService] Text extraction complete: {len(extracted_text) if extracted_text else 0} characters")
+            logger.info(f"Text extraction complete: {len(extracted_text) if extracted_text else 0} characters")
 
             # Create PDF document
             pdf_doc = PDFDocument(
@@ -134,9 +137,7 @@ class MemoryPDFService(PDFService):
             return pdf_doc
 
         except Exception as e:
-            print(f"[MemoryPDFService] ERROR during PDF processing: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(logger, "PDF processing", e)
 
             # Create error document
             error_doc = PDFDocument(
@@ -186,7 +187,7 @@ class MemoryPDFService(PDFService):
 
     async def list_user_documents(self, user_id: str) -> Sequence[PDFDocument]:
         """List all PDF documents uploaded by a user."""
-        print(f"[MemoryPDFService] List user documents request - user_id: {user_id}")
+        logger.info(f"List user documents request - user_id: {sanitize_user_id(user_id)}")
 
         pdf_list: List[PDFDocument] = []
         # Search through all sessions for this user
@@ -195,14 +196,13 @@ class MemoryPDFService(PDFService):
                 session_data.update_access_time()
                 pdf_list.extend(session_data.pdfs.values())
 
-        print(f"[MemoryPDFService] Found {len(pdf_list)} PDFs for user")
-        print(f"[MemoryPDFService] PDF IDs: {[pdf.document_id for pdf in pdf_list]}")
+        logger.info(f"Found {len(pdf_list)} PDFs for user")
 
         return pdf_list
 
     async def list_patient_documents(self, patient_id: str, user_id: str) -> Sequence[PDFDocument]:
         """List all PDF documents associated with a patient."""
-        print(f"[MemoryPDFService] List patient documents request - patient_id: {patient_id}, user_id: {user_id}")
+        logger.info(f"List patient documents request - patient_id: {sanitize_patient_id(patient_id)}, user_id: {sanitize_user_id(user_id)}")
 
         pdf_list = []
         # Search through all sessions for this user and patient
@@ -213,66 +213,59 @@ class MemoryPDFService(PDFService):
                 patient_pdfs = [pdf for pdf in session_data.pdfs.values() if pdf.patient_id == patient_id]
                 pdf_list.extend(patient_pdfs)
 
-        print(f"[MemoryPDFService] Found {len(pdf_list)} PDFs for patient {patient_id}")
-        print(f"[MemoryPDFService] PDF IDs: {[pdf.document_id for pdf in pdf_list]}")
+        logger.info(f"Found {len(pdf_list)} PDFs for patient")
 
         return pdf_list
 
     async def delete_document(self, document_id: str, user_id: str, session_id: str = None, patient_id: str = None) -> bool:
         """Delete a PDF document by its ID."""
-        print(f"[MemoryPDFService] Delete request - document_id: {document_id}, user_id: {user_id}, session_id: {session_id}, patient_id: {patient_id}")
+        logger.info(f"Delete request - document_id: {sanitize_document_id(document_id)}, user_id: {sanitize_user_id(user_id)}, session_id: {sanitize_session_id(session_id) if session_id else 'None'}, patient_id: {sanitize_patient_id(patient_id) if patient_id else 'None'}")
 
         if session_id:
             # If session_id is provided, look in that specific session
             session_key = self._get_session_key(user_id, session_id, patient_id)
-            print(f"[MemoryPDFService] Generated session key: {session_key}")
 
             if session_key in self.sessions:
                 session_data = self.sessions[session_key]
-                print(f"[MemoryPDFService] Available PDF documents in session: {list(session_data.pdfs.keys())}")
 
                 if document_id in session_data.pdfs:
-                    print(f"[MemoryPDFService] Found PDF in session: {session_key}")
-                    print(f"[MemoryPDFService] Deleting PDF document: {document_id}")
+                    logger.info(f"Deleting PDF document")
                     del session_data.pdfs[document_id]
 
                     # Also delete raw content if it exists
                     if document_id in session_data.raw_content:
-                        print(f"[MemoryPDFService] Deleting raw content: {document_id}")
                         del session_data.raw_content[document_id]
 
                     session_data.update_access_time()
-                    print(f"[MemoryPDFService] Document {document_id} deleted successfully")
+                    logger.info("Document deleted successfully")
                     return True
                 else:
-                    print(f"[MemoryPDFService] PDF document not found in session: {document_id}")
+                    logger.warning("PDF document not found in session")
             else:
-                print(f"[MemoryPDFService] Session not found: {session_key}")
+                logger.warning("Session not found")
         else:
             # Fallback: Search through all sessions for this user (original behavior)
-            print(f"[MemoryPDFService] No session_id provided, searching all sessions for user: {user_id}")
+            logger.info("No session_id provided, searching all sessions for user")
             for session_key, session_data in self.sessions.items():
                 if user_id in session_key:
                     if document_id in session_data.pdfs:
-                        print(f"[MemoryPDFService] Found PDF in session: {session_key}")
-                        print(f"[MemoryPDFService] Deleting PDF document: {document_id}")
+                        logger.info("Deleting PDF document")
                         del session_data.pdfs[document_id]
 
                         # Also delete raw content if it exists
                         if document_id in session_data.raw_content:
-                            print(f"[MemoryPDFService] Deleting raw content: {document_id}")
                             del session_data.raw_content[document_id]
 
                         session_data.update_access_time()
-                        print(f"[MemoryPDFService] Document {document_id} deleted successfully")
+                        logger.info("Document deleted successfully")
                         return True
 
-        print(f"[MemoryPDFService] WARNING: PDF document not found: {document_id}")
+        logger.warning("PDF document not found")
         return False
 
     async def get_documents_for_context(self, user_id: str, patient_id: Optional[str] = None) -> Sequence[PDFDocument]:
         """Get PDF documents relevant for the current context (patient-specific or general)."""
-        print(f"[MemoryPDFService] Get documents for context - user_id: {user_id}, patient_id: {patient_id}")
+        logger.info(f"Get documents for context - user_id: {sanitize_user_id(user_id)}, patient_id: {sanitize_patient_id(patient_id) if patient_id else 'None'}")
 
         pdf_list = []
         # Search through all sessions for this user
@@ -291,7 +284,7 @@ class MemoryPDFService(PDFService):
                             if pdf.patient_id == patient_id or pdf.patient_id is None:  # Patient-specific or general
                                 pdf_list.append(pdf)
 
-        print(f"[MemoryPDFService] Found {len(pdf_list)} documents for context")
+        logger.info(f"Found {len(pdf_list)} documents for context")
         return pdf_list
 
     # Legacy session-based methods for internal use
@@ -302,16 +295,14 @@ class MemoryPDFService(PDFService):
         patient_id: Optional[str] = None
     ) -> List[PDFDocument]:
         """List all PDF documents for a session (internal method)."""
-        print(f"[MemoryPDFService] List request - user_id: {user_id}, session_id: {session_id}, patient_id: {patient_id}")
+        logger.info(f"List request - user_id: {sanitize_user_id(user_id)}, session_id: {sanitize_session_id(session_id)}, patient_id: {sanitize_patient_id(patient_id) if patient_id else 'None'}")
 
         session_key = self._get_session_key(user_id, session_id, patient_id)
-        print(f"[MemoryPDFService] Generated session key for list: {session_key}")
 
         session_data = self._get_or_create_session(user_id, session_id, patient_id)
         pdf_list = list(session_data.pdfs.values())
 
-        print(f"[MemoryPDFService] Found {len(pdf_list)} PDFs in session")
-        print(f"[MemoryPDFService] PDF IDs: {[pdf.document_id for pdf in pdf_list]}")
+        logger.info(f"Found {len(pdf_list)} PDFs in session")
 
         return pdf_list
 
@@ -323,7 +314,7 @@ class MemoryPDFService(PDFService):
             session_data.pdfs.clear()
             session_data.raw_content.clear()
             del self.sessions[session_key]
-            print(f"Cleaned up PDF session: {session_key}")
+            logger.info("Cleaned up PDF session")
 
     async def cleanup_user_session(
         self,
@@ -349,11 +340,10 @@ class MemoryPDFService(PDFService):
 
     def debug_all_sessions(self):
         """Debug method to show all current sessions and their PDFs."""
-        print(f"[MemoryPDFService] DEBUG: Total sessions: {len(self.sessions)}")
+        logger.info(f"DEBUG: Total sessions: {len(self.sessions)}")
         for session_key, session_data in self.sessions.items():
             pdf_count = len(session_data.pdfs)
-            pdf_ids = list(session_data.pdfs.keys())
-            print(f"[MemoryPDFService] Session: {session_key} | PDFs: {pdf_count} | IDs: {pdf_ids}")
+            logger.info(f"Session PDFs: {pdf_count}")
         return {
             "sessions": list(self.sessions.keys()),
             "session_pdfs": {k: list(v.pdfs.keys()) for k, v in self.sessions.items()}

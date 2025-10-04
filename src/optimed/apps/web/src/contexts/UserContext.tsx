@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { getCurrentUser, loginUser, logoutUser, User, setupSessionEncryption } from '@/lib/api';
 import { sendSessionToWatcher, clearSessionFromWatcher } from '@/lib/watcherService';
+import { sanitizeUserId, sanitizePatientId, sanitizeSessionId, sanitizeDocumentId, logInfo, logError, logWarning } from '@/lib/logger';
 
 type UserContextType = {
   user: User | null;
@@ -71,12 +72,12 @@ export function UserProvider({ children }: { children: ReactNode }) {
       try {
         const encryptionSetup = await setupSessionEncryption(response.session.session_id);
         if (encryptionSetup) {
-          console.log('✅ Session encryption setup successful');
+          logInfo(`Session encryption setup successful for session: ${sanitizeSessionId(response.session.session_id)}`);
         } else {
-          console.warn('⚠️ Session encryption setup failed, continuing without encryption');
+          logWarning(`Session encryption setup failed for session: ${sanitizeSessionId(response.session.session_id)}, continuing without encryption`);
         }
       } catch (encryptionError) {
-        console.warn('⚠️ Encryption setup error:', encryptionError);
+        logWarning(`Encryption setup error for session: ${sanitizeSessionId(response.session.session_id)}`);
         // Continue without encryption - not critical for basic functionality
       }
     } catch (err) {
@@ -96,7 +97,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
       await logoutUser();
     } catch (err) {
-      console.error('Logout error:', err);
+      logError('Logout error', err instanceof Error ? err : new Error(String(err)));
     } finally {
       localStorage.removeItem('session_id');
       setUser(null);

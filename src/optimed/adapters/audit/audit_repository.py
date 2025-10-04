@@ -12,6 +12,9 @@ import hashlib
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 from optimed.adapters.security.encryption_service import get_phi_redactor
+from optimed.core.logging_utils import get_logger, log_error
+
+logger = get_logger(__name__)
 
 
 class PGAuditRepository:
@@ -141,8 +144,8 @@ class PGAuditRepository:
 
         except Exception as e:
             import traceback
-            print(f"[AUDIT] Error logging API request: {e}")
-            print(f"[AUDIT] Full traceback: {traceback.format_exc()}")
+            log_error(logger, "Error logging API request", e)
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             # Don't fail the request if logging fails
 
     async def log_data_access(
@@ -194,7 +197,7 @@ class PGAuditRepository:
                 )
 
         except Exception as e:
-            print(f"[AUDIT] Error logging data access: {e}")
+            log_error(logger, "Error logging data access", e)
 
     async def log_data_flow(
         self,
@@ -243,7 +246,7 @@ class PGAuditRepository:
                 )
 
         except Exception as e:
-            print(f"[AUDIT] Error logging data flow: {e}")
+            log_error(logger, "Error logging data flow", e)
 
     async def log_prompt_category(
         self,
@@ -291,7 +294,7 @@ class PGAuditRepository:
                 )
 
         except Exception as e:
-            print(f"[AUDIT] Error logging prompt category: {e}")
+            log_error(logger, "Error logging prompt category", e)
 
     async def log_compliance_event(
         self,
@@ -344,7 +347,7 @@ class PGAuditRepository:
                 )
 
         except Exception as e:
-            print(f"[AUDIT] Error logging compliance event: {e}")
+            log_error(logger, "Error logging compliance event", e)
 
     async def log_usage_metric(
         self,
@@ -386,7 +389,7 @@ class PGAuditRepository:
                 )
 
         except Exception as e:
-            print(f"[AUDIT] Error logging usage metric: {e}")
+            log_error(logger, "Error logging usage metric", e)
 
     async def get_user_audit_trail(
         self,
@@ -430,7 +433,7 @@ class PGAuditRepository:
                 return [dict(row) for row in rows]
 
         except Exception as e:
-            print(f"[AUDIT] Error getting user audit trail: {e}")
+            log_error(logger, "Error getting user audit trail", e)
             return []
 
 

@@ -10,6 +10,9 @@ import os
 import faiss
 import numpy as np
 from optimed.adapters.kms.crypto_service import EnvelopeEncryption, EphemeralCacheService, KMSConfig
+from optimed.core.logging_utils import get_logger, sanitize_patient_id, sanitize_session_id, log_error
+
+logger = get_logger(__name__)
 
 class PGVectorAdapter(VectorStore):
     def __init__(self, dsn: str, min_size: int = 10, max_size: int = 20, embedding_dim: int = 1024):
@@ -143,7 +146,7 @@ class PGVectorAdapter(VectorStore):
             )
             
         except Exception as e:
-            print(f"Warning: Failed to store in ephemeral cache: {e}")
+            log_error(logger, "Failed to store in ephemeral cache", e)
     
     async def _store_metadata_only(self, embedding_id: str, object_type: str, object_id: str, metadata: dict):
         """Store only metadata in database, no PHI content."""
@@ -157,7 +160,7 @@ class PGVectorAdapter(VectorStore):
                     ON CONFLICT (server_alias, resource_type, resource_id) DO NOTHING
                 """, "local", object_type, object_id, datetime.now(timezone.utc))
         except Exception as e:
-            print(f"Warning: Failed to store metadata: {e}")
+            log_error(logger, "Failed to store metadata", e)
     
     async def _store_legacy_embedding(self, embedding_id: str, object_type: str, object_id: str, content: str | dict, embedding: Sequence[float], metadata: dict):
         """Store in legacy embeddings table (for backward compatibility when persist_phi=true)."""
@@ -329,7 +332,7 @@ class PGVectorAdapter(VectorStore):
                     uuid.UUID(session_id)
                 )
         except Exception as e:
-            print(f"Warning: Failed to clear ephemeral cache for session {session_id}: {e}")
+            log_error(logger, "Failed to clear ephemeral cache for session", e, session_id=sanitize_session_id(session_id))
     
     def get_session_memory_usage(self, session_id: str) -> dict:
         """Get memory usage statistics for a session."""
@@ -355,15 +358,15 @@ class PGVectorAdapter(VectorStore):
         """GDPR-compliant chat history: returns empty list to prevent PHI storage."""
         # GDPR Compliance: Chat history with PHI must not be stored or retrieved
         # This prevents any PHI from being persisted in the database
-        print(f"[GDPR] Chat history access blocked for patient_id={patient_id}, session_id={session_id}")
-        
+        logger.info(f"Chat history access blocked (GDPR compliance)")
+
         # Return empty list to maintain API compatibility
         return []
 
     async def clear_chat_history(self, patient_id: str) -> None:
         """GDPR-compliant: No chat history to clear since it's not stored."""
         # GDPR Compliance: Chat history with PHI is not stored, so nothing to clear
-        print(f"[GDPR] Chat history clear requested for patient_id={patient_id} - no action needed (not stored)")
+        logger.info("Chat history clear requested - no action needed (not stored)")
 
     async def update(
         self,
@@ -621,7 +624,7 @@ class PGVectorAdapter(VectorStore):
             return participants
             
         except Exception as e:
-            print(f"Error parsing session participants: {e}")
+            log_error(logger, "Error parsing session participants", e)
             return []
     
     async def create_chat_session(
@@ -741,7 +744,7 @@ class PGVectorAdapter(VectorStore):
                 last_participant_id=metadata.get("last_participant_id")
             )
         except Exception as e:
-            print(f"Error parsing session info: {e}")
+            log_error(logger, "Error parsing session info", e)
             return None
     
     async def get_session_messages(
@@ -811,7 +814,7 @@ class PGVectorAdapter(VectorStore):
                 })
                 
             except Exception as e:
-                print(f"Error parsing message row: {e}")
+                log_error(logger, "Error parsing message row", e)
                 continue
         
         return result
@@ -840,7 +843,7 @@ class PGVectorAdapter(VectorStore):
                 )
                 sessions.append(session)
             except Exception as e:
-                print(f"Error parsing session row: {e}")
+                log_error(logger, "Error parsing session row", e)
                 continue
                 
         return sessions

@@ -6,6 +6,9 @@ import httpx
 from optimed.core.ports import WebSearchService, LLMClient
 from optimed.core.domain import WebSearchQuery, WebSearchResult, WebSearchResponse
 from optimed.core.domain import ChatMessage, ChatRole
+from optimed.core.logging_utils import get_logger, log_error
+
+logger = get_logger(__name__)
 
 
 class TavilyWebSearchService(WebSearchService):
@@ -63,7 +66,7 @@ class TavilyWebSearchService(WebSearchService):
             
             return response.content.strip().upper() == "YES"
         except Exception as e:
-            print(f"[WebSearch] Error evaluating search need: {e}")
+            log_error(logger, "evaluate search need", e)
             return False
     
     async def search(
@@ -165,9 +168,9 @@ class TavilyWebSearchService(WebSearchService):
                 sources_used=sources_used,
                 summary=summary
             )
-            
+
         except Exception as e:
-            print(f"[WebSearch] Error performing search: {e}")
+            log_error(logger, "perform search", e)
             return WebSearchResponse(
                 query=query_obj,
                 results=[],
@@ -241,5 +244,5 @@ class TavilyWebSearchService(WebSearchService):
             
             return response.content
         except Exception as e:
-            print(f"[WebSearch] Error generating summary: {e}")
+            log_error(logger, "generate summary", e)
             return "Summary generation failed, but search results are available above."

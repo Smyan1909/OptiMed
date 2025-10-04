@@ -9,6 +9,9 @@ import uuid
 from typing import Optional
 from fastapi import Request
 import asyncpg
+from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_session_id, log_error
+
+logger = get_logger(__name__)
 
 
 async def set_rls_context_for_connection(
@@ -51,7 +54,7 @@ async def set_rls_context_for_connection(
             )
 
     except Exception as e:
-        print(f"[RLS] Error setting RLS context: {e}")
+        log_error(logger, "Set RLS context", e)
         # Don't fail the request if RLS context setting fails
         # This allows the system to work even if RLS is not fully configured
 
@@ -67,7 +70,7 @@ async def clear_rls_context(conn: asyncpg.Connection) -> None:
         await conn.execute("SELECT set_config('app.current_tenant_id', '', false)")
         await conn.execute("SELECT set_config('app.session_id', '', false)")
     except Exception as e:
-        print(f"[RLS] Error clearing RLS context: {e}")
+        log_error(logger, "Clear RLS context", e)
 
 
 async def get_current_rls_context(conn: asyncpg.Connection) -> dict:
@@ -88,7 +91,7 @@ async def get_current_rls_context(conn: asyncpg.Connection) -> dict:
             "session_id": session_id,
         }
     except Exception as e:
-        print(f"[RLS] Error getting RLS context: {e}")
+        log_error(logger, "Get RLS context", e)
         return {}
 
 

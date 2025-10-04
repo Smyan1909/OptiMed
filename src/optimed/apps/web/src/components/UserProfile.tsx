@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/contexts/UserContext';
+import { logInfo, logError } from '@/lib/logger';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -58,12 +59,12 @@ export function UserProfile() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const handleProfileClick = () => {
-    console.log('Profile clicked - navigating to /profile');
+    logInfo('User Profile: Profile clicked - navigating to /profile');
     router.push('/profile');
   };
 
   const handleSettingsClick = () => {
-    console.log('Settings clicked - navigating to /settings');
+    logInfo('User Profile: Settings clicked - navigating to /settings');
     router.push('/settings');
   };
 
@@ -74,7 +75,7 @@ export function UserProfile() {
     try {
       await logout();
     } catch (err) {
-      console.error('Logout failed:', err);
+      logError('User Profile: Logout failed', err);
     } finally {
       setIsLoggingOut(false);
     }

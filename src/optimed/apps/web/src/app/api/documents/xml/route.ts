@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logError } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,7 +32,7 @@ export async function GET(request: NextRequest) {
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
-    console.error('XML documents list API error:', error);
+    logError('XML documents list API error', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

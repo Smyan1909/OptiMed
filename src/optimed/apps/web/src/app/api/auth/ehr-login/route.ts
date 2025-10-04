@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logError } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,7 +22,7 @@ export async function POST(request: NextRequest) {
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
-    console.error('EHR login API error:', error);
+    logError('EHR login API error', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

@@ -12,6 +12,9 @@ from collections import defaultdict
 from fastapi import Request, HTTPException
 from datetime import datetime, timezone
 import asyncio
+from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_session_id, log_error
+
+logger = get_logger(__name__)
 
 # Configuration from environment
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
@@ -220,7 +223,7 @@ async def check_rate_limit_for_request(request: Request) -> None:
                     dimensions={"identifier": identifier, "path": request.url.path}
                 )
         except Exception as e:
-            print(f"[RATE_LIMIT] Error logging violation: {e}")
+            log_error(logger, "Log rate limit violation", e)
 
         raise HTTPException(
             status_code=429,
@@ -240,7 +243,7 @@ async def check_rate_limit_for_request(request: Request) -> None:
             )
     except Exception as e:
         # Don't block request if logging fails
-        print(f"[RATE_LIMIT] Error logging metric: {e}")
+        log_error(logger, "Log rate limit metric", e)
 
 
 class RateLimitMiddleware:

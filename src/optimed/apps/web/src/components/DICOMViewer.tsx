@@ -3,6 +3,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { logError } from '@/lib/logger';
 import { 
   Upload, 
   ZoomIn, 
@@ -228,7 +229,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
       const response = await listDICOMImages();
       setUploadedImages(response.images);
     } catch (error) {
-      console.error('Failed to load images:', error);
+      logError('DICOM Viewer: Failed to load images', error);
       alert('Failed to load images. Please try again.');
     }
   };
@@ -239,7 +240,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
       const response = await fetchPatients();
       setPatients(response || []);
     } catch (error) {
-      console.error('Failed to load patients:', error);
+      logError('DICOM Viewer: Failed to load patients', error);
       // Don't show error for patients as it might not be critical
     } finally {
       setLoadingPatients(false);
@@ -251,20 +252,20 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
       const patient = await fetchPatient(patientId);
       setSelectedPatient(patient);
     } catch (error) {
-      console.error('Failed to load patient details:', error);
+      logError('DICOM Viewer: Failed to load patient details', error);
       setSelectedPatient(null);
     }
   };
 
   const handleCopyAnalysis = async () => {
     if (!analysisResult) return;
-    
+
     try {
       await navigator.clipboard.writeText(analysisResult);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
-      console.error('Failed to copy analysis:', error);
+      logError('DICOM Viewer: Failed to copy analysis', error);
     }
   };
 
@@ -278,7 +279,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
       );
       setPixelData(data);
     } catch (error) {
-      console.error('Failed to load pixel data:', error);
+      logError('DICOM Viewer: Failed to load pixel data', error);
       alert('Failed to load image data. Please try again.');
     } finally {
       setIsLoading(false);
@@ -305,17 +306,17 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
 
   const handleAnalyzeImage = async () => {
     if (!selectedImage || !analysisQuery.trim()) return;
-    
+
     setIsAnalyzing(true);
     try {
       const result = await analyzeDICOMImage(
-        selectedImage.image_id, 
+        selectedImage.image_id,
         analysisQuery,
         selectedPatientId !== 'no-patient' ? selectedPatientId : undefined
       );
       setAnalysisResult(result.analysis);
     } catch (error) {
-      console.error('Analysis failed:', error);
+      logError('DICOM Viewer: Analysis failed', error);
       alert('Failed to analyze image. Please try again.');
     } finally {
       setIsAnalyzing(false);
@@ -324,13 +325,13 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
 
   const handleFindSimilar = async () => {
     if (!selectedImage) return;
-    
+
     try {
       const result = await findSimilarDICOMImages(selectedImage.image_id);
       setSimilarImages(result.similar_images);
       setShowSimilarImages(true);
     } catch (error) {
-      console.error('Similar image search failed:', error);
+      logError('DICOM Viewer: Similar image search failed', error);
       alert('Failed to find similar images. Please try again.');
     }
   };
@@ -347,10 +348,11 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
       await loadImages();
       const newImage = result.image;
       handleImageSelect(newImage);
-      
+
+
       alert('DICOM file uploaded successfully!');
     } catch (error) {
-      console.error('Error uploading DICOM file:', error);
+      logError('DICOM Viewer: Error uploading DICOM file', error);
       alert('Failed to upload DICOM file. Please try again.');
     } finally {
       setIsUploading(false);
@@ -371,10 +373,11 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
         setSelectedImage(null);
         setPixelData(null);
       }
-      
+
+
       alert('Image deleted successfully');
     } catch (error) {
-      console.error('Error deleting image:', error);
+      logError('DICOM Viewer: Error deleting image', error);
       alert('Failed to delete image. Please try again.');
     }
   };
@@ -392,7 +395,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
       );
       setPixelData(data);
     } catch (error) {
-      console.error('Failed to apply windowing:', error);
+      logError('DICOM Viewer: Failed to apply windowing', error);
     } finally {
       setIsLoading(false);
     }

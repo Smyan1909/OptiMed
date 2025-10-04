@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { sanitizeSessionId, logInfo, logError } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,21 +17,20 @@ export async function POST(request: NextRequest) {
       headers['X-Session-ID'] = sessionId;
     }
 
-    console.log('🔄 [DIAGNOSE API] Forwarding streaming request to backend:', {
+    logInfo('Diagnose Stream API: Forwarding streaming request to backend', {
       endpoint: 'diagnose/stream',
-      payload: body,
-      sessionId
+      sessionId: sessionId ? sanitizeSessionId(sessionId) : null
     });
 
     // Make request to streaming endpoint
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
     const backendUrl = `${baseUrl}/diagnose/stream`;
-    console.log('🎯 [DIAGNOSE API] Backend URL:', backendUrl);
+    logInfo('Diagnose Stream API: Backend URL configured', { url: backendUrl });
     
     // Add timeout and abort controller for long-running requests
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
-      console.log('⏰ [DIAGNOSE API] Request timeout after 5 minutes');
+      logInfo('Diagnose Stream API: Request timeout after 5 minutes');
       controller.abort();
     }, 300000); // 5 minute timeout
     
@@ -44,12 +44,12 @@ export async function POST(request: NextRequest) {
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      console.error('❌ [DIAGNOSE API] Backend error:', response.status, response.statusText);
+      logError('Diagnose Stream API: Backend error', { status: response.status, statusText: response.statusText });
       throw new Error(`Backend error: ${response.status}`);
     }
 
-    console.log('✅ [DIAGNOSE API] Backend response received, content-type:', response.headers.get('content-type'));
-    console.log('📡 [DIAGNOSE API] Starting SSE forwarding...');
+    logInfo('Diagnose Stream API: Backend response received', { contentType: response.headers.get('content-type') });
+    logInfo('Diagnose Stream API: Starting SSE forwarding');
 
     // Log the first chunk to debug
     if (response.body) {
@@ -63,22 +63,22 @@ export async function POST(request: NextRequest) {
               try {
                 while (true) {
                   const { done, value } = await reader.read();
-                  
+
                   if (done) {
-                    console.log('📡 [DIAGNOSE API] Stream ended');
+                    logInfo('Diagnose Stream API: Stream ended');
                     controller.close();
                     break;
                   }
-                  
+
                   const chunk = decoder.decode(value, { stream: true });
-                  console.log('📦 [DIAGNOSE API] Forwarding chunk:', chunk.length + ' chars');
-                  
+                  logInfo('Diagnose Stream API: Forwarding chunk', { chunkSize: chunk.length });
+
                   controller.enqueue(value);
                 }
               } catch (error) {
-                console.error('❌ [DIAGNOSE API] Stream error:', error);
+                logError('Diagnose Stream API: Stream error', error);
                 if (error instanceof Error && error.name === 'AbortError') {
-                  console.log('🛑 [DIAGNOSE API] Stream aborted due to timeout');
+                  logInfo('Diagnose Stream API: Stream aborted due to timeout');
                 }
                 controller.error(error);
               }
@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
     }
 
   } catch (error) {
-    console.error('❌ [DIAGNOSE API] Streaming API error:', error);
+    logError('Diagnose Stream API: Streaming API error', error);
     return new Response(JSON.stringify({ error: 'Streaming failed' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }

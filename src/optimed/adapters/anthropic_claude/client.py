@@ -1,18 +1,21 @@
 from __future__ import annotations
 
-import os 
+import os
 from typing import Sequence, cast, Optional, AsyncGenerator
 
-import anthropic 
+import anthropic
 from anthropic.types import Message, MessageParam
 
 from optimed.core.domain import ChatMessage, ChatRole, PatientContext, DICOMMetadata, ImagePixelData
 from optimed.core.ports import LLMClient, VisionLLMClient
+from optimed.core.logging_utils import get_logger, log_error
 
-import numpy as np 
+import numpy as np
 from PIL import Image
 import io
 import base64
+
+logger = get_logger(__name__)
 
 """
 Adapter: Anthropic Claude
@@ -246,9 +249,9 @@ Focus on being accurate, detailed, and clinically relevant. If you cannot make d
                     response_text += block.text
             
             return response_text
-            
+
         except Exception as e:
-            print(f"Error in DICOM image analysis: {e}")
+            log_error(logger, "DICOM image analysis", e)
             return "I apologize, but I encountered an error while analyzing the DICOM image. Please try again or consult with a radiologist directly."
     
     async def _pixel_data_to_base64(self, pixel_data: ImagePixelData) -> str:

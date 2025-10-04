@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { sanitizeSessionId, logInfo, logError } from '@/lib/logger';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 
@@ -7,15 +8,15 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const sessionId = url.searchParams.get('session_id');
 
-  console.log('[API Route] Session ID from query:', sessionId);
+  logInfo('Documents Events: Session ID from query', { sessionId: sessionId ? sanitizeSessionId(sessionId) : null });
 
   if (!sessionId) {
-    console.error('[API Route] No session ID in query parameter');
+    logError('Documents Events: No session ID in query parameter');
     return new Response('Unauthorized - No session', { status: 401 });
   }
 
   const backendUrl = `${BACKEND_URL}/documents/events`;
-  console.log('[API Route] SSE connecting to:', backendUrl, 'with session:', sessionId.substring(0, 12));
+  logInfo('Documents Events: SSE connecting to backend', { sessionId: sanitizeSessionId(sessionId) });
 
   try {
     const response = await fetch(backendUrl, {
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
     });
 
     if (!response.ok) {
-      console.error('[API Route] SSE failed:', response.status);
+      logError('Documents Events: SSE failed', { status: response.status });
       return new Response('SSE connection failed', { status: response.status });
     }
 
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error: any) {
-    console.error('[API Route] SSE error:', error);
+    logError('Documents Events: SSE error', error);
     return new Response(error.message || 'Internal server error', { status: 500 });
   }
 }

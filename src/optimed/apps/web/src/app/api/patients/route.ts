@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { logError } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -31,7 +32,7 @@ export async function GET(request: NextRequest) {
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
-    console.error('Patients API error:', error);
+    logError(`Patients API error: ${error}`);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { fetchPatient, PatientDetail } from '@/lib/api';
+import { logError } from '@/lib/logger';
 import { Badge } from '@/components/ui/badge';
 import { getDisplayKey, formatLabValue, formatVitalValue, formatNumericalValue, type ObservationCategory } from '@/lib/codeMapping';
 import { Heart, Beaker, Camera, Stethoscope, Scissors, UserCheck, Pill, AlertTriangle, FileText, ClipboardList, ChevronDown, ChevronRight, Calendar, Clock, Shield } from 'lucide-react';
@@ -56,7 +57,7 @@ function VitalsPageContent() {
         setPatient(result);
       } catch (err: any) {
         setError(err.message || "Failed to load patient");
-        console.error('Patient load error:', err);
+        logError('Vitals Page: Patient load error', err);
       } finally {
         setLoading(false);
       }

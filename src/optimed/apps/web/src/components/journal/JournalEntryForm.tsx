@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { JournalEntryType, JournalEntryCreate, createJournalEntry } from '@/lib/api';
+import { logError } from '@/lib/logger';
 
 interface CreateJournalEntryModalProps {
   patientId: string;
@@ -86,7 +87,7 @@ export default function CreateJournalEntryModal({
       setContent('');
       setSelectedType(JournalEntryType.NOTE);
     } catch (err) {
-      console.error('Failed to create journal entry:', err);
+      logError('Journal Entry Form: Failed to create journal entry', err);
       setError(err instanceof Error ? err.message : 'Failed to create journal entry');
     } finally {
       setIsSubmitting(false);

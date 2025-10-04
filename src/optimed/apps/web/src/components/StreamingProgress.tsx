@@ -1,6 +1,7 @@
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { logInfo } from '@/lib/logger';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Clock, Search, FileText, Database, Globe, Brain, Stethoscope, CheckCircle } from 'lucide-react';
 
@@ -46,7 +47,7 @@ export const StreamingProgress: React.FC<StreamingProgressProps> = ({
   differentialDiagnosisProgress
 }) => {
   // Debug logging
-  console.log('🔍 StreamingProgress render:', {
+  logInfo('Streaming Progress: Render state', {
     isStreaming,
     currentStep,
     differentialDiagnosisProgress
@@ -57,7 +58,7 @@ export const StreamingProgress: React.FC<StreamingProgressProps> = ({
                      differentialDiagnosisProgress?.isComputing || 
                      (differentialDiagnosisProgress?.currentDiagnosis && differentialDiagnosisProgress.currentDiagnosis.trim() !== '');
   
-  console.log('🔍 StreamingProgress shouldShow:', shouldShow);
+  logInfo('Streaming Progress: Should show', { shouldShow });
   
   if (!shouldShow) return null;
   

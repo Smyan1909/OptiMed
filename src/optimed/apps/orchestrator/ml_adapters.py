@@ -5,6 +5,9 @@ import math
 import asyncio
 import concurrent.futures
 from typing import List, Tuple, Any
+from optimed.core.logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 class MultilingualCrossEncoder:
@@ -30,8 +33,8 @@ class MultilingualCrossEncoder:
         else:
             self._optimal_batch_size = 8  # Smaller batches for better GPU memory usage
 
-        print(f"[MultilingualCrossEncoder] Initialized with model: {self._model_name}")
-        print(f"[MultilingualCrossEncoder] Optimal batch size: {self._optimal_batch_size}")
+        logger.info(f"Initialized MultilingualCrossEncoder with model: {self._model_name}")
+        logger.info(f"Optimal batch size: {self._optimal_batch_size}")
 
     def _ensure_loaded(self) -> bool:
         """Ensure the model is loaded and ready."""
@@ -39,29 +42,29 @@ class MultilingualCrossEncoder:
             return True
 
         try:
-            print(f"[MultilingualCrossEncoder] Loading model: {self._model_name}")
+            logger.info(f"Loading MultilingualCrossEncoder model: {self._model_name}")
             from sentence_transformers import CrossEncoder
             import torch
 
             # Detect GPU availability properly
             if torch.cuda.is_available():
                 device = "cuda"
-                print(f"[MultilingualCrossEncoder] GPU detected: {torch.cuda.get_device_name(0)}")
+                logger.info(f"GPU detected: {torch.cuda.get_device_name(0)}")
             else:
                 device = "cpu"
-                print("[MultilingualCrossEncoder] No GPU available, using CPU")
+                logger.info("No GPU available, using CPU")
 
             self._model = CrossEncoder(self._model_name, device=device, trust_remote_code=True)
             self._loaded = True
 
-            print(f"[MultilingualCrossEncoder] Model loaded successfully on {device}")
+            logger.info(f"MultilingualCrossEncoder model loaded successfully on {device}")
             return True
 
         except ImportError:
-            print("[MultilingualCrossEncoder] sentence-transformers not available, using fallback")
+            logger.warning("sentence-transformers not available, using fallback")
             return False
         except Exception as e:
-            print(f"[MultilingualCrossEncoder] Failed to load model: {e}")
+            logger.warning(f"Failed to load model: {e}")
             return False
 
     def _sigmoid(self, x: float) -> float:
@@ -96,10 +99,10 @@ class MultilingualCrossEncoder:
             try:
                 return self._predict_with_model(pairs, timeout)
             except Exception as e:
-                print(f"[MultilingualCrossEncoder] Model prediction failed: {e}, using fallback")
+                logger.warning(f"Model prediction failed: {e}, using fallback")
 
         # Fallback scoring with safe unpacking
-        print("[MultilingualCrossEncoder] Using fallback scoring")
+        logger.info("Using fallback scoring")
         fallback_scores = []
         for item in pairs:
             try:
@@ -107,10 +110,10 @@ class MultilingualCrossEncoder:
                     query, passage = item[0], item[1]
                     fallback_scores.append(self._fallback_score(str(query), str(passage)))
                 else:
-                    print(f"[MultilingualCrossEncoder] Invalid pair format in fallback: {item}")
+                    logger.warning(f"Invalid pair format in fallback: {item}")
                     fallback_scores.append(0.5)  # neutral score
             except Exception as e:
-                print(f"[MultilingualCrossEncoder] Error in fallback unpacking: {e}")
+                logger.warning(f"Error in fallback unpacking: {e}")
                 fallback_scores.append(0.5)  # neutral score
         return fallback_scores
 
@@ -119,7 +122,7 @@ class MultilingualCrossEncoder:
         batch_size = min(self._optimal_batch_size, len(pairs))
         all_scores = []
 
-        print(f"[MultilingualCrossEncoder] Processing {len(pairs)} pairs in batches of {batch_size}")
+        logger.info(f"Processing {len(pairs)} pairs in batches of {batch_size}")
 
         # Process in batches for better performance
         for i in range(0, len(pairs), batch_size):
@@ -127,7 +130,7 @@ class MultilingualCrossEncoder:
             batch_num = i//batch_size + 1
             total_batches = math.ceil(len(pairs) / batch_size)
 
-            print(f"[MultilingualCrossEncoder] Processing batch {batch_num}/{total_batches}")
+            logger.info(f"Processing batch {batch_num}/{total_batches}")
 
             try:
                 # Direct batch prediction without threading for single batch
@@ -142,7 +145,7 @@ class MultilingualCrossEncoder:
                         all_scores.extend(batch_scores)
 
             except concurrent.futures.TimeoutError:
-                print(f"[MultilingualCrossEncoder] Batch {i//batch_size + 1} timed out")
+                logger.warning(f"Batch {i//batch_size + 1} timed out")
                 # Use fallback for this batch with safe unpacking
                 fallback_scores = []
                 for item in batch_pairs:
@@ -151,14 +154,14 @@ class MultilingualCrossEncoder:
                             q, p = item[0], item[1]
                             fallback_scores.append(self._fallback_score(str(q), str(p)))
                         else:
-                            print(f"[MultilingualCrossEncoder] Invalid pair format: {item}")
+                            logger.warning(f"Invalid pair format: {item}")
                             fallback_scores.append(0.5)  # neutral score
                     except Exception as unpacking_error:
-                        print(f"[MultilingualCrossEncoder] Error unpacking item {item}: {unpacking_error}")
+                        logger.warning(f"Error unpacking item: {unpacking_error}")
                         fallback_scores.append(0.5)  # neutral score
                 all_scores.extend(fallback_scores)
             except Exception as e:
-                print(f"[MultilingualCrossEncoder] Batch {i//batch_size + 1} failed: {e}")
+                logger.warning(f"Batch {i//batch_size + 1} failed: {e}")
                 # Use fallback for this batch with safe unpacking
                 fallback_scores = []
                 for item in batch_pairs:
@@ -167,10 +170,10 @@ class MultilingualCrossEncoder:
                             q, p = item[0], item[1]
                             fallback_scores.append(self._fallback_score(str(q), str(p)))
                         else:
-                            print(f"[MultilingualCrossEncoder] Invalid pair format: {item}")
+                            logger.warning(f"Invalid pair format: {item}")
                             fallback_scores.append(0.5)  # neutral score
                     except Exception as unpacking_error:
-                        print(f"[MultilingualCrossEncoder] Error unpacking item {item}: {unpacking_error}")
+                        logger.warning(f"Error unpacking item: {unpacking_error}")
                         fallback_scores.append(0.5)  # neutral score
                 all_scores.extend(fallback_scores)
 
@@ -189,17 +192,17 @@ class MultilingualCrossEncoder:
                     query, passage = item[0], item[1]
                     batch_texts.append([str(query), str(passage)])
                 else:
-                    print(f"[MultilingualCrossEncoder] Invalid item format: {item}")
+                    logger.warning(f"Invalid item format: {item}")
                     # Skip invalid items or provide fallback
                     continue
 
             if not batch_texts:
-                print("[MultilingualCrossEncoder] No valid pairs for prediction")
+                logger.warning("No valid pairs for prediction")
                 return []
 
             # Get raw scores with proper batch size
             if self._model is None:
-                print("[MultilingualCrossEncoder] Model not loaded")
+                logger.warning("Model not loaded")
                 return []
             actual_batch_size = min(len(batch_texts), 4)  # Conservative GPU batch size
             raw_scores = self._model.predict(
@@ -223,7 +226,7 @@ class MultilingualCrossEncoder:
             return normalized_scores
 
         except Exception as e:
-            print(f"[MultilingualCrossEncoder] Batch prediction error: {e}")
+            logger.warning(f"Batch prediction error: {e}")
             # Return fallback scores for each pair
             fallback_scores = []
             for item in batch_pairs:
@@ -253,11 +256,11 @@ class MultilingualCrossEncoder:
             return result
 
         except asyncio.TimeoutError:
-            print(f"[MultilingualCrossEncoder] Async prediction timed out after {timeout}s")
+            logger.warning(f"Async prediction timed out after {timeout}s")
             # Return fallback scores
             return [self._fallback_score(str(pair[0]), str(pair[1])) for pair in pairs]
         except Exception as e:
-            print(f"[MultilingualCrossEncoder] Async prediction error: {e}")
+            logger.warning(f"Async prediction error: {e}")
             # Return fallback scores
             return [self._fallback_score(str(pair[0]), str(pair[1])) for pair in pairs]
 
@@ -277,7 +280,7 @@ class MultilingualZeroShotClassifier:
         self._model: Any = None
         self._loaded = False
         self._model_name = model_name or "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli"
-        print(f"[MultilingualZeroShotClassifier] Initialized with model: {self._model_name}")
+        logger.info(f"Initialized MultilingualZeroShotClassifier with model: {self._model_name}")
 
     def _ensure_loaded(self) -> bool:
         """Ensure the model is loaded and ready."""
@@ -285,7 +288,7 @@ class MultilingualZeroShotClassifier:
             return True
 
         try:
-            print(f"[MultilingualZeroShotClassifier] Loading model: {self._model_name}")
+            logger.info(f"Loading MultilingualZeroShotClassifier model: {self._model_name}")
             from transformers import pipeline
             import torch
 
@@ -293,10 +296,10 @@ class MultilingualZeroShotClassifier:
             if torch.cuda.is_available():
                 device = 0  # First GPU
                 device_name = torch.cuda.get_device_name(0)
-                print(f"[MultilingualZeroShotClassifier] GPU detected: {device_name}")
+                logger.info(f"GPU detected: {device_name}")
             else:
                 device = -1  # CPU
-                print("[MultilingualZeroShotClassifier] No GPU available, using CPU")
+                logger.info("No GPU available, using CPU")
 
             self._model = pipeline(
                 "zero-shot-classification",
@@ -307,14 +310,14 @@ class MultilingualZeroShotClassifier:
             self._loaded = True
 
             device_str = f"GPU ({torch.cuda.get_device_name(0)})" if device == 0 else "CPU"
-            print(f"[MultilingualZeroShotClassifier] Model loaded successfully on {device_str}")
+            logger.info(f"MultilingualZeroShotClassifier model loaded successfully on {device_str}")
             return True
 
         except ImportError:
-            print("[MultilingualZeroShotClassifier] transformers not available")
+            logger.warning("transformers not available")
             return False
         except Exception as e:
-            print(f"[MultilingualZeroShotClassifier] Failed to load model: {e}")
+            logger.warning(f"Failed to load model: {e}")
             return False
 
     def classify(self, text: str, candidate_labels: List[str]) -> str:
@@ -347,7 +350,7 @@ class MultilingualZeroShotClassifier:
                 result = self._model(text, candidate_labels)
                 return result['labels'][0]  # Return highest confidence label
             except Exception as e:
-                print(f"[MultilingualZeroShotClassifier] Classification failed: {e}")
+                logger.warning(f"Classification failed: {e}")
 
         # Default fallback
         return candidate_labels[0] if candidate_labels else "unknown"

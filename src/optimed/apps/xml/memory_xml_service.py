@@ -9,7 +9,10 @@ from datetime import datetime, timezone
 from optimed.core.domain.xml_document import XMLDocument, XMLMetadata, XMLProcessingInfo
 from optimed.core.ports import XMLService, XMLProcessor
 from optimed.core.domain import ImageStatus
+from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, sanitize_session_id, sanitize_document_id, log_error
 import uuid
+
+logger = get_logger(__name__)
 
 
 class SessionXMLData:
@@ -61,7 +64,7 @@ class MemoryXMLService(XMLService):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"Error in XML cleanup task: {e}")
+                log_error(logger, "XML cleanup task", e)
 
     def _get_session_key(self, user_id: str, session_id: str, patient_id: Optional[str] = None) -> str:
         """Generate a unique session key."""
@@ -88,44 +91,43 @@ class MemoryXMLService(XMLService):
         try:
             # Generate document ID
             document_id = str(uuid.uuid4())
-            print(f"[MemoryXMLService] Starting upload for document_id: {document_id}")
-            print(f"[MemoryXMLService] Upload params - user_id: {user_id}, session_id: {session_id}, patient_id: {patient_id}")
+            logger.info(f"Starting upload for document_id: {sanitize_document_id(document_id)}")
+            logger.info(f"Upload params - user_id: {sanitize_user_id(user_id)}, session_id: {sanitize_session_id(session_id)}, patient_id: {sanitize_patient_id(patient_id) if patient_id else 'None'}")
 
             # Get session data
             session_key = self._get_session_key(user_id, session_id, patient_id)
-            print(f"[MemoryXMLService] Generated session key for upload: {session_key}")
 
             session_data = self._get_or_create_session(user_id, session_id, patient_id)
 
             # Store raw content
             session_data.raw_content[document_id] = content
-            print(f"[MemoryXMLService] Stored raw content ({len(content)} bytes)")
+            logger.info(f"Stored raw content ({len(content)} bytes)")
 
             # Validate XML
-            print("[MemoryXMLService] Validating XML...")
+            logger.info("Validating XML...")
             is_valid = await self.xml_processor.validate_xml_file(content)
             if not is_valid:
                 raise ValueError("Invalid XML file format")
 
             # Detect document type
-            print("[MemoryXMLService] Detecting document type...")
+            logger.info("Detecting document type...")
             doc_type = await self.xml_processor.detect_document_type(content)
-            print(f"[MemoryXMLService] Detected document type: {doc_type}")
+            logger.info(f"Detected document type: {doc_type}")
 
             # Extract metadata
-            print("[MemoryXMLService] Extracting metadata...")
+            logger.info("Extracting metadata...")
             metadata = await self.xml_processor.extract_metadata(content)
-            print(f"[MemoryXMLService] Metadata extraction complete: {metadata}")
+            logger.info("Metadata extraction complete")
 
             # Extract text content
-            print("[MemoryXMLService] Extracting text...")
+            logger.info("Extracting text...")
             extracted_text = await self.xml_processor.extract_text(content)
-            print(f"[MemoryXMLService] Text extraction complete: {len(extracted_text) if extracted_text else 0} characters")
+            logger.info(f"Text extraction complete: {len(extracted_text) if extracted_text else 0} characters")
 
             # Extract structured data
-            print("[MemoryXMLService] Extracting structured data...")
+            logger.info("Extracting structured data...")
             structured_data = await self.xml_processor.extract_structured_data(content)
-            print("[MemoryXMLService] Structured data extraction complete")
+            logger.info("Structured data extraction complete")
 
             # Create XML document
             xml_doc = XMLDocument(
@@ -157,9 +159,7 @@ class MemoryXMLService(XMLService):
             return xml_doc
 
         except Exception as e:
-            print(f"[MemoryXMLService] ERROR during XML processing: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(logger, "XML processing", e)
 
             # Create error document
             error_doc = XMLDocument(
@@ -212,16 +212,14 @@ class MemoryXMLService(XMLService):
         patient_id: Optional[str] = None
     ) -> List[XMLDocument]:
         """List all XML documents for a session."""
-        print(f"[MemoryXMLService] List request - user_id: {user_id}, session_id: {session_id}, patient_id: {patient_id}")
+        logger.info(f"List request - user_id: {sanitize_user_id(user_id)}, session_id: {sanitize_session_id(session_id)}, patient_id: {sanitize_patient_id(patient_id) if patient_id else 'None'}")
 
         session_key = self._get_session_key(user_id, session_id, patient_id)
-        print(f"[MemoryXMLService] Generated session key for list: {session_key}")
 
         session_data = self._get_or_create_session(user_id, session_id, patient_id)
         xml_list = list(session_data.xml_documents.values())
 
-        print(f"[MemoryXMLService] Found {len(xml_list)} XML documents in session")
-        print(f"[MemoryXMLService] XML document IDs: {[doc.document_id for doc in xml_list]}")
+        logger.info(f"Found {len(xml_list)} XML documents in session")
 
         return xml_list
 
@@ -233,31 +231,29 @@ class MemoryXMLService(XMLService):
         patient_id: Optional[str] = None
     ) -> bool:
         """Delete an XML document from memory."""
-        print(f"[MemoryXMLService] Delete request - document_id: {document_id}, user_id: {user_id}, session_id: {session_id}, patient_id: {patient_id}")
+        logger.info(f"Delete request - document_id: {sanitize_document_id(document_id)}, user_id: {sanitize_user_id(user_id)}, session_id: {sanitize_session_id(session_id)}, patient_id: {sanitize_patient_id(patient_id) if patient_id else 'None'}")
 
         session_key = self._get_session_key(user_id, session_id, patient_id)
-        print(f"[MemoryXMLService] Generated session key: {session_key}")
 
         session_data = self._get_or_create_session(user_id, session_id, patient_id)
-        print(f"[MemoryXMLService] Available XML documents in session: {list(session_data.xml_documents.keys())}")
 
         deleted_doc = document_id in session_data.xml_documents
         deleted_content = document_id in session_data.raw_content
 
         if deleted_doc:
-            print(f"[MemoryXMLService] Deleting XML document: {document_id}")
+            logger.info("Deleting XML document")
             del session_data.xml_documents[document_id]
         else:
-            print(f"[MemoryXMLService] WARNING: XML document not found: {document_id}")
+            logger.warning("XML document not found")
 
         if deleted_content:
-            print(f"[MemoryXMLService] Deleting raw content: {document_id}")
+            logger.info("Deleting raw content")
             del session_data.raw_content[document_id]
         else:
-            print(f"[MemoryXMLService] WARNING: Raw content not found: {document_id}")
+            logger.warning("Raw content not found")
 
         success = deleted_doc or deleted_content
-        print(f"[MemoryXMLService] Delete operation result: {success}")
+        logger.info(f"Delete operation result: {success}")
         return success
 
     async def get_documents_for_context(
@@ -281,7 +277,7 @@ class MemoryXMLService(XMLService):
             session_data.xml_documents.clear()
             session_data.raw_content.clear()
             del self.sessions[session_key]
-            print(f"Cleaned up XML session: {session_key}")
+            logger.info("Cleaned up XML session")
 
     async def cleanup_user_session(
         self,
@@ -307,11 +303,10 @@ class MemoryXMLService(XMLService):
 
     def debug_all_sessions(self):
         """Debug method to show all current sessions and their XML documents."""
-        print(f"[MemoryXMLService] DEBUG: Total sessions: {len(self.sessions)}")
+        logger.info(f"DEBUG: Total sessions: {len(self.sessions)}")
         for session_key, session_data in self.sessions.items():
             doc_count = len(session_data.xml_documents)
-            doc_ids = list(session_data.xml_documents.keys())
-            print(f"[MemoryXMLService] Session: {session_key} | XML Docs: {doc_count} | IDs: {doc_ids}")
+            logger.info(f"Session XML Docs: {doc_count}")
         return {
             "sessions": list(self.sessions.keys()),
             "session_documents": {k: list(v.xml_documents.keys()) for k, v in self.sessions.items()}

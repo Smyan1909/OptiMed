@@ -11,6 +11,9 @@ from fastapi import Request, HTTPException, Header, Depends
 from optimed.core.domain import User
 from optimed.core.ports import UserRepository
 from datetime import datetime, timezone
+from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_session_id, log_error
+
+logger = get_logger(__name__)
 
 # Configuration from environment
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", os.getenv("CORS_ORIGINS", "http://localhost:3000")).split(",")
@@ -112,7 +115,7 @@ async def get_current_user_optional(
 
         return user
     except Exception as e:
-        print(f"[AUTH] Error fetching current user: {e}")
+        log_error(logger, "Fetch current user", e)
         return None
 
 
@@ -167,7 +170,7 @@ async def require_authenticated_user(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[AUTH] Error during authentication: {e}")
+        log_error(logger, "Authentication", e)
         raise HTTPException(
             status_code=500,
             detail="Authentication service error. Please try again."
@@ -206,7 +209,7 @@ async def check_session_validity(session_id: str, user_repo: UserRepository) -> 
         return True
 
     except Exception as e:
-        print(f"[AUTH] Error checking session validity: {e}")
+        log_error(logger, "Check session validity", e)
         return False
 
 
@@ -297,7 +300,7 @@ class AuthenticationMiddleware:
                             request.state.session_id = x_session_id
             except Exception as e:
                 # Don't fail the request if user attachment fails
-                print(f"[AUTH] Error attaching user to request: {e}")
+                log_error(logger, "Attach user to request", e)
 
         # Continue to next middleware/route
         await self.app(scope, receive, send)

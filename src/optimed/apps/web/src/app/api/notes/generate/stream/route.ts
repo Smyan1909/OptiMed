@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { sanitizeSessionId, logInfo, logError } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,21 +17,20 @@ export async function POST(request: NextRequest) {
       headers['X-Session-ID'] = sessionId;
     }
 
-    console.log('🔄 [NOTES API] Forwarding streaming request to backend:', {
+    logInfo('Notes Stream API: Forwarding streaming request to backend', {
       endpoint: 'notes/generate/stream',
-      payload: body,
-      sessionId
+      sessionId: sessionId ? sanitizeSessionId(sessionId) : null
     });
 
     // Make request to streaming endpoint
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
     const backendUrl = `${baseUrl}/notes/generate/stream`;
-    console.log('🎯 [NOTES API] Backend URL:', backendUrl);
+    logInfo('Notes Stream API: Backend URL configured', { url: backendUrl });
 
     // Add timeout and abort controller for long-running requests
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
-      console.log('⏰ [NOTES API] Request timeout after 5 minutes');
+      logInfo('Notes Stream API: Request timeout after 5 minutes');
       controller.abort();
     }, 300000); // 5 minute timeout
 
@@ -44,12 +44,12 @@ export async function POST(request: NextRequest) {
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      console.error('❌ [NOTES API] Backend error:', response.status, response.statusText);
+      logError('Notes Stream API: Backend error', { status: response.status, statusText: response.statusText });
       throw new Error(`Backend error: ${response.status}`);
     }
 
-    console.log('✅ [NOTES API] Backend response received, content-type:', response.headers.get('content-type'));
-    console.log('📡 [NOTES API] Starting SSE forwarding...');
+    logInfo('Notes Stream API: Backend response received', { contentType: response.headers.get('content-type') });
+    logInfo('Notes Stream API: Starting SSE forwarding');
 
     // Log the first chunk to debug
     if (response.body) {
@@ -65,26 +65,25 @@ export async function POST(request: NextRequest) {
                   const { done, value } = await reader.read();
 
                   if (done) {
-                    console.log('📡 [NOTES API] Stream ended');
+                    logInfo('Notes Stream API: Stream ended');
                     controller.close();
                     break;
                   }
 
                   const chunk = decoder.decode(value, { stream: true });
-                  console.log('📦 [NOTES API] Forwarding chunk:', chunk.length + ' chars');
+                  logInfo('Notes Stream API: Forwarding chunk', { chunkSize: chunk.length });
 
                   // Log completion events for debugging
                   if (chunk.includes('"type":"completion"') || chunk.includes('"type": "completion"')) {
-                    console.log('🎯 [NOTES API] Completion event detected!');
-                    console.log('📋 [NOTES API] Chunk preview:', chunk.substring(0, 200));
+                    logInfo('Notes Stream API: Completion event detected', { preview: chunk.substring(0, 200) });
                   }
 
                   controller.enqueue(value);
                 }
               } catch (error) {
-                console.error('❌ [NOTES API] Stream error:', error);
+                logError('Notes Stream API: Stream error', error);
                 if (error instanceof Error && error.name === 'AbortError') {
-                  console.log('🛑 [NOTES API] Stream aborted due to timeout');
+                  logInfo('Notes Stream API: Stream aborted due to timeout');
                 }
                 controller.error(error);
               }
@@ -110,7 +109,7 @@ export async function POST(request: NextRequest) {
     }
 
   } catch (error) {
-    console.error('❌ [NOTES API] Streaming API error:', error);
+    logError('Notes Stream API: Streaming API error', error);
     return new Response(JSON.stringify({ error: 'Streaming failed' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }

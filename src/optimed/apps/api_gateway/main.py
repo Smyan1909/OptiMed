@@ -29,9 +29,19 @@ from optimed.adapters.security.rls_middleware import RLSMiddleware
 from optimed.adapters.middleware.audit_logger import AuditLoggingMiddleware
 from optimed.apps.api_gateway.gdpr_endpoints import gdpr_router
 from optimed.apps.api_gateway.document_events import get_broadcaster, DocumentEvent, format_sse_event
-
+from optimed.core.logging_utils import (
+    get_logger,
+    sanitize_user_id,
+    sanitize_patient_id,
+    sanitize_session_id,
+    sanitize_document_id,
+    log_error,
+    log_operation
+)
 
 from pydantic import BaseModel
+
+logger = get_logger(__name__)
 
 # Defer heavy dependency wiring to startup to avoid crashing on import
 # if env vars (e.g., PGVECTOR_DSN) are missing at container boot.
@@ -89,11 +99,11 @@ async def lifespan(app: FastAPI):
         app.state._audit_repo = _audit_repo
 
         _dependencies_ready.set()
-        print("[startup] Dependencies initialized")
+        logger.info("[startup] Dependencies initialized")
         yield
     except Exception as e:
         import traceback
-        print(f"[startup] Dependency init failed: {e}")
+        log_error(logger, "startup - Dependency initialization", e)
         traceback.print_exc()
         # Fail fast: prevent the app from serving if dependencies cannot initialize
         raise
@@ -139,8 +149,8 @@ async def gdpr_logging_middleware(request: Request, call_next):
     phi_redactor = get_phi_redactor()
     safe_path = phi_redactor.redact_text(request.url.path)
     safe_query = phi_redactor.redact_text(str(request.query_params))
-    
-    print(f"[GDPR] Request: {request.method} {safe_path} - Query: {safe_query}")
+
+    logger.info(f"[GDPR] Request: {request.method} {safe_path} - Query: {safe_query}")
     
     # Process request
     response = await call_next(request)
@@ -427,29 +437,29 @@ async def get_current_user(
 ) -> Optional[User]:
 
     if not x_session_id:
-        print(f"[DEBUG] get_current_user - No session ID provided")
+        logger.info("[DEBUG] get_current_user - No session ID provided")
         return None
 
-    print(f"[DEBUG] get_current_user - Looking up session: {x_session_id[:12]}...")
+    logger.info(f"[DEBUG] get_current_user - Looking up session: {sanitize_session_id(x_session_id)}")
 
     try:
         session = await _user_repo.get_active_session(x_session_id)
         if not session:
-            print(f"[DEBUG] get_current_user - Session not found or expired: {x_session_id[:12]}...")
+            logger.info(f"[DEBUG] get_current_user - Session not found or expired: {sanitize_session_id(x_session_id)}")
             return None
 
-        print(f"[DEBUG] get_current_user - Session found, user_id: {session.user_id}")
+        logger.info(f"[DEBUG] get_current_user - Session found, user: {sanitize_user_id(session.user_id)}")
 
         user = await _user_repo.get_user_by_id(session.user_id)
         if user:
-            print(f"[DEBUG] get_current_user - User found: {user.username}")
+            logger.info(f"[DEBUG] get_current_user - User found: {user.username}")
             await _user_repo.update_session_activity(x_session_id)
         else:
-            print(f"[DEBUG] get_current_user - User not found for user_id: {session.user_id}")
+            logger.warning(f"[DEBUG] get_current_user - User not found for user: {sanitize_user_id(session.user_id)}")
 
         return user
     except Exception as e:
-        print(f"[ERROR] get_current_user - Exception: {e}")
+        log_error(logger, "get_current_user", e)
         import traceback
         traceback.print_exc()
         return None
@@ -474,26 +484,26 @@ async def get_user_fhir_repository(user_ctx: dict = Depends(get_user_context)) -
     current_user = user_ctx.get("user")
     
     if current_user:
-        print(f"[DEBUG] Attempting to create SMART FHIR repository for user: {current_user.username} (ID: {current_user.user_id})")
-        
+        logger.info(f"[DEBUG] Attempting to create SMART FHIR repository for user: {current_user.username} ({sanitize_user_id(current_user.user_id)})")
+
         # Try to get an authenticated SMART FHIR repository for this user
         try:
             user_repo = await _connection_service.create_fhir_repository(
-                current_user.user_id, 
+                current_user.user_id,
                 provider_type="smart_fhir"
             )
             if user_repo:
-                print(f"[API] SUCCESS: Using SMART FHIR repository for user {current_user.username}")
+                logger.info(f"[API] SUCCESS: Using SMART FHIR repository for user {current_user.username}")
                 return user_repo
             else:
-                print(f"[DEBUG] ERROR: create_fhir_repository returned None for user {current_user.username}")
+                logger.warning(f"[DEBUG] ERROR: create_fhir_repository returned None for user {current_user.username}")
         except Exception as e:
-            print(f"[API] ERROR: Failed to create SMART FHIR repo for user {current_user.username}: {e}")
+            log_error(logger, f"Failed to create SMART FHIR repo for user {current_user.username}", e)
     else:
-        print("[DEBUG] No current user found, using default repository")
-    
+        logger.info("[DEBUG] No current user found, using default repository")
+
     # Fallback to default HAPI repository
-    print("[API] Using default HAPI FHIR repository")
+    logger.info("[API] Using default HAPI FHIR repository")
     if _fhir is None:
         # Service not initialized yet
         raise HTTPException(status_code=503, detail="Service initializing, please try again shortly")
@@ -568,9 +578,9 @@ async def list_user_sessions(
             )
             for session in sessions
         ]
-        
+
     except Exception as e:
-        print(f"[API] Error listing sessions: {e}")
+        log_error(logger, "List sessions", e)
         raise HTTPException(status_code=500, detail="Could not load sessions")
 
 @app.post("/sessions/create")
@@ -586,7 +596,7 @@ async def create_new_session(
 
     try:
         # Clean up all existing sessions for this user before creating a new one
-        print(f"[Session Create] Cleaning up existing sessions for user: {user_id}")
+        logger.info(f"[Session Create] Cleaning up existing sessions for user: {sanitize_user_id(user_id)}")
 
         # Clean up PDF documents for all sessions of this user
         if hasattr(_pdf_service, 'sessions'):
@@ -597,7 +607,7 @@ async def create_new_session(
 
             for session_key in sessions_to_cleanup:
                 await _pdf_service.cleanup_session(session_key)
-                print(f"[Session Create] Cleaned up PDF session: {session_key}")
+                logger.info(f"[Session Create] Cleaned up PDF session: {sanitize_session_id(session_key)}")
 
         # Clean up XML documents for all sessions of this user
         if hasattr(_xml_service, 'sessions'):
@@ -608,7 +618,7 @@ async def create_new_session(
 
             for session_key in sessions_to_cleanup:
                 await _xml_service.cleanup_session(session_key)
-                print(f"[Session Create] Cleaned up XML session: {session_key}")
+                logger.info(f"[Session Create] Cleaned up XML session: {sanitize_session_id(session_key)}")
 
         session_id = await _engine.vector_store.create_chat_session(
             user_id=user_id,
@@ -617,11 +627,11 @@ async def create_new_session(
             session_title=request.session_title
         )
 
-        print(f"[Session Create] Created new session: {session_id} for user: {user_id}")
+        logger.info(f"[Session Create] Created new session: {sanitize_session_id(session_id)} for user: {sanitize_user_id(user_id)}")
         return {"session_id": session_id, "message": "Session created successfully"}
 
     except Exception as e:
-        print(f"[API] Error creating session: {e}")
+        log_error(logger, "Create session", e, user_id=user_id)
         raise HTTPException(status_code=500, detail="Could not create session")
 
 @app.post("/sessions/{session_id}/join")
@@ -642,9 +652,9 @@ async def join_session(
             return {"message": "Successfully joined session", "session_id": session_id}
         else:
             return {"message": "Already a participant in this session", "session_id": session_id}
-        
+
     except Exception as e:
-        print(f"[API] Error joining session: {e}")
+        log_error(logger, "Join session", e)
         raise HTTPException(status_code=500, detail="Could not join session")
 
 @app.get("/sessions/{session_id}/participants")
@@ -669,9 +679,9 @@ async def get_session_participants(
                 for p in participants
             ]
         }
-        
+
     except Exception as e:
-        print(f"[API] Error getting session participants: {e}")
+        log_error(logger, "Get session participants", e)
         raise HTTPException(status_code=500, detail="Could not get session participants")
 
 
@@ -714,7 +724,7 @@ async def setup_session_encryption(
         )
 
     except Exception as e:
-        print(f"[API] Key exchange error: {e}")
+        log_error(logger, "Key exchange", e)
         raise HTTPException(status_code=500, detail="Key exchange failed")
 
 @app.get("/encryption/server-public-key")
@@ -731,7 +741,7 @@ async def get_server_public_key():
             "usage": "key_exchange"
         }
     except Exception as e:
-        print(f"[API] Error getting server public key: {e}")
+        log_error(logger, "Get server public key", e)
         raise HTTPException(status_code=500, detail="Could not retrieve server public key")
 
 
@@ -852,9 +862,9 @@ async def initiate_ehr_login(req: EHRLoginRequest):
             }
         
         authorization_url = f"{auth_url}?{urlencode(auth_params)}"
-        
-        print(f"[DEBUG] Authorization URL: {authorization_url}")
-        
+
+        logger.info(f"[DEBUG] Authorization URL generated successfully")
+
         return EHRLoginResponse(
             authorization_url=authorization_url,
             connection_id=connection_id,
@@ -889,9 +899,9 @@ async def search_patients(
                 processing_purposes=["clinical_decision_support", "patient_search"],                compliance_status="compliant",
                 additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation (healthcare delivery)"}
             )
-        except Exception as log_error:
-            print(f"[COMPLIANCE] Error logging patient access: {log_error}")  
-        
+        except Exception as e:
+            log_error(logger, "Patient access logging", e)
+
         return [
             PatientOut(
                 id=p.patient_id,
@@ -1011,10 +1021,11 @@ async def complete_ehr_login(
 ):
     """Complete EHR-based login and create/update user."""
     frontend_base = os.getenv("FRONTEND_URL", "http://localhost:3000")
-    
+
+
     if error:
-        print(f"[ERROR] OAuth error received: {error} - {error_description}")
-        
+        logger.error(f"[ERROR] OAuth error received: {error} - {error_description}")
+
         # Map common errors to user-friendly messages
         if error == "access_denied":
             error_msg = "Access was denied. Please try again if you want to connect your EHR."
@@ -1032,7 +1043,7 @@ async def complete_ehr_login(
     
     # Check for missing required parameters
     if not code or not state:
-        print(f"[ERROR] Missing required parameters - code: {bool(code)}, state: {bool(state)}")
+        logger.error(f"[ERROR] Missing required parameters - code: {bool(code)}, state: {bool(state)}")
         frontend_url = f"{frontend_base}/login?error=Missing authorization parameters"
         return RedirectResponse(url=frontend_url, status_code=302)
     
@@ -1042,20 +1053,20 @@ async def complete_ehr_login(
             state_data = json.loads(base64.urlsafe_b64decode(state).decode())
             connection_id = state_data["connection_id"]
         except Exception as e:
-            print(f"[ERROR] Invalid state parameter: {e}")
+            log_error(logger, "Invalid state parameter", e)
             frontend_url = f"{frontend_base}/login?error=Invalid state parameter"
             return RedirectResponse(url=frontend_url, status_code=302)
         
         # Get the temporary session data
         session_data = await _connection_repo.get_ehr_login_session(connection_id)
         if not session_data:
-            print(f"[ERROR] Login session expired for connection: {connection_id}")
+            logger.error(f"[ERROR] Login session expired")
             frontend_url = f"{frontend_base}/login?error=Login session expired"
             return RedirectResponse(url=frontend_url, status_code=302)
         
         # Verify state parameter
         if session_data["state"] != state:
-            print("[ERROR] State parameter mismatch")
+            logger.error("[ERROR] State parameter mismatch")
             frontend_url = f"{frontend_base}/login?error=Security validation failed"
             return RedirectResponse(url=frontend_url, status_code=302)
         
@@ -1092,7 +1103,7 @@ async def complete_ehr_login(
         
         if existing_user:
             final_user = existing_user
-            print(f"[INFO] Using existing user: {final_user.username}")
+            logger.info(f"[INFO] Using existing user: {final_user.username}")
         else:
             # Create new user with unique username
             user_id = f"ehr_user_{uuid.uuid4()}"
@@ -1115,8 +1126,8 @@ async def complete_ehr_login(
             
             await _user_repo.create_user(new_user)
             final_user = new_user
-            print(f"[INFO] Created new user: {final_user.username}")
-        
+            logger.info(f"[INFO] Created new user: {final_user.username}")
+
         # Create the EHR connection
         connection = UserEHRConnection(
             connection_id=connection_id,
@@ -1155,9 +1166,10 @@ async def complete_ehr_login(
         # Redirect to frontend with success and session info
         frontend_url = f"{frontend_base}/auth/ehr-success?session_id={session.session_id}&user_id={final_user.user_id}"
         return RedirectResponse(url=frontend_url)
-        
+
+
     except Exception as e:
-        print(f"[ERROR] EHR callback failed: {e}")
+        log_error(logger, "EHR callback", e)
         # Redirect to frontend with error
         frontend_url = f"{frontend_base}/login?error=Authentication failed: {str(e)}"
         return RedirectResponse(url=frontend_url)
@@ -1177,9 +1189,9 @@ async def exchange_code_for_token(code: str, client_id: str, redirect_uri: str, 
         # Remove /fhir suffix if present
         base_url = fhir_server_url.replace("/fhir", "")
         token_url = f"{base_url.rstrip('/')}/auth/token"
-    
-    print(f"[DEBUG] Token URL: {token_url}")  # Add this for debugging
-    
+
+    logger.info(f"[DEBUG] Token URL generated successfully")
+
     token_data = {
         "grant_type": "authorization_code",
         "code": code,
@@ -1193,10 +1205,9 @@ async def exchange_code_for_token(code: str, client_id: str, redirect_uri: str, 
             data=token_data,
             headers={"Content-Type": "application/x-www-form-urlencoded"}
         )
-        
-        print(f"[DEBUG] Token response status: {response.status_code}")
-        print(f"[DEBUG] Token response: {response.text}")
-        
+
+        logger.info(f"[DEBUG] Token response status: {response.status_code}")
+
         response.raise_for_status()
         return response.json()
 
@@ -1248,7 +1259,7 @@ async def diagnose(
     current_user = user_ctx.get("user")
 
     if current_user:
-        print(f"[API] Diagnosis request from {current_user.display_name} ({current_user.role.value})")
+        logger.info(f"[API] Diagnosis request from {current_user.display_name} ({current_user.role.value})")
 
     try:
         # Use the user-specific repository
@@ -1269,8 +1280,8 @@ async def diagnose(
             processing_purposes=["clinical_decision_support", "ai_diagnosis", "healthcare_delivery"],            compliance_status="compliant",
             additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation, Article 9(2)(h) - Medical diagnosis"}
         )
-    except Exception as log_error:
-        print(f"[COMPLIANCE] Error logging diagnosis request: {log_error}")
+    except Exception as e:
+        log_error(logger, "Diagnosis request logging", e)
 
     result = await _engine.run(patient_ctx, req.user_prompt, chat_mode=req.chat_mode, user_id=user_id, session_id=req.session_id)
     if hasattr(result, 'model_dump'):
@@ -1288,7 +1299,7 @@ async def get_chat_history(
     session_id = request.get("session_id")
     mode = request.get("mode", "diagnose")
     
-    print(f"[GDPR] Chat history request blocked for patient_id={patient_id}, session_id={session_id}, mode={mode}")
+    logger.info(f"[GDPR] Chat history request blocked - patient: {sanitize_patient_id(patient_id)}, session: {sanitize_session_id(session_id)}, mode={mode}")
     
     # GDPR Compliance: Return empty history to prevent PHI exposure
     return {"messages": [], "total": 0, "gdpr_compliant": True}
@@ -1414,7 +1425,7 @@ async def get_patient(
 @app.delete("/patients/{patient_id}/chat-history", summary="GDPR-compliant: No chat history to clear")
 async def clear_patient_chat_history(patient_id: str = Path(..., description="The patient ID")):
     """GDPR-compliant: No chat history stored, so nothing to clear."""
-    print(f"[GDPR] Chat history clear request blocked for patient_id={patient_id}")
+    logger.info(f"[GDPR] Chat history clear request blocked for patient: {sanitize_patient_id(patient_id)}")
     return {"message": "No chat history stored (GDPR compliant)", "gdpr_compliant": True}
 
 @app.get("/analytics/user-metrics", summary="Get GDPR-safe user metrics")
@@ -1440,7 +1451,7 @@ async def get_user_metrics(
         }
         
     except Exception as e:
-        print(f"[get_user_metrics] Error: {e}")
+        log_error(logger, "Get user metrics", e)
         raise HTTPException(status_code=500, detail=f"Could not retrieve metrics: {e}")
 
 async def _event_stream(patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[str, None]:
@@ -1490,7 +1501,7 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
             
             elif update.get("type") == "differential_diagnosis_progress":
                 # Handle differential diagnosis progress updates
-                print(f"[DEBUG] API Gateway received differential diagnosis progress: {update}")
+                logger.info(f"[DEBUG] API Gateway received differential diagnosis progress")
                 diagnosis_progress_data = {
                     "type": "differential_diagnosis_progress",
                     "diagnosis_name": update.get("diagnosis_name", ""),
@@ -1499,7 +1510,7 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
                     "message": update.get("message", ""),
                     "timestamp": update.get("timestamp", datetime.now().isoformat())
                 }
-                print(f"[DEBUG] Emitting diagnosis progress data: {diagnosis_progress_data}")
+                logger.info(f"[DEBUG] Emitting diagnosis progress data")
                 yield f"data: {json.dumps(diagnosis_progress_data)}\n\n"
             
             elif update.get("type") == "response_chunk":
@@ -1624,8 +1635,8 @@ async def diagnose_stream(
             processing_purposes=["clinical_decision_support", "ai_diagnosis", "real_time_streaming"],            compliance_status="compliant",
             additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation, Article 9(2)(h) - Medical diagnosis"}
         )
-    except Exception as log_error:
-        print(f"[COMPLIANCE] Error logging diagnosis stream: {log_error}")
+    except Exception as e:
+        log_error(logger, "Diagnosis stream logging", e)
 
     response = StreamingResponse(
         _event_stream(
@@ -1674,7 +1685,7 @@ async def chat_stream(
         try:
             patient_ctx = await fhir_repo.get_patient(req.patient_id)
         except Exception as e:
-            print(f"Could not fetch patient {req.patient_id}: {e}")
+            log_error(logger, "Fetch patient for chat", e, patient_id=req.patient_id)
 
     # GDPR compliance event logging (Article 30 - Records of Processing Activities)
     try:
@@ -1690,8 +1701,8 @@ async def chat_stream(
             compliance_status="compliant",
             additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation" if patient_ctx else "Article 6(1)(a) - Consent"}
         )
-    except Exception as log_error:
-        print(f"[COMPLIANCE] Error logging chat stream: {log_error}")
+    except Exception as e:
+        log_error(logger, "Chat stream logging", e)
 
     response = StreamingResponse(
         _event_stream(
@@ -1728,7 +1739,7 @@ async def chat(
     current_user = user_ctx.get("user")
 
     if current_user:
-        print(f"[API] Chat request from {current_user.display_name} ({current_user.role.value})")
+        logger.info(f"[API] Chat request from {current_user.display_name} ({current_user.role.value})")
 
     patient_ctx = None
     if req.patient_id is not None:
@@ -1737,7 +1748,7 @@ async def chat(
             patient_ctx = await fhir_repo.get_patient(req.patient_id)
         except Exception as e:
             # Log the error but continue with general chat
-            print(f"Could not fetch patient {req.patient_id}: {e}")
+            log_error(logger, "Fetch patient for chat", e, patient_id=req.patient_id)
 
     # GDPR compliance event logging (Article 30 - Records of Processing Activities)
     try:
@@ -1753,8 +1764,8 @@ async def chat(
             compliance_status="compliant",
             additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation" if patient_ctx else "Article 6(1)(a) - Consent"}
         )
-    except Exception as log_error:
-        print(f"[COMPLIANCE] Error logging chat request: {log_error}")
+    except Exception as e:
+        log_error(logger, "Chat request logging", e)
 
     # Create a mock patient context for general chat
     if not patient_ctx:
@@ -1938,8 +1949,8 @@ async def upload_dicom_image(
                 processing_purposes=["clinical_decision_support", "diagnostic_analysis", "medical_imaging"],                compliance_status="compliant",
                 additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation (healthcare delivery), Article 9(2)(h) - Medical diagnosis"}
             )
-        except Exception as log_error:
-            print(f"[COMPLIANCE] Error logging DICOM upload: {log_error}")
+        except Exception as e:
+            log_error(logger, "DICOM upload logging", e)
 
         return DICOMUploadResponse(
             image_id=dicom_image.image_id,
@@ -1948,7 +1959,7 @@ async def upload_dicom_image(
         )
         
     except Exception as e:
-        print(f"[ERROR] DICOM upload failed: {e}")
+        log_error(logger, "DICOM upload", e)
         raise HTTPException(status_code=400, detail=f"Failed to upload DICOM image: {str(e)}")
 
 @app.get("/dicom/images", response_model=DICOMImageListResponse)
@@ -2002,14 +2013,14 @@ async def list_user_dicom_images(request: Request):
                     storage_path=img.storage_path
                 ))
             except Exception as e:
-                print(f"[ERROR] Failed to serialize image {img.image_id}: {e}")
+                logger.error(f"[ERROR] Failed to serialize image - doc: {sanitize_document_id(img.image_id)}")
                 # Skip this image and continue with others
                 continue
         
         return DICOMImageListResponse(images=image_responses)
         
     except Exception as e:
-        print(f"[ERROR] Failed to list DICOM images: {e}")
+        log_error(logger, "List DICOM images", e)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to list images: {str(e)}")
@@ -2064,7 +2075,7 @@ async def get_dicom_image(image_id: str, request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Failed to get DICOM image: {e}")
+        log_error(logger, "Get DICOM image", e)
         raise HTTPException(status_code=500, detail=f"Failed to get image: {str(e)}")
 
 @app.get("/dicom/images/{image_id}/pixel-data", response_model=DICOMPixelDataResponse)
@@ -2127,7 +2138,7 @@ async def get_dicom_pixel_data(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Failed to get pixel data: {e}")
+        log_error(logger, "Get pixel data", e)
         raise HTTPException(status_code=500, detail=f"Failed to get pixel data: {str(e)}")
 
 @app.delete("/dicom/images/{image_id}")
@@ -2154,7 +2165,7 @@ async def delete_dicom_image(image_id: str, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        print(f"[ERROR] Failed to delete DICOM image: {e}")
+        log_error(logger, "Delete DICOM image", e)
         raise HTTPException(status_code=500, detail=f"Failed to delete image: {str(e)}")
 
 @app.post("/dicom/images/{image_id}/analyze", response_model=dict)
@@ -2206,7 +2217,7 @@ async def analyze_dicom_image(
         }
         
     except Exception as e:
-        print(f"[ERROR] DICOM analysis failed: {e}")
+        log_error(logger, "DICOM analysis", e)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
@@ -2238,7 +2249,7 @@ async def find_similar_dicom_images(
         }
         
     except Exception as e:
-        print(f"[ERROR] Similar image search failed: {e}")
+        log_error(logger, "Similar image search", e)
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
     
 
@@ -2420,7 +2431,7 @@ Patient Information:
 - Active Diagnoses: {', '.join([f"{k}: {v}" for k, v in list(patient.diagnoses.items())[:3]])}
 """
             except Exception as e:
-                print(f"[Warning] Could not fetch patient context: {e}")
+                logger.warning(f"[Warning] Could not fetch patient context")
                 patient_context = ""
         
         # Define entry type contexts and templates
@@ -2559,7 +2570,7 @@ Important language policy: Write both the title and content in '{active_lang}'. 
         }
         
     except Exception as e:
-        print(f"[Journal Generation] Error: {e}")
+        log_error(logger, "Journal generation", e)
         raise HTTPException(status_code=500, detail=f"Journal generation failed: {e}")
 
 @app.post("/journal/autocomplete")
@@ -2645,7 +2656,7 @@ Completion:"""
         }
         
     except Exception as e:
-        print(f"[Autocomplete] Error: {e}")
+        log_error(logger, "Autocomplete", e)
         raise HTTPException(status_code=500, detail=f"Autocomplete failed: {e}")
 
 
@@ -2697,7 +2708,7 @@ async def generate_image(
         }
         
     except Exception as e:
-        print(f"Error generating image: {e}")
+        log_error(logger, "Generate image", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/images/generated/{image_id}")
@@ -2734,7 +2745,7 @@ async def get_generated_image(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error retrieving image: {e}")
+        log_error(logger, "Retrieve image", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/images/user/{user_id}")
@@ -2774,7 +2785,7 @@ async def get_user_generated_images(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error retrieving user images: {e}")
+        log_error(logger, "Retrieve user images", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/images/service/status")
@@ -2799,7 +2810,7 @@ async def get_image_generation_status(
         }
         
     except Exception as e:
-        print(f"Error checking image generation status: {e}")
+        logger.error(f"Error checking image generation status")
         return {
             "enabled": True,
             "available": False,
@@ -2923,7 +2934,7 @@ async def lookup_term(
             if llm_resp and llm_resp.content and len(llm_resp.content.strip()) > 0:
                 summary_text = llm_resp.content.strip()
         except Exception as e:
-            print(f"[Lookup] Structured summary generation failed, using default summary. Error: {e}")
+            logger.warning(f"[Lookup] Structured summary generation failed, using default summary")
 
         return LookupResponse(
             term=term,
@@ -2935,7 +2946,7 @@ async def lookup_term(
             ]
         )
     except Exception as e:
-        print(f"[Lookup] Error: {e}")
+        log_error(logger, "Lookup", e)
         raise HTTPException(status_code=500, detail="Lookup failed")
 
 
@@ -3027,11 +3038,11 @@ async def get_upload_context(
 
     # Debug: Log all headers
     headers_dict = dict(request.headers)
-    print(f"[DEBUG] upload-context - All headers: {headers_dict}")
-    print(f"[DEBUG] upload-context - user_id: {user_id}, session_id: {session_id}, user: {user}")
+    logger.info(f"[DEBUG] upload-context - Headers received")
+    logger.info(f"[DEBUG] upload-context - user: {sanitize_user_id(user_id) if user_id else "none"}, session: {sanitize_session_id(session_id) if session_id else "none"}")
 
     if not user_id:
-        print(f"[ERROR] User ID not found in user context - session_id: {session_id}")
+        logger.error(f"[ERROR] User ID not found in user context - session: {sanitize_session_id(session_id) if session_id else "none"}")
         return UploadContextResponse(patient_id=None, chat_session_id=None)
 
     try:
@@ -3041,24 +3052,24 @@ async def get_upload_context(
             limit=1
         )
 
-        print(f"[DEBUG] upload-context - Found {len(sessions) if sessions else 0} sessions in vector store")
+        logger.info(f"[DEBUG] upload-context - Found {len(sessions) if sessions else 0} sessions in vector store")
 
         if sessions and len(sessions) > 0:
             most_recent_session = sessions[0]
-            print(f"[INFO] upload-context - Returning most recent session from DB: {most_recent_session}")
+            logger.info(f"[INFO] upload-context - Returning most recent session from DB")
             return UploadContextResponse(
                 patient_id=most_recent_session.patient_id,
                 chat_session_id=most_recent_session.session_id
             )
         else:
             # No sessions in vector store yet - use auth session_id as fallback
-            print(f"[INFO] upload-context - No sessions in DB, using auth session as fallback: {session_id}")
+            logger.info(f"[INFO] upload-context - No sessions in DB, using auth session as fallback: {sanitize_session_id(session_id)}")
             return UploadContextResponse(
                 patient_id=None,
                 chat_session_id=session_id  # Use auth session_id as chat_session_id
             )
     except Exception as e:
-        print(f"[ERROR] upload-context - Failed to fetch: {e}")
+        log_error(logger, "upload-context", e)
         import traceback
         traceback.print_exc()
         # Still return session_id as fallback on error
@@ -3077,10 +3088,10 @@ async def upload_pdf_document(
     user_ctx: dict = Depends(get_user_context)
 ):
     """Upload a PDF document file."""
-    print("=" * 50)
-    print("PDF UPLOAD ENDPOINT HIT WITH NEW CODE!")
-    print(f"[PDF Upload] Raw form data - chat_session_id: {chat_session_id}, patient_id: {patient_id}")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("PDF UPLOAD ENDPOINT HIT WITH NEW CODE!")
+    logger.info(f"[PDF Upload] Raw form data - chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
+    logger.info("=" * 50)
 
     # Get session ID from user context
     session_id = user_ctx.get("session_id")
@@ -3106,7 +3117,7 @@ async def upload_pdf_document(
         # Use chat_session_id if provided, otherwise fall back to auth session_id
         effective_session_id = chat_session_id or session_id
 
-        print(f"[PDF Upload] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, filename: {file.filename}, patient_id: {patient_id}")
+        logger.info(f"[PDF Upload] Request - user: {sanitize_user_id(user.user_id)}, auth_session: {sanitize_session_id(session_id)}, chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, effective_session: {sanitize_session_id(effective_session_id)}, filename: {file.filename}, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
         # Create upload request
         from optimed.core.domain.pdf_document import PDFUploadRequest
@@ -3121,7 +3132,7 @@ async def upload_pdf_document(
         # Process upload using memory service
         pdf_document = await _pdf_service.upload_document(upload_request)
 
-        print(f"[PDF Upload] Success - document_id: {pdf_document.document_id}, status: {pdf_document.status}")
+        logger.info(f"[PDF Upload] Success - document: {sanitize_document_id(pdf_document.document_id)}, status: {pdf_document.status}")
 
         # GDPR compliance event logging (Article 30)
         try:
@@ -3137,8 +3148,8 @@ async def upload_pdf_document(
                 compliance_status="compliant",
                 additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation"}
             )
-        except Exception as log_error:
-            print(f"[COMPLIANCE] Error logging document upload: {log_error}")
+        except Exception as e:
+            log_error(logger, "Document upload logging", e)
 
         response = PDFUploadResponse(
             document_id=pdf_document.document_id,
@@ -3161,16 +3172,16 @@ async def upload_pdf_document(
                 patient_id=patient_id
             )
             await broadcaster.broadcast(user.user_id, event)
-            print(f"[PDF Upload] Event broadcasted to user {user.user_id}")
+            logger.info(f"[PDF Upload] Event broadcasted to user {sanitize_user_id(user.user_id)}")
         except Exception as e:
-            print(f"[PDF Upload] Broadcast failed: {e}")
+            log_error(logger, "PDF Upload broadcast", e)
 
         return response
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        print(f"[PDF Upload] Error: {e}")
+        log_error(logger, "PDF Upload", e)
         raise HTTPException(status_code=500, detail="PDF upload failed")
 
 
@@ -3194,7 +3205,7 @@ async def list_xml_documents(
         raise HTTPException(status_code=401, detail="User not found")
 
     try:
-        print(f"[XML List] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, patient_id: {patient_id}")
+        logger.info(f"[XML List] Request - user: {sanitize_user_id(user.user_id)}, auth_session: {sanitize_session_id(session_id)}, chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
         documents = []
         seen_ids = set()
@@ -3204,7 +3215,7 @@ async def list_xml_documents(
 
         # First, search chat session if provided
         if chat_session_id:
-            print(f"[XML List] Searching in chat session: {chat_session_id}")
+            logger.info(f"[XML List] Searching in chat session: {sanitize_session_id(chat_session_id)}")
             chat_docs = await _xml_service.list_documents(
                 user_id=user.user_id,
                 session_id=chat_session_id,
@@ -3214,11 +3225,11 @@ async def list_xml_documents(
                 if doc.document_id not in seen_ids:
                     documents.append(doc)
                     seen_ids.add(doc.document_id)
-            print(f"[XML List] Found {len(chat_docs)} documents in chat session")
+            logger.info(f"[XML List] Found {len(chat_docs)} documents in chat session")
 
         # Always check auth session (where watcher uploads go)
         if session_id != chat_session_id:
-            print(f"[XML List] Searching in auth session: {session_id}")
+            logger.info(f"[XML List] Searching in auth session: {sanitize_session_id(session_id)}")
             auth_docs = await _xml_service.list_documents(
                 user_id=user.user_id,
                 session_id=session_id,
@@ -3228,9 +3239,9 @@ async def list_xml_documents(
                 if doc.document_id not in seen_ids:
                     documents.append(doc)
                     seen_ids.add(doc.document_id)
-            print(f"[XML List] Found {len(auth_docs)} documents in auth session")
+            logger.info(f"[XML List] Found {len(auth_docs)} documents in auth session")
 
-        print(f"[XML List] Total unique documents: {len(documents)}")
+        logger.info(f"[XML List] Total unique documents: {len(documents)}")
 
         # Separate counts
         total_count = len(documents)
@@ -3247,7 +3258,7 @@ async def list_xml_documents(
         )
 
     except Exception as e:
-        print(f"[XML List] Error: {e}")
+        log_error(logger, "XML List", e)
         raise HTTPException(status_code=500, detail="Failed to list XML documents")
 
 
@@ -3309,7 +3320,7 @@ async def get_xml_document(
     except HTTPException as he:
         raise he
     except Exception as e:
-        print(f"[XML Get] Error: {e}")
+        log_error(logger, "XML Get", e)
         raise HTTPException(status_code=500, detail="Failed to get XML document")
 
 
@@ -3322,7 +3333,7 @@ async def list_pdf_documents(
     user_ctx: dict = Depends(get_user_context)
 ):
     """List PDF documents for the current session."""
-    print(f"[PDF List] Raw query params - chat_session_id: {chat_session_id}, patient_id: {patient_id}")
+    logger.info(f"[PDF List] Raw query params - chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
     # Get session ID from user context
     session_id = user_ctx.get("session_id")
@@ -3334,7 +3345,7 @@ async def list_pdf_documents(
         raise HTTPException(status_code=401, detail="User not found")
 
     try:
-        print(f"[PDF List] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, patient_id: {patient_id}")
+        logger.info(f"[PDF List] Request - user: {sanitize_user_id(user.user_id)}, auth_session: {sanitize_session_id(session_id)}, chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
         documents = []
         seen_ids = set()
@@ -3344,7 +3355,7 @@ async def list_pdf_documents(
 
         # First, search chat session if provided
         if chat_session_id:
-            print(f"[PDF List] Searching in chat session: {chat_session_id}")
+            logger.info(f"[PDF List] Searching in chat session: {sanitize_session_id(chat_session_id)}")
             chat_docs = await _pdf_service.list_documents(
                 user_id=user.user_id,
                 session_id=chat_session_id,
@@ -3354,11 +3365,11 @@ async def list_pdf_documents(
                 if doc.document_id not in seen_ids:
                     documents.append(doc)
                     seen_ids.add(doc.document_id)
-            print(f"[PDF List] Found {len(chat_docs)} documents in chat session")
+            logger.info(f"[PDF List] Found {len(chat_docs)} documents in chat session")
 
         # Always check auth session (where watcher uploads go)
         if session_id != chat_session_id:
-            print(f"[PDF List] Searching in auth session: {session_id}")
+            logger.info(f"[PDF List] Searching in auth session: {sanitize_session_id(session_id)}")
             auth_docs = await _pdf_service.list_documents(
                 user_id=user.user_id,
                 session_id=session_id,
@@ -3368,11 +3379,11 @@ async def list_pdf_documents(
                 if doc.document_id not in seen_ids:
                     documents.append(doc)
                     seen_ids.add(doc.document_id)
-            print(f"[PDF List] Found {len(auth_docs)} documents in auth session")
+            logger.info(f"[PDF List] Found {len(auth_docs)} documents in auth session")
 
-        print(f"[PDF List] Total unique documents: {len(documents)}")
+        logger.info(f"[PDF List] Total unique documents: {len(documents)}")
         for doc in documents:
-            print(f"[PDF List] Document: {doc.filename} (status: {doc.status}, patient_id: {doc.patient_id})")
+            logger.info(f"[PDF List] Document: {doc.filename} (status: {doc.status}, patient: {sanitize_patient_id(doc.patient_id) if doc.patient_id else "none"})")
 
         # Separate patient-specific and general documents
         patient_docs = [doc for doc in documents if doc.patient_id is not None]
@@ -3386,7 +3397,7 @@ async def list_pdf_documents(
         )
 
     except Exception as e:
-        print(f"[PDF List] Error: {e}")
+        log_error(logger, "PDF List", e)
         raise HTTPException(status_code=500, detail="Failed to list PDF documents")
 
 
@@ -3400,7 +3411,7 @@ async def document_events_stream(
     Uses same streaming approach as /chat/stream.
     """
     try:
-        print(f"[DocEvents] SSE request received, user_ctx: {user_ctx}")
+        logger.info(f"[DocEvents] SSE request received")
 
         session_id = user_ctx.get("session_id")
         if not session_id:
@@ -3411,11 +3422,11 @@ async def document_events_stream(
             raise HTTPException(status_code=401, detail="User not found")
 
         user_id = user.user_id
-        print(f"[DocEvents] User {user_id} connecting to SSE stream")
+        logger.info(f"[DocEvents] User {sanitize_user_id(user_id)} connecting to SSE stream")
 
         broadcaster = get_broadcaster()
     except Exception as e:
-        print(f"[DocEvents] Setup error: {e}")
+        log_error(logger, "DocEvents setup", e)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"SSE setup failed: {str(e)}")
@@ -3431,7 +3442,7 @@ async def document_events_stream(
             while True:
                 # Check if client disconnected
                 if await request.is_disconnected():
-                    print(f"[DocEvents] Client disconnected: {user_id}")
+                    logger.info(f"[DocEvents] Client disconnected: {sanitize_user_id(user_id)}")
                     break
 
                 try:
@@ -3446,7 +3457,7 @@ async def document_events_stream(
                     yield ": keepalive\n\n"
 
         except Exception as e:
-            print(f"[DocEvents] Stream error: {e}")
+            log_error(logger, "DocEvents stream", e)
         finally:
             await broadcaster.unsubscribe(user_id, queue)
 
@@ -3508,7 +3519,7 @@ async def get_pdf_document(
         }
 
     except Exception as e:
-        print(f"[PDF Get] Error: {e}")
+        log_error(logger, "PDF Get", e)
         raise HTTPException(status_code=500, detail="Failed to get PDF document")
 
 
@@ -3531,18 +3542,18 @@ async def delete_pdf_document(
         raise HTTPException(status_code=401, detail="User not found")
 
     try:
-        print("[PDF Delete] Request details:")
-        print(f"  - document_id: {document_id}")
-        print(f"  - user_id: {user.user_id}")
-        print(f"  - auth_session_id: {session_id}")
-        print(f"  - chat_session_id: {chat_session_id}")
-        print(f"  - patient_id: {patient_id}")
+        logger.info("[PDF Delete] Request details:")
+        logger.info(f"  - document: {sanitize_document_id(document_id)}")
+        logger.info(f"  - user: {sanitize_user_id(user.user_id)}")
+        logger.info(f"  - auth_session: {sanitize_session_id(session_id)}")
+        logger.info(f"  - chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}")
+        logger.info(f"  - patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
         # Try deleting from chat session first, then auth session (search both like list does)
         success = False
 
         if chat_session_id:
-            print(f"[PDF Delete] Trying chat session: {chat_session_id}")
+            logger.info(f"[PDF Delete] Trying chat session: {sanitize_session_id(chat_session_id)}")
             success = await _pdf_service.delete_document(
                 document_id=document_id,
                 user_id=user.user_id,
@@ -3551,7 +3562,7 @@ async def delete_pdf_document(
             )
 
         if not success:
-            print(f"[PDF Delete] Trying auth session: {session_id}")
+            logger.info(f"[PDF Delete] Trying auth session: {sanitize_session_id(session_id)}")
             success = await _pdf_service.delete_document(
                 document_id=document_id,
                 user_id=user.user_id,
@@ -3559,20 +3570,20 @@ async def delete_pdf_document(
                 patient_id=patient_id
             )
 
-        print(f"[PDF Delete] Delete operation returned: {success}")
+        logger.info(f"[PDF Delete] Delete operation returned: {success}")
 
         if success:
             return {"message": "Document deleted successfully"}
         else:
-            print("[PDF Delete] Document not found in any session, returning 404")
+            logger.warning("[PDF Delete] Document not found in any session, returning 404")
             raise HTTPException(status_code=404, detail="Document not found")
 
     except HTTPException as he:
         # Re-raise HTTP exceptions as-is
-        print(f"[PDF Delete] HTTP Exception: {he.status_code} - {he.detail}")
+        logger.error(f"[PDF Delete] HTTP Exception: {he.status_code} - {he.detail}")
         raise he
     except Exception as e:
-        print(f"[PDF Delete] Unexpected error: {e}")
+        log_error(logger, "PDF Delete", e)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to delete PDF document")
@@ -3597,7 +3608,7 @@ async def cleanup_session_documents(
         raise HTTPException(status_code=401, detail="User not found")
 
     try:
-        print(f"[Cleanup] Starting cleanup for auth session: {session_id}, user: {user.user_id}")
+        logger.info(f"[Cleanup] Starting cleanup for auth session: {sanitize_session_id(session_id)}, user: {sanitize_user_id(user.user_id)}")
 
         # Get all documents from auth session
         pdf_docs = await _pdf_service.list_documents(
@@ -3619,7 +3630,7 @@ async def cleanup_session_documents(
                 await _pdf_service.delete_document(doc.document_id, user.user_id, session_id)
                 deleted_pdfs += 1
             except Exception as e:
-                print(f"[Cleanup] Failed to delete PDF {doc.document_id}: {e}")
+                logger.error(f"[Cleanup] Failed to delete PDF {sanitize_document_id(doc.document_id)}")
 
         deleted_xmls = 0
         for doc in xml_docs:
@@ -3627,9 +3638,9 @@ async def cleanup_session_documents(
                 await _xml_service.delete_document(doc.document_id, user.user_id, session_id)
                 deleted_xmls += 1
             except Exception as e:
-                print(f"[Cleanup] Failed to delete XML {doc.document_id}: {e}")
+                logger.error(f"[Cleanup] Failed to delete XML {sanitize_document_id(doc.document_id)}")
 
-        print(f"[Cleanup] Cleaned up {deleted_pdfs} PDFs and {deleted_xmls} XMLs from auth session")
+        logger.info(f"[Cleanup] Cleaned up {deleted_pdfs} PDFs and {deleted_xmls} XMLs from auth session")
 
         return {
             "message": "Session cleaned up successfully",
@@ -3638,7 +3649,7 @@ async def cleanup_session_documents(
         }
 
     except Exception as e:
-        print(f"[Cleanup] Error: {e}")
+        log_error(logger, "Cleanup", e)
         raise HTTPException(status_code=500, detail="Failed to cleanup session")
 
 
@@ -3675,7 +3686,7 @@ async def upload_xml_document(
         # Read file content
         content = await file.read()
 
-        print(f"[XML Upload] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, filename: {file.filename}, patient_id: {patient_id}")
+        logger.info(f"[XML Upload] Request - user: {sanitize_user_id(user.user_id)}, auth_session: {sanitize_session_id(session_id)}, chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, effective_session: {sanitize_session_id(effective_session_id)}, filename: {file.filename}, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
         # Process upload using memory service (XML service uses individual parameters)
         xml_document = await _xml_service.upload_document(
@@ -3708,14 +3719,14 @@ async def upload_xml_document(
                 patient_id=patient_id
             )
             await broadcaster.broadcast(user.user_id, event)
-            print(f"[XML Upload] Event broadcasted to user {user.user_id}")
+            logger.info(f"[XML Upload] Event broadcasted to user {sanitize_user_id(user.user_id)}")
         except Exception as e:
-            print(f"[XML Upload] Broadcast failed: {e}")
+            log_error(logger, "XML Upload broadcast", e)
 
         return response
 
     except Exception as e:
-        print(f"[XML Upload] Error: {e}")
+        log_error(logger, "XML Upload", e)
         raise HTTPException(status_code=500, detail="XML upload failed")
 
 
@@ -3739,18 +3750,18 @@ async def delete_xml_document(
         raise HTTPException(status_code=401, detail="User not found")
 
     try:
-        print("[XML Delete] Request details:")
-        print(f"  - document_id: {document_id}")
-        print(f"  - user_id: {user.user_id}")
-        print(f"  - auth_session_id: {session_id}")
-        print(f"  - chat_session_id: {chat_session_id}")
-        print(f"  - patient_id: {patient_id}")
+        logger.info("[XML Delete] Request details:")
+        logger.info(f"  - document: {sanitize_document_id(document_id)}")
+        logger.info(f"  - user: {sanitize_user_id(user.user_id)}")
+        logger.info(f"  - auth_session: {sanitize_session_id(session_id)}")
+        logger.info(f"  - chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}")
+        logger.info(f"  - patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
         # Try deleting from chat session first, then auth session (search both like list does)
         success = False
 
         if chat_session_id:
-            print(f"[XML Delete] Trying chat session: {chat_session_id}")
+            logger.info(f"[XML Delete] Trying chat session: {sanitize_session_id(chat_session_id)}")
             success = await _xml_service.delete_document(
                 document_id=document_id,
                 user_id=user.user_id,
@@ -3759,7 +3770,7 @@ async def delete_xml_document(
             )
 
         if not success:
-            print(f"[XML Delete] Trying auth session: {session_id}")
+            logger.info(f"[XML Delete] Trying auth session: {sanitize_session_id(session_id)}")
             success = await _xml_service.delete_document(
                 document_id=document_id,
                 user_id=user.user_id,
@@ -3767,20 +3778,20 @@ async def delete_xml_document(
                 patient_id=patient_id
             )
 
-        print(f"[XML Delete] Delete operation returned: {success}")
+        logger.info(f"[XML Delete] Delete operation returned: {success}")
 
         if success:
             return {"message": "XML document deleted successfully"}
         else:
-            print("[XML Delete] Document not found in any session, returning 404")
+            logger.warning("[XML Delete] Document not found in any session, returning 404")
             raise HTTPException(status_code=404, detail="XML document not found")
 
     except HTTPException as he:
         # Re-raise HTTP exceptions as-is
-        print(f"[XML Delete] HTTP Exception: {he.status_code} - {he.detail}")
+        logger.error(f"[XML Delete] HTTP Exception: {he.status_code} - {he.detail}")
         raise he
     except Exception as e:
-        print(f"[XML Delete] Unexpected error: {e}")
+        log_error(logger, "XML Delete", e)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to delete XML document")
@@ -3807,7 +3818,7 @@ async def upload_template(
 ):
     """Upload and parse a template file (DOCX, PDF, XLSX, TXT)."""
     try:
-        print(f"[Template Upload] User {user_ctx['user_id']} uploading template: {name}")
+        logger.info(f"[Template Upload] User {sanitize_user_id(user_ctx["user_id"])} uploading template: {name}")
 
         # Read file content
         content = await file.read()
@@ -3823,7 +3834,7 @@ async def upload_template(
             filename=file.filename
         )
 
-        print(f"[Template Upload] ✓ Template created: {template.template_id}")
+        logger.info(f"[Template Upload] Template created successfully")
 
         return {
             "template_id": template.template_id,
@@ -3836,7 +3847,7 @@ async def upload_template(
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        print(f"[Template Upload] Error: {e}")
+        log_error(logger, "Template Upload", e)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to upload template")
@@ -3875,7 +3886,7 @@ async def list_templates(
         }
 
     except Exception as e:
-        print(f"[Template List] Error: {e}")
+        log_error(logger, "Template List", e)
         raise HTTPException(status_code=500, detail="Failed to list templates")
 
 
@@ -3911,7 +3922,7 @@ async def get_template(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[Template Get] Error: {e}")
+        log_error(logger, "Template Get", e)
         raise HTTPException(status_code=500, detail="Failed to get template")
 
 
@@ -3941,7 +3952,7 @@ async def delete_template(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[Template Delete] Error: {e}")
+        log_error(logger, "Template Delete", e)
         raise HTTPException(status_code=500, detail="Failed to delete template")
 
 
@@ -3954,7 +3965,7 @@ async def generate_note_stream(
 ):
     """Generate clinical note with streaming (GDPR: content never stored)."""
     try:
-        print(f"[Note Generate] Starting generation for template {req.template_id}")
+        logger.info(f"[Note Generate] Starting generation for template")
 
         # Get template
         template = await template_repo.get_template_by_id(req.template_id)
@@ -3967,7 +3978,7 @@ async def generate_note_stream(
             try:
                 patient_ctx = await fhir_repo.get_patient(req.patient_id)
             except Exception as e:
-                print(f"[Note Generate] Warning: Could not fetch patient: {e}")
+                logger.warning(f"[Note Generate] Warning: Could not fetch patient")
 
         # Start metadata tracking
         import hashlib
@@ -4038,7 +4049,7 @@ async def generate_note_stream(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[Note Generate] Error: {e}")
+        log_error(logger, "Note Generate", e)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to generate note")
@@ -4080,5 +4091,5 @@ async def get_generation_history(
         }
 
     except Exception as e:
-        print(f"[Note History] Error: {e}")
+        log_error(logger, "Note History", e)
         raise HTTPException(status_code=500, detail="Failed to get history")

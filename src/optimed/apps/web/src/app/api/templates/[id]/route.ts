@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { sanitizeDocumentId, sanitizeSessionId, logInfo, logError } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -10,18 +11,18 @@ export async function GET(
     // Get session ID from headers
     const sessionId = request.headers.get('x-session-id');
 
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string} = {};
 
     // Forward the session header to the backend
     if (sessionId) {
       headers['X-Session-ID'] = sessionId;
     }
 
-    console.log('🔄 [TEMPLATES API] Fetching template:', templateId);
+    logInfo(`[TEMPLATES API] Fetching template: ${sanitizeDocumentId(templateId)}`);
 
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
     const backendUrl = `${baseUrl}/templates/${templateId}`;
-    console.log('🎯 [TEMPLATES API] Backend URL:', backendUrl);
+    logInfo(`[TEMPLATES API] Backend URL: ${backendUrl}`);
 
     const response = await fetch(backendUrl, {
       method: 'GET',
@@ -30,15 +31,15 @@ export async function GET(
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('❌ [TEMPLATES API] Get error:', response.status, errorText);
+      logError(`[TEMPLATES API] Get error: ${response.status} ${errorText}`);
       return NextResponse.json({ error: errorText }, { status: response.status });
     }
 
     const data = await response.json();
-    console.log('✅ [TEMPLATES API] Retrieved template:', templateId);
+    logInfo(`[TEMPLATES API] Retrieved template: ${sanitizeDocumentId(templateId)}`);
     return NextResponse.json(data);
   } catch (error) {
-    console.error('❌ [TEMPLATES API] Get API error:', error);
+    logError(`[TEMPLATES API] Get API error: ${error}`);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }
@@ -60,11 +61,11 @@ export async function DELETE(
       headers['X-Session-ID'] = sessionId;
     }
 
-    console.log('🔄 [TEMPLATES API] Deleting template:', templateId);
+    logInfo(`[TEMPLATES API] Deleting template: ${sanitizeDocumentId(templateId)}`);
 
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
     const backendUrl = `${baseUrl}/templates/${templateId}`;
-    console.log('🎯 [TEMPLATES API] Backend URL:', backendUrl);
+    logInfo(`[TEMPLATES API] Backend URL: ${backendUrl}`);
 
     const response = await fetch(backendUrl, {
       method: 'DELETE',
@@ -73,15 +74,15 @@ export async function DELETE(
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('❌ [TEMPLATES API] Delete error:', response.status, errorText);
+      logError(`[TEMPLATES API] Delete error: ${response.status} ${errorText}`);
       return NextResponse.json({ error: errorText }, { status: response.status });
     }
 
     const data = await response.json();
-    console.log('✅ [TEMPLATES API] Deleted template:', templateId);
+    logInfo(`[TEMPLATES API] Deleted template: ${sanitizeDocumentId(templateId)}`);
     return NextResponse.json(data);
   } catch (error) {
-    console.error('❌ [TEMPLATES API] Delete API error:', error);
+    logError(`[TEMPLATES API] Delete API error: ${error}`);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

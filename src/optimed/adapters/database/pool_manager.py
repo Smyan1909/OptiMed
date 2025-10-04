@@ -1,6 +1,9 @@
 import asyncpg
 from typing import Optional
 import asyncio
+from optimed.core.logging_utils import get_logger, log_error
+
+logger = get_logger(__name__)
 
 class DatabasePoolManager:
     """Singleton connection pool manager for the entire application."""
@@ -29,9 +32,9 @@ class DatabasePoolManager:
                             'jit': 'off'
                         }
                     )
-                    print(f"[DB] Created shared connection pool with {min_connections}-{max_connections} connections")
+                    logger.info(f"Created shared database connection pool with {min_connections}-{max_connections} connections")
                 except Exception as e:
-                    print(f"[ERROR] Failed to create shared connection pool: {e}")
+                    log_error(logger, "create_shared_connection_pool", e)
                     raise
             
             return self._pool
@@ -41,7 +44,7 @@ class DatabasePoolManager:
         async with self._lock:
             if self._pool and not self._pool._closed:
                 await self._pool.close()
-                print("[DB] Shared connection pool closed")
+                logger.info("Shared database connection pool closed")
                 self._pool = None
 
 # Global instance

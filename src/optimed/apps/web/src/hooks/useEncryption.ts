@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { getEncryptionClient, E2EEncryptionClient } from '@/lib/encryption';
+import { logWarning, logError } from '@/lib/logger';
 
 export interface UseEncryptionReturn {
   encryptionClient: E2EEncryptionClient;
@@ -27,13 +28,13 @@ export function useEncryption(): UseEncryptionReturn {
       setIsEncryptionReady(true);
     } else {
       setError('Web Crypto API not available. E2E encryption is disabled.');
-      console.warn('Web Crypto API not available');
+      logWarning('useEncryption: Web Crypto API not available');
     }
   }, []);
 
   const setupSessionEncryption = useCallback(async (sessionId: string): Promise<boolean> => {
     if (!isEncryptionReady) {
-      console.warn('Encryption not ready, skipping session setup');
+      logWarning('useEncryption: Encryption not ready, skipping session setup');
       return false;
     }
 
@@ -49,7 +50,7 @@ export function useEncryption(): UseEncryptionReturn {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown encryption error';
       setError(errorMessage);
-      console.error('Session encryption setup failed:', err);
+      logError('useEncryption: Session encryption setup failed', err);
       return false;
     }
   }, [encryptionClient, isEncryptionReady]);
@@ -64,14 +65,14 @@ export function useEncryption(): UseEncryptionReturn {
 
   const encryptData = useCallback(async (data: any, sessionId: string) => {
     if (!isEncryptionReady || !hasSessionKey(sessionId)) {
-      console.warn('Encryption not available, returning unencrypted data');
+      logWarning('useEncryption: Encryption not available, returning unencrypted data');
       return data;
     }
 
     try {
       return await encryptionClient.encryptData(data, sessionId);
     } catch (err) {
-      console.error('Data encryption failed:', err);
+      logError('useEncryption: Data encryption failed', err);
       setError(err instanceof Error ? err.message : 'Encryption failed');
       return data; // Fallback to unencrypted data
     }
@@ -79,7 +80,7 @@ export function useEncryption(): UseEncryptionReturn {
 
   const decryptData = useCallback(async (encryptedData: any, sessionId: string) => {
     if (!isEncryptionReady || !hasSessionKey(sessionId)) {
-      console.warn('Decryption not available, returning data as-is');
+      logWarning('useEncryption: Decryption not available, returning data as-is');
       return encryptedData;
     }
 
@@ -91,7 +92,7 @@ export function useEncryption(): UseEncryptionReturn {
     try {
       return await encryptionClient.decryptData(encryptedData, sessionId);
     } catch (err) {
-      console.error('Data decryption failed:', err);
+      logError('useEncryption: Data decryption failed', err);
       setError(err instanceof Error ? err.message : 'Decryption failed');
       return encryptedData; // Fallback to original data
     }
@@ -123,7 +124,7 @@ export function useStreamDecryption(sessionId: string | null) {
     try {
       return await encryptionClient.decryptStreamChunk(chunk, sessionId);
     } catch (error) {
-      console.error('Stream chunk decryption failed:', error);
+      logError('useEncryption: Stream chunk decryption failed', error);
       return chunk; // Return original chunk on error
     }
   }, [encryptionClient, sessionId, isEncryptionReady, hasSessionKey]);

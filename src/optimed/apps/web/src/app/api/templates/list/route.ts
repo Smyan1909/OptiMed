@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { sanitizeSessionId, logInfo, logError } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
   try {
@@ -18,12 +19,7 @@ export async function GET(request: NextRequest) {
       headers['X-Session-ID'] = sessionId;
     }
 
-    console.log('🔄 [TEMPLATES API] Fetching templates:', {
-      includeSystem,
-      language,
-      templateType,
-      sessionId
-    });
+    logInfo(`[TEMPLATES API] Fetching templates: includeSystem=${includeSystem}, language=${language}, templateType=${templateType}, session=${sanitizeSessionId(sessionId)}`);
 
     // Build query string
     const queryParams = new URLSearchParams();
@@ -34,7 +30,7 @@ export async function GET(request: NextRequest) {
     // Make request to backend
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
     const backendUrl = `${baseUrl}/templates/list?${queryParams.toString()}`;
-    console.log('🎯 [TEMPLATES API] Backend URL:', backendUrl);
+    logInfo(`[TEMPLATES API] Backend URL: ${backendUrl}`);
 
     const response = await fetch(backendUrl, {
       method: 'GET',
@@ -42,7 +38,7 @@ export async function GET(request: NextRequest) {
     });
 
     if (!response.ok) {
-      console.error('❌ [TEMPLATES API] Backend error:', response.status, response.statusText);
+      logError(`[TEMPLATES API] Backend error: ${response.status} ${response.statusText}`);
       const errorText = await response.text();
       return new Response(errorText, {
         status: response.status,
@@ -51,7 +47,7 @@ export async function GET(request: NextRequest) {
     }
 
     const data = await response.json();
-    console.log('✅ [TEMPLATES API] Retrieved', data.templates?.length || 0, 'templates');
+    logInfo(`[TEMPLATES API] Retrieved ${data.templates?.length || 0} templates`);
 
     return new Response(JSON.stringify(data), {
       status: 200,
@@ -59,7 +55,7 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('❌ [TEMPLATES API] List error:', error);
+    logError(`[TEMPLATES API] List error: ${error}`);
     return new Response(JSON.stringify({ error: 'Failed to list templates' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }

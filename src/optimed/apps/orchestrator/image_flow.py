@@ -7,6 +7,9 @@ from optimed.core.domain import PatientContext, ImagePixelData, DICOMMetadata
 from optimed.core.ports import LLMClient, FHIRRepository, VectorStore, ImageEmbeddingService, ImageAnalysisEngine, UserRepository
 from optimed.adapters.anthropic_claude.client import AnthropicClaudeClient
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
+from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, sanitize_session_id, log_error
+
+logger = get_logger(__name__)
 
 
 class ImageAnalysisState(BaseModel):
@@ -149,7 +152,7 @@ class LangGraphImageAnalysisEngine(ImageAnalysisEngine):
         elif isinstance(result, dict) and 'final_response' in result:
             return result['final_response']
         else:
-            print(f"Warning: Unexpected result type: {type(result)}")
+            logger.warning(f"Unexpected result type: {type(result)}")
             return "Analysis completed but response format was unexpected."
     
     async def _analyze_image(self, state: ImageAnalysisState) -> ImageAnalysisState:
@@ -208,7 +211,7 @@ class LangGraphImageAnalysisEngine(ImageAnalysisEngine):
             return state
             
         except Exception as e:
-            print(f"Warning: Could not find similar cases: {e}")
+            logger.warning(f"Could not find similar cases: {e}")
             # Don't fail the entire flow for this
             state.similar_cases = []
             return state
@@ -282,14 +285,14 @@ class LangGraphImageAnalysisEngine(ImageAnalysisEngine):
     async def _load_user_context(self, state: ImageAnalysisState) -> ImageAnalysisState:
         """Load user context if available."""
         if state.user_id:
-            try: 
+            try:
                 state.user_context = await self.user_repo.get_user_by_id(state.user_id)
                 if not state.user_context:
-                    print(f"[load_user_context] No user found with ID {state.user_id}")
+                    logger.info(f"No user found with ID {sanitize_user_id(state.user_id)}")
             except Exception as e:
-                print(f"[load_user_context] Error loading user context: {e}")
+                log_error(logger, "load_user_context", e)
                 state.user_context = None
-        
+
         return state
 
     async def _check_patient_exists(self, state: ImageAnalysisState) -> ImageAnalysisState:
@@ -324,12 +327,12 @@ class LangGraphImageAnalysisEngine(ImageAnalysisEngine):
                             "timestamp": item.get("timestamp", "")
                         })
                     except Exception as e:
-                        print(f"[load_chat_history] Error parsing item: {e}")
+                        log_error(logger, "parse_chat_history_item", e)
                         continue
-                        
+
                 state.chat_history = chat_messages
             except Exception as e:
-                print(f"[load_chat_history] Error loading chat history: {e}")
+                log_error(logger, "load_chat_history", e)
                 state.chat_history = []
         else:
             state.chat_history = []
@@ -352,16 +355,16 @@ class LangGraphImageAnalysisEngine(ImageAnalysisEngine):
                 )
                 if user_fhir_repo:
                     fhir_repo = user_fhir_repo
-                    print("[image_analysis] Using user's SMART on FHIR connection")
+                    logger.info("Using user's SMART on FHIR connection for image analysis")
             except Exception as e:
-                print(f"[image_analysis] Failed to use SMART connection: {e}, falling back to default")
+                logger.warning(f"Failed to use SMART connection: {e}, falling back to default")
         
         try:
             state.patient_context = await fhir_repo.get_patient(str(state.patient_id))
         except Exception as e:
-            print(f"Warning: Could not fetch patient context: {e}")
+            logger.warning(f"Could not fetch patient context for {sanitize_patient_id(str(state.patient_id))}: {e}")
             state.patient_context = None
-        
+
         return state
 
     async def _retrieve_chunks(self, state: ImageAnalysisState) -> ImageAnalysisState:
@@ -398,9 +401,9 @@ class LangGraphImageAnalysisEngine(ImageAnalysisEngine):
                         patient_specific_chunks.append(chunk_text)
             
             state.retrieved_chunks = patient_specific_chunks
-            
+
         except Exception as e:
-            print(f"[retrieve_chunks] Error retrieving chunks: {e}")
+            log_error(logger, "retrieve_chunks", e)
             state.retrieved_chunks = []
-        
+
         return state

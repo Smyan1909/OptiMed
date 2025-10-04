@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { sanitizeSessionId, logInfo, logError } from '@/lib/logger';
 
 export async function GET(
   request: Request,
@@ -15,29 +16,28 @@ export async function GET(
     if (sessionId) {
       headers['X-Session-ID'] = sessionId;
     }
-    
-    console.log(`[API Route] Fetching generated image: ${id}`);
-    console.log(`[API Route] Session ID: ${sessionId}`);
+
+    logInfo('Generated image: Fetching image', { imageId: id, sessionId: sessionId ? sanitizeSessionId(sessionId) : null });
     
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
     const response = await fetch(`${baseUrl}/images/generated/${id}`, {
       headers
     });
-    
-    console.log(`[API Route] Backend response status: ${response.status}`);
-    
+
+    logInfo('Generated image: Backend response received', { status: response.status });
+
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`[API Route] Backend error: ${response.status} - ${errorText}`);
+      logError('Generated image: Backend error', { status: response.status, error: errorText });
       return NextResponse.json({ error: errorText }, { status: response.status });
     }
-    
+
     // Forward the image data directly
     const imageData = await response.blob();
     const contentType = response.headers.get('content-type') || 'image/png';
     const contentDisposition = response.headers.get('content-disposition') || 'inline; filename=generated_image.png';
-    
-    console.log(`[API Route] Successfully retrieved image, size: ${imageData.size} bytes`);
+
+    logInfo('Generated image: Successfully retrieved image', { size: imageData.size });
     
     return new NextResponse(imageData, {
       headers: {
@@ -46,9 +46,9 @@ export async function GET(
         'Cache-Control': 'public, max-age=31536000'
       }
     });
-    
+
   } catch (error) {
-    console.error('[API Route] Image retrieval error:', error);
+    logError('Generated image: Image retrieval error', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

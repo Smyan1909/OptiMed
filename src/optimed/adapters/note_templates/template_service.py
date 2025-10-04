@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 
 from optimed.core.domain import NoteTemplate, TemplateType
 from optimed.core.ports import TemplateService, TemplateRepository
+from optimed.core.logging_utils import get_logger, log_error
+
+logger = get_logger(__name__)
 
 
 class TemplateServiceAdapter:
@@ -83,7 +86,7 @@ class TemplateServiceAdapter:
                 return {"fields": fields}
 
         except Exception as e:
-            print(f"[TemplateService] Error parsing DOCX: {e}")
+            log_error(logger, "parse DOCX", e)
             # Fallback to text parsing
             return await self._parse_text(content)
 
@@ -131,7 +134,7 @@ class TemplateServiceAdapter:
                 return {"fields": fields}
 
         except Exception as e:
-            print(f"[TemplateService] Error parsing PDF: {e}")
+            log_error(logger, "parse PDF", e)
             return await self._parse_text(content)
 
     async def _parse_xlsx(self, content: bytes) -> Dict[str, Any]:
@@ -180,7 +183,7 @@ class TemplateServiceAdapter:
                 }
 
         except Exception as e:
-            print(f"[TemplateService] Error parsing XLSX: {e}")
+            log_error(logger, "parse XLSX", e)
             return {
                 "fields": [
                     {"name": "field_1", "label": "Field 1", "type": "text"},

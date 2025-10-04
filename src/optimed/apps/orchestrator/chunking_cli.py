@@ -9,20 +9,23 @@ from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator
 from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
 from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
 from optimed.core.domain import PatientContext
+from optimed.core.logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 def summarize(chunks):
-    print(f"Total chunks: {len(chunks)}")
+    logger.info(f"Total chunks: {len(chunks)}")
     by_strategy: dict[str, int] = {}
     token_counts = []
     tok = WhitespaceTokenizer()
     for c in chunks:
         by_strategy[c.strategy_id] = by_strategy.get(c.strategy_id, 0) + 1
         token_counts.append(tok.token_count(c.text))
-    print("Counts by strategy:")
+    logger.info("Counts by strategy:")
     for k, v in by_strategy.items():
-        print(f"  {k}: {v}")
-    print(f"Avg tokens: {round(mean(token_counts), 2) if token_counts else 0}")
+        logger.info(f"  {k}: {v}")
+    logger.info(f"Avg tokens: {round(mean(token_counts), 2) if token_counts else 0}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -42,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mode == "patient":
         if not args.patient_json:
-            print("--patient-json is required")
+            logger.error("--patient-json argument is required for patient mode")
             return 1
         with open(args.patient_json, "r", encoding="utf-8") as f:
             pdata = json.load(f)
@@ -53,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mode == "csv":
         if not args.csv_path:
-            print("--csv-path is required")
+            logger.error("--csv-path argument is required for csv mode")
             return 1
         doc = {"type": "csv", "path": args.csv_path}
         chunks = orchestrator.chunk_document(doc, POLICY_PRESETS)
@@ -62,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mode == "pdf":
         if not args.pdf_text:
-            print("--pdf-text is required")
+            logger.error("--pdf-text argument is required for pdf mode")
             return 1
         doc = {"type": "pdf", "text": args.pdf_text}
         chunks = orchestrator.chunk_document(doc, POLICY_PRESETS)

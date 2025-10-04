@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useUser } from '@/contexts/UserContext';
+import { logInfo } from '@/lib/logger';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -51,7 +52,7 @@ export function NoteGenerationDialog({
   // Handle auto-generated note (from natural language prompt)
   useEffect(() => {
     if (open && initialNote) {
-      console.log('📝 Auto-generated note detected, skipping to editing step');
+      logInfo('Note Generation Dialog: Auto-generated note detected, skipping to editing step');
       setGeneratedNote(initialNote);
       setEditedNote(initialNote);
       setStep('editing');

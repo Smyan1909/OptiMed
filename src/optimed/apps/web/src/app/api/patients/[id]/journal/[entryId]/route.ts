@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { logError } from '@/lib/logger';
 
 export async function GET(
   request: Request,
@@ -28,7 +29,7 @@ export async function GET(
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
-    console.error('Journal entry API error:', error);
+    logError(`Journal entry API error: ${error}`);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

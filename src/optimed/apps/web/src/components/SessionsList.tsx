@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { listSessions, createSession, joinSession, SessionListRequest } from '@/lib/api';
 import { Session } from '@/lib/api';
 import { useUser } from '@/contexts/UserContext';
+import { sanitizePatientId, logInfo, logError } from '@/lib/logger';
 import { formatDistanceToNow } from 'date-fns';
 import { useTranslations, useLocale } from 'next-intl';
 import { enUS, sv as svLocale } from 'date-fns/locale';
@@ -44,11 +45,11 @@ export default function SessionsList({
         user_id: user.user_id,
         include_all_patient_sessions: showAllSessions
       };
-      
-      console.log('Loading sessions with request:', request);
-      
+
+      logInfo('Sessions List: Loading sessions', { patientId: patientId ? sanitizePatientId(patientId) : null });
+
       const data = await listSessions(request);
-      console.log('Sessions loaded:', data.length + ' sessions');
+      logInfo('Sessions List: Sessions loaded', { count: data.length });
       setSessions(data);
       
       // Load actual message counts for each session
@@ -60,7 +61,7 @@ export default function SessionsList({
         onSessionSelect(mostRecentSession.session_id);
       }
     } catch (err: any) {
-      console.error('Failed to load sessions:', err);
+      logError('Sessions List: Failed to load sessions', err);
       setError(err.message || 'Failed to load sessions');
     } finally {
       setLoading(false);
@@ -99,7 +100,7 @@ export default function SessionsList({
             counts[session.session_id] = session.message_count;
           }
         } catch (sessionError) {
-          console.error(`Failed to load message count for session ${session.session_id}:`, sessionError);
+          logError('Sessions List: Failed to load message count for session', sessionError);
           // Fallback to the stored count
           counts[session.session_id] = session.message_count;
         }
@@ -107,7 +108,7 @@ export default function SessionsList({
       
       setSessionMessageCounts(counts);
     } catch (err) {
-      console.error('Failed to load session message counts:', err);
+      logError('Sessions List: Failed to load session message counts', err);
       // Fallback to stored counts
       const fallbackCounts: Record<string, number> = {};
       sessionsList.forEach(session => {
@@ -146,7 +147,7 @@ export default function SessionsList({
       // Generate a more descriptive session title
       const sessionTitle = generateSessionTitle(mode, patientId);
       
-      console.log('Creating session with data:', {
+      logInfo('Sessions List: Creating session', {
         patient_id: patientId,
         mode: mode,
         session_title: sessionTitle
@@ -158,14 +159,14 @@ export default function SessionsList({
         session_title: sessionTitle
       });
       
-      console.log('Session created:', result);
+      logInfo('Sessions List: Session created');
       
       // Reload sessions and select the new one
       await loadSessions();
       onSessionSelect(result.session_id);
       onNewSession();
     } catch (err: any) {
-      console.error('Failed to create session:', err);
+      logError('Sessions List: Failed to create session', err);
       setError(err.message || 'Failed to create session');
     }
   };
@@ -222,7 +223,7 @@ export default function SessionsList({
       // Reload to update participant info and message counts
       await loadSessions();
     } catch (err: any) {
-      console.error('Failed to join session:', err);
+      logError('Sessions List: Failed to join session', err);
       setError(err.message || 'Failed to join session');
     }
   };

@@ -28,6 +28,9 @@ from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator
 from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY as CHUNK_STRATEGY_REGISTRY, POLICY_PRESETS as CHUNK_POLICY_PRESETS
 from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
 from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
+from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, sanitize_session_id, log_error
+
+logger = get_logger(__name__)
 from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder, MultilingualZeroShotClassifier
 import re
 
@@ -289,7 +292,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             )
         except Exception as e:
             # Never fail the flow due to logging errors
-            print(f"[DATA_LINEAGE] Error logging data flow: {e}")
+            log_error(logger, "DATA_LINEAGE", e)
 
     async def _run_parallel_cross_encoder_operations(self, state: FlowState, chunks: list[dict[str, Any]], initial_indices: list[int], query_vecs: list[list[float]]) -> tuple[list[tuple[int, float]], list[int], list[float]]:
         """Run all cross-encoder operations in parallel for maximum efficiency.
@@ -312,7 +315,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             'metadata': {'indices': initial_indices}
         })
         
-        print(f"[_run_parallel_cross_encoder_operations] Starting parallel execution of {len(operations)} operations")
+        logger.info(f"Starting parallel execution of {len(operations)} operations")
         start_time = time.time()
         
         # Run reranking operation
@@ -325,7 +328,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             all_results = [[]]
         
         end_time = time.time()
-        print(f"[_run_parallel_cross_encoder_operations] Parallel execution completed in {end_time - start_time:.3f}s")
+        logger.info(f"Parallel execution completed in {end_time - start_time:.3f}s")
         
         # Process reranking results
         rerank_scores = all_results[0] if all_results else []
@@ -334,15 +337,15 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         reranked = reranked[:TOPK_RERANK]
         
         # Log reranking results
-        print(f"[_run_parallel_cross_encoder_operations] Reranked {len(reranked)} chunks")
+        logger.info(f"Reranked {len(reranked)} chunks")
         for i, (idx, score) in enumerate(reranked[:5]):
             chunk_type = chunks[idx]["data_type"]
-            print(f"[_run_parallel_cross_encoder_operations]   {i+1}. Chunk {idx} ({chunk_type}): {score:.4f}")
+            logger.info(f"  {i+1}. Chunk {idx} ({chunk_type}): {score:.4f}")
         
         # Compute dynamic n and MMR selection
         rerank_only_scores = [s for _, s in reranked]
         n_dynamic = self._compute_dynamic_n(state.user_prompt, rerank_only_scores)
-        print(f"[_run_parallel_cross_encoder_operations] Dynamic n: {n_dynamic}")
+        logger.info(f"Dynamic n: {n_dynamic}")
         
         # MMR selection
         candidate_vecs = [chunks[i]["embedding"] for i, _ in reranked]
@@ -351,7 +354,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         mmr_local_indices = self._mmr(candidate_vecs, best_q_vec, n_dynamic, lambda_=MMR_LAMBDA)
         selected_indices = [reranked[j][0] for j in mmr_local_indices]
         
-        print(f"[_run_parallel_cross_encoder_operations] MMR selected {len(selected_indices)} chunks")
+        logger.info(f"MMR selected {len(selected_indices)} chunks")
         
         # Prepare gating operation
         gate_passages = [chunks[i]["content"] for i in selected_indices]
@@ -378,9 +381,9 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     )
                     if user_fhir_repo:
                         fhir_repo = user_fhir_repo
-                        print("[fetch_patient] Using user's SMART on FHIR connection")
+                        logger.info("Using user's SMART on FHIR connection")
                 except Exception as e:
-                    print(f"[fetch_patient] Failed to use SMART connection: {e}, falling back to default")
+                    logger.info(f"Failed to use SMART connection: {e}, falling back to default")
             
             state.patient_ctx = await fhir_repo.get_patient(str(state.patient_id))
             
@@ -388,9 +391,9 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             try:
                 journal_entries = await fhir_repo.get_patient_journal_entries(str(state.patient_id))
                 state.journal_entries = list(journal_entries)
-                print(f"[fetch_patient] Fetched {len(state.journal_entries)} journal entries for patient {state.patient_id}")
+                logger.info(f"Fetched {len(state.journal_entries)} journal entries for patient {sanitize_patient_id(str(state.patient_id))}")
             except Exception as e:
-                print(f"[fetch_patient] Failed to fetch journal entries: {e}")
+                logger.info(f"Failed to fetch journal entries: {e}")
                 state.journal_entries = []
             
             return state
@@ -417,10 +420,10 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 ]
 
                 state.uploaded_pdfs = ready_pdfs
-                print(f"[fetch_pdfs] Fetched {len(state.uploaded_pdfs)} ready PDF documents for session {state.session_id} (patient_id={state.patient_id})")
+                logger.info(f"Fetched {len(state.uploaded_pdfs)} ready PDF documents for session {state.session_id} (patient_id={sanitize_patient_id(str(state.patient_id))})")
 
             except Exception as e:
-                print(f"[fetch_pdfs] Failed to fetch PDF documents: {e}")
+                logger.info(f"Failed to fetch PDF documents: {e}")
                 state.uploaded_pdfs = []
 
             return state
@@ -448,10 +451,10 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 ]
 
                 state.uploaded_xmls = ready_xmls
-                print(f"[fetch_xmls] Fetched {len(state.uploaded_xmls)} ready XML documents for session {state.session_id} (patient_id={state.patient_id})")
+                logger.info(f"Fetched {len(state.uploaded_xmls)} ready XML documents for session {state.session_id} (patient_id={sanitize_patient_id(str(state.patient_id))})")
 
             except Exception as e:
-                print(f"[fetch_xmls] Failed to fetch XML documents: {e}")
+                logger.info(f"Failed to fetch XML documents: {e}")
                 state.uploaded_xmls = []
 
             return state
@@ -463,9 +466,9 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 try: 
                     state.user_context = await self._user_repo.get_user_by_id(state.user_id)
                     if not state.user_context:
-                        print(f"[load_user_context] No user found with ID {state.user_id}")
+                        logger.info(f"No user found with ID {sanitize_user_id(state.user_id)}")
                 except Exception as e:
-                    print(f"[load_user_context] Error loading user context: {e}")
+                    log_error(logger, "load_user_context", e)
                     state.user_context = None
             
             return state
@@ -487,10 +490,10 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 )
                 
                 state.web_search_performed = needs_search
-                print(f"[web_search] Web search needed: {needs_search}")
+                logger.info(f"Web search needed: {needs_search}")
                 
             except Exception as e:
-                print(f"[web_search] Error evaluating search need: {e}")
+                log_error(logger, "web_search", e)
                 state.web_search_performed = False
             
             return state
@@ -527,10 +530,10 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                         for result in search_response.results[:3]
                     ]
                 
-                print(f"[web_search] Found {len(search_response.results)} results")
+                logger.info(f"Found {len(search_response.results)} results")
                 
             except Exception as e:
-                print(f"[web_search] Error performing search: {e}")
+                log_error(logger, "web_search", e)
                 state.web_search_response = None
                 state.retrieved_web = []
             
@@ -544,20 +547,20 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         @streaming_step("load_current_session_history")
         async def load_current_session_history(state: FlowState) -> FlowState:
             """Load current session chat history from in-memory session store with decryption and deduplication."""
-            print(f"[load_current_session_history] 📚 Loading history for session_id={state.session_id}")
-            print(f"[load_current_session_history] 🆔 Session memory ID: {id(self._session_memory)}")
+            logger.info(f"📚 Loading history for session_id={sanitize_session_id(state.session_id)}")
+            logger.info(f"🆔 Session memory ID: {id(self._session_memory)}")
             try:
                 history = self._session_memory.get(state.session_id or "", []) if state.session_id else []
                 total_sessions = len(self._session_memory)
-                print(f"[load_current_session_history] 🗄️ Found {len(history)} raw messages in session memory")
-                print(f"[load_current_session_history] 🗂️ Global memory tracking {total_sessions} sessions total")
+                logger.info(f"🗄️ Found {len(history)} raw messages in session memory")
+                logger.info(f"🗂️ Global memory tracking {total_sessions} sessions total")
 
                 chat_messages: list[ChatMessage] = []
                 session_manager = get_session_encryption_manager()
 
                 for i, item in enumerate(history):
                     try:
-                        print(f"[load_current_session_history] 🔍 Processing message {i+1}: encrypted={item.get('encrypted', False)}")
+                        logger.info(f"🔍 Processing message {i+1}: encrypted={item.get('encrypted', False)}")
 
                         # Handle both encrypted and unencrypted messages
                         if item.get("encrypted", False):
@@ -569,38 +572,38 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                                     role = ChatRole(decrypted_message.get("role", "user"))
                                     content = decrypted_message.get("content", "")
                                     chat_messages.append(ChatMessage(role=role, content=content))
-                                    print(f"[load_current_session_history] ✅ Decrypted {role.value}: '{content[:50]}...'")
+                                    logger.info(f"✅ Decrypted {role.value}: '{content[:50]}...'")
                                 except Exception as decrypt_error:
-                                    print(f"[load_current_session_history] ❌ Decryption failed for message {i+1}: {decrypt_error}")
+                                    logger.info(f"❌ Decryption failed for message {i+1}: {decrypt_error}")
                                     continue
                         else:
                             # Handle legacy unencrypted messages
                             role = ChatRole(item.get("role", "user"))
                             content = item.get("content", "")
                             chat_messages.append(ChatMessage(role=role, content=content))
-                            print(f"[load_current_session_history] ✅ Loaded unencrypted {role.value}: '{content[:50]}...'")
+                            logger.info(f"✅ Loaded unencrypted {role.value}: '{content[:50]}...'")
                     except Exception as e:
-                        print(f"[load_current_session_history] ❌ Error parsing message {i+1}: {e}")
+                        logger.info(f"❌ Error parsing message {i+1}: {e}")
                         continue
 
-                print(f"[load_current_session_history] 📋 Total decrypted messages: {len(chat_messages)}")
+                logger.info(f"📋 Total decrypted messages: {len(chat_messages)}")
 
                 # Remove the last user message to avoid duplication with current prompt
                 # The current user message was stored in store_user_message before this function
                 if chat_messages and chat_messages[-1].role == ChatRole.USER:
                     removed_msg = chat_messages[-1].content[:50]
-                    print(f"[load_current_session_history] 🗑️ Removing duplicate user message: '{removed_msg}...'")
+                    logger.info(f"🗑️ Removing duplicate user message: '{removed_msg}...'")
                     chat_messages = chat_messages[:-1]
 
                 state.chat_history = chat_messages
-                print(f"[load_current_session_history] ✅ Final chat history: {len(chat_messages)} messages")
+                logger.info(f"✅ Final chat history: {len(chat_messages)} messages")
 
                 # Debug: Show the final messages
                 for i, msg in enumerate(chat_messages):
-                    print(f"[load_current_session_history]   {i+1}. {msg.role.value}: '{msg.content[:50]}...'")
+                    logger.info(f"  {i+1}. {msg.role.value}: '{msg.content[:50]}...'")
 
             except Exception as e:
-                print(f"[load_current_session_history] ❌ Error loading in-memory chat history: {e}")
+                logger.info(f"❌ Error loading in-memory chat history: {e}")
                 import traceback
                 traceback.print_exc()
                 state.chat_history = []
@@ -612,12 +615,12 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         async def intelligent_retrieve_chunks(state: FlowState) -> FlowState:
             """In-RAM retrieval: chunk, embed, paraphrase, bi-encoder, cross-encoder rerank, dynamic-N MMR, gate, retry."""
             try:
-                print(f"[intelligent_retrieve_chunks] Starting retrieval for patient_id: {state.patient_id}")
-                print(f"[intelligent_retrieve_chunks] User prompt: '{state.user_prompt[:100]}...'")
+                logger.info(f"Starting retrieval for patient_id: {sanitize_patient_id(str(state.patient_id))}")
+                logger.info(f"User prompt: '{state.user_prompt[:100]}...'")
                 
                 # 1) Chunking via ChunkingOrchestrator (policy-driven)
                 patient_id_str = str(state.patient_id) if state.patient_id else ""
-                print(f"[intelligent_retrieve_chunks] Creating chunking orchestrator for patient: {patient_id_str}")
+                logger.info(f"Creating chunking orchestrator for patient: {patient_id_str}")
 
                 tokenizer = WhitespaceTokenizer()
                 redactor = SimplePhiRedactor()
@@ -631,36 +634,36 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 # Chunk patient context if available
                 produced = []
                 if state.patient_ctx:
-                    print("[intelligent_retrieve_chunks] Chunking patient context...")
+                    logger.info("Chunking patient context...")
                     produced = orchestrator.chunk_patient(state.patient_ctx, CHUNK_POLICY_PRESETS)
-                    print(f"[intelligent_retrieve_chunks] Patient context chunking produced {len(produced)} chunks")
+                    logger.info(f"Patient context chunking produced {len(produced)} chunks")
                 else:
-                    print("[intelligent_retrieve_chunks] No patient context available - proceeding with PDF-only mode")
+                    logger.info("No patient context available - proceeding with PDF-only mode")
                 
                 # Also chunk journal entries if available
                 journal_chunks = []
                 if state.journal_entries:
-                    print(f"[intelligent_retrieve_chunks] Chunking {len(state.journal_entries)} journal entries...")
+                    logger.info(f"Chunking {len(state.journal_entries)} journal entries...")
                     journal_chunks = await self._chunk_journal_entries(state.journal_entries, orchestrator, patient_id_str)
-                    print(f"[intelligent_retrieve_chunks] Journal entries chunking produced {len(journal_chunks)} chunks")
+                    logger.info(f"Journal entries chunking produced {len(journal_chunks)} chunks")
 
                 # Also chunk PDF documents if available
                 pdf_chunks = []
                 if state.uploaded_pdfs:
-                    print(f"[intelligent_retrieve_chunks] Chunking {len(state.uploaded_pdfs)} PDF documents...")
+                    logger.info(f"Chunking {len(state.uploaded_pdfs)} PDF documents...")
                     pdf_chunks = await self._chunk_pdf_documents(state.uploaded_pdfs, orchestrator, patient_id_str)
-                    print(f"[intelligent_retrieve_chunks] PDF documents chunking produced {len(pdf_chunks)} chunks")
+                    logger.info(f"PDF documents chunking produced {len(pdf_chunks)} chunks")
 
                 # Also chunk XML documents if available
                 xml_chunks = []
                 if state.uploaded_xmls:
-                    print(f"[intelligent_retrieve_chunks] Chunking {len(state.uploaded_xmls)} XML documents...")
+                    logger.info(f"Chunking {len(state.uploaded_xmls)} XML documents...")
                     xml_chunks = await self._chunk_xml_documents(state.uploaded_xmls, orchestrator, patient_id_str)
-                    print(f"[intelligent_retrieve_chunks] XML documents chunking produced {len(xml_chunks)} chunks")
+                    logger.info(f"XML documents chunking produced {len(xml_chunks)} chunks")
 
                 # Combine all chunks
                 all_chunks = produced + journal_chunks + pdf_chunks + xml_chunks
-                print(f"[intelligent_retrieve_chunks] Total chunks produced: {len(all_chunks)} (patient: {len(produced)}, journal: {len(journal_chunks)}, pdf: {len(pdf_chunks)}, xml: {len(xml_chunks)})")
+                logger.info(f"Total chunks produced: {len(all_chunks)} (patient: {len(produced)}, journal: {len(journal_chunks)}, pdf: {len(pdf_chunks)}, xml: {len(xml_chunks)})")
 
                 # Log data lineage: FHIR/PDF/XML → Chunking
                 if all_chunks:
@@ -677,7 +680,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
                 # Log chunk details (GDPR-safe)
                 for i, chunk in enumerate(all_chunks):
-                    print(f"[intelligent_retrieve_chunks] Chunk {i+1}: type={chunk.resource_type}, id={chunk.id}, length={len(chunk.text)} chars")
+                    logger.info(f"Chunk {i+1}: type={chunk.resource_type}, id={chunk.id}, length={len(chunk.text)} chars")
 
                 # Adapt to local chunk dicts
                 chunks: list[dict[str, Any]] = [{
@@ -688,24 +691,24 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 } for c in all_chunks]
                 
                 if not chunks:
-                    print("[intelligent_retrieve_chunks] No chunks produced")
+                    logger.info("No chunks produced")
                     if state.patient_ctx:
-                        print("[intelligent_retrieve_chunks] Using fallback to full patient context")
+                        logger.info("Using fallback to full patient context")
                         state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
                         state.chunk_analysis = {"method": "fallback", "reason": "No chunks from patient context"}
                     else:
-                        print("[intelligent_retrieve_chunks] No patient context or PDF content available")
+                        logger.info("No patient context or PDF content available")
                         state.retrieved_chunks = []
                         state.chunk_analysis = {"method": "none", "reason": "No content available for chunking"}
                     return state
 
                 # 2) Embed chunks
-                print(f"[intelligent_retrieve_chunks] Embedding {len(chunks)} chunks...")
+                logger.info(f"Embedding {len(chunks)} chunks...")
                 chunk_texts = [c["content"] for c in chunks]
                 chunk_vecs = await self._embed_many(chunk_texts, mode="passage")
                 for i, vec in enumerate(chunk_vecs):
                     chunks[i]["embedding"] = vec
-                print(f"[intelligent_retrieve_chunks] Successfully embedded {len(chunk_vecs)} chunks")
+                logger.info(f"Successfully embedded {len(chunk_vecs)} chunks")
 
                 # Log data lineage: Chunks → Embeddings
                 if chunk_vecs:
@@ -721,25 +724,25 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     )
 
                 # 3) Query variants
-                print("[intelligent_retrieve_chunks] Generating query variants...")
+                logger.info("Generating query variants...")
                 try:
                     paraphrases = await self._paraphrase_query_variants(state.user_prompt)
-                    print(f"[intelligent_retrieve_chunks] Generated {len(paraphrases)} paraphrases: {paraphrases}")
+                    logger.info(f"Generated {len(paraphrases)} paraphrases: {paraphrases}")
                 except Exception as e:
-                    print(f"[intelligent_retrieve_chunks] Failed to generate paraphrases: {e}")
+                    logger.info(f"Failed to generate paraphrases: {e}")
                     paraphrases = []
                 
                 # If in refinement loop, include refined queries at front
                 refinements = getattr(state, 'refined_queries', []) or []
                 base_variants = [state.user_prompt] + paraphrases[:2]
                 query_variants = refinements + base_variants
-                print(f"[intelligent_retrieve_chunks] Using {len(query_variants)} query variants: {query_variants}")
+                logger.info(f"Using {len(query_variants)} query variants: {query_variants}")
                 
                 query_vecs = await self._embed_many(query_variants, mode="query")
-                print(f"[intelligent_retrieve_chunks] Successfully embedded {len(query_vecs)} query variants")
+                logger.info(f"Successfully embedded {len(query_vecs)} query variants")
 
                 # 4) Bi-encoder scoring (max cosine)
-                print(f"[intelligent_retrieve_chunks] Computing bi-encoder scores for {len(chunks)} chunks...")
+                logger.info(f"Computing bi-encoder scores for {len(chunks)} chunks...")
                 def bi_score(vec: list[float]) -> float:
                     return max(self._cosine(vec, qv) for qv in query_vecs)
                 from typing import cast
@@ -747,23 +750,23 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 bi_scored.sort(key=lambda x: x[1], reverse=True)
                 
                 # Log top bi-encoder scores
-                print("[intelligent_retrieve_chunks] Top 5 bi-encoder scores:")
+                logger.info("Top 5 bi-encoder scores:")
                 for i, (idx, score) in enumerate(bi_scored[:5]):
                     chunk_type = chunks[idx]["data_type"]
-                    print(f"[intelligent_retrieve_chunks]   {i+1}. Chunk {idx} ({chunk_type}): {score:.4f}")
+                    logger.info(f"  {i+1}. Chunk {idx} ({chunk_type}): {score:.4f}")
                 
                 # Log bi-encoder score range
                 if bi_scored:
                     bi_scores = [score for _, score in bi_scored]
-                    print(f"[intelligent_retrieve_chunks] Bi-encoder score range: [{min(bi_scores):.4f}, {max(bi_scores):.4f}]")
+                    logger.info(f"Bi-encoder score range: [{min(bi_scores):.4f}, {max(bi_scores):.4f}]")
                 
                 initial_indices = [idx for idx, _ in bi_scored[:TOPK_INITIAL]]
-                print(f"[intelligent_retrieve_chunks] Selected top {len(initial_indices)} chunks for cross-encoder reranking")
+                logger.info(f"Selected top {len(initial_indices)} chunks for cross-encoder reranking")
 
                 # 5-8) Cross-encoder operations (reranking, MMR, gating) - MAXIMUM PARALLEL EXECUTION
                 lang = detect_language_code(state.user_prompt or "")
-                print(f"[intelligent_retrieve_chunks] Detected language: {lang}")
-                print("[intelligent_retrieve_chunks] Running optimized parallel cross-encoder operations...")
+                logger.info(f"Detected language: {lang}")
+                logger.info("Running optimized parallel cross-encoder operations...")
 
                 # Use the new parallel method for all cross-encoder operations
                 reranked, selected_indices, gate_scores = await self._run_parallel_cross_encoder_operations(
@@ -771,53 +774,53 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 )
                 
                 # Apply gating threshold
-                print(f"[intelligent_retrieve_chunks] Applying binary gate with threshold {GATE_THRESH}")
+                logger.info(f"Applying binary gate with threshold {GATE_THRESH}")
                 gate_results = [s >= GATE_THRESH for s in gate_scores]
                 final_selected = [i for i, ok in zip(selected_indices, gate_results) if ok]
                 
                 # Log gating results
-                print("[intelligent_retrieve_chunks] Gate results:")
+                logger.info("Gate results:")
                 for i, (idx, score, passed) in enumerate(zip(selected_indices, gate_scores, gate_results)):
                     chunk_type = chunks[idx]["data_type"]
                     status = "PASSED" if passed else "FILTERED"
-                    print(f"[intelligent_retrieve_chunks]   Chunk {idx} ({chunk_type}): {score:.4f} - {status}")
+                    logger.info(f"  Chunk {idx} ({chunk_type}): {score:.4f} - {status}")
                 
-                print(f"[intelligent_retrieve_chunks] Final selected chunks after gating: {len(final_selected)}")
+                logger.info(f"Final selected chunks after gating: {len(final_selected)}")
                 
                 # If no chunks pass gating, try with a lower threshold
                 if not final_selected and gate_scores:
                     max_score = max(gate_scores)
-                    print(f"[intelligent_retrieve_chunks] No chunks passed gating (max score: {max_score:.4f}), trying with lower threshold")
+                    logger.info(f"No chunks passed gating (max score: {max_score:.4f}), trying with lower threshold")
                     lower_threshold = min(0.3, max_score * 0.8)  # Use 80% of max score or 0.3, whichever is lower
-                    print(f"[intelligent_retrieve_chunks] Using lower threshold: {lower_threshold:.4f}")
+                    logger.info(f"Using lower threshold: {lower_threshold:.4f}")
                     gate_results_lower = [s >= lower_threshold for s in gate_scores]
                     final_selected = [i for i, ok in zip(selected_indices, gate_results_lower) if ok]
-                    print(f"[intelligent_retrieve_chunks] Final selected chunks with lower threshold: {len(final_selected)}")
+                    logger.info(f"Final selected chunks with lower threshold: {len(final_selected)}")
                     
                     # Log the new results
                     for i, (idx, score, passed) in enumerate(zip(selected_indices, gate_scores, gate_results_lower)):
                         chunk_type = chunks[idx]["data_type"]
                         status = "PASSED" if passed else "FILTERED"
-                        print(f"[intelligent_retrieve_chunks]   Chunk {idx} ({chunk_type}): {score:.4f} - {status}")
+                        logger.info(f"  Chunk {idx} ({chunk_type}): {score:.4f} - {status}")
 
                 # 9) Retry if too few
                 # Agentic refinement handoff: if too few, set state and branch in the graph
                 min_required = max(N_MIN, min(N_MAX, len(chunks)))
                 state.needs_refinement = len(final_selected) < min_required and state.retrieval_retry_attempts < RETRY_MAX
                 
-                print(f"[intelligent_retrieve_chunks] Retry check: {len(final_selected)} < {min_required} and attempts {state.retrieval_retry_attempts} < {RETRY_MAX}")
+                logger.info(f"Retry check: {len(final_selected)} < {min_required} and attempts {state.retrieval_retry_attempts} < {RETRY_MAX}")
                 
                 if state.needs_refinement:
-                    print(f"[intelligent_retrieve_chunks] Too few chunks selected ({len(final_selected)}), attempting refinement...")
+                    logger.info(f"Too few chunks selected ({len(final_selected)}), attempting refinement...")
                     try:
                         refinements = await self._refine_queries(state.user_prompt, [cast(str, chunks[i]["content"]) for i in final_selected])
-                        print(f"[intelligent_retrieve_chunks] Generated {len(refinements)} refined queries: {refinements}")
+                        logger.info(f"Generated {len(refinements)} refined queries: {refinements}")
                         
                         # If we have refined queries, we could potentially run them in parallel here
                         # but for now, we'll use them in the next iteration
                         state.refined_queries = [r for r in refinements if r][:2]
                     except Exception as e:
-                        print(f"[intelligent_retrieve_chunks] Refinement failed: {e}")
+                        logger.info(f"Refinement failed: {e}")
                         refinements = []
                         state.refined_queries = []
                     state.retrieval_retry_attempts += 1
@@ -838,22 +841,22 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     }
                     state.retrieval_reasoning = f"Refining search (attempt {state.retrieval_retry_attempts}) - too few chunks selected"
                     
-                    print(f"[intelligent_retrieve_chunks] Setting up for retry with {len(state.refined_queries)} refined queries")
+                    logger.info(f"Setting up for retry with {len(state.refined_queries)} refined queries")
                     # Do not finalize retrieved_chunks yet; upstream conditional edge will loop
                     return state
 
                 if not final_selected:
-                    print("[intelligent_retrieve_chunks] No chunks passed gating, using fallback selection")
+                    logger.info("No chunks passed gating, using fallback selection")
                     fallback_n = min(max(N_MIN, 1), len(reranked))
                     final_selected = [idx for idx, _ in reranked[:fallback_n]]
-                    print(f"[intelligent_retrieve_chunks] Fallback selected {len(final_selected)} chunks: {final_selected}")
+                    logger.info(f"Fallback selected {len(final_selected)} chunks: {final_selected}")
 
                 # Log final selected chunks (GDPR-safe)
-                print(f"[intelligent_retrieve_chunks] Final selected chunks ({len(final_selected)}):")
+                logger.info(f"Final selected chunks ({len(final_selected)}):")
                 for i, idx in enumerate(final_selected):
                     chunk_type = chunks[idx]["data_type"]
                     chunk_length = len(cast(str, chunks[idx]["content"]))
-                    print(f"[intelligent_retrieve_chunks]   {i+1}. Chunk {idx} ({chunk_type}): {chunk_length} chars")
+                    logger.info(f"  {i+1}. Chunk {idx} ({chunk_type}): {chunk_length} chars")
 
                 # Log data lineage: Embeddings → Retrieval (bi-encoder + cross-encoder + MMR + gating)
                 if final_selected:
@@ -893,10 +896,10 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 }
                 state.retrieval_reasoning = "Paraphrases + bi-encoder, cross-encoder rerank, MMR diversity, binary gating"
                 
-                print(f"[intelligent_retrieve_chunks] Retrieval complete: {len(state.retrieved_chunks)} chunks selected")
-                print(f"[intelligent_retrieve_chunks] Chunk analysis: {state.chunk_analysis}")
+                logger.info(f"Retrieval complete: {len(state.retrieved_chunks)} chunks selected")
+                logger.info(f"Chunk analysis: {state.chunk_analysis}")
             except Exception as e:
-                print(f"[intelligent_retrieve_chunks] Error: {e}")
+                logger.info(f"Error: {e}")
                 state.retrieved_chunks = []
                 state.chunk_analysis = {"method": "error", "reason": str(e)}
                 return state
@@ -906,16 +909,16 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         async def _fast_sbar_retrieve(state: FlowState, focus: str, queries: List[str]) -> List[str]:
             """Fast SBAR retrieval using only bi-encoder similarity (no cross-encoder)."""
             try:
-                print(f"[_fast_sbar_retrieve] {focus} - Starting fast bi-encoder retrieval")
+                logger.info(f"{focus} - Starting fast bi-encoder retrieval")
 
                 # Get chunks from state - try multiple sources
                 chunks = []
                 if state.retrieved_chunks:
                     chunks = state.retrieved_chunks[:50]  # Use cached chunks if available
-                    print(f"[_fast_sbar_retrieve] {focus} - Using {len(chunks)} cached chunks")
+                    logger.info(f"{focus} - Using {len(chunks)} cached chunks")
                 else:
                     # Fall back to doing quick retrieval ourselves
-                    print(f"[_fast_sbar_retrieve] {focus} - No cached chunks, doing quick retrieval")
+                    logger.info(f"{focus} - No cached chunks, doing quick retrieval")
                     if state.patient_ctx and state.journal_entries:
                         # Quick retrieval from journal entries (most relevant for SBAR)
                         for entry in state.journal_entries[:15]:  # Limit for speed
@@ -925,7 +928,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                                 chunks.append(entry.text)
 
                     if not chunks:
-                        print(f"[_fast_sbar_retrieve] {focus} - No chunks available")
+                        logger.info(f"{focus} - No chunks available")
                         return []
 
                 # Simple keyword-based retrieval for maximum speed
@@ -947,17 +950,17 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 scored_chunks.sort(key=lambda x: x[0], reverse=True)
                 result_chunks = [chunk for _, chunk in scored_chunks[:15]]
 
-                print(f"[_fast_sbar_retrieve] {focus} - Retrieved {len(result_chunks)} chunks using keyword matching")
+                logger.info(f"{focus} - Retrieved {len(result_chunks)} chunks using keyword matching")
                 return result_chunks
 
             except Exception as e:
-                print(f"[_fast_sbar_retrieve] {focus} - Error: {e}")
+                logger.info(f"{focus} - Error: {e}")
                 return []
 
         async def _generate_sbar_queries(state: FlowState, sbar_component: str, focus_instruction: str) -> List[str]:
             """Generate focused queries for each SBAR component based on the user's original query."""
             try:
-                print(f"[_generate_sbar_queries] Generating {sbar_component} queries from: '{state.user_prompt[:100]}...'")
+                logger.info(f"Generating {sbar_component} queries from: '{state.user_prompt[:100]}...'")
 
                 # Define SBAR component specific instructions
                 component_prompts = {
@@ -1002,11 +1005,11 @@ Keep queries concise and medical terminology appropriate.
                     }
                     queries.extend(fallback.get(sbar_component, ["medical information"])[:3-len(queries)])
 
-                print(f"[_generate_sbar_queries] Generated {len(queries)} {sbar_component} queries: {queries}")
+                logger.info(f"Generated {len(queries)} {sbar_component} queries: {queries}")
                 return queries[:3]  # Limit to 3 queries
 
             except Exception as e:
-                print(f"[_generate_sbar_queries] Error generating {sbar_component} queries: {e}")
+                log_error(logger, "_generate_sbar_queries", e)
                 # Return fallback queries
                 fallback_queries = {
                     "situation": ["current symptoms complaints", "vital signs measurements", "active problems"],
@@ -1019,7 +1022,7 @@ Keep queries concise and medical terminology appropriate.
         async def _generate_timeline_queries(state: FlowState, event_description: str, time_period: str) -> List[str]:
             """Generate focused temporal queries for each timeline event."""
             try:
-                print(f"[_generate_timeline_queries] Generating queries for event: '{event_description}' at '{time_period}'")
+                logger.info(f"Generating queries for event: '{event_description}' at '{time_period}'")
 
                 prompt = f"""
 Based on this user request: "{state.user_prompt}"
@@ -1061,11 +1064,11 @@ Keep queries concise and focused on the temporal aspect.
                     ]
                     queries.extend(fallback[:3-len(queries)])
 
-                print(f"[_generate_timeline_queries] Generated {len(queries)} queries: {queries}")
+                logger.info(f"Generated {len(queries)} queries: {queries}")
                 return queries[:3]  # Limit to 3 queries
 
             except Exception as e:
-                print(f"[_generate_timeline_queries] Error generating queries: {e}")
+                log_error(logger, "_generate_timeline_queries", e)
                 # Return fallback queries
                 return [
                     f"{event_description} {time_period}",
@@ -1077,7 +1080,7 @@ Keep queries concise and focused on the temporal aspect.
         async def retrieve_situation_chunks(state: FlowState) -> FlowState:
             """Retrieve chunks focused on current patient situation (fast SBAR version)."""
             try:
-                print("[retrieve_situation_chunks] Generating situation-focused queries from user prompt")
+                logger.info("Generating situation-focused queries from user prompt")
 
                 # Generate SBAR-focused queries from the original user query
                 situation_queries = await _generate_sbar_queries(state, "situation",
@@ -1085,10 +1088,10 @@ Keep queries concise and focused on the temporal aspect.
 
                 chunks = await _fast_sbar_retrieve(state, "situation", situation_queries)
                 state.sbar_situation_chunks = chunks[:10]  # Limit for speed
-                print(f"[retrieve_situation_chunks] Retrieved {len(state.sbar_situation_chunks)} chunks")
+                logger.info(f"Retrieved {len(state.sbar_situation_chunks)} chunks")
 
             except Exception as e:
-                print(f"[retrieve_situation_chunks] Error: {e}")
+                logger.info(f"Error: {e}")
                 state.sbar_situation_chunks = []
 
             return state
@@ -1097,7 +1100,7 @@ Keep queries concise and focused on the temporal aspect.
         async def retrieve_background_chunks(state: FlowState) -> FlowState:
             """Retrieve chunks focused on patient background and history (fast SBAR version)."""
             try:
-                print("[retrieve_background_chunks] Generating background-focused queries from user prompt")
+                logger.info("Generating background-focused queries from user prompt")
 
                 # Generate SBAR-focused queries from the original user query
                 background_queries = await _generate_sbar_queries(state, "background",
@@ -1105,10 +1108,10 @@ Keep queries concise and focused on the temporal aspect.
 
                 chunks = await _fast_sbar_retrieve(state, "background", background_queries)
                 state.sbar_background_chunks = chunks[:10]  # Limit for speed
-                print(f"[retrieve_background_chunks] Retrieved {len(state.sbar_background_chunks)} chunks")
+                logger.info(f"Retrieved {len(state.sbar_background_chunks)} chunks")
 
             except Exception as e:
-                print(f"[retrieve_background_chunks] Error: {e}")
+                logger.info(f"Error: {e}")
                 state.sbar_background_chunks = []
 
             return state
@@ -1117,7 +1120,7 @@ Keep queries concise and focused on the temporal aspect.
         async def retrieve_assessment_chunks(state: FlowState) -> FlowState:
             """Retrieve chunks focused on clinical assessment data (fast SBAR version)."""
             try:
-                print("[retrieve_assessment_chunks] Generating assessment-focused queries from user prompt")
+                logger.info("Generating assessment-focused queries from user prompt")
 
                 # Generate SBAR-focused queries from the original user query
                 assessment_queries = await _generate_sbar_queries(state, "assessment",
@@ -1125,10 +1128,10 @@ Keep queries concise and focused on the temporal aspect.
 
                 chunks = await _fast_sbar_retrieve(state, "assessment", assessment_queries)
                 state.sbar_assessment_chunks = chunks[:10]  # Limit for speed
-                print(f"[retrieve_assessment_chunks] Retrieved {len(state.sbar_assessment_chunks)} chunks")
+                logger.info(f"Retrieved {len(state.sbar_assessment_chunks)} chunks")
 
             except Exception as e:
-                print(f"[retrieve_assessment_chunks] Error: {e}")
+                logger.info(f"Error: {e}")
                 state.sbar_assessment_chunks = []
 
             return state
@@ -1137,7 +1140,7 @@ Keep queries concise and focused on the temporal aspect.
         async def retrieve_recommendation_chunks(state: FlowState) -> FlowState:
             """Retrieve chunks focused on treatment and recommendations (fast SBAR version)."""
             try:
-                print("[retrieve_recommendation_chunks] Generating recommendation-focused queries from user prompt")
+                logger.info("Generating recommendation-focused queries from user prompt")
 
                 # Generate SBAR-focused queries from the original user query
                 recommendation_queries = await _generate_sbar_queries(state, "recommendation",
@@ -1145,10 +1148,10 @@ Keep queries concise and focused on the temporal aspect.
 
                 chunks = await _fast_sbar_retrieve(state, "recommendation", recommendation_queries)
                 state.sbar_recommendation_chunks = chunks[:10]  # Limit for speed
-                print(f"[retrieve_recommendation_chunks] Retrieved {len(state.sbar_recommendation_chunks)} chunks")
+                logger.info(f"Retrieved {len(state.sbar_recommendation_chunks)} chunks")
 
             except Exception as e:
-                print(f"[retrieve_recommendation_chunks] Error: {e}")
+                logger.info(f"Error: {e}")
                 state.sbar_recommendation_chunks = []
 
             return state
@@ -1187,14 +1190,14 @@ Keep queries concise and focused on the temporal aspect.
                 return state
 
             try:
-                print(f"[store_user_message] 🔐 Storing user message for session_id={state.session_id}")
-                print(f"[store_user_message] 📝 Message: '{state.user_prompt[:100]}...'")
+                logger.info(f"🔐 Storing user message for session_id={sanitize_session_id(state.session_id)}")
+                logger.info(f"📝 Message: '{state.user_prompt[:100]}...'")
 
                 # Generate session encryption key if not exists
                 session_manager = get_session_encryption_manager()
                 if state.session_id and not session_manager.get_session_key(state.session_id):
                     session_manager.generate_session_key(state.session_id)
-                    print(f"[store_user_message] 🔑 Generated new session key for {state.session_id}")
+                    logger.info(f"🔑 Generated new session key for {sanitize_session_id(state.session_id)}")
 
                 # Encrypt user message for secure storage
                 encrypted_message = {
@@ -1218,11 +1221,11 @@ Keep queries concise and focused on the temporal aspect.
                     # Debug: Show current session memory size
                     current_size = len(self._session_memory[state.session_id])
                     total_sessions = len(self._session_memory)
-                    print(f"[store_user_message] 💾 Session memory now has {current_size} messages")
-                    print(f"[store_user_message] 🗂️ Global memory tracking {total_sessions} sessions total")
-                    print(f"[store_user_message] 🆔 Session memory ID: {id(self._session_memory)}")
+                    logger.info(f"💾 Session memory now has {current_size} messages")
+                    logger.info(f"🗂️ Global memory tracking {total_sessions} sessions total")
+                    logger.info(f"🆔 Session memory ID: {id(self._session_memory)}")
                 else:
-                    print("[store_user_message] ⚠️ No session_id provided, message not stored")
+                    logger.info("⚠️ No session_id provided, message not stored")
 
                 # Store GDPR-safe user metrics for analytics (not encrypted - no PHI)
                 if state.user_id:
@@ -1249,10 +1252,10 @@ Keep queries concise and focused on the temporal aspect.
                     
                     # Store metrics in database
                     await self._user_repo.create_user_action(user_action)
-                    print(f"[store_user_message] Stored encrypted GDPR-safe metrics: {prompt_category} prompt from user {state.user_id}")
+                    logger.info(f"Stored encrypted GDPR-safe metrics: {prompt_category} prompt from user {sanitize_user_id(state.user_id)}")
                 
             except Exception as e:
-                print(f"[store_user_message] Error: {e}")
+                logger.info(f"Error: {e}")
                 import traceback
                 traceback.print_exc()
             
@@ -1261,23 +1264,23 @@ Keep queries concise and focused on the temporal aspect.
         async def store_assistant_response(state: FlowState) -> FlowState:
             """Store the assistant response in ephemeral memory with encryption and GDPR-safe metrics."""
             if not state.llm_response:
-                print("[store_assistant_response] ⚠️ No LLM response to store")
+                logger.info("⚠️ No LLM response to store")
                 return state
 
             try:
-                print(f"[store_assistant_response] 🤖 Storing assistant response for session_id={state.session_id}")
-                print(f"[store_assistant_response] 📝 Response: '{state.llm_response.content[:100]}...'")
+                logger.info(f"🤖 Storing assistant response for session_id={sanitize_session_id(state.session_id)}")
+                logger.info(f"📝 Response: '{state.llm_response.content[:100]}...'")
 
                 # Generate session encryption key if not exists
                 session_manager = get_session_encryption_manager()
                 if state.session_id and not session_manager.get_session_key(state.session_id):
                     session_manager.generate_session_key(state.session_id)
-                    print(f"[store_assistant_response] 🔑 Generated new session key for {state.session_id}")
+                    logger.info(f"🔑 Generated new session key for {sanitize_session_id(state.session_id)}")
 
                 # Use the assistant message content as-is
                 clean_content = state.llm_response.content
 
-                print(f"[store_assistant_response] 🧹 Cleaned content: {len(clean_content)} chars (was {len(state.llm_response.content)} chars)")
+                logger.info(f"🧹 Cleaned content: {len(clean_content)} chars (was {len(state.llm_response.content)} chars)")
 
                 # Encrypt assistant message for secure storage
                 encrypted_message = {
@@ -1300,12 +1303,12 @@ Keep queries concise and focused on the temporal aspect.
 
                     # Debug: Show current session memory size
                     current_size = len(self._session_memory[state.session_id])
-                    print(f"[store_assistant_response] 💾 Session memory now has {current_size} messages")
+                    logger.info(f"💾 Session memory now has {current_size} messages")
                 else:
-                    print("[store_assistant_response] ⚠️ No session_id provided, response not stored")
+                    logger.info("⚠️ No session_id provided, response not stored")
 
             except Exception as e:
-                print(f"[store_assistant_response] ❌ Error: {e}")
+                logger.info(f"❌ Error: {e}")
                 import traceback
                 traceback.print_exc()
 
@@ -1315,7 +1318,7 @@ Keep queries concise and focused on the temporal aspect.
         async def generate_sbar_situation(state: FlowState) -> FlowState:
             """Generate SBAR Situation component."""
             try:
-                print("[generate_sbar_situation] Starting SBAR Situation generation")
+                logger.info("Starting SBAR Situation generation")
 
                 # Get situation-specific chunks
                 situation_chunks = state.sbar_situation_chunks or []
@@ -1386,10 +1389,10 @@ Keep queries concise and focused on the temporal aspect.
                 # Store in SBAR results
                 state.sbar_situation_result = response.content.strip()
 
-                print(f"[generate_sbar_situation] Generated situation summary: {len(response.content)} chars")
+                logger.info(f"Generated situation summary: {len(response.content)} chars")
 
             except Exception as e:
-                print(f"[generate_sbar_situation] Error: {e}")
+                logger.info(f"Error: {e}")
                 state.sbar_situation_result = f"Error generating situation summary: {str(e)}"
 
             return state
@@ -1398,7 +1401,7 @@ Keep queries concise and focused on the temporal aspect.
         async def generate_sbar_background(state: FlowState) -> FlowState:
             """Generate SBAR Background component."""
             try:
-                print("[generate_sbar_background] Starting SBAR Background generation")
+                logger.info("Starting SBAR Background generation")
 
                 # Get background-specific chunks
                 background_chunks = state.sbar_background_chunks or []
@@ -1469,10 +1472,10 @@ Keep queries concise and focused on the temporal aspect.
                 # Store in SBAR results
                 state.sbar_background_result = response.content.strip()
 
-                print(f"[generate_sbar_background] Generated background summary: {len(response.content)} chars")
+                logger.info(f"Generated background summary: {len(response.content)} chars")
 
             except Exception as e:
-                print(f"[generate_sbar_background] Error: {e}")
+                logger.info(f"Error: {e}")
                 state.sbar_background_result = f"Error generating background summary: {str(e)}"
 
             return state
@@ -1481,7 +1484,7 @@ Keep queries concise and focused on the temporal aspect.
         async def generate_sbar_assessment(state: FlowState) -> FlowState:
             """Generate SBAR Assessment component."""
             try:
-                print("[generate_sbar_assessment] Starting SBAR Assessment generation")
+                logger.info("Starting SBAR Assessment generation")
 
                 # Get assessment-specific chunks
                 assessment_chunks = state.sbar_assessment_chunks or []
@@ -1552,10 +1555,10 @@ Keep queries concise and focused on the temporal aspect.
                 # Store in SBAR results
                 state.sbar_assessment_result = response.content.strip()
 
-                print(f"[generate_sbar_assessment] Generated assessment summary: {len(response.content)} chars")
+                logger.info(f"Generated assessment summary: {len(response.content)} chars")
 
             except Exception as e:
-                print(f"[generate_sbar_assessment] Error: {e}")
+                logger.info(f"Error: {e}")
                 state.sbar_assessment_result = f"Error generating assessment summary: {str(e)}"
 
             return state
@@ -1564,7 +1567,7 @@ Keep queries concise and focused on the temporal aspect.
         async def generate_sbar_recommendation(state: FlowState) -> FlowState:
             """Generate SBAR Recommendation component."""
             try:
-                print("[generate_sbar_recommendation] Starting SBAR Recommendation generation")
+                logger.info("Starting SBAR Recommendation generation")
 
                 # Get recommendation-specific chunks
                 recommendation_chunks = state.sbar_recommendation_chunks or []
@@ -1636,10 +1639,10 @@ Keep queries concise and focused on the temporal aspect.
                 # Store in SBAR results
                 state.sbar_recommendation_result = response.content.strip()
 
-                print(f"[generate_sbar_recommendation] Generated recommendation summary: {len(response.content)} chars")
+                logger.info(f"Generated recommendation summary: {len(response.content)} chars")
 
             except Exception as e:
-                print(f"[generate_sbar_recommendation] Error: {e}")
+                logger.info(f"Error: {e}")
                 state.sbar_recommendation_result = f"Error generating recommendation summary: {str(e)}"
 
             return state
@@ -1648,7 +1651,7 @@ Keep queries concise and focused on the temporal aspect.
         async def merge_sbar_results(state: FlowState) -> FlowState:
             """Merge parallel SBAR results and prepare final response."""
             try:
-                print("[merge_sbar_results] All parallel SBAR components completed, merging results")
+                logger.info("All parallel SBAR components completed, merging results")
 
                 # Collect results from separate fields
                 sbar_results = {
@@ -1659,10 +1662,10 @@ Keep queries concise and focused on the temporal aspect.
                 }
 
                 completed_components = [comp for comp, result in sbar_results.items() if result]
-                print(f"[merge_sbar_results] Available components: {completed_components}")
+                logger.info(f"Available components: {completed_components}")
 
                 if not completed_components:
-                    print("[merge_sbar_results] No SBAR results available")
+                    logger.info("No SBAR results available")
                     state.llm_response = ChatMessage(
                         role=ChatRole.ASSISTANT,
                         content="Error: No SBAR results were generated"
@@ -1720,10 +1723,10 @@ Keep queries concise and focused on the temporal aspect.
                     content=json_response
                 )
 
-                print(f"[merge_sbar_results] Created structured SBAR response: {len(json_response)} chars")
+                logger.info(f"Created structured SBAR response: {len(json_response)} chars")
 
             except Exception as e:
-                print(f"[merge_sbar_results] Error merging SBAR results: {e}")
+                log_error(logger, "merge_sbar_results", e)
                 # Fallback response
                 import json
                 fallback_sbar = {
@@ -1747,17 +1750,17 @@ Keep queries concise and focused on the temporal aspect.
         async def sbar_parallel_dispatcher(state: FlowState) -> FlowState:
             """Dispatcher node that triggers parallel SBAR processing."""
             try:
-                print("[sbar_parallel_dispatcher] Initiating parallel SBAR processing")
+                logger.info("Initiating parallel SBAR processing")
 
                 # Initialize SBAR component fields if needed
-                print("[sbar_parallel_dispatcher] SBAR fields initialized for parallel processing")
+                logger.info("SBAR fields initialized for parallel processing")
 
                 # This node doesn't do much - it's just a dispatcher
                 # The actual parallel work will happen in the parallel tasks
-                print("[sbar_parallel_dispatcher] Dispatcher ready for parallel execution")
+                logger.info("Dispatcher ready for parallel execution")
 
             except Exception as e:
-                print(f"[sbar_parallel_dispatcher] Error in dispatcher: {e}")
+                log_error(logger, "sbar_parallel_dispatcher", e)
 
             return state
 
@@ -1767,7 +1770,7 @@ Keep queries concise and focused on the temporal aspect.
         async def extract_timeline_events(state: FlowState) -> FlowState:
             """Extract key temporal events from user query and chat history."""
             try:
-                print("[extract_timeline_events] Analyzing query for temporal events")
+                logger.info("Analyzing query for temporal events")
 
                 # Include chat history context for better event extraction
                 recent_history = state.chat_history[-10:] if state.chat_history else []
@@ -1811,10 +1814,10 @@ Return ONLY the JSON array, no additional text.
 
                     # Limit to 6 events max
                     state.timeline_events = events[:6]
-                    print(f"[extract_timeline_events] Extracted {len(state.timeline_events)} timeline events")
+                    logger.info(f"Extracted {len(state.timeline_events)} timeline events")
 
                 except json.JSONDecodeError as e:
-                    print(f"[extract_timeline_events] JSON parse error: {e}, using fallback events")
+                    logger.info(f"JSON parse error: {e}, using fallback events")
                     # Fallback: create simple temporal events
                     state.timeline_events = [
                         {"title": "Initial presentation", "time_period": "First visit", "keywords": ["initial", "presentation", "symptoms"]},
@@ -1824,7 +1827,7 @@ Return ONLY the JSON array, no additional text.
                     ]
 
             except Exception as e:
-                print(f"[extract_timeline_events] Error: {e}")
+                logger.info(f"Error: {e}")
                 # Fallback events
                 state.timeline_events = [
                     {"title": "Medical history overview", "time_period": "Historical", "keywords": ["history", "background"]},
@@ -1839,10 +1842,10 @@ Return ONLY the JSON array, no additional text.
         async def retrieve_timeline_chunks(state: FlowState) -> FlowState:
             """Retrieve chunks for each timeline event sequentially."""
             try:
-                print("[retrieve_timeline_chunks] Starting retrieval for timeline events")
+                logger.info("Starting retrieval for timeline events")
 
                 if not state.timeline_events:
-                    print("[retrieve_timeline_chunks] No timeline events to retrieve")
+                    logger.info("No timeline events to retrieve")
                     return state
 
                 state.timeline_chunks = {}
@@ -1853,7 +1856,7 @@ Return ONLY the JSON array, no additional text.
                     title = event.get("title", "Unknown event")
                     time_period = event.get("time_period", "Unknown time")
 
-                    print(f"[retrieve_timeline_chunks] Retrieving chunks for: {title} ({time_period})")
+                    logger.info(f"Retrieving chunks for: {title} ({time_period})")
 
                     # Generate queries for this event
                     queries = await _generate_timeline_queries(state, title, time_period)
@@ -1863,12 +1866,12 @@ Return ONLY the JSON array, no additional text.
 
                     # Store chunks for this event
                     state.timeline_chunks[event_id] = chunks[:8]  # Limit to 8 chunks per event
-                    print(f"[retrieve_timeline_chunks] Retrieved {len(state.timeline_chunks[event_id])} chunks for {title}")
+                    logger.info(f"Retrieved {len(state.timeline_chunks[event_id])} chunks for {title}")
 
-                print(f"[retrieve_timeline_chunks] Retrieved chunks for {len(state.timeline_chunks)} events")
+                logger.info(f"Retrieved chunks for {len(state.timeline_chunks)} events")
 
             except Exception as e:
-                print(f"[retrieve_timeline_chunks] Error: {e}")
+                logger.info(f"Error: {e}")
                 state.timeline_chunks = {}
 
             return state
@@ -1877,10 +1880,10 @@ Return ONLY the JSON array, no additional text.
         async def generate_timeline_bubbles(state: FlowState) -> FlowState:
             """Generate timeline bubble content for each event."""
             try:
-                print("[generate_timeline_bubbles] Generating timeline content")
+                logger.info("Generating timeline content")
 
                 if not state.timeline_events:
-                    print("[generate_timeline_bubbles] No timeline events to generate")
+                    logger.info("No timeline events to generate")
                     return state
 
                 state.timeline_results = []
@@ -1915,7 +1918,7 @@ Return ONLY the JSON array, no additional text.
                     time_period = event.get("time_period", "Unknown time")
                     chunks = state.timeline_chunks.get(event_id, [])
 
-                    print(f"[generate_timeline_bubbles] Generating content for: {title}")
+                    logger.info(f"Generating content for: {title}")
 
                     # Citation format
                     citation_format = "Use **page X** format" if detect_language_code(state.user_prompt) == "en" else "Use **sida X** format"
@@ -1973,12 +1976,12 @@ Return only the content in markdown format, no preamble.
                     }
 
                     state.timeline_results.append(timeline_event)
-                    print(f"[generate_timeline_bubbles] Generated content for {title}: {len(content)} chars")
+                    logger.info(f"Generated content for {title}: {len(content)} chars")
 
-                print(f"[generate_timeline_bubbles] Generated {len(state.timeline_results)} timeline bubbles")
+                logger.info(f"Generated {len(state.timeline_results)} timeline bubbles")
 
             except Exception as e:
-                print(f"[generate_timeline_bubbles] Error: {e}")
+                logger.info(f"Error: {e}")
                 state.timeline_results = []
 
             return state
@@ -1987,10 +1990,10 @@ Return only the content in markdown format, no preamble.
         async def merge_timeline_results(state: FlowState) -> FlowState:
             """Merge timeline results and format as JSON for frontend."""
             try:
-                print("[merge_timeline_results] Merging timeline results")
+                logger.info("Merging timeline results")
 
                 if not state.timeline_results or len(state.timeline_results) == 0:
-                    print("[merge_timeline_results] No timeline results available")
+                    logger.info("No timeline results available")
                     state.llm_response = ChatMessage(
                         role=ChatRole.ASSISTANT,
                         content="Error: No timeline results were generated"
@@ -2021,10 +2024,10 @@ Return only the content in markdown format, no preamble.
                     content=json_response
                 )
 
-                print(f"[merge_timeline_results] Created timeline response with {len(state.timeline_results)} events: {len(json_response)} chars")
+                logger.info(f"Created timeline response with {len(state.timeline_results)} events: {len(json_response)} chars")
 
             except Exception as e:
-                print(f"[merge_timeline_results] Error: {e}")
+                logger.info(f"Error: {e}")
                 # Fallback response
                 fallback_timeline = {
                     "type": "timeline_view",
@@ -2048,15 +2051,15 @@ Return only the content in markdown format, no preamble.
             try:
                 # If template already set (from button), skip
                 if state.note_template:
-                    print(f"[load_note_template] Template already set: {state.note_template.name}")
+                    logger.info(f"Template already set: {state.note_template.name}")
                     return state
 
                 # If no preference set, can't load template
                 if not state.note_template_type_preference:
-                    print("[load_note_template] ⚠️ No template type preference set")
+                    logger.info("⚠️ No template type preference set")
                     return state
 
-                print(f"[load_note_template] Loading system template of type: {state.note_template_type_preference}")
+                logger.info(f"Loading system template of type: {state.note_template_type_preference}")
 
                 # Get template repository from engine
                 # We need to access it from the engine's dependencies
@@ -2131,10 +2134,10 @@ Return only the content in markdown format, no preamble.
 
                 state.note_generation_id = str(uuid.uuid4())
 
-                print(f"[load_note_template] ✓ Loaded template: {name} ({type_str}, {lang_code})")
+                logger.info(f"✓ Loaded template: {name} ({type_str}, {lang_code})")
 
             except Exception as e:
-                print(f"[load_note_template] ❌ Error: {e}")
+                logger.info(f"❌ Error: {e}")
                 import traceback
                 traceback.print_exc()
 
@@ -2148,10 +2151,10 @@ Return only the content in markdown format, no preamble.
             """
             try:
                 if not state.note_template:
-                    print("[generate_note_section] ⚠️ No template found")
+                    logger.info("⚠️ No template found")
                     return state
 
-                print(f"[generate_note_section] Generating sections for template: {state.note_template.name}")
+                logger.info(f"Generating sections for template: {state.note_template.name}")
 
                 # Get template structure
                 template = state.note_template
@@ -2210,7 +2213,7 @@ Generate content for each section separately with only the necessary clinical fa
                     field_label = field.get("label", field_name)
                     field_description = field.get("description", "")
 
-                    print(f"[generate_note_section] Generating: {field_label} ({i+1}/{len(fields)})")
+                    logger.info(f"Generating: {field_label} ({i+1}/{len(fields)})")
 
                     # Update progress for this section
                     state.step_details = f"Generating section {i+1}/{len(fields)}: {field_label}"
@@ -2228,7 +2231,7 @@ Generate content for each section separately with only the necessary clinical fa
                                 "timestamp": datetime.now().isoformat()
                             })
                         except Exception as callback_err:
-                            print(f"[generate_note_section] Failed to emit progress: {callback_err}")
+                            logger.info(f"Failed to emit progress: {callback_err}")
 
                     # Build section-specific prompt
                     section_prompt = f"""Based on the clinical information below, generate content for this section:
@@ -2254,7 +2257,7 @@ Generate the content for "{field_label}" section now:"""
                     section_content = section_response.content.strip()
 
                     sections[field_name] = section_content
-                    print(f"[generate_note_section] ✓ Generated {field_label}: {len(section_content)} chars")
+                    logger.info(f"✓ Generated {field_label}: {len(section_content)} chars")
 
                 # Format complete note
                 final_content = f"# {template.name}\n\n"
@@ -2269,12 +2272,12 @@ Generate the content for "{field_label}" section now:"""
                 state.note_final_content = final_content
                 state.note_sources = []
 
-                print(f"[generate_note_section] ✓ Complete note generated: {len(final_content)} chars")
+                logger.info(f"✓ Complete note generated: {len(final_content)} chars")
 
                 return state
 
             except Exception as e:
-                print(f"[generate_note_section] ❌ Error: {e}")
+                logger.info(f"❌ Error: {e}")
                 import traceback
                 traceback.print_exc()
                 return state
@@ -2286,12 +2289,12 @@ Generate the content for "{field_label}" section now:"""
             Returns as JSON structure for frontend rendering.
             """
             try:
-                print("[format_note_response] Formatting note for response")
+                logger.info("Formatting note for response")
 
                 if not state.note_final_content:
-                    print("[format_note_response] ⚠️ No note content to format")
-                    print(f"[format_note_response] Debug: note_sections={len(state.note_sections)} sections")
-                    print(f"[format_note_response] Debug: retrieved_chunks={len(state.retrieved_chunks)} chunks")
+                    logger.info("⚠️ No note content to format")
+                    logger.info(f"Debug: note_sections={len(state.note_sections)} sections")
+                    logger.info(f"Debug: retrieved_chunks={len(state.retrieved_chunks)} chunks")
 
                     # Create error response
                     from optimed.core.domain import ChatMessage, ChatRole
@@ -2329,12 +2332,12 @@ Generate the content for "{field_label}" section now:"""
                     content=json.dumps(note_response, ensure_ascii=False)
                 )
 
-                print("[format_note_response] ✓ Note response formatted and ready")
+                logger.info("✓ Note response formatted and ready")
 
                 return state
 
             except Exception as e:
-                print(f"[format_note_response] ❌ Error: {e}")
+                logger.info(f"❌ Error: {e}")
                 import traceback
                 traceback.print_exc()
                 return state
@@ -2343,31 +2346,31 @@ Generate the content for "{field_label}" section now:"""
         async def store_note_metadata(state: FlowState) -> FlowState:
             """Store note generation metadata only (GDPR-safe, no content)."""
             try:
-                print("[store_note_metadata] Recording generation metadata")
+                logger.info("Recording generation metadata")
 
                 if not state.note_generation_id:
-                    print("[store_note_metadata] ⚠️ No generation_id")
+                    logger.info("⚠️ No generation_id")
                     return state
 
                 # The metadata update is handled by the NoteGenerator adapter
                 # through the API layer. This node is just for flow completion.
-                print(f"[store_note_metadata] ✓ Metadata recorded for {state.note_generation_id}")
+                logger.info(f"✓ Metadata recorded for {state.note_generation_id}")
 
                 return state
 
             except Exception as e:
-                print(f"[store_note_metadata] ❌ Error: {e}")
+                logger.info(f"❌ Error: {e}")
                 return state
 
         # ==================== END NOTE GENERATION FLOW NODES ====================
 
         @streaming_step("provide_information")
         async def provide_information(state: FlowState) -> FlowState:
-            print("[provide_information] 🎯 Starting information provision")
-            print(f"[provide_information] 🔍 Query: '{state.user_prompt[:100]}...'")
-            print(f"[provide_information] 🚀 Full processing: {getattr(state, 'requires_full_processing', True)}")
-            print(f"[provide_information] 🆔 Session ID: {state.session_id}")
-            print(f"[provide_information] 👤 User ID: {state.user_id}")
+            logger.info("🎯 Starting information provision")
+            logger.info(f"🔍 Query: '{state.user_prompt[:100]}...'")
+            logger.info(f"🚀 Full processing: {getattr(state, 'requires_full_processing', True)}")
+            logger.info(f"🆔 Session ID: {sanitize_session_id(state.session_id)}")
+            logger.info(f"👤 User ID: {sanitize_user_id(state.user_id)}")
 
             # Use the single system message for information relay
             messages = [SYSTEM_MSG_INFO_RELAY]
@@ -2399,7 +2402,7 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                 messages.append(user_info)
 
             current_history = state.chat_history[-15:]  # Recent current session history
-            print(f"[provide_information] 💬 Chat history available: {len(state.chat_history)} total, {len(current_history)} recent")
+            logger.info(f"💬 Chat history available: {len(state.chat_history)} total, {len(current_history)} recent")
 
             # Disable ChatMessage history due to Azure API serialization issues
             # Use alternative text-based conversation history instead
@@ -2412,11 +2415,11 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
             MAX_HISTORY_LENGTH = 4000  # Limit to prevent token overflow
 
             if current_history and ENABLE_CONVERSATION_HISTORY:
-                print("[provide_information] 📋 Processing conversation history:")
+                logger.info("📋 Processing conversation history:")
                 for i, msg in enumerate(current_history):
                     # Skip empty or None content
                     if not msg.content or not msg.content.strip():
-                        print(f"[provide_information]   {i+1}. SKIPPED - Empty content")
+                        logger.info(f"  {i+1}. SKIPPED - Empty content")
                         continue
 
                     # Use message content as-is
@@ -2427,7 +2430,7 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
 
                     # Check if adding this message would exceed limit
                     if total_history_length + len(content) > MAX_HISTORY_LENGTH:
-                        print(f"[provide_information]   {i+1}. SKIPPED - Would exceed {MAX_HISTORY_LENGTH} char limit")
+                        logger.info(f"  {i+1}. SKIPPED - Would exceed {MAX_HISTORY_LENGTH} char limit")
                         break
 
                     # Create a completely new ChatMessage with only essential fields
@@ -2441,10 +2444,10 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                     )
                     safe_history.append(clean_msg)
                     total_history_length += len(content)
-                    print(f"[provide_information]   {i+1}. {msg.role.value} ({len(content)} chars): '{content[:50]}...'")
+                    logger.info(f"  {i+1}. {msg.role.value} ({len(content)} chars): '{content[:50]}...'")
 
                     # Debug: Check message structure
-                    print(f"[provide_information]      Message type: {type(clean_msg.content)}, content preview: '{str(clean_msg.content)[:50]}...'")
+                    logger.info(f"     Message type: {type(clean_msg.content)}, content preview: '{str(clean_msg.content)[:50]}...'")
 
                 if safe_history:
                     history_header = ChatMessage(
@@ -2466,13 +2469,13 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                         metadata={}
                     )
                     messages.append(history_footer)
-                    print(f"[provide_information] ✅ Added {len(safe_history)} safe history messages ({total_history_length} chars)")
+                    logger.info(f"✅ Added {len(safe_history)} safe history messages ({total_history_length} chars)")
                 else:
-                    print("[provide_information] ⚠️ No safe conversation history to include")
+                    logger.info("⚠️ No safe conversation history to include")
             else:
                 if not ENABLE_CONVERSATION_HISTORY and ENABLE_TEXT_CONVERSATION_SUMMARY and current_history:
                     # Alternative approach: Create a text summary of conversation history
-                    print("[provide_information] 📝 Creating text-based conversation summary")
+                    logger.info("📝 Creating text-based conversation summary")
                     conversation_lines = []
                     for msg in current_history:
                         if not msg.content or not msg.content.strip():
@@ -2498,38 +2501,38 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                             metadata={}
                         )
                         messages.append(conversation_context)
-                        print(f"[provide_information] ✅ Added text conversation summary ({len(conversation_summary)} chars)")
+                        logger.info(f"✅ Added text conversation summary ({len(conversation_summary)} chars)")
                     else:
-                        print("[provide_information] ⚠️ No valid conversation content to summarize")
+                        logger.info("⚠️ No valid conversation content to summarize")
                 elif not ENABLE_CONVERSATION_HISTORY:
-                    print("[provide_information] ⚠️ Conversation history disabled temporarily to prevent API errors")
+                    logger.info("⚠️ Conversation history disabled temporarily to prevent API errors")
                 else:
-                    print("[provide_information] ⚠️ No conversation history to include in model prompt")
+                    logger.info("⚠️ No conversation history to include in model prompt")
             
             # Ensure intelligent retrieval results are available for direct path as well
             try:
                 if not getattr(state, 'requires_full_processing', True):
-                    print("[provide_information] Direct path - checking if retrieval needed")
-                    print(f"[provide_information] Patient context available: {state.patient_ctx is not None}")
-                    print(f"[provide_information] Retrieved chunks available: {len(state.retrieved_chunks) if state.retrieved_chunks else 0}")
+                    logger.info("Direct path - checking if retrieval needed")
+                    logger.info(f"Patient context available: {state.patient_ctx is not None}")
+                    logger.info(f"Retrieved chunks available: {len(state.retrieved_chunks) if state.retrieved_chunks else 0}")
                     
                     if state.patient_ctx and not state.retrieved_chunks:
-                        print("[provide_information] Direct path - running intelligent retrieval for patient context")
+                        logger.info("Direct path - running intelligent retrieval for patient context")
                         # Populate retrieval using the new intelligent retrieval within this node
                         await intelligent_retrieve_chunks(state)
-                        print(f"[provide_information] Direct path - retrieval complete, got {len(state.retrieved_chunks) if state.retrieved_chunks else 0} chunks")
+                        logger.info(f"Direct path - retrieval complete, got {len(state.retrieved_chunks) if state.retrieved_chunks else 0} chunks")
                     else:
-                        print(f"[provide_information] Direct path - no retrieval needed (patient_ctx: {state.patient_ctx is not None}, chunks: {len(state.retrieved_chunks) if state.retrieved_chunks else 0})")
+                        logger.info(f"Direct path - no retrieval needed (patient_ctx: {state.patient_ctx is not None}, chunks: {len(state.retrieved_chunks) if state.retrieved_chunks else 0})")
             except Exception as e:
-                print(f"[provide_information] Retrieval attempt failed on direct path: {e}")
+                logger.info(f"Retrieval attempt failed on direct path: {e}")
                 import traceback
                 traceback.print_exc()
 
 
             # Add retrieved chunks (this is now the primary source of patient data)
-            print(f"[provide_information] Retrieved chunks count: {len(state.retrieved_chunks) if state.retrieved_chunks else 0}")
+            logger.info(f"Retrieved chunks count: {len(state.retrieved_chunks) if state.retrieved_chunks else 0}")
             if state.retrieved_chunks:
-                print(f"[provide_information] Adding {len(state.retrieved_chunks)} chunks to LLM context")
+                logger.info(f"Adding {len(state.retrieved_chunks)} chunks to LLM context")
                 chunk_context = "Relevant clinical information"
                 if state.retrieval_reasoning:
                     chunk_context += f" (Selected because: {state.retrieval_reasoning})"
@@ -2549,14 +2552,14 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                 
                 # Log chunk info (GDPR-safe)
                 for i, chunk in enumerate(state.retrieved_chunks):
-                    print(f"[provide_information] Chunk {i+1}: {len(chunk)} chars")
+                    logger.info(f"Chunk {i+1}: {len(chunk)} chars")
                 
                 docs = ChatMessage(
                     role=ChatRole.USER,
                     content=f"{chunk_context}:{temporal_context}\n" + "\n---\n".join(state.retrieved_chunks),
                 )
                 messages.append(docs)
-                print(f"[provide_information] Added chunks message to LLM context (total length: {len(docs.content)} chars)")
+                logger.info(f"Added chunks message to LLM context (total length: {len(docs.content)} chars)")
 
                 # Include chunk analysis metadata for transparency
                 if state.chunk_analysis and state.chunk_analysis.get("query_type"):
@@ -2566,7 +2569,7 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                     )
                     messages.append(analysis_info)
             else:
-                print("[provide_information] No retrieved chunks available - LLM will rely on general knowledge and other context")
+                logger.info("No retrieved chunks available - LLM will rely on general knowledge and other context")
 
             # Add web search results if available
             if state.web_search_response and state.web_search_response.results:
@@ -2609,15 +2612,15 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 3. How can I give a clear, helpful response?"""
 
             # Debug: Log final message structure before sending to LLM
-            print("[provide_information] 🔍 Final prompt structure:")
-            print(f"[provide_information] 📊 Total messages: {len(messages)}")
+            logger.info("🔍 Final prompt structure:")
+            logger.info(f"📊 Total messages: {len(messages)}")
             total_content_length = 0
             for i, msg in enumerate(messages):
                 content_preview = msg.content[:100] + "..." if len(msg.content) > 100 else msg.content
                 content_length = len(msg.content)
                 total_content_length += content_length
-                print(f"[provide_information]   {i+1}. {msg.role.value} ({content_length} chars): '{content_preview}'")
-            print(f"[provide_information] 📏 Total content length: {total_content_length} characters")
+                logger.info(f"  {i+1}. {msg.role.value} ({content_length} chars): '{content_preview}'")
+            logger.info(f"📏 Total content length: {total_content_length} characters")
 
             if getattr(state, 'should_stream_response', False):
                 state.streaming_response = ""  # Reset streaming response
@@ -2626,7 +2629,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 if not hasattr(state, 'streaming_updates'):
                     state.streaming_updates = []
 
-                print("[provide_information] 🚀 Starting streaming LLM call")
+                logger.info("🚀 Starting streaming LLM call")
                 async for update in self._streaming_llm.chat_with_reasoning_stream(messages=messages, state=state, reasoning_prompt=reasoning_prompt):
                     if update["type"] == "content":
                         # Format EHR links during streaming accumulation
@@ -2663,13 +2666,13 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                         )
                         break
             else:
-                print("[provide_information] 🚀 Starting non-streaming LLM call")
+                logger.info("🚀 Starting non-streaming LLM call")
                 llm_resp = await self._streaming_llm.chat_with_reasoning(messages=messages, state=state, reasoning_prompt=reasoning_prompt)
-                print(f"[provide_information] 📝 LLM response received: {len(llm_resp.content) if llm_resp and llm_resp.content else 0} characters")
+                logger.info(f"📝 LLM response received: {len(llm_resp.content) if llm_resp and llm_resp.content else 0} characters")
                 if llm_resp and llm_resp.content:
-                    print(f"[provide_information] 📄 Response preview: '{llm_resp.content[:200]}...'")
+                    logger.info(f"📄 Response preview: '{llm_resp.content[:200]}...'")
                 else:
-                    print("[provide_information] ⚠️ Empty or null LLM response!")
+                    logger.info("⚠️ Empty or null LLM response!")
 
                 state.llm_response = ChatMessage(
                     role=llm_resp.role,
@@ -2752,10 +2755,10 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 
                 state.requires_full_processing = requires_full_processing
                 
-                print(f"[query_complexity] Query: '{state.user_prompt[:50]}...' -> {'FULL_PROCESSING' if requires_full_processing else 'DIRECT'}")
+                logger.info(f"Query: '{state.user_prompt[:50]}...' -> {'FULL_PROCESSING' if requires_full_processing else 'DIRECT'}")
                 
             except Exception as e:
-                print(f"[query_complexity] Error evaluating query complexity: {e}")
+                log_error(logger, "query_complexity", e)
                 # Default to full processing on error to be safe
                 state.requires_full_processing = True
                 
@@ -2771,7 +2774,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 if not state.chat_history or len(state.chat_history) < 2:
                     # No context needed for first message
                     state.classification_query = state.user_prompt
-                    print(f"[contextualize_query] No history - using original query")
+                    logger.info(f"No history - using original query")
                     return state
 
                 # Get recent conversation context (last 5 messages)
@@ -2806,11 +2809,11 @@ Return ONLY the reformulated query, nothing else."""
                 response = await self._llm.chat(messages)
                 state.classification_query = response.content.strip()
 
-                print(f"[contextualize_query] Original: '{state.user_prompt}'")
-                print(f"[contextualize_query] Contextualized: '{state.classification_query}'")
+                logger.info(f"Original: '{state.user_prompt}'")
+                logger.info(f"Contextualized: '{state.classification_query}'")
 
             except Exception as e:
-                print(f"[contextualize_query] Error: {e}, using original query")
+                logger.info(f"Error: {e}, using original query")
                 state.classification_query = state.user_prompt
 
             return state
@@ -2819,17 +2822,17 @@ Return ONLY the reformulated query, nothing else."""
         async def classify_query_intent(state: FlowState) -> FlowState:
             """Classify the query to determine flow type including note generation."""
             try:
-                print(f"[classify_query_intent] Classifying query: '{state.user_prompt[:100]}...'")
+                logger.info(f"Classifying query: '{state.user_prompt[:100]}...'")
 
                 # Skip classification if already in note generation flow
                 if hasattr(state, 'is_note_generation_flow') and state.is_note_generation_flow:
-                    print(f"[classify_query_intent] Already in note generation flow, skipping classification")
+                    logger.info(f"Already in note generation flow, skipping classification")
                     return state
 
                 # Use contextualized query if available (from contextualize_query_for_classification node)
                 query_to_classify = getattr(state, 'classification_query', state.user_prompt)
 
-                print(f"[classify_query_intent] Classifying: '{query_to_classify[:100]}...'")
+                logger.info(f"Classifying: '{query_to_classify[:100]}...'")
 
                 # Use the existing classifier
                 classifier = self._zero_shot_classifier
@@ -2837,14 +2840,14 @@ Return ONLY the reformulated query, nothing else."""
                     "lookup", "temporal-trend", "comparative", "reasoning", "summary", "guideline", "timeline", "note_generation", "discharge_summary"
                 ])
 
-                print(f"[classify_query_intent] Query classified as: {label}")
+                logger.info(f"Query classified as: {label}")
 
                 # Store classification in state
                 state.query_classification = label
 
                 # Check for note generation intent (high precision)
                 if label == "note_generation" or label == "discharge_summary":
-                    print(f"[classify_query_intent] Note generation detected!")
+                    logger.info(f"Note generation detected!")
                     state.is_note_generation_flow = True
 
                     # Determine template type from query content
@@ -2865,7 +2868,7 @@ Return ONLY the reformulated query, nothing else."""
                         # Default to SBAR for general note requests
                         template_type = "sbar"
 
-                    print(f"[classify_query_intent] Auto-selected template type: {template_type}")
+                    logger.info(f"Auto-selected template type: {template_type}")
 
                     # Store template type preference for later retrieval
                     state.note_template_type_preference = template_type
@@ -2879,18 +2882,18 @@ Return ONLY the reformulated query, nothing else."""
                 sbar_query_types = ["summary"]
                 state.is_sbar_flow = label in sbar_query_types
 
-                print(f"[classify_query_intent] SBAR flow: {state.is_sbar_flow}")
+                logger.info(f"SBAR flow: {state.is_sbar_flow}")
 
                 # Determine if this should use Timeline flow (temporal sequence queries)
                 timeline_query_types = ["timeline", "temporal-trend"]
                 state.is_timeline_flow = label in timeline_query_types
 
-                print(f"[classify_query_intent] Timeline flow: {state.is_timeline_flow}")
+                logger.info(f"Timeline flow: {state.is_timeline_flow}")
 
                 # Override DIRECT routing if SBAR or Timeline flow is detected
                 if state.is_sbar_flow or state.is_timeline_flow:
                     state.requires_full_processing = True
-                    print(f"[classify_query_intent] ⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, Timeline: {state.is_timeline_flow})")
+                    logger.info(f"⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, Timeline: {state.is_timeline_flow})")
 
                 # Initialize SBAR cache if using SBAR flow
                 if state.is_sbar_flow:
@@ -2901,7 +2904,7 @@ Return ONLY the reformulated query, nothing else."""
                     state.timeline_retrieval_cache = {}
 
             except Exception as e:
-                print(f"[classify_query_intent] Classification failed: {e}, defaulting to regular flow")
+                logger.info(f"Classification failed: {e}, defaulting to regular flow")
                 state.query_classification = "lookup"  # Default fallback
                 state.is_sbar_flow = False
                 state.is_timeline_flow = False
@@ -2924,7 +2927,7 @@ Return ONLY the reformulated query, nothing else."""
 
             # Override DIRECT routing if SBAR or Timeline flow is detected
             if is_sbar or is_timeline:
-                print(f"[requires_full_processing] Overriding DIRECT - SBAR: {is_sbar}, Timeline: {is_timeline}")
+                logger.info(f"Overriding DIRECT - SBAR: {is_sbar}, Timeline: {is_timeline}")
                 return True
 
             return base_requirement
@@ -3257,7 +3260,7 @@ Content:
         # Apply chunking strategy
         chunks = strategy.apply(redacted_records, policy, tokenizer)
         
-        print(f"[_chunk_journal_entries] Created {len(chunks)} chunks from {len(journal_entries)} journal entries")
+        logger.info(f"Created {len(chunks)} chunks from {len(journal_entries)} journal entries")
         
         return chunks
 
@@ -3303,7 +3306,7 @@ Content:
                 }
             )
 
-            print(f"[_chunk_pdf_documents] PDF {pdf.filename} -> {len(semantic_chunks)} semantic chunks")
+            logger.info(f"PDF {pdf.filename} -> {len(semantic_chunks)} semantic chunks")
 
             # Use appropriate patient reference
             if pdf.patient_id:
@@ -3357,7 +3360,7 @@ Content:
         # Apply chunking strategy
         chunks = strategy.apply(redacted_records, policy, tokenizer)
 
-        print(f"[_chunk_pdf_documents] Created {len(chunks)} chunks from {len(pdf_documents)} PDF documents")
+        logger.info(f"Created {len(chunks)} chunks from {len(pdf_documents)} PDF documents")
 
         return chunks
 
@@ -3375,7 +3378,7 @@ Content:
 
         for xml in xml_documents:
             if not xml.extracted_text:
-                print(f"[_chunk_xml_documents] Skipping XML document {xml.filename} - no extracted text")
+                logger.info(f"Skipping XML document {xml.filename} - no extracted text")
                 continue
 
             # Use appropriate patient reference
@@ -3386,7 +3389,7 @@ Content:
 
             # Split the extracted text into logical sections for better chunking
             sections = self._split_xml_text_into_sections(xml.extracted_text)
-            print(f"[_chunk_xml_documents] XML {xml.filename} -> {len(sections)} sections")
+            logger.info(f"XML {xml.filename} -> {len(sections)} sections")
 
             # Create a record for each section
             for i, section in enumerate(sections):
@@ -3411,7 +3414,7 @@ Content:
                 )
                 records.append(record)
 
-        print(f"[_chunk_xml_documents] Created {len(records)} records from {len(xml_documents)} XML documents")
+        logger.info(f"Created {len(records)} records from {len(xml_documents)} XML documents")
 
         # Simple conversion to chunks without complex chunking strategy to avoid breaking PDF flow
         chunks: List[Chunk] = []
@@ -3435,7 +3438,7 @@ Content:
             )
             chunks.append(chunk)
 
-        print(f"[_chunk_xml_documents] Created {len(chunks)} chunks from {len(xml_documents)} XML documents")
+        logger.info(f"Created {len(chunks)} chunks from {len(xml_documents)} XML documents")
 
         return chunks
 
@@ -3586,13 +3589,13 @@ Content:
         try:
             if pre_classification:
                 label = pre_classification
-                print(f"[_compute_dynamic_n] Using pre-stored classification: {label}")
+                logger.info(f"Using pre-stored classification: {label}")
             else:
                 classifier = self._zero_shot_classifier
                 label = classifier.classify_query(query, [
                     "lookup", "temporal-trend", "comparative", "reasoning", "summary", "guideline"
                 ])
-                print(f"[_compute_dynamic_n] Query classified as: {label}")
+                logger.info(f"Query classified as: {label}")
 
             if label == "lookup":
                 n_class = min(8, N_MAX)        # ~5–8
@@ -3609,7 +3612,7 @@ Content:
             else:
                 n_class = 8  # Default fallback
         except Exception as e:
-            print(f"[_compute_dynamic_n] Classification failed: {e}, using heuristic fallback")
+            logger.info(f"Classification failed: {e}, using heuristic fallback")
             n_class = self._classify_query(query)
         
         n = max(min(n_elbow, n_thresh), n_class)
@@ -3667,20 +3670,20 @@ Content:
             sid = session_id or str(uuid.uuid4())
             # Only clear session memory if this is a truly new session (no existing data)
             if sid not in self._session_memory:
-                print(f"[get_or_create_session] 🆕 Creating new ephemeral session {sid}")
+                logger.info(f"🆕 Creating new ephemeral session {sid}")
                 self._session_memory[sid] = []
             else:
-                print(f"[get_or_create_session] 🔄 Reusing existing ephemeral session {sid} with {len(self._session_memory[sid])} messages")
+                logger.info(f"🔄 Reusing existing ephemeral session {sid} with {len(self._session_memory[sid])} messages")
                 # Validate session memory integrity
                 try:
                     # Check if session memory contains valid data
                     for i, item in enumerate(self._session_memory[sid]):
                         if not isinstance(item, dict) or 'data' not in item:
-                            print(f"[get_or_create_session] ⚠️ Invalid item {i} in session memory, clearing session")
+                            logger.info(f"⚠️ Invalid item {i} in session memory, clearing session")
                             self._session_memory[sid] = []
                             break
                 except Exception as e:
-                    print(f"[get_or_create_session] ❌ Session memory corrupted, clearing: {e}")
+                    logger.info(f"❌ Session memory corrupted, clearing: {e}")
                     self._session_memory[sid] = []
             return sid
         if session_id:
@@ -3692,11 +3695,11 @@ Content:
                     if allow_join_existing:
                         success = await self._vec.add_user_to_session(session_id, user_id)
                         if success:
-                            print(f"[session] User {user_id} joined existing session {session_id}")
+                            logger.info(f"User {sanitize_user_id(user_id)} joined existing session {session_id}")
                         else:
-                            print(f"[session] Failed to add user {user_id} to session {session_id}")
+                            logger.info(f"Failed to add user {sanitize_user_id(user_id)} to session {session_id}")
                     else:
-                        print(f"[session] User {user_id} not allowed to join session {session_id}")
+                        logger.info(f"User {sanitize_user_id(user_id)} not allowed to join session {session_id}")
                         return await self._vec.create_chat_session(user_id, patient_id, mode)
                 
                 return session_id
@@ -3869,16 +3872,16 @@ Content:
                     if previous_state and previous_state.get("llm_response"):
                         final_response_content = previous_state["llm_response"].content if hasattr(previous_state["llm_response"], 'content') else str(previous_state["llm_response"])
 
-                    print(f"[run_stream] 🎯 Emitting completion event")
-                    print(f"[run_stream] 📦 final_response length: {len(final_response_content)} chars")
+                    logger.info(f"🎯 Emitting completion event")
+                    logger.info(f"📦 final_response length: {len(final_response_content)} chars")
                     if final_response_content:
                         try:
                             parsed = json.loads(final_response_content)
-                            print(f"[run_stream] 📋 Response type: {parsed.get('type')}")
+                            logger.info(f"📋 Response type: {parsed.get('type')}")
                             if parsed.get('type') == 'generated_note':
-                                print(f"[run_stream] ✅ Note content length: {len(parsed.get('content', ''))} chars")
+                                logger.info(f"✅ Note content length: {len(parsed.get('content', ''))} chars")
                         except:
-                            print(f"[run_stream] ⚠️ Response is not JSON")
+                            logger.info(f"⚠️ Response is not JSON")
 
                     completion_update = {
                         "type": "completion",
@@ -3896,11 +3899,11 @@ Content:
                     
 
 
-                    print(f"[run_stream] 🚀 Putting completion event in queue")
+                    logger.info(f"🚀 Putting completion event in queue")
                     await chunk_queue.put(completion_update)
-                    print(f"[run_stream] 🏁 Putting end signal in queue")
+                    logger.info(f"🏁 Putting end signal in queue")
                     await chunk_queue.put(None)  # Signal end of stream
-                    print(f"[run_stream] ✅ Stream generation complete")
+                    logger.info(f"✅ Stream generation complete")
                 
                 # Start graph processing
                 graph_task = asyncio.create_task(run_graph())

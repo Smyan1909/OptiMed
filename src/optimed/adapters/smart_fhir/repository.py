@@ -11,8 +11,11 @@ from fhir.resources.observation import Observation  # type: ignore[import-untype
 
 from optimed.core.ports import FHIRRepository, AuthenticatedFHIRRepository, AuthenticationProvider
 from optimed.core.domain import PatientContext, UserEHRConnection, JournalEntry, JournalEntryCreate, JournalEntryUpdate, JournalEntryType, User, DataSource
+from optimed.core.logging_utils import get_logger, log_error
 import uuid
 import base64
+
+logger = get_logger(__name__)
 
 
 VITAL_CODES = {
@@ -1063,7 +1066,7 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
             
             return statements
         except Exception as e:
-            print(f"Failed to fetch medication statements: {e}")
+            log_error(logger, "fetch medication statements", e)
             return []
 
     async def _get_questionnaire_responses(self, patient_id: str) -> list[Observation]:
@@ -1116,7 +1119,7 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
             
             return responses
         except Exception as e:
-            print(f"Failed to fetch questionnaire responses: {e}")
+            log_error(logger, "fetch questionnaire responses", e)
             return []
 
     async def _get_medications(self, patient_id: str) -> list[Observation]:
@@ -1262,7 +1265,7 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
             
             return immunizations
         except Exception as e:
-            print(f"Failed to fetch immunizations: {e}")
+            log_error(logger, "fetch immunizations", e)
             return []
 
     async def _get_observations(
@@ -1314,7 +1317,7 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
             
             return encounters
         except Exception as e:
-            print(f"Failed to fetch encounters: {e}")
+            log_error(logger, "fetch encounters", e)
             return []
 
     async def _get_care_plans(self, patient_id: str) -> list[Observation]:
@@ -1364,7 +1367,7 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
 
             return care_plans
         except Exception as e:
-            print(f"Failed to fetch care plans: {e}")
+            log_error(logger, "fetch care plans", e)
             return []
 
     async def _get_diagnostic_reports(self, patient_id: str) -> list[dict]:
@@ -1407,7 +1410,7 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
 
             return reports
         except Exception as e:
-            print(f"Failed to fetch diagnostic reports: {e}")
+            log_error(logger, "fetch diagnostic reports", e)
             return []
 
     # ImagingStudy retrieval is disabled to avoid errors in current version
@@ -1457,7 +1460,7 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
 
             return procedures
         except Exception as e:
-            print(f"Failed to fetch procedures: {e}")
+            log_error(logger, "fetch procedures", e)
             return []
 
     async def _get_family_history(self, patient_id: str) -> list[dict]:
@@ -1959,13 +1962,13 @@ class SMARTFHIRRepository(FHIRRepository, AuthenticatedFHIRRepository):
                         entries.append(_parse_smart_fhir_document_reference(fhir_resource))
                     except Exception as e:
                         # Skip invalid entries
-                        print(f"Failed to parse DocumentReference: {e}")
+                        log_error(logger, "parse DocumentReference", e)
                         continue
             
             return entries
-            
+
         except Exception as e:
-            print(f"Failed to fetch journal entries from FHIR server: {e}")
+            log_error(logger, "fetch journal entries from FHIR server", e)
             return []
 
     async def create_journal_entry(self, entry: JournalEntryCreate, user: User) -> JournalEntry:

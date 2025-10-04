@@ -9,6 +9,9 @@ import re
 import hashlib
 from typing import Optional, Dict, List
 from dataclasses import dataclass
+from optimed.core.logging_utils import get_logger, log_error
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -221,6 +224,6 @@ async def categorize_and_log_prompt(
             latency_ms=latency_ms
         )
     except Exception as e:
-        print(f"[PROMPT_CATEGORIZER] Error logging prompt category: {e}")
+        log_error(logger, "log_prompt_category", e)
 
     return category_result

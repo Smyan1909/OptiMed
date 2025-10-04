@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/ui/button';
+import { logInfo, logError } from '@/lib/logger';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Brain, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react';
@@ -91,7 +92,7 @@ export const ReasoningViewer: React.FC<ReasoningViewerProps> = ({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
-      console.error('Failed to copy reasoning:', error);
+      logError('Reasoning Viewer: Failed to copy reasoning', error);
     }
   };
 
@@ -100,11 +101,11 @@ export const ReasoningViewer: React.FC<ReasoningViewerProps> = ({
                       (reasoningSteps && reasoningSteps.length > 0 && reasoningSteps.some(step => step.trim().length > 0));
 
   if (!hasReasoning) {
-    console.log('🔍 ReasoningViewer: No reasoning content found', { reasoning: !!reasoning, reasoningSteps: reasoningSteps?.length });
+    logInfo('Reasoning Viewer: No reasoning content found', { hasReasoning: !!reasoning, reasoningStepsCount: reasoningSteps?.length });
     return null;
   }
 
-  console.log('🧠 ReasoningViewer: Displaying reasoning', { 
+  logInfo('Reasoning Viewer: Displaying reasoning', { 
     reasoning: !!reasoning, 
     reasoningSteps: reasoningSteps?.length,
     firstStep: reasoningSteps?.[0]?.substring(0, 50) 

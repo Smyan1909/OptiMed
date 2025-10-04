@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { logError } from '@/lib/logger';
 
 export async function GET(
   request: Request,
@@ -27,7 +28,7 @@ export async function GET(
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
-    console.error('DICOM image API error:', error);
+    logError('DICOM image API error', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }
@@ -61,7 +62,7 @@ export async function DELETE(
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
-    console.error('DICOM delete API error:', error);
+    logError('DICOM delete API error', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

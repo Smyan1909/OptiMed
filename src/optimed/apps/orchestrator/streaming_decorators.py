@@ -1,5 +1,8 @@
 from functools import wraps
 from typing import Callable
+from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, log_error
+
+logger = get_logger(__name__)
 
 class StreamingStatus:
     """Context manager for streaming status updates."""
@@ -62,7 +65,7 @@ class StreamingStatus:
             try:
                 asyncio.create_task(self.state.stream_callback(update))
             except Exception as e:
-                print(f"[streaming] Error emitting differential diagnosis update: {e}")
+                log_error(logger, "emit_differential_diagnosis_update", e)
     
     def _generate_detailed_description(self, status: str) -> str:
         """Generate detailed descriptions based on step name and current state."""
@@ -78,19 +81,19 @@ class StreamingStatus:
     def _get_starting_description(self, step_lower: str) -> str:
         """Get detailed starting descriptions."""
         descriptions = {
-            "load_user_context": f"Loading user profile and permissions for user ID: {getattr(self.state, 'user_id', 'unknown')}",
-            "fetch_patient": f"Retrieving patient data from medical records for patient ID: {getattr(self.state, 'patient_id', 'unknown')}",
-            "store_patient_chunks": f"Breaking down patient context into searchable chunks for patient {getattr(self.state, 'patient_id', 'unknown')}",
+            "load_user_context": f"Loading user profile and permissions for user ID: {sanitize_user_id(getattr(self.state, 'user_id', 'unknown'))}",
+            "fetch_patient": f"Retrieving patient data from medical records for patient ID: {sanitize_patient_id(getattr(self.state, 'patient_id', 'unknown'))}",
+            "store_patient_chunks": f"Breaking down patient context into searchable chunks for patient {sanitize_patient_id(getattr(self.state, 'patient_id', 'unknown'))}",
             "intelligent_retrieve_chunks": f"Analyzing clinical records using AI to find information relevant to: '{getattr(self.state, 'user_prompt', '')[:50]}...'",
             "evaluate_web_search_need": f"Evaluating if current medical literature search is needed for query: '{getattr(self.state, 'user_prompt', '')[:50]}...'",
             "perform_web_search": f"Searching latest medical literature and clinical guidelines for: '{getattr(self.state, 'user_prompt', '')[:50]}...'",
             "evaluate_image_generation_need": f"Analyzing if visual medical illustrations would help explain concepts for: '{getattr(self.state, 'user_prompt', '')[:50]}...'",
             "generate_image": f"Creating educational medical illustration: '{getattr(self.state, 'image_generation_prompt', '')[:100]}...'",
-            "load_current_session_history": f"Loading conversation history for session {getattr(self.state, 'session_id', 'unknown')}",
+            "load_current_session_history": f"Loading conversation history for current session",
             "evaluate_cross_session_history_need": "Evaluating if previous conversations from other sessions are relevant",
             "search_cross_session_history": "Searching previous conversations across all sessions for relevant context",
             "diagnose": "AI model analyzing all available information to provide comprehensive response...",
-            "store_user_message": f"Storing user message in chat history for session {getattr(self.state, 'session_id', 'unknown')}",
+            "store_user_message": f"Storing user message in chat history for current session",
             "store_assistant_response": "Saving AI response and reasoning to chat history",
             "evaluate_query_complexity": "Determining if the user query requires full processing or can be answered directly",
             "evaluate_icd_parsing_need": "Analyzing if differential diagnoses should be generated for this patient case",

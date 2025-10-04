@@ -16,6 +16,9 @@ from .encryption_service import (
     encrypt_patient_data,
     decrypt_patient_data
 )
+from optimed.core.logging_utils import get_logger, log_error
+
+logger = get_logger(__name__)
 
 class E2EEncryptionMiddleware(BaseHTTPMiddleware):
     """End-to-end encryption middleware for all API communications."""
@@ -61,7 +64,7 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
         # Skip encryption for excluded routes and streaming routes
         if (any(request.url.path.startswith(route) for route in self.excluded_routes) or
             any(request.url.path.startswith(route) for route in self.streaming_routes)):
-            print(f"[E2E] Bypassing encryption for route: {request.url.path}")
+            logger.info(f"Bypassing encryption for route: {request.url.path}")
             response = await call_next(request)
             return response
         
@@ -105,11 +108,11 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
                                     "user_id": user.user_id if user else None
                                 }
                             )
-                        except Exception as log_error:
-                            print(f"[E2E] Encryption audit logging failed: {log_error}")
+                        except Exception as audit_error:
+                            log_error(logger, "Encryption audit logging", audit_error)
 
             except Exception as e:
-                print(f"[E2E] Request decryption failed: {e}")
+                log_error(logger, "Request decryption", e)
                 # Log failed decryption
                 if hasattr(request.app.state, '_audit_repo'):
                     try:
@@ -132,7 +135,7 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         
         # Encrypt outgoing response if needed (skip for streaming responses)
-        print(f"[E2E] Response media type: {response.media_type}, path: {request.url.path}")
+        logger.info(f"Response media type: {response.media_type}, path: {request.url.path}")
         is_streaming = (response.media_type == "text/event-stream" or
                        hasattr(response, 'body_iterator') and
                        hasattr(response.body_iterator, '__aiter__'))
@@ -180,8 +183,8 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
                                     "user_id": user.user_id if user else None
                                 }
                             )
-                        except Exception as log_error:
-                            print(f"[E2E] Encryption audit logging failed: {log_error}")
+                        except Exception as audit_error:
+                            log_error(logger, "Encryption audit logging", audit_error)
 
                     return Response(
                         content=new_response_body,
@@ -191,7 +194,7 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
                     )
 
             except Exception as e:
-                print(f"[E2E] Response encryption failed: {e}")
+                log_error(logger, "Response encryption", e)
                 # Log failed encryption
                 if hasattr(request.app.state, '_audit_repo'):
                     try:

@@ -11,6 +11,9 @@ from optimed.adapters.user_repository.pg_user_repository import PGUserRepository
 from optimed.adapters.user_repository.pg_ehr_connection_repository import PGUserEHRConnectionRepository
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine, ImageGenerationService, GeneratedImageRepository, LLMClient, PDFService, XMLService
 from optimed.adapters.dicom.pydicom_processor import PyDICOMProcessor
+from optimed.core.logging_utils import get_logger
+
+logger = get_logger(__name__)
 from optimed.adapters.dicom.image_service import ImageServiceImpl
 from optimed.adapters.dicom.pg_image_repository import PostgreSQLImageRepository
 from optimed.adapters.dicom.image_storage import FileSystemImageStorage
@@ -106,9 +109,9 @@ async def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
                 llm_client=llm_client
             )
             generated_image_repo = PostgresGeneratedImageRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
-            print("Image generation service (Stability AI) initialized")
+            logger.info("Image generation service (Stability AI) initialized")
         except Exception as e:
-            print(f"Warning: Could not initialize image generation service: {e}")
+            logger.warning(f"Could not initialize image generation service: {e}")
 
     # New EHR connection dependencies
     connection_repo: UserEHRConnectionRepository = PGUserEHRConnectionRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
@@ -152,28 +155,28 @@ async def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
     )
 
     # Initialize ML models for intelligent retrieval
-    print("Initializing ML models for intelligent retrieval...")
+    logger.info("Initializing ML models for intelligent retrieval...")
     cross_encoder = MultilingualCrossEncoder()
     zero_shot_classifier = MultilingualZeroShotClassifier()
-    print("ML models initialized successfully")
+    logger.info("ML models initialized successfully")
 
     # Initialize GDPR compliance services
-    print("Initializing GDPR compliance services...")
+    logger.info("Initializing GDPR compliance services...")
     cleanup_service = initialize_cleanup_service(vector_store, user_repo)
     await cleanup_service.start_cleanup_service()
-    print("GDPR compliance services initialized")
+    logger.info("GDPR compliance services initialized")
 
     # Note template adapters (GDPR-compliant, no content storage)
-    print("Initializing note template services...")
+    logger.info("Initializing note template services...")
     template_repo: TemplateRepository = PGTemplateRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
     template_service: TemplateService = TemplateServiceAdapter(template_repo=template_repo)
     note_generator: NoteGenerator = NoteGeneratorAdapter(template_repo=template_repo)
-    print("Note template services initialized")
+    logger.info("Note template services initialized")
 
     # Audit repository (GDPR-compliant logging)
-    print("Initializing audit logging services...")
+    logger.info("Initializing audit logging services...")
     audit_repo: AuditRepository = PGAuditRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
-    print("Audit logging services initialized")
+    logger.info("Audit logging services initialized")
 
     # Main engine with connection service
     engine: DiagnosticEngine = LangGraphDiagnosticEngine(

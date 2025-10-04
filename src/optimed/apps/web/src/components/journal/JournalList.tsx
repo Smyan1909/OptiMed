@@ -5,6 +5,7 @@ import { JournalEntry, JournalEntryType, fetchPatientJournalEntries } from '@/li
 import { formatDistanceToNow } from 'date-fns';
 import { useLocale, useTranslations } from 'next-intl';
 import CreateJournalEntryDialog from './CreateJournalEntryDialog';
+import { sanitizePatientId, logInfo, logError } from '@/lib/logger';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 interface JournalListProps {
@@ -29,13 +30,13 @@ export default function JournalList({ patientId }: JournalListProps) {
     try {
       setLoading(true);
       setError(null);
-      console.log('Fetching journal entries for patient:', patientId);
-      
+      logInfo('Journal List: Fetching journal entries', { patientId: sanitizePatientId(patientId) });
+
       const data = await fetchPatientJournalEntries(patientId);
-      console.log('Journal entries received:', data.length + ' entries');
+      logInfo('Journal List: Journal entries received', { count: data.length });
       setEntries(data);
     } catch (err) {
-      console.error('Failed to fetch journal entries:', err);
+      logError('Journal List: Failed to fetch journal entries', err);
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setLoading(false);

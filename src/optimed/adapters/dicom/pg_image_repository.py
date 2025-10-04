@@ -6,6 +6,9 @@ from typing import Optional, Sequence
 from optimed.core.domain import DICOMImage, ImageStatus, ImageModalityType, DICOMMetadata, ImageDimensions, WindowLevel
 from optimed.core.ports import ImageRepository
 from optimed.adapters.database.pool_manager import get_shared_pool
+from optimed.core.logging_utils import get_logger, sanitize_user_id, log_error
+
+logger = get_logger(__name__)
 
 class PostgreSQLImageRepository(ImageRepository):
     """PostgreSQL implementation of ImageRepository using shared connection pool."""
@@ -38,7 +41,7 @@ class PostgreSQLImageRepository(ImageRepository):
                 """)
                 
                 if not table_exists:
-                    print("[DB] Creating dicom_images table...")
+                    logger.info("Creating dicom_images table")
                     await conn.execute("""
                         CREATE TABLE dicom_images (
                             image_id TEXT PRIMARY KEY,
@@ -63,13 +66,13 @@ class PostgreSQLImageRepository(ImageRepository):
                     # patient_id index removed for GDPR compliance
                     await conn.execute("CREATE INDEX IF NOT EXISTS idx_dicom_images_status ON dicom_images(status)")
                     await conn.execute("CREATE INDEX IF NOT EXISTS idx_dicom_images_uploaded_at ON dicom_images(uploaded_at)")
-                    
-                    print("[DB] ✅ dicom_images table created successfully")
+
+                    logger.info("dicom_images table created successfully")
                 else:
-                    print("[DB] dicom_images table already exists")
+                    logger.info("dicom_images table already exists")
                     
         except Exception as e:
-            print(f"[ERROR] Failed to create dicom_images table: {e}")
+            log_error(logger, "Failed to create dicom_images table", e)
             # Don't raise here, let the app continue
 
     async def save_image(self, image: DICOMImage) -> None:
@@ -96,9 +99,9 @@ class PostgreSQLImageRepository(ImageRepository):
                     image.processed_at,
                     image.storage_path
                 )
-                print(f"[DB] ✅ Saved image {image.image_id}")
+                logger.info("Saved image")
             except Exception as e:
-                print(f"[ERROR] Failed to save image {image.image_id}: {e}")
+                log_error(logger, "Failed to save image", e)
                 raise
 
     async def get_image_by_id(self, image_id: str) -> Optional[DICOMImage]:
@@ -137,16 +140,15 @@ class PostgreSQLImageRepository(ImageRepository):
                         domain_obj = self._row_to_domain(row)
                         result.append(domain_obj)
                     except Exception as e:
-                        print(f"[ERROR] Failed to convert row to domain object: {e}")
-                        print(f"[DEBUG] Row data: {dict(row)}")
+                        log_error(logger, "Failed to convert row to domain object", e)
                         # Skip this row and continue with others
                         continue
-                        
-                print(f"[DB] ✅ Retrieved {len(result)} images for user {user_id}")
+
+                logger.info(f"Retrieved {len(result)} images for user")
                 return result
-                
+
             except Exception as e:
-                print(f"[ERROR] Failed to get images for user {user_id}: {e}")
+                log_error(logger, "Failed to get images for user", e, user_id=sanitize_user_id(user_id))
                 raise
 
     async def get_images_by_patient(self, patient_id: str) -> Sequence[DICOMImage]:

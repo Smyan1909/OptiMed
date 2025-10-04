@@ -6,6 +6,8 @@
  * not running (which is expected for users who don't have it installed).
  */
 
+import { logInfo, logWarning } from './logger';
+
 const WATCHER_BASE_URL = 'http://localhost:9999';
 const WATCHER_TIMEOUT = 2000; // 2 seconds
 
@@ -32,18 +34,18 @@ export async function sendSessionToWatcher(sessionId: string): Promise<boolean> 
     clearTimeout(timeoutId);
 
     if (response.ok) {
-      console.log('✅ Session sent to CLARA watcher');
+      logInfo('Watcher Service: Session sent to CLARA watcher');
       return true;
     } else {
-      console.log('⚠️ CLARA watcher responded with error');
+      logWarning('Watcher Service: CLARA watcher responded with error');
       return false;
     }
   } catch (error) {
     // Silently fail - watcher not running is expected for most users
     if (error instanceof Error && error.name === 'AbortError') {
-      console.log('⏱️ CLARA watcher connection timeout (not running)');
+      logInfo('Watcher Service: CLARA watcher connection timeout (not running)');
     } else {
-      console.log('ℹ️ CLARA watcher not available (optional feature)');
+      logInfo('Watcher Service: CLARA watcher not available (optional feature)');
     }
     return false;
   }
@@ -66,15 +68,15 @@ export async function clearSessionFromWatcher(): Promise<boolean> {
     clearTimeout(timeoutId);
 
     if (response.ok) {
-      console.log('✅ Session cleared from CLARA watcher');
+      logInfo('Watcher Service: Session cleared from CLARA watcher');
       return true;
     } else {
-      console.log('⚠️ CLARA watcher clear session failed');
+      logWarning('Watcher Service: CLARA watcher clear session failed');
       return false;
     }
   } catch (error) {
     // Silently fail - watcher not running is expected
-    console.log('ℹ️ CLARA watcher not available for session clear');
+    logInfo('Watcher Service: CLARA watcher not available for session clear');
     return false;
   }
 }
@@ -101,7 +103,7 @@ export async function getWatcherStatus(): Promise<{
 
     if (response.ok) {
       const data = await response.json();
-      console.log('✅ CLARA watcher is running:', data);
+      logInfo('Watcher Service: CLARA watcher is running', data);
       return data;
     } else {
       return null;

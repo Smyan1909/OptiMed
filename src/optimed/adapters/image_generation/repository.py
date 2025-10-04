@@ -5,6 +5,9 @@ import asyncpg
 from typing import Optional, Any
 from optimed.core.domain import GeneratedImage
 from optimed.core.ports import GeneratedImageRepository
+from optimed.core.logging_utils import get_logger, sanitize_user_id, log_error
+
+logger = get_logger(__name__)
 
 
 class PostgresGeneratedImageRepository(GeneratedImageRepository):
@@ -44,7 +47,7 @@ class PostgresGeneratedImageRepository(GeneratedImageRepository):
                 """)
                 
                 if not table_exists:
-                    print("[DB] Creating generated_images table...")
+                    logger.info("Creating generated_images table")
                     await conn.execute("""
                         CREATE TABLE generated_images (
                             generation_id UUID PRIMARY KEY,
@@ -66,13 +69,13 @@ class PostgresGeneratedImageRepository(GeneratedImageRepository):
                     
                     # Fixed: Use proper GIN index with tsvector for full-text search
                     await conn.execute("CREATE INDEX IF NOT EXISTS idx_generated_images_prompt_fts ON generated_images USING GIN (to_tsvector('english', prompt))")
-                    
-                    print("[DB] ✅ generated_images table created successfully")
+
+                    logger.info("generated_images table created successfully")
                 else:
-                    print("[DB] generated_images table already exists")
+                    logger.info("generated_images table already exists")
                     
         except Exception as e:
-            print(f"[ERROR] Failed to create generated_images table: {e}")
+            log_error(logger, "create_generated_images_table", e)
             # Don't raise here, let the app continue
     
     async def store_generated_image(self, image: GeneratedImage) -> str:
@@ -99,12 +102,12 @@ class PostgresGeneratedImageRepository(GeneratedImageRepository):
                     image.prompt,
                     json.dumps(image.model_info)
                 )
-                
-                print(f"[DB] ✅ Stored generated image {image.generation_id}")
+
+                logger.info(f"Stored generated image {image.generation_id}")
                 return result['generation_id']
-                
+
             except Exception as e:
-                print(f"[ERROR] Failed to store generated image {image.generation_id}: {e}")
+                log_error(logger, "store_generated_image", e, image_id=image.generation_id)
                 raise
     
     async def get_generated_image(self, image_id: str) -> Optional[GeneratedImage]:
@@ -133,9 +136,9 @@ class PostgresGeneratedImageRepository(GeneratedImageRepository):
                     prompt=row['prompt'],
                     model_info=json.loads(row['model_info'])
                 )
-                
+
             except Exception as e:
-                print(f"[ERROR] Failed to retrieve generated image {image_id}: {e}")
+                log_error(logger, "get_generated_image", e, image_id=image_id)
                 return None
 
     async def get_user_generated_images(
@@ -171,9 +174,9 @@ class PostgresGeneratedImageRepository(GeneratedImageRepository):
                     )
                     for row in rows
                 ]
-                
+
             except Exception as e:
-                print(f"[ERROR] Failed to retrieve generated images for user {user_id}: {e}")
+                log_error(logger, "get_user_generated_images", e, user_id=sanitize_user_id(user_id))
                 return []
 
     async def search_generated_images_by_prompt(
@@ -220,9 +223,9 @@ class PostgresGeneratedImageRepository(GeneratedImageRepository):
                     )
                     for row in rows
                 ]
-                
+
             except Exception as e:
-                print(f"[ERROR] Failed to search generated images: {e}")
+                log_error(logger, "search_generated_images", e)
                 return []
     
     async def close(self) -> None:

@@ -7,6 +7,9 @@ import asyncpg
 
 from optimed.core.domain import UserEHRConnection
 from optimed.core.ports import UserEHRConnectionRepository
+from optimed.core.logging_utils import get_logger, log_error
+
+logger = get_logger(__name__)
 
 class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
     """PostgreSQL implementation of UserEHRConnectionRepository."""
@@ -98,7 +101,7 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_ehr_login_sessions_connection ON ehr_login_sessions(connection_id)")
                 
             except Exception as e:
-                print(f"Warning: Error creating tables: {e}")
+                log_error(logger, "Error creating tables", e)
                 # Continue anyway - tables might already exist
                 pass
     

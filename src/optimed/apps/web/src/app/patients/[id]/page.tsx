@@ -7,6 +7,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { fetchPatient, PatientDetail } from '@/lib/api';
 import { useUser } from '@/contexts/UserContext';
+import { logError } from '@/lib/logger';
 import ChatBox from '@/components/ChatBox';
 import SessionsList from '@/components/SessionsList';
 import { useTranslations } from 'next-intl';
@@ -36,7 +37,7 @@ function PatientDetailContent() {
         setPatient(result);
       } catch (err: any) {
         setError(err.message || 'Failed to load patient');
-        console.error('Patient load error:', err);
+        logError('Patient Detail Page: Patient load error', err);
       } finally {
         setLoading(false);
       }
