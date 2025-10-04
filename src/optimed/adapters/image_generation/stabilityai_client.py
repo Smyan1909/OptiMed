@@ -6,6 +6,9 @@ import httpx
 from typing import Optional, Tuple
 from optimed.core.domain import ImageGenerationRequest, GeneratedImage, ImageGenerationContext, ChatMessage, ChatRole
 from optimed.core.ports import ImageGenerationService, LLMClient
+from optimed.core.logging_utils import get_logger, log_error
+
+logger = get_logger(__name__)
 
 
 class StabilityAIClient(ImageGenerationService):
@@ -46,7 +49,7 @@ class StabilityAIClient(ImageGenerationService):
                 )
                 return response.status_code == 200
         except Exception as e:
-            print(f"[stability_ai] Service availability check failed: {e}")
+            log_error(logger, "stability_ai_availability_check", e)
             return False
     
     async def evaluate_generation_need(
@@ -100,13 +103,13 @@ class StabilityAIClient(ImageGenerationService):
                 ChatMessage(role=ChatRole.USER, content=evaluation_prompt)
             ], json_mode=True)
             if not response or not response.content:
-                        print("[parse_icd] Empty response from LLM, using fallback values")
+                        logger.warning("Empty response from LLM during image generation evaluation, using fallback values")
                         raise ValueError("Empty response from LLM")
 
                     # Strip whitespace and check if content is empty
             response_content = response.content.strip()
             if not response_content:
-                print("[parse_icd] Empty content in response, using fallback values")
+                logger.warning("Empty content in LLM response during image generation evaluation")
                 raise ValueError("Empty content in response")
 
             # Remove markdown code block markers if present
@@ -127,17 +130,17 @@ class StabilityAIClient(ImageGenerationService):
             data = json.loads(response_content)
             should_generate = data.get("should_generate", False)
             image_prompt = data.get("image_prompt") if should_generate else None
-            
-            print(f"[stability_ai] Evaluation - Should generate: {should_generate}")
+
+            logger.info(f"Image generation evaluation - Should generate: {should_generate}")
             if should_generate:
-                print(f"[stability_ai] Prompt: {image_prompt}")
+                logger.info("Generated image prompt for medical illustration")
             else:
-                print(f"[stability_ai] Reason: {data.get('reason', 'Not specified')}")
-                
+                logger.info(f"Image generation not needed: {data.get('reason', 'Not specified')}")
+
             return should_generate, image_prompt
-            
+
         except Exception as e:
-            print(f"[stability_ai] Error evaluating generation need: {e}")
+            log_error(logger, "evaluate_image_generation_need", e)
             return False, None
     
     async def generate_image(self, request: ImageGenerationRequest) -> GeneratedImage:
@@ -189,10 +192,11 @@ class StabilityAIClient(ImageGenerationService):
                     json=payload,
                     headers=headers
                 )
-                
+
+
                 if response.status_code != 200:
                     error_detail = response.text
-                    print(f"[stability_ai] API error: {response.status_code} - {error_detail}")
+                    logger.error(f"Stability AI API error: {response.status_code} - {error_detail}")
                     raise Exception(f"Stability AI API request failed: {response.status_code} - {error_detail}")
                 
                 result = response.json()
@@ -233,12 +237,12 @@ class StabilityAIClient(ImageGenerationService):
                         "style_preset": "photographic"
                     }
                 )
-                
-                print(f"[stability_ai] Successfully generated image: {generated_image.generation_id}")
+
+                logger.info(f"Successfully generated medical illustration: {generated_image.generation_id}")
                 return generated_image
-                
+
         except Exception as e:
-            print(f"[stability_ai] Error generating image: {e}")
+            log_error(logger, "stability_ai_generate_image", e)
             raise Exception(f"Failed to generate image with Stability AI: {str(e)}")
     
     def _enhance_medical_prompt(self, prompt: str) -> str:

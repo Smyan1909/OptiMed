@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { logError } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ user: data.user, session_id: data.session_id, message: data.message });
   } catch (err) {
-    console.error('Auth login route error:', err);
+    logError('Auth login route error', err);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

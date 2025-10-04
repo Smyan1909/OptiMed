@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logError } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
   try {
@@ -27,7 +28,7 @@ export async function GET(request: NextRequest) {
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
-    console.error('DICOM images API error:', error);
+    logError('DICOM images API error', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

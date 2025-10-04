@@ -12,7 +12,10 @@ from fhir.resources.observation import Observation # type: ignore[import-untyped
 
 from optimed.core.domain import PatientContext, JournalEntry, User, JournalEntryType, JournalEntryCreate, JournalEntryUpdate, DataSource
 from optimed.core.ports import FHIRRepository
+from optimed.core.logging_utils import get_logger, log_error
 import uuid
+
+logger = get_logger(__name__)
 
 """
 optimed.adapters.fhir_hapi.repository
@@ -990,7 +993,7 @@ class HAPIFHIRRepository(FHIRRepository):
             
             return statements
         except Exception as e:
-            print(f"Failed to fetch medication statements: {e}")
+            log_error(logger, "fetch medication statements", e)
             return []
 
     async def _get_questionnaire_responses(self, patient_id: str) -> list[Observation]:
@@ -1041,7 +1044,7 @@ class HAPIFHIRRepository(FHIRRepository):
             
             return responses
         except Exception as e:
-            print(f"Failed to fetch questionnaire responses: {e}")
+            log_error(logger, "fetch questionnaire responses", e)
             return []
 
 
@@ -1153,7 +1156,7 @@ class HAPIFHIRRepository(FHIRRepository):
             
             return immunizations
         except Exception as e:
-            print(f"Failed to fetch immunizations: {e}")
+            log_error(logger, "fetch immunizations", e)
             return []
 
     async def _get_conditions(self, patient_id: str) -> list[Observation]:
@@ -1231,7 +1234,7 @@ class HAPIFHIRRepository(FHIRRepository):
             
             return encounters
         except Exception as e:
-            print(f"Failed to fetch encounters: {e}")
+            log_error(logger, "fetch encounters", e)
             return []
 
     async def _get_care_plans(self, patient_id: str) -> list[Observation]:
@@ -1280,7 +1283,7 @@ class HAPIFHIRRepository(FHIRRepository):
 
             return care_plans
         except Exception as e:
-            print(f"Failed to fetch care plans: {e}")
+            log_error(logger, "fetch care plans", e)
             return []
 
     # ImagingStudy retrieval disabled to avoid errors in current version
@@ -1330,7 +1333,7 @@ class HAPIFHIRRepository(FHIRRepository):
 
             return procedures
         except Exception as e:
-            print(f"Failed to fetch procedures: {e}")
+            log_error(logger, "fetch procedures", e)
             return []
 
     async def _get_diagnostic_reports(self, patient_id: str) -> list[dict]:
@@ -1372,7 +1375,7 @@ class HAPIFHIRRepository(FHIRRepository):
 
             return reports
         except Exception as e:
-            print(f"Failed to fetch diagnostic reports: {e}")
+            log_error(logger, "fetch diagnostic reports", e)
             return []
 
     async def _get_family_history(self, patient_id: str) -> list[dict]:
@@ -1800,7 +1803,7 @@ class HAPIFHIRRepository(FHIRRepository):
                         entries.append(_parse_fhir_document_reference(fhir_resource))
                     except Exception as e:
                         # Skip invalid entries
-                        print(f"Failed to parse DocumentReference: {e}")
+                        log_error(logger, "parse DocumentReference", e)
                         continue
             
             # Also include in-memory entries for this patient
@@ -1813,8 +1816,8 @@ class HAPIFHIRRepository(FHIRRepository):
             
             # Sort by creation date descending
             return sorted(entries, key=lambda e: e.created_at, reverse=True)
-        except Exception:
-
+        except Exception as e:
+            log_error(logger, "fetch journal entries from FHIR server", e)
             # Fallback to in-memory storage only
             entries = []
             for entry_data in self._journal_entries.values():
@@ -1904,7 +1907,7 @@ class HAPIFHIRRepository(FHIRRepository):
                 return _parse_fhir_document_reference(server_resource)
         except Exception as e:
             # Expected for read-only HAPI demo
-            print(f"Failed to POST to FHIR server (expected for HAPI demo): {e}")
+            log_error(logger, "POST to FHIR server (expected for HAPI demo)", e)
         
         return _parse_fhir_document_reference(fhir_resource)
 
@@ -1972,7 +1975,7 @@ class HAPIFHIRRepository(FHIRRepository):
                 self._journal_entries[entry_id] = server_resource
                 return _parse_fhir_document_reference(server_resource)
         except Exception as e:
-            print(f"Failed to PUT to FHIR server (expected for HAPI demo): {e}")
+            log_error(logger, "PUT to FHIR server (expected for HAPI demo)", e)
         
         return _parse_fhir_document_reference(existing_resource)
 

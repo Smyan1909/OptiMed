@@ -7,6 +7,9 @@ from optimed.core.domain import User, UserSession, UserAction, UserRole, UserSta
 from optimed.core.ports import UserRepository
 import hashlib
 import uuid
+from optimed.core.logging_utils import get_logger, log_error
+
+logger = get_logger(__name__)
 
 class PGUserRepository(UserRepository):
 
@@ -303,7 +306,7 @@ class PGUserRepository(UserRepository):
                     model_config_hash
                 )
         except Exception as e:
-            print(f"Warning: Failed to create GDPR session record: {e}")
+            log_error(logger, "Failed to create GDPR session record", e)
 
     async def get_active_session(self, session_id: str) -> Optional[UserSession]:
         """Get an active user session by ID."""

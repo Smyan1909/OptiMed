@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logInfo, logError } from '@/lib/logger';
 
 interface EHRCallbackRequest {
   connection_id: string;
@@ -21,7 +22,7 @@ export async function POST(request: NextRequest) {
     url.searchParams.set('code', code);
     url.searchParams.set('state', state);
 
-    console.log('🔄 [EHR CALLBACK API] Forwarding to backend:', url.toString());
+    logInfo('EHR CALLBACK API: Forwarding to backend', { url: url.toString() });
 
     const response = await fetch(url.toString(), {
       method: 'GET',
@@ -33,13 +34,13 @@ export async function POST(request: NextRequest) {
       redirect: 'manual'
     });
 
-    console.log('📥 [EHR CALLBACK API] Backend response status:', response.status);
+    logInfo('EHR CALLBACK API: Backend response received', { status: response.status });
 
     // If it's a redirect, the backend is working correctly but returning HTML
     // We need to extract the success/error information
     if (response.status === 302) {
       const location = response.headers.get('location');
-      console.log('📍 [EHR CALLBACK API] Redirect location:', location);
+      logInfo('EHR CALLBACK API: Redirect location', { location });
 
       if (location) {
         const redirectUrl = new URL(location);
@@ -76,7 +77,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('❌ [EHR CALLBACK API] Error:', error);
+    logError('EHR CALLBACK API: Error during callback', error);
     return NextResponse.json(
       { error: 'Internal server error during EHR callback' },
       { status: 500 }

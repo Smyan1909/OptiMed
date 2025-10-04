@@ -11,7 +11,7 @@ export interface UseLookupReturn {
   selection: string;
   lookupTerm: string;
   showLookup: boolean;
-  contentRef: React.RefObject<HTMLDivElement>;
+  contentRef: React.RefObject<HTMLDivElement | null>;
   handleTouchEnd: (e: React.TouchEvent | React.MouseEvent) => void;
   handleMouseUp: () => void;
   handleKeyUp: () => void;

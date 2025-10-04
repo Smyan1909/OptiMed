@@ -2,6 +2,8 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { getCurrentUser, loginUser, logoutUser, User, setupSessionEncryption } from '@/lib/api';
+import { sendSessionToWatcher, clearSessionFromWatcher } from '@/lib/watcherService';
+import { sanitizeUserId, sanitizePatientId, sanitizeSessionId, sanitizeDocumentId, logInfo, logError, logWarning } from '@/lib/logger';
 
 type UserContextType = {
   user: User | null;
@@ -28,6 +30,17 @@ export function UserProvider({ children }: { children: ReactNode }) {
       const currentUser = await getCurrentUser();
       setUser(currentUser);
       setIsAuthenticated(!!currentUser);
+
+      // If user is authenticated, send existing session to watcher
+      // This handles page refresh scenarios
+      if (currentUser) {
+        const sessionId = localStorage.getItem('session_id');
+        if (sessionId) {
+          sendSessionToWatcher(sessionId).catch(() => {
+            // Ignore errors - watcher is optional
+          });
+        }
+      }
     } catch (err) {
       setUser(null);
       setIsAuthenticated(false);
@@ -45,21 +58,26 @@ export function UserProvider({ children }: { children: ReactNode }) {
       setError(null);
       setIsLoading(true);
       const response = await loginUser(username, password);
-      
+
       localStorage.setItem('session_id', response.session.session_id);
       setUser(response.user);
       setIsAuthenticated(true);
+
+      // Send session to local CLARA watcher (fails silently if not running)
+      sendSessionToWatcher(response.session.session_id).catch(() => {
+        // Ignore errors - watcher is optional
+      });
 
       // Setup encryption for the session
       try {
         const encryptionSetup = await setupSessionEncryption(response.session.session_id);
         if (encryptionSetup) {
-          console.log('✅ Session encryption setup successful');
+          logInfo(`Session encryption setup successful for session: ${sanitizeSessionId(response.session.session_id)}`);
         } else {
-          console.warn('⚠️ Session encryption setup failed, continuing without encryption');
+          logWarning(`Session encryption setup failed for session: ${sanitizeSessionId(response.session.session_id)}, continuing without encryption`);
         }
       } catch (encryptionError) {
-        console.warn('⚠️ Encryption setup error:', encryptionError);
+        logWarning(`Encryption setup error for session: ${sanitizeSessionId(response.session.session_id)}`);
         // Continue without encryption - not critical for basic functionality
       }
     } catch (err) {
@@ -72,9 +90,14 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     try {
+      // Clear session from local CLARA watcher (fails silently if not running)
+      clearSessionFromWatcher().catch(() => {
+        // Ignore errors - watcher is optional
+      });
+
       await logoutUser();
     } catch (err) {
-      console.error('Logout error:', err);
+      logError('Logout error', err instanceof Error ? err : new Error(String(err)));
     } finally {
       localStorage.removeItem('session_id');
       setUser(null);

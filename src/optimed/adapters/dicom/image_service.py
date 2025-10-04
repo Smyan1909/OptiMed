@@ -16,8 +16,11 @@ from optimed.core.ports import (
     DICOMProcessor,
     ImageService,
     VectorStore,
-    ImageEmbeddingService, 
+    ImageEmbeddingService,
 )
+from optimed.core.logging_utils import get_logger, log_error
+
+logger = get_logger(__name__)
 
 
 class ImageServiceImpl(ImageService):
@@ -219,9 +222,10 @@ class ImageServiceImpl(ImageService):
                     combined_embedding,
                     embedding_metadata
                 )
-            
+
         except Exception as e:
-            print(f"Warning: Failed to create embeddings for image {image.image_id}: {e}")
+            logger.warning(f"Failed to create embeddings for image {image.image_id}, continuing without embeddings")
+            log_error(logger, "create_image_embeddings", e, image_id=image.image_id)
             # Don't fail the upload if embedding creation fails
     
     async def find_similar_images(self, image_id: str, user_id: str, limit: int = 5) -> list[dict[str, Any]]:
@@ -262,7 +266,7 @@ class ImageServiceImpl(ImageService):
                     filtered_results.append(result)
             
             return filtered_results[:limit]
-            
+
         except Exception as e:
-            print(f"Error finding similar images: {e}")
+            log_error(logger, "find_similar_images", e, image_id=image_id)
             return []

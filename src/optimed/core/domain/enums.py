@@ -14,7 +14,10 @@ __all__ = [
     "UserStatus",
     "ImageModalityType",
     "ImageStatus",
-    "JournalEntryType",  # Add this line
+    "JournalEntryType",
+    "TemplateType",
+    "NoteGenerationStatus",
+    "NoteExportMethod",
 ]
 
 
@@ -128,4 +131,32 @@ class GeneratedImagePurpose(str, Enum):
     EDUCATIONAL = "educational"
     DIAGNOSTIC_AID = "diagnostic_aid"
     ILLUSTRATION = "illustration"
-    
+
+
+class TemplateType(str, Enum):
+    """Types of clinical note templates."""
+    JOURNAL_ENTRY = "journal_entry"
+    REFERRAL = "referral"
+    SOAP = "soap"
+    PROGRESS_NOTE = "progress_note"
+    SBAR = "sbar"
+    CONSULTATION = "consultation"
+    CUSTOM = "custom"
+
+
+class NoteGenerationStatus(str, Enum):
+    """Status of note generation process."""
+    STARTED = "started"
+    GENERATING = "generating"
+    COMPLETED = "completed"
+    EXPORTED = "exported"
+    CANCELLED = "cancelled"
+    ERROR = "error"
+
+
+class NoteExportMethod(str, Enum):
+    """Method used to export generated note."""
+    CLIPBOARD = "clipboard"
+    DOWNLOAD = "download"
+    EHR = "ehr"
+    CANCELLED = "cancelled"

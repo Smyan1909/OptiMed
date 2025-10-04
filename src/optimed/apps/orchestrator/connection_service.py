@@ -7,6 +7,9 @@ from optimed.core.domain import UserEHRConnection, User
 from optimed.core.ports import UserEHRConnectionRepository, AuthenticationProvider, FHIRRepository
 from optimed.adapters.smart_fhir.auth_provider import SMARTAuthProvider
 from optimed.adapters.smart_fhir.repository import SMARTFHIRRepository
+from optimed.core.logging_utils import get_logger, sanitize_user_id, log_error
+
+logger = get_logger(__name__)
 
 class UserEHRConnectionService:
     """Service for managing user EHR connections."""
@@ -120,24 +123,24 @@ class UserEHRConnectionService:
     
     async def create_fhir_repository(self, user_id: str, provider_type: str = "smart_fhir") -> Optional[FHIRRepository]:
         """Create an authenticated FHIR repository for a user using their connection and auth provider."""
-        print(f"[ConnectionService] Creating FHIR repository for user {user_id}, provider {provider_type}")
-        
+        logger.info(f"Creating FHIR repository for user {sanitize_user_id(user_id)}, provider {provider_type}")
+
         # Get active connection for this user
         connection = await self._connection_repo.get_active_connection_by_user(user_id, provider_type)
         if not connection:
-            print(f"[ConnectionService] No active {provider_type} connection found for user {user_id}")
+            logger.info(f"No active {provider_type} connection found for user {sanitize_user_id(user_id)}")
             return None
-        
+
         if not connection.access_token:
-            print(f"[ConnectionService] Connection {connection.connection_id} has no access token")
+            logger.warning("Connection has no access token")
             return None
-        
-        print(f"[ConnectionService] Found connection {connection.connection_id} with access token")
-        
+
+        logger.info("Found connection with access token")
+
         # Check if we already have a repository for this connection
         if connection.connection_id in self._active_repositories:
             repo = self._active_repositories[connection.connection_id]
-            print(f"[ConnectionService] Reusing existing repository for connection {connection.connection_id}")
+            logger.info("Reusing existing repository for connection")
             return repo
         
         # Create new repository based on provider type
@@ -156,14 +159,14 @@ class UserEHRConnectionService:
                 
                 # Cache the repository
                 self._active_repositories[connection.connection_id] = repository
-                print(f"[ConnectionService] Created new {provider_type} repository for user {user_id}")
+                logger.info(f"Created new {provider_type} repository for user {sanitize_user_id(user_id)}")
                 return repository
-                
+
             except Exception as e:
-                print(f"[ConnectionService] Failed to create {provider_type} repository: {e}")
+                log_error(logger, f"create_{provider_type}_repository", e)
                 import traceback
                 traceback.print_exc()
                 return None
-        
-        print(f"[ConnectionService] Unsupported provider type: {provider_type}")
+
+        logger.warning(f"Unsupported provider type: {provider_type}")
         return None

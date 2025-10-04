@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@/contexts/UserContext';
+import { logError } from '@/lib/logger';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -96,7 +97,7 @@ export default function LoginPage() {
       // Redirect to authorization server
       window.location.href = result.authorization_url;
     } catch (err: any) {
-      console.error('EHR login error:', err);
+      logError('Login Page: EHR login error', err);
       setAuthError('Failed to initiate EHR login: ' + err.message);
     } finally {
       setIsEhrConnecting(false);

@@ -2,7 +2,7 @@ from __future__ import annotations
 from .streaming_decorators import streaming_step
 from .streaming_llm import StreamingLLMWrapper
 
-import uuid 
+import uuid
 import json
 import time
 import asyncio
@@ -13,7 +13,7 @@ from datetime import datetime
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
-from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, GeneratedImage, ImageGenerationContext, DifferentialDiagnosis
+from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, ChatRole, UserAction, User, WebSearchResponse, GeneratedImage, ImageGenerationContext, DifferentialDiagnosis, NoteTemplate
 from optimed.core.lang import detect_language_code
 
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, ImageGenerationService, GeneratedImageRepository
@@ -22,6 +22,9 @@ from optimed.apps.orchestrator.connection_service import UserEHRConnectionServic
 
 from optimed.embeddings.minilm import embed
 from optimed.embeddings.service import embed_and_store
+from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, sanitize_session_id, log_error
+
+logger = get_logger(__name__)
 
 
 
@@ -211,9 +214,9 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     )
                     if user_fhir_repo:
                         fhir_repo = user_fhir_repo
-                        print("[fetch_patient] Using user's SMART on FHIR connection")
+                        logger.info("Using user's SMART on FHIR connection for patient fetch")
                 except Exception as e:
-                    print(f"[fetch_patient] Failed to use SMART connection: {e}, falling back to default")
+                    logger.warning(f"Failed to use SMART connection: {e}, falling back to default")
             
             state.patient_ctx = await fhir_repo.get_patient(str(state.patient_id))
             return state
@@ -222,12 +225,12 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
         async def load_user_context(state: FlowState) -> FlowState:
             """Load user context if available."""
             if state.user_id:
-                try: 
+                try:
                     state.user_context = await self._user_repo.get_user_by_id(state.user_id)
                     if not state.user_context:
-                        print(f"[load_user_context] No user found with ID {state.user_id}")
+                        logger.info(f"No user found with ID {sanitize_user_id(state.user_id)}")
                 except Exception as e:
-                    print(f"[load_user_context] Error loading user context: {e}")
+                    log_error(logger, "load_user_context", e)
                     state.user_context = None
             
             return state
@@ -239,7 +242,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 # Research mode always needs web search for comprehensive analysis
                 if state.diagnostic_mode == "research":
                     state.web_search_performed = True
-                    print("[web_search] Research mode: Web search automatically enabled")
+                    logger.info("Research mode: Web search automatically enabled")
                     return state
                 
                 # For other modes, evaluate based on query content
@@ -256,10 +259,10 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 )
                 
                 state.web_search_performed = needs_search
-                print(f"[web_search] Mode {state.diagnostic_mode}: Web search needed: {needs_search}")
-                
+                logger.info(f"Mode {state.diagnostic_mode}: Web search needed: {needs_search}")
+
             except Exception as e:
-                print(f"[web_search] Error evaluating search need: {e}")
+                log_error(logger, "evaluate_web_search_need", e)
                 # Default to web search for research mode even on error
                 state.web_search_performed = (state.diagnostic_mode == "research")
             
@@ -297,10 +300,10 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                         for result in search_response.results[:3]
                     ]
                 
-                print(f"[web_search] Found {len(search_response.results)} results")
-                
+                logger.info(f"Found {len(search_response.results)} web search results")
+
             except Exception as e:
-                print(f"[web_search] Error performing search: {e}")
+                log_error(logger, "perform_web_search", e)
                 state.web_search_response = None
                 state.retrieved_web = []
             
@@ -315,7 +318,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
         @streaming_step("load_current_session_history")
         async def load_current_session_history(state: FlowState) -> FlowState:
             """Load chat history for the patient if available."""
-            print(f"[load_current_session_history] Loading for patient_id={state.patient_id}, session_id={state.session_id}")
+            logger.info(f"Loading chat history for patient_id={sanitize_patient_id(str(state.patient_id) if state.patient_id else 'None')}, session_id={sanitize_session_id(state.session_id) if state.session_id else 'None'}")
 
             if state.patient_id and state.session_id:
                 try:
@@ -325,7 +328,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                         session_id=state.session_id,
                         limit=20
                     )
-                    print(f"[load_current_session_history] Retrieved {len(history_data)} messages")
+                    logger.info(f"Retrieved {len(history_data)} chat history messages")
 
                     chat_messages = []
                     
@@ -335,12 +338,12 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                             content = item.get("content", "")
                             chat_messages.append(ChatMessage(role=role, content=content))
                         except Exception as e:
-                            print(f"[load_current_session_history] Error parsing item: {e}")
+                            log_error(logger, "parse_chat_history_item", e)
                             continue
                             
                     state.chat_history = chat_messages
                 except Exception as e:
-                    print(f"[load_current_session_history] Error loading chat history: {e}")
+                    log_error(logger, "load_chat_history", e)
                     state.chat_history = []
             else:
                 try:
@@ -350,7 +353,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                         session_id=state.session_id,
                         limit=20
                     )
-                    print(f"[load_current_session_history] Retrieved {len(history_data)} messages")
+                    logger.info(f"Retrieved {len(history_data)} chat history messages")
 
                     chat_messages = []
                     
@@ -360,12 +363,12 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                             content = item.get("content", "")
                             chat_messages.append(ChatMessage(role=role, content=content))
                         except Exception as e:
-                            print(f"[load_current_session_history] Error parsing item: {e}")
+                            log_error(logger, "parse_chat_history_item", e)
                             continue
                             
                     state.chat_history = chat_messages
                 except Exception as e:
-                    print(f"[load_current_session_history] Error loading chat history: {e}")
+                    log_error(logger, "load_chat_history", e)
                     state.chat_history = []
 
             return state
@@ -403,10 +406,10 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 needs_cross_session_history = "YES" in response.content.upper()
                 state.needs_cross_session_search = needs_cross_session_history
                 
-                print(f"[cross_session_eval] Cross-session history needed: {needs_cross_session_history} for query: '{state.user_prompt[:50]}...'")
+                logger.info(f"Cross-session history needed: {needs_cross_session_history}")
                 
             except Exception as e:
-                print(f"[cross_session_eval] Error evaluating cross-session history need: {e}")
+                log_error(logger, "evaluate_cross_session_history_need", e)
                 state.needs_cross_session_search = False
             
             return state
@@ -486,17 +489,17 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                         })
                         
                     except Exception as e:
-                        print(f"[cross_session_search] Error parsing history row: {e}")
+                        log_error(logger, "parse_cross_session_history_row", e)
                         continue
                 
                 # Sort by similarity score and take the most relevant
                 relevant_history.sort(key=lambda x: x.get("similarity_score", 0.0), reverse=True)
                 state.relevant_cross_session_history = relevant_history[:5]  # Keep top 5 most relevant
                 
-                print(f"[cross_session_search] Found {len(state.relevant_cross_session_history)} relevant historical conversations")
+                logger.info(f"Found {len(state.relevant_cross_session_history)} relevant historical conversations")
                 
             except Exception as e:
-                print(f"[cross_session_search] Error searching cross-session history: {e}")
+                log_error(logger, "search_cross_session_history", e)
                 state.relevant_cross_session_history = []
 
             return state
@@ -520,10 +523,10 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 )
                 
                 if existing_chunks:
-                    print(f"[store_chunks] Patient {patient_id} chunks already exist, checking for new journal entries")
+                    logger.info(f"Patient chunks already exist for {sanitize_patient_id(patient_id)}, checking for new journal entries")
                     # Still proceed to check for new journal entries
                 else:
-                    print(f"[store_chunks] Creating new chunks for patient {patient_id}")
+                    logger.info(f"Creating new chunks for patient {sanitize_patient_id(patient_id)}")
                 
                 # Break down patient context into meaningful chunks
                 patient_data = state.patient_ctx
@@ -797,13 +800,13 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                             if user_fhir_repo:
                                 fhir_repo = user_fhir_repo
                         except Exception as e:
-                            print(f"[store_chunks] Failed to use SMART connection for journal: {e}")
+                            logger.warning(f"Failed to use SMART connection for journal: {e}")
 
                     # Fetch journal entries for this patient
                     journal_entries = await fhir_repo.get_patient_journal_entries(patient_id)
                     
                     if journal_entries:
-                        print(f"[store_chunks] Found {len(journal_entries)} journal entries for patient {patient_id}")
+                        logger.info(f"Found {len(journal_entries)} journal entries for patient {sanitize_patient_id(patient_id)}")
 
                         # Prepare a reusable embedding for existence checks to avoid duplicates
                         existence_query_vec = await embed("journal entry existence check", "query")
@@ -822,10 +825,10 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                                     },
                                 )
                                 if existing_entry:
-                                    print(f"[store_chunks] Skipping already stored journal entry {entry.entry_id}")
+                                    logger.info("Skipping already stored journal entry")
                                     continue
                             except Exception as e:
-                                print(f"[store_chunks] Existence check failed for journal entry {entry.entry_id}: {e}")
+                                log_error(logger, "journal_entry_existence_check", e)
                                 # Fall through and attempt to store
                                 pass
                             journal_text = f"""
@@ -856,18 +859,18 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                                 }
                             )
                         
-                        print(f"[store_chunks] Successfully stored {len(journal_entries)} journal entries")
+                        logger.info(f"Successfully stored {len(journal_entries)} journal entries")
                     else:
-                        print(f"[store_chunks] No journal entries found for patient {patient_id}")
+                        logger.info(f"No journal entries found for patient {sanitize_patient_id(patient_id)}")
                         
                 except Exception as journal_error:
-                    print(f"[store_chunks] Error fetching/storing journal entries: {journal_error}")
+                    log_error(logger, "fetch_store_journal_entries", journal_error)
                     # Continue without journal entries - don't fail the entire process
                 
-                print(f"[store_chunks] Successfully processed chunks for patient {patient_id}")
+                logger.info(f"Successfully processed chunks for patient {sanitize_patient_id(patient_id)}")
                 
             except Exception as e:
-                print(f"[store_chunks] Error storing patient chunks: {e}")
+                log_error(logger, "store_patient_chunks", e)
             
             return state
 
@@ -892,12 +895,12 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
 
                 if not rows and state.patient_ctx:
                     # Fallback to patient context
-                    print("[intelligent_retrieve_chunks] fallback to patient context as no chunks found")
+                    logger.info("Fallback to patient context as no chunks found")
                     state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
                     state.chunk_analysis = {"method": "fallback", "reason": "No chunks found, using patient context"}
                     return state
                 elif not rows and not state.patient_ctx:
-                    print("[intelligent_retrieve_chunks] No chunks found and no patient context available")
+                    logger.warning("No chunks found and no patient context available")
                     state.retrieved_chunks = []
                     state.chunk_analysis = {"method": "fallback", "reason": "No chunks found and no patient context available"}
                     return state
@@ -947,15 +950,15 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                                 
                                 # Log recency analysis for debugging
                                 threshold_days = threshold / (24 * 60 * 60 * 1000) if threshold != float('inf') else "∞"
-                                print(f"[recency] {data_type} chunk is {days_old:.1f} days old, threshold: {threshold_days} days, recent: {is_recent}")
+                                logger.info(f"{data_type} chunk is {days_old:.1f} days old, threshold: {threshold_days} days, recent: {is_recent}")
                                 
                             except (ValueError, TypeError) as e:
-                                print(f"[recency] Could not parse timestamp '{timestamp_str}' for {data_type} chunk: {e}")
+                                logger.warning(f"Could not parse timestamp for {data_type} chunk: {e}")
                                 is_recent = True  # Default to including if timestamp parsing fails
                         
                         # Apply recency filter - skip old time-sensitive data
                         if not is_recent:
-                            print(f"[recency] Skipping {data_type} chunk due to age ({chunk_timestamp})")
+                            logger.info(f"Skipping {data_type} chunk due to age")
                             continue
                         
                         # Verify patient relevance
@@ -973,7 +976,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                                         # Apply recency boost: more recent = higher boost
                                         recency_factor = 1.0 + (0.3 * (1.0 - time_diff / threshold))
                                         adjusted_score = similarity_score * recency_factor # type: ignore
-                                        print(f"[recency] Applied recency boost to {data_type}: {similarity_score:.3f} -> {adjusted_score:.3f}")
+                                        logger.info(f"Applied recency boost to {data_type}: {similarity_score:.3f} -> {adjusted_score:.3f}")
                                 
                                 candidate_chunks.append({
                                     "id": f"chunk_{i}",
@@ -989,7 +992,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                                 })
                         
                     except Exception as e:
-                        print(f"[intelligent_retrieve] Error processing chunk {i}: {e}")
+                        log_error(logger, f"process_chunk_{i}", e)
                         continue
 
                 if not candidate_chunks:
@@ -1052,13 +1055,13 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     ], json_mode=True)
 
                     if not analysis_response or not analysis_response.content:
-                        print("[intelligent_retrieve] Empty response from LLM, using fallback")
+                        logger.warning("Empty response from LLM, using fallback")
                         raise ValueError("Empty response from LLM")
 
                     # Strip whitespace and check if content is empty
                     response_content = analysis_response.content.strip()
                     if not response_content:
-                        print("[intelligent_retrieve] Empty content in response, using fallback")
+                        logger.warning("Empty content in response, using fallback")
                         raise ValueError("Empty content in response")
 
                     # Remove markdown code block markers if present
@@ -1087,18 +1090,18 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     state.chunk_analysis = analysis_data
                     state.retrieval_reasoning = analysis_data.get("reasoning", "")
                     
-                    print(f"[intelligent_retrieve] Selected {len(selected_chunks)} chunks out of {len(candidate_chunks)} candidates")
-                    print(f"[intelligent_retrieve] Reasoning: {state.retrieval_reasoning}")
+                    logger.info(f"Selected {len(selected_chunks)} chunks out of {len(candidate_chunks)} candidates")
+                    logger.info(f"Reasoning: {state.retrieval_reasoning}")
 
                     # Log which data types were selected for debugging
                     selected_data_types = []
                     for chunk in candidate_chunks:
                         if chunk["id"] in selected_chunk_ids:
                             selected_data_types.append(chunk.get("data_type", "unknown"))
-                    print(f"[intelligent_retrieve] Selected data types: {selected_data_types}")
+                    logger.info(f"Selected data types: {selected_data_types}")
 
                 except Exception as e:
-                    print(f"[intelligent_retrieve] Error in LLM analysis: {e}, falling back to similarity-based selection")
+                    logger.warning(f"Error in LLM analysis: {e}, falling back to similarity-based selection")
                     # Fallback to top similarity scores, but prioritize journal entries and recent data
                     journal_chunks = [chunk for chunk in candidate_chunks if chunk.get("data_type") == "journal_entry"]
                     recent_time_sensitive = [chunk for chunk in candidate_chunks if chunk.get("data_type") in ["vitals", "labs", "medications"] and chunk.get("is_recent", True)]
@@ -1114,7 +1117,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                     state.chunk_analysis = {"method": "fallback_similarity", "error": str(e)}
 
             except Exception as e:
-                print(f"[intelligent_retrieve] Critical error in chunk retrieval: {e}")
+                log_error(logger, "chunk_retrieval_critical", e)
                 # Ultimate fallback to patient context if everything fails
                 if state.patient_ctx:
                     state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
@@ -1164,7 +1167,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 )
                 
             except Exception as e:
-                print(f"[store_user_message] Error: {e}")
+                log_error(logger, "store_user_message", e)
                 import traceback
                 traceback.print_exc()
             
@@ -1231,7 +1234,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 # Add differential diagnosis count
                 if state.parsed_response and state.parsed_response.differential:
                     metadata["differential_count"] = str(len(state.parsed_response.differential))
-                    print("[Differential Diagnoses] saved differential diagnoses count:", metadata["differential_count"])
+                    logger.info(f"Saved differential diagnoses count: {metadata['differential_count']}")
                 # Store assistant message
                 await self._vec.upsert(
                     embedding_id=f"chat_{state.session_id}_{int(time.time() * 1000)}_assistant",
@@ -1246,7 +1249,7 @@ class LangGraphDiagnosticEngine(DiagnosticEngine):
                 )
                 
             except Exception as e:
-                print(f"[store_assistant_response] Error: {e}")
+                log_error(logger, "store_assistant_response", e)
                 import traceback
                 traceback.print_exc()
             
@@ -1632,14 +1635,14 @@ Please reference this generated image in your response when relevant and explain
 
                 state.should_parse_icd_codes = should_parse
                 
-                print(f"[icd_evaluation] Mode: {state.diagnostic_mode}, Should parse ICD: {should_parse}")
+                logger.info(f"Mode: {state.diagnostic_mode}, Should parse ICD: {should_parse}")
                 if should_parse:
-                    print("[icd_evaluation] High-confidence diagnosis detected in response")
+                    logger.info("High-confidence diagnosis detected in response")
                 else:
-                    print("[icd_evaluation] No confident diagnosis found, skipping ICD parsing")
+                    logger.info("No confident diagnosis found, skipping ICD parsing")
 
             except Exception as e:
-                print(f"[icd_evaluation] Error evaluating ICD parsing need: {e}")
+                log_error(logger, "evaluate_icd_parsing_need", e)
                 # Default to False to be safe - don't parse unless we're certain
                 state.should_parse_icd_codes = False
             
@@ -1666,10 +1669,10 @@ Please reference this generated image in your response when relevant and explain
                 contains_diagnostic_content = any(keyword in response_lower for keyword in differential_keywords)
                 
                 if not contains_diagnostic_content:
-                    print("[parse_icd] Pre-meet mode: No diagnostic content detected, skipping ICD parsing")
+                    logger.info("Pre-meet mode: No diagnostic content detected, skipping ICD parsing")
                     return state
                 else:
-                    print("[parse_icd] Pre-meet mode: Diagnostic content detected, proceeding with ICD parsing")
+                    logger.info("Pre-meet mode: Diagnostic content detected, proceeding with ICD parsing")
 
             if state.patient_ctx and state.llm_response:
                 try:
@@ -1736,13 +1739,13 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                                 break
                                 
                         except Exception as retry_error:
-                            print(f"[parse_icd] Attempt {attempt + 1} failed: {retry_error}")
+                            logger.warning(f"ICD parse attempt {attempt + 1} failed: {retry_error}")
                             if attempt == max_retries - 1:
                                 raise retry_error
                             await asyncio.sleep(2 ** attempt)
                     
                     if not parsed or not parsed.content:
-                        print("[parse_icd] Failed to get valid response from LLM")
+                        logger.error("Failed to get valid response from LLM for ICD parsing")
                         state.parsed_response = DiagnosisResult(
                             patient_id=state.patient_ctx.patient_id,
                             primary_icd="Unknown",
@@ -1769,7 +1772,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                     try:
                         parsed_data = json.loads(response_content)
                     except json.JSONDecodeError as e:
-                        print(f"[parse_icd] JSON decode error: {e}, content: {response_content[:200]}...")
+                        logger.error(f"JSON decode error: {e}")
                         parsed_data = {
                             "primary_icd": "Unknown",
                             "differential": []
@@ -1806,7 +1809,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                                 "Retrieving baseline probabilities", 
                                 f"Searching medical literature for {len(diagnosis_names)} conditions"
                             )
-                            print(f"[parse_icd] Batch retrieving priors for {len(diagnosis_names)} diagnoses")
+                            logger.info(f"Batch retrieving priors for {len(diagnosis_names)} diagnoses")
                             batch_priors = await _batch_web_search_for_priors(diagnosis_names, state.patient_ctx)
                             await _emit_diagnosis_progress_update(
                                 state, 
@@ -1827,7 +1830,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                             )
                             
                             state.prelim_diagnosis_name = diagnosis_name  # Store for streaming updates
-                            print(f"[parse_icd] Preparing Bayesian confidence calculation for: {diagnosis_name}")
+                            logger.info("Preparing Bayesian confidence calculation for diagnosis")
                             
                             # Create async task for Bayesian confidence calculation
                             # Pass the batch_priors dict so it can use pre-computed values
@@ -1842,7 +1845,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                         
                         # Execute all confidence calculations concurrently
                         if confidence_tasks:
-                            print(f"[parse_icd] Computing Bayesian confidence for {len(confidence_tasks)} diagnoses in parallel")
+                            logger.info(f"Computing Bayesian confidence for {len(confidence_tasks)} diagnoses in parallel")
                             
                             # Emit start of concurrent processing
                             await _emit_diagnosis_progress_update(
@@ -1871,7 +1874,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                             for i, (confidence_result, diff) in enumerate(zip(task_results, [diff for _, diff in confidence_tasks])):
                                 try:
                                     if isinstance(confidence_result, Exception):
-                                        print(f"[parse_icd] Error calculating confidence for {diff.get('diagnosis_name', 'Unknown')}: {confidence_result}")
+                                        logger.error(f"Error calculating confidence: {confidence_result}")
                                         bayesian_confidence = 0.5  # Fallback confidence
                                     else:
                                         bayesian_confidence = confidence_result # type: ignore
@@ -1886,7 +1889,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                                     ))
                                     
                                     processed_count += 1
-                                    print(f"[parse_icd] {diagnosis_name}: Bayesian confidence = {bayesian_confidence:.3f}")
+                                    logger.info(f"Bayesian confidence = {bayesian_confidence:.3f}")
                                     
                                     # Emit progress for each processed diagnosis
                                     await _emit_diagnosis_progress_update(
@@ -1897,7 +1900,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                                     )
                                     
                                 except Exception as e:
-                                    print(f"[parse_icd] Error processing result for differential {i}: {e}")
+                                    log_error(logger, f"process_differential_{i}", e)
                                     continue
 
                     # Emit final completion update
@@ -1926,12 +1929,12 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                         created_by_user_id=state.user_id
                     )
 
-                    print(f"[parse_icd] Successfully parsed with Bayesian confidence - Primary: {state.parsed_response.primary_icd}, Differential count: {len(state.parsed_response.differential)}")
+                    logger.info(f"Successfully parsed with Bayesian confidence - Primary: {state.parsed_response.primary_icd}, Differential count: {len(state.parsed_response.differential)}")
                     for diff in differential_list:
-                        print(f"[parse_icd] {diff.diagnosis_name}: Bayesian confidence = {diff.confidence:.3f}")
+                        logger.info(f"{diff.diagnosis_name}: Bayesian confidence = {diff.confidence:.3f}")
 
                 except Exception as e:
-                    print(f"[parse_icd] Error parsing ICD: {e}")
+                    log_error(logger, "parse_icd", e)
                     import traceback
                     traceback.print_exc()
                     
@@ -1991,18 +1994,18 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 
                 await _emit_diagnosis_progress_update(state, diagnosis_name, "Diagnosis computed", f"Confidence: {posterior:.1%}")
                 
-                print(f"[bayesian] {diagnosis_name}: Prior={prior_probability:.3f}, Likelihood={likelihood:.3f}, Marginal={marginal_probability:.3f}, Posterior={posterior:.3f}")
+                logger.info(f"Bayesian: Prior={prior_probability:.3f}, Likelihood={likelihood:.3f}, Marginal={marginal_probability:.3f}, Posterior={posterior:.3f}")
                 
                 return posterior
                 
             except Exception as e:
-                print(f"[bayesian] Error calculating confidence for {diagnosis_name}: {e}")
+                log_error(logger, "calculate_bayesian_confidence", e)
                 await _emit_diagnosis_progress_update(state, diagnosis_name, "Error in calculation", "Using fallback confidence")
                 return 0.5
         
         async def _emit_diagnosis_progress_update(state: FlowState, diagnosis_name: str, step: str, details: str = ""):
             """Emit streaming update for differential diagnosis computation progress."""
-            print(f"[DEBUG] Emitting differential diagnosis progress: {diagnosis_name} - {step} - {details}")
+            logger.info(f"Emitting differential diagnosis progress: {step}")
             if hasattr(state, 'stream_callback') and state.stream_callback:
                 try:
                     update = {
@@ -2012,13 +2015,13 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                         "details": details,
                         "timestamp": datetime.now().isoformat()
                     }
-                    print(f"[DEBUG] Calling stream_callback with update: {update}")
+                    logger.info("Calling stream_callback with update")
                     await state.stream_callback(update)
-                    print("[DEBUG] Successfully emitted differential diagnosis progress")
+                    logger.info("Successfully emitted differential diagnosis progress")
                 except Exception as e:
-                    print(f"[streaming] Error emitting diagnosis progress: {e}")
+                    log_error(logger, "emit_diagnosis_progress", e)
             else:
-                print(f"[DEBUG] No stream_callback available, hasattr: {hasattr(state, 'stream_callback')}, callback: {getattr(state, 'stream_callback', None)}")
+                logger.warning("No stream_callback available")
 
         async def _estimate_marginal_probability_with_batch_priors(
             patient_context: PatientContext,
@@ -2032,7 +2035,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
             try:
                 # Use the diagnoses from batch_priors as candidate diagnoses
                 candidate_diagnoses = list(batch_priors.keys())
-                print(f"[marginal_batch] Processing {len(candidate_diagnoses)} candidate diagnoses with consistent priors")
+                logger.info(f"Processing {len(candidate_diagnoses)} candidate diagnoses with consistent priors")
                 
                 # Calculate marginal probability using law of total probability
                 marginal_probability = 0.0
@@ -2048,10 +2051,10 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                         # Add to total: P(E) += P(E|D_i) * P(D_i)
                         marginal_probability += likelihood * prior_prob
                         
-                        print(f"[marginal_batch] {diagnosis}: P(D)={prior_prob:.3f}, P(E|D)={likelihood:.3f}, contribution={likelihood * prior_prob:.3f}")
+                        logger.info(f"P(D)={prior_prob:.3f}, P(E|D)={likelihood:.3f}, contribution={likelihood * prior_prob:.3f}")
                         
                     except Exception as e:
-                        print(f"[marginal_batch] Error calculating for {diagnosis}: {e}")
+                        log_error(logger, "calculate_marginal", e)
                         continue
                 
                 # Add baseline for other conditions
@@ -2061,11 +2064,11 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 # Ensure result is reasonable
                 marginal_probability = max(0.001, min(0.8, marginal_probability))
                 
-                print(f"[marginal_batch] Total marginal probability: {marginal_probability:.3f}")
+                logger.info(f"Total marginal probability: {marginal_probability:.3f}")
                 return marginal_probability
                 
             except Exception as e:
-                print(f"[marginal_batch] Error in marginal probability calculation: {e}")
+                log_error(logger, "marginal_probability_calculation", e)
                 return 0.1
                 
 
@@ -2154,18 +2157,18 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                     # prob_evidence_no_disease = 1 - specificity
                     prob_evidence_given_disease = sensitivity
                     
-                    print(f"[bayesian_likelihood] {diagnosis_name}: Sensitivity={sensitivity:.3f}, Specificity={specificity:.3f}")
-                    print(f"[bayesian_likelihood] {diagnosis_name}: LR+={likelihood_ratio:.3f}, P(E|D)={prob_evidence_given_disease:.3f}")
+                    logger.info(f"Sensitivity={sensitivity:.3f}, Specificity={specificity:.3f}")
+                    logger.info(f"LR+={likelihood_ratio:.3f}, P(E|D)={prob_evidence_given_disease:.3f}")
                     
                     return prob_evidence_given_disease
                     
                 else:
-                    print(f"[bayesian_likelihood] Could not parse sensitivity/specificity from: {likelihood_text}")
+                    logger.warning("Could not parse sensitivity/specificity from likelihood text")
                     # Fallback to moderate values
                     return 0.5
                     
             except Exception as e:
-                print(f"[bayesian_likelihood] Error calculating likelihood: {e}")
+                log_error(logger, "calculate_likelihood", e)
                 return 0.5  # Default likelihood
 
         async def _get_focused_candidate_diagnoses(
@@ -2235,11 +2238,11 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 # Limit to exactly 5
                 diagnoses = diagnoses[:5]
                 
-                print(f"[focused_candidates] Selected {len(diagnoses)} focused candidate diagnoses")
+                logger.info(f"Selected {len(diagnoses)} focused candidate diagnoses")
                 return diagnoses
                 
             except Exception as e:
-                print(f"[focused_candidates] Error getting candidates: {e}")
+                log_error(logger, "get_focused_candidates", e)
                 # Return minimal common diagnoses as fallback
                 return [
                     "Viral upper respiratory infection",
@@ -2313,7 +2316,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                     return 0.4  # Default moderate likelihood
                     
             except Exception as e:
-                print(f"[likelihood_marginal] Error for {diagnosis_name}: {e}")
+                log_error(logger, "likelihood_marginal", e)
                 return 0.4
 
         async def _batch_web_search_for_priors( # type: ignore
@@ -2325,13 +2328,13 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
             This is much more efficient than sequential searches.
             """
             try:
-                print(f"[batch_priors] Starting batch web search for {len(diagnoses)} diagnoses")
+                logger.info(f"Starting batch web search for {len(diagnoses)} diagnoses")
                 
                 # Create a combined search query for all diagnoses without patient data for GDPR compliance
                 diagnosis_list = ", ".join(diagnoses)
                 combined_search_query = f"epidemiology prevalence incidence rates {diagnosis_list} population statistics medical literature"
                 
-                print(f"[batch_priors] Combined search query: {combined_search_query}")
+                logger.info("Combined search query generated")
                 
                 # Perform single web search for all diagnoses
                 try:
@@ -2353,9 +2356,9 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                         f"Source {i+1}: {result.title}\nURL: {result.url}\nContent: {result.snippet}"
                         for i, result in enumerate(web_response.results)
                     ])
-                    print(f"[batch_priors] Found {len(web_response.results)} web sources")
+                    logger.info(f"Found {len(web_response.results)} web sources")
                 else:
-                    print("[batch_priors] No web results found, will use medical knowledge")
+                    logger.info("No web results found, will use medical knowledge")
                 
                 # Create demographic context from patient data
                 demographic_context = f"Age: {patient_context.age}, Sex: {patient_context.sex}, Care Unit: {patient_context.care_unit}"
@@ -2441,19 +2444,19 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                                     # Default fallback
                                     validated_priors[diagnosis] = 0.03
                         
-                        print(f"[batch_priors] Successfully extracted priors for {len(validated_priors)} diagnoses")
+                        logger.info(f"Successfully extracted priors for {len(validated_priors)} diagnoses")
                         for diagnosis, prior in validated_priors.items():
-                            print(f"[batch_priors] {diagnosis}: {prior:.3f}")
+                            logger.info(f"Prior: {prior:.3f}")
                         
                         return validated_priors
                         
                 except json.JSONDecodeError as e:
-                    print(f"[batch_priors] JSON parsing error: {e}")
+                    log_error(logger, "batch_priors_json_parse", e)
                     # Fall back to individual searches for critical diagnoses
                     return await _fallback_individual_searches(diagnoses, patient_context)
                     
             except Exception as e:
-                print(f"[batch_priors] Error in batch search: {e}")
+                log_error(logger, "batch_priors_search", e)
                 # Fall back to individual searches
                 return await _fallback_individual_searches(diagnoses, patient_context)
 
@@ -2465,7 +2468,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
             Fallback to individual web searches if batch search fails.
             Only search for the most critical diagnoses to save time.
             """
-            print("[fallback_priors] Performing individual searches for top 3 diagnoses")
+            logger.info("Performing individual searches for top 3 diagnoses")
             
             priors = {}
             
@@ -2475,15 +2478,15 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                     # Use default prior since individual web searches are removed
                     prior = 0.03
                     priors[diagnosis] = prior
-                    print(f"[fallback_priors] {diagnosis}: {prior:.3f}")
+                    logger.info(f"Fallback prior: {prior:.3f}")
                 except Exception as e:
-                    print(f"[fallback_priors] Error for {diagnosis}: {e}")
+                    log_error(logger, "fallback_prior_search", e)
                     priors[diagnosis] = 0.03
             
             # Use defaults for remaining diagnoses to save time
             for diagnosis in diagnoses[3:]:
                 priors[diagnosis] = 0.03
-                print(f"[fallback_priors] {diagnosis}: 0.030 (default)")
+                logger.info("Using default prior: 0.030")
             
             return priors
 
@@ -2495,7 +2498,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                 # For research mode, always do full processing
                 if state.diagnostic_mode == "research":
                     state.requires_full_processing = True
-                    print("[query_complexity] Research mode: Full processing required")
+                    logger.info("Research mode: Full processing required")
                     return state
 
                 # Create evaluation prompt based on diagnostic mode
@@ -2556,10 +2559,10 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
 
                 state.requires_full_processing = requires_full_processing
                 
-                print(f"[query_complexity] Query: '{state.user_prompt[:50]}...' -> {'FULL_PROCESSING' if requires_full_processing else 'DIRECT'}")
+                logger.info(f"Query complexity: {'FULL_PROCESSING' if requires_full_processing else 'DIRECT'}")
                 
             except Exception as e:
-                print(f"[query_complexity] Error evaluating query complexity: {e}")
+                log_error(logger, "evaluate_query_complexity", e)
                 # Default to full processing on error to be safe
                 state.requires_full_processing = True
                 
@@ -2813,11 +2816,11 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
                     if allow_join_existing:
                         success = await self._vec.add_user_to_session(session_id, user_id)
                         if success:
-                            print(f"[session] User {user_id} joined existing session {session_id}")
+                            logger.info(f"User {sanitize_user_id(user_id)} joined existing session {sanitize_session_id(session_id)}")
                         else:
-                            print(f"[session] Failed to add user {user_id} to session {session_id}")
+                            logger.warning(f"Failed to add user {sanitize_user_id(user_id)} to session {sanitize_session_id(session_id)}")
                     else:
-                        print(f"[session] User {user_id} not allowed to join session {session_id}")
+                        logger.warning(f"User {sanitize_user_id(user_id)} not allowed to join session {sanitize_session_id(session_id)}")
                         return await self._vec.create_chat_session(user_id, patient_id, mode)
                 
                 return session_id
@@ -2865,7 +2868,7 @@ If no clear medical diagnoses are found, return: {{"primary_icd": "Unknown", "di
             return self._to_output(data.model_dump())
         return self._to_output(data)
 
-    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
+    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None, note_template: NoteTemplate | None = None, note_generation_id: str | None = None, note_context_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Return an async generator that yields chunks as they stream from the graph."""
 
         async def _stream_generator():

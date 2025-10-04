@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { logError } from '@/lib/logger';
 
 export async function GET(
   request: Request,
@@ -31,7 +32,7 @@ export async function GET(
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
-    console.error('[API Route] User images error:', error);
+    logError('User images API error', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

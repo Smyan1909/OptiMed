@@ -5,6 +5,9 @@ from optimed.core.ports import ImageEmbeddingService
 import torch
 from transformers import AutoImageProcessor, AutoModel
 from PIL import Image
+from optimed.core.logging_utils import get_logger, log_error
+
+logger = get_logger(__name__)
 
 
 class DICOMImageEmbeddingService(ImageEmbeddingService):
@@ -17,8 +20,8 @@ class DICOMImageEmbeddingService(ImageEmbeddingService):
         self.vision_model = AutoModel.from_pretrained(model_name)
         self.vision_model.to(self.device)
         self.vision_model.eval()
-        
-        print(f"Initialized DICOM embedding service with model: {model_name} on device: {self.device}")
+
+        logger.info(f"Initialized DICOM embedding service with model: {model_name} on device: {self.device}")
     
     async def create_image_embedding(self, pixel_data: ImagePixelData) -> Sequence[float]:
         """Create vector embedding from DICOM pixel data using pre-trained vision model."""
@@ -92,11 +95,9 @@ class DICOMImageEmbeddingService(ImageEmbeddingService):
                 embedding = embedding[:target_size]
             
             return embedding.tolist()
-            
+
         except Exception as e:
-            print(f"Error creating image embedding: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(logger, "create_image_embedding", e)
             # Return zero embedding on error
             return [0.0] * 768
     
@@ -140,18 +141,16 @@ class DICOMImageEmbeddingService(ImageEmbeddingService):
                     feature_len = min(len(char_features), 767)
                     if feature_len > 0:
                         embedding[1:feature_len+1] = char_features[:feature_len]
-                        
-            except Exception as inner_e:
-                print(f"Warning: Character frequency extraction failed: {inner_e}")
+
+            except Exception:
+                logger.warning("Character frequency extraction failed for metadata embedding, using length feature only")
                 # Just use length feature if character analysis fails
                 pass
             
             return embedding.tolist()
-            
+
         except Exception as e:
-            print(f"Error creating metadata embedding: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(logger, "create_metadata_embedding", e)
             # Return zero embedding on error
             return [0.0] * 768
     

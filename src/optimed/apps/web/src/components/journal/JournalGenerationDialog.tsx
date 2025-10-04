@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useLocale, useTranslations, useMessages } from 'next-intl';
 import { JournalEntryType, generateJournalEntry } from '@/lib/api';
+import { logError } from '@/lib/logger';
 import {
   Dialog,
   DialogContent,
@@ -82,7 +83,7 @@ export default function JournalGenerationDialog({
       setPrompt('');
       onClose();
     } catch (err) {
-      console.error('Failed to generate journal entry:', err);
+      logError('Journal Generation Dialog: Failed to generate journal entry', err);
       setError(err instanceof Error ? err.message : 'Failed to generate journal entry');
     } finally {
       setIsGenerating(false);

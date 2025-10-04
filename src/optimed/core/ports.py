@@ -26,7 +26,14 @@ from optimed.core.domain import (
     SessionParticipant,
     JournalEntry,
     JournalEntryCreate,
-    JournalEntryUpdate )
+    JournalEntryUpdate,
+    NoteTemplate,
+    NoteGenerationRequest,
+    NoteGenerationMetadata,
+    TemplateType,
+    NoteGenerationStatus,
+    NoteExportMethod,
+)
 
 from optimed.core.domain.pdf_document import PDFDocument, PDFUploadRequest, PDFMetadata
 from optimed.core.domain.xml_document import XMLDocument, XMLMetadata
@@ -285,7 +292,7 @@ class DiagnosticEngine(Protocol):
         """Return the top diagnosis (v0) or ranked list (v1)."""
         ...
 
-    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
+    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None, note_template: NoteTemplate | None = None, note_generation_id: str | None = None, note_context_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Run the diagnostic engine with streaming support."""
         ...
 
@@ -796,7 +803,7 @@ class PDFService(Protocol):
         """List all PDF documents associated with a patient."""
         ...
 
-    async def delete_document(self, document_id: str, user_id: str) -> None:
+    async def delete_document(self, document_id: str, user_id: str, session_id: Optional[str] = None, patient_id: Optional[str] = None) -> bool:
         """Delete a PDF document by its ID."""
         ...
 
@@ -864,5 +871,250 @@ class XMLService(Protocol):
         patient_id: Optional[str] = None
     ) -> None:
         """Clean up XML documents for a specific user session."""
+        ...
+
+
+# ==================== NOTE TEMPLATE PROTOCOLS ====================
+
+class TemplateRepository(Protocol):
+    """Repository for note template persistence."""
+
+    async def create_template(self, template: NoteTemplate) -> NoteTemplate:
+        """Create a new template."""
+        ...
+
+    async def get_template_by_id(self, template_id: str) -> Optional[NoteTemplate]:
+        """Get template by ID."""
+        ...
+
+    async def list_templates(
+        self,
+        user_id: str,
+        include_system: bool = True,
+        language: Optional[str] = None,
+        template_type: Optional[str] = None
+    ) -> List[NoteTemplate]:
+        """List templates available to user."""
+        ...
+
+    async def update_template(self, template: NoteTemplate) -> NoteTemplate:
+        """Update existing template."""
+        ...
+
+    async def delete_template(self, template_id: str) -> bool:
+        """Delete template (user templates only)."""
+        ...
+
+    async def save_generation_metadata(
+        self, metadata: NoteGenerationMetadata
+    ) -> None:
+        """Save generation metadata (GDPR-safe, no content)."""
+        ...
+
+    async def update_generation_metadata(
+        self,
+        generation_id: str,
+        status: NoteGenerationStatus,
+        export_method: Optional[NoteExportMethod] = None,
+        error_message: Optional[str] = None
+    ) -> None:
+        """Update generation metadata status."""
+        ...
+
+    async def get_generation_history(
+        self,
+        user_id: str,
+        patient_id: Optional[str] = None,
+        limit: int = 50
+    ) -> List[NoteGenerationMetadata]:
+        """Get metadata history (no actual note content)."""
+        ...
+
+
+class TemplateService(Protocol):
+    """Service for template management and parsing."""
+
+    async def parse_uploaded_file(
+        self,
+        file_content: bytes,
+        filename: str,
+        file_type: str
+    ) -> Dict[str, Any]:
+        """Parse uploaded template file to structured format."""
+        ...
+
+    async def validate_template_structure(
+        self, structure: Dict[str, Any]
+    ) -> bool:
+        """Validate template structure format."""
+        ...
+
+    async def get_system_templates(
+        self, language: Optional[str] = None
+    ) -> List[NoteTemplate]:
+        """Get pre-defined system templates."""
+        ...
+
+    async def create_template_from_upload(
+        self,
+        user_id: str,
+        name: str,
+        language: str,
+        template_type: TemplateType,
+        file_content: bytes,
+        filename: str
+    ) -> NoteTemplate:
+        """Parse uploaded file and create template."""
+        ...
+
+
+class NoteGenerator(Protocol):
+    """Service for generating clinical notes from context."""
+
+    def generate_note_streaming(
+        self,
+        request: NoteGenerationRequest,
+        patient_context: Optional[PatientContext],
+        conversation_history: List[ChatMessage],
+        template: NoteTemplate,
+        user: User
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Generate note content using LLM + retrieval.
+        Streams progress updates and final ephemeral content.
+        Records metadata only (no content persistence).
+
+        Yields:
+            Dict with:
+            - type: 'progress' | 'section' | 'complete' | 'error'
+            - data: progress info or section content
+        """
+        ...
+
+    async def start_generation_metadata(
+        self,
+        request: NoteGenerationRequest,
+        template: NoteTemplate
+    ) -> str:
+        """
+        Start generation and create metadata record.
+        Returns generation_id.
+        """
+        ...
+
+    async def complete_generation_metadata(
+        self,
+        generation_id: str,
+        status: NoteGenerationStatus,
+        export_method: Optional[NoteExportMethod] = None,
+        chunks_count: int = 0,
+        conversation_turns: int = 0,
+        error_message: Optional[str] = None
+    ) -> None:
+        """Complete generation metadata (no content saved)."""
+        ...
+
+
+# ==================== AUDIT LOGGING PROTOCOLS ====================
+
+class AuditRepository(Protocol):
+    """Repository for GDPR-compliant audit logging."""
+
+    async def log_api_request(
+        self,
+        session_id: Optional[str],
+        user_id: Optional[str],
+        endpoint: str,
+        method: str,
+        status_code: int,
+        latency_ms: int,
+        request_category: str,
+        error_message: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Log API request for audit trail."""
+        ...
+
+    async def log_data_access(
+        self,
+        session_id: Optional[str],
+        user_id: str,
+        access_type: str,
+        resource_type: str,
+        resource_count: int = 1,
+        data_source: str = "application",
+        lawful_basis: str = "care_delivery",
+        purpose_of_use: str = "clinical_decision_support",
+        access_duration_ms: Optional[int] = None
+    ) -> None:
+        """Log data access for GDPR compliance."""
+        ...
+
+    async def log_data_flow(
+        self,
+        session_id: Optional[str],
+        flow_id: str,
+        source_system: str,
+        source_type: str,
+        destination_system: str,
+        destination_type: str,
+        transformations: List[str],
+        data_quality_score: Optional[float] = None
+    ) -> None:
+        """Log data lineage/flow for compliance tracking."""
+        ...
+
+    async def log_prompt_category(
+        self,
+        user_id: str,
+        session_id: Optional[str],
+        prompt_hash: str,
+        category: str,
+        model_used: Optional[str] = None,
+        response_tokens: Optional[int] = None,
+        latency_ms: Optional[int] = None
+    ) -> None:
+        """Log prompt category (NOT actual content) for usage analytics."""
+        ...
+
+    async def log_compliance_event(
+        self,
+        event_type: str,
+        compliance_framework: str,
+        session_id: Optional[str],
+        user_id: str,
+        patient_id_hash: Optional[str] = None,
+        data_categories: Optional[List[str]] = None,
+        processing_purposes: Optional[List[str]] = None,
+        compliance_status: str = "compliant",
+        additional_context: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Log compliance-related events (GDPR, HIPAA, etc.)."""
+        ...
+
+    async def log_usage_metric(
+        self,
+        metric_type: str,
+        metric_name: str,
+        value: int,
+        unit: str = "count",
+        dimensions: Optional[Dict[str, Any]] = None,
+        tenant_id: Optional[str] = None
+    ) -> None:
+        """Log system usage metric."""
+        ...
+
+    async def get_user_audit_trail(
+        self,
+        user_id: str,
+        from_date: Optional[Any] = None,
+        to_date: Optional[Any] = None,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Get audit trail for a user (admin function)."""
+        ...
+
+    async def close(self) -> None:
+        """Close connections and cleanup resources."""
         ...
 

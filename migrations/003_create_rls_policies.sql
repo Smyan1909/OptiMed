@@ -4,16 +4,16 @@
 -- Note: Role creation requires CREATEROLE permission
 -- RLS policies will use basic tenant/user isolation without specific roles
 
--- NOTE: RLS is currently DISABLED for backend compatibility
--- Enable Row Level Security when application adds session variable support
--- ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
--- ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
--- ALTER TABLE resources ENABLE ROW LEVEL SECURITY;
--- ALTER TABLE resource_codes ENABLE ROW LEVEL SECURITY;
--- ALTER TABLE evidence_sets ENABLE ROW LEVEL SECURITY;
--- ALTER TABLE model_registry ENABLE ROW LEVEL SECURITY;
--- ALTER TABLE retrieval_config ENABLE ROW LEVEL SECURITY;
--- ALTER TABLE temp_content ENABLE ROW LEVEL SECURITY;
+-- NOTE: RLS is now ENABLED with middleware support
+-- Row Level Security enabled for multi-tenant isolation
+ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE resources ENABLE ROW LEVEL SECURITY;
+ALTER TABLE resource_codes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE evidence_sets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE model_registry ENABLE ROW LEVEL SECURITY;
+ALTER TABLE retrieval_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE temp_content ENABLE ROW LEVEL SECURITY;
 
 -- NOTE: RLS policies are currently DISABLED for backend compatibility
 -- Uncomment when enabling RLS
@@ -34,54 +34,54 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- RLS Policies (commented out - uncomment when enabling RLS)
--- CREATE POLICY tenant_isolation_sessions ON sessions
---     FOR ALL
---     USING (tenant_id = current_setting('app.current_tenant_id', true)::uuid);
+-- RLS Policies (now ENABLED with middleware support)
+CREATE POLICY tenant_isolation_sessions ON sessions
+    FOR ALL
+    USING (tenant_id = current_setting('app.current_tenant_id', true)::uuid);
 
--- CREATE POLICY tenant_isolation_audit_events ON audit_events
---     FOR ALL
---     USING (session_id IN (
---         SELECT session_id FROM sessions
---         WHERE tenant_id = current_setting('app.current_tenant_id', true)::uuid
---     ));
+CREATE POLICY tenant_isolation_audit_events ON audit_events
+    FOR ALL
+    USING (session_id IN (
+        SELECT session_id FROM sessions
+        WHERE tenant_id = current_setting('app.current_tenant_id', true)::uuid
+    ));
 
--- CREATE POLICY tenant_isolation_resources ON resources
---     FOR ALL
---     USING (is_subject_in_tenant(subject_hash, current_setting('app.current_tenant_id', true)::uuid));
+CREATE POLICY tenant_isolation_resources ON resources
+    FOR ALL
+    USING (is_subject_in_tenant(subject_hash, current_setting('app.current_tenant_id', true)::uuid));
 
--- CREATE POLICY tenant_isolation_resource_codes ON resource_codes
---     FOR ALL
---     USING (resource_fk IN (
---         SELECT id FROM resources r
---         WHERE is_subject_in_tenant(r.subject_hash, current_setting('app.current_tenant_id', true)::uuid)
---     ));
+CREATE POLICY tenant_isolation_resource_codes ON resource_codes
+    FOR ALL
+    USING (resource_fk IN (
+        SELECT id FROM resources r
+        WHERE is_subject_in_tenant(r.subject_hash, current_setting('app.current_tenant_id', true)::uuid)
+    ));
 
--- CREATE POLICY tenant_isolation_evidence_sets ON evidence_sets
---     FOR ALL
---     USING (session_id IN (
---         SELECT session_id FROM sessions
---         WHERE tenant_id = current_setting('app.current_tenant_id', true)::uuid
---     ));
+CREATE POLICY tenant_isolation_evidence_sets ON evidence_sets
+    FOR ALL
+    USING (session_id IN (
+        SELECT session_id FROM sessions
+        WHERE tenant_id = current_setting('app.current_tenant_id', true)::uuid
+    ));
 
--- CREATE POLICY global_read_model_registry ON model_registry
---     FOR SELECT
---     USING (true);
+CREATE POLICY global_read_model_registry ON model_registry
+    FOR SELECT
+    USING (true);
 
--- CREATE POLICY tenant_isolation_retrieval_config ON retrieval_config
---     FOR ALL
---     USING (id IN (
---         SELECT DISTINCT r.id FROM retrieval_config r
---         JOIN sessions s ON s.model_config_hash = r.config_hash
---         WHERE s.tenant_id = current_setting('app.current_tenant_id', true)::uuid
---     ));
+CREATE POLICY tenant_isolation_retrieval_config ON retrieval_config
+    FOR ALL
+    USING (id IN (
+        SELECT DISTINCT r.id FROM retrieval_config r
+        JOIN sessions s ON s.model_config_hash = r.config_hash
+        WHERE s.tenant_id = current_setting('app.current_tenant_id', true)::uuid
+    ));
 
--- CREATE POLICY tenant_isolation_temp_content ON temp_content
---     FOR ALL
---     USING (session_id IN (
---         SELECT session_id FROM sessions
---         WHERE tenant_id = current_setting('app.current_tenant_id', true)::uuid
---     ));
+CREATE POLICY tenant_isolation_temp_content ON temp_content
+    FOR ALL
+    USING (session_id IN (
+        SELECT session_id FROM sessions
+        WHERE tenant_id = current_setting('app.current_tenant_id', true)::uuid
+    ));
 
 -- Note: Permission grants removed due to role creation restrictions
 -- Application will handle access control at the connection level

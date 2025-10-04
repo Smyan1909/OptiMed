@@ -4,6 +4,7 @@ import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { Header } from '@/components/Header';
 import { useState, useEffect } from "react";
 import { useUser } from '@/contexts/UserContext';
+import { logInfo } from '@/lib/logger';
 
 function ProfileContent() {
   const { user } = useUser();
@@ -31,7 +32,7 @@ function ProfileContent() {
 
   const handleSave = () => {
     setIsEditing(false);
-    console.log('Saving profile:', formData);
+    logInfo('Profile Page: Saving profile');
   };
 
   const handleCancel = () => {

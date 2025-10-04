@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { fetchPatients, Patient } from "@/lib/api";
 import { useUser } from '@/contexts/UserContext';
+import { logError } from '@/lib/logger';
 import { useTranslations } from 'next-intl';
 import { getSexKey } from '@/lib/codeMapping';
 
@@ -26,7 +27,7 @@ function PatientsPageContent() {
       setPatients(results);
     } catch (err: any) {
       setError(err.message || "Search failed");
-      console.error('Patient search error:', err);
+      logError('Patients Page: Patient search error', err);
     } finally {
       setLoading(false);
     }

@@ -10,7 +10,7 @@ import io
 from PIL import Image
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode
-from typing import AsyncGenerator, Dict, Optional, Any, List
+from typing import AsyncGenerator, Dict, Optional, Any, List, Any as _Any
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, Header, Depends, File, Form, Body, Response # type: ignore
 from fastapi.responses import StreamingResponse, RedirectResponse
@@ -23,14 +23,27 @@ from optimed.apps.orchestrator.factory import create_app_dependencies
 from optimed.core.domain import JournalEntryCreate, JournalEntryUpdate, JournalEntryType
 from optimed.adapters.security.encryption_service import get_encryption_service, get_phi_redactor
 from optimed.adapters.security.e2e_encryption_middleware import E2EEncryptionMiddleware, create_session_with_encryption
-
+from optimed.adapters.security.auth_middleware import AuthenticationMiddleware
+from optimed.adapters.security.rate_limiter import RateLimitMiddleware
+from optimed.adapters.security.rls_middleware import RLSMiddleware
+from optimed.adapters.middleware.audit_logger import AuditLoggingMiddleware
+from optimed.apps.api_gateway.gdpr_endpoints import gdpr_router
+from optimed.apps.api_gateway.document_events import get_broadcaster, DocumentEvent, format_sse_event
+from optimed.core.logging_utils import (
+    get_logger,
+    sanitize_user_id,
+    sanitize_patient_id,
+    sanitize_session_id,
+    sanitize_document_id,
+    log_error
+)
 
 from pydantic import BaseModel
 
+logger = get_logger(__name__)
+
 # Defer heavy dependency wiring to startup to avoid crashing on import
 # if env vars (e.g., PGVECTOR_DSN) are missing at container boot.
-from typing import Any as _Any  # local alias to annotate dynamic singletons
-
 _engine: _Any = None
 _fhir: _Any = None
 _vector_store: _Any = None
@@ -45,13 +58,17 @@ _journal_llm_service: _Any = None
 _web_search_service: _Any = None
 _pdf_service: _Any = None
 _xml_service: _Any = None
+_template_repo: _Any = None
+_template_service: _Any = None
+_note_generator: _Any = None
+_audit_repo: _Any = None
 
 
 _dependencies_ready: asyncio.Event = asyncio.Event()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service
+    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service, _template_repo, _template_service, _note_generator, _audit_repo
     try:
         (
             _engine,
@@ -68,13 +85,22 @@ async def lifespan(app: FastAPI):
             _web_search_service,
             _pdf_service,
             _xml_service,
+            _template_repo,
+            _template_service,
+            _note_generator,
+            _audit_repo,
         ) = await create_app_dependencies()
+
+        # Store repositories in app state for middleware access
+        app.state._user_repo = _user_repo
+        app.state._audit_repo = _audit_repo
+
         _dependencies_ready.set()
-        print("[startup] Dependencies initialized")
+        logger.info("[startup] Dependencies initialized")
         yield
     except Exception as e:
         import traceback
-        print(f"[startup] Dependency init failed: {e}")
+        log_error(logger, "startup - Dependency initialization", e)
         traceback.print_exc()
         # Fail fast: prevent the app from serving if dependencies cannot initialize
         raise
@@ -83,6 +109,9 @@ async def lifespan(app: FastAPI):
         pass
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True, lifespan=lifespan)
+
+# Register GDPR Data Subject Rights endpoints (GDPR Articles 15-22)
+app.include_router(gdpr_router)
 
 # Add End-to-End Encryption middleware first (now supports streaming)
 app.add_middleware(E2EEncryptionMiddleware, encrypt_responses=True, encrypt_requests=True)
@@ -95,6 +124,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add Security and Audit Middlewares
+# Order matters: outer -> inner execution
+# 1. Rate limiting (check limits before auth)
+app.add_middleware(RateLimitMiddleware)
+
+# 2. Authentication & origin validation
+app.add_middleware(AuthenticationMiddleware)
+
+# 3. RLS context (requires authenticated user)
+app.add_middleware(RLSMiddleware)
+
+# 4. Audit logging (logs authenticated requests with user context)
+app.add_middleware(AuditLoggingMiddleware)
+
 # GDPR Compliance Middleware
 @app.middleware("http")
 async def gdpr_logging_middleware(request: Request, call_next):
@@ -103,8 +146,8 @@ async def gdpr_logging_middleware(request: Request, call_next):
     phi_redactor = get_phi_redactor()
     safe_path = phi_redactor.redact_text(request.url.path)
     safe_query = phi_redactor.redact_text(str(request.query_params))
-    
-    print(f"[GDPR] Request: {request.method} {safe_path} - Query: {safe_query}")
+
+    logger.info(f"[GDPR] Request: {request.method} {safe_path} - Query: {safe_query}")
     
     # Process request
     response = await call_next(request)
@@ -389,32 +432,46 @@ async def health():
 async def get_current_user(
     x_session_id: str = Header(None, alias="X-Session-ID")
 ) -> Optional[User]:
-    
+
     if not x_session_id:
+        logger.info("[DEBUG] get_current_user - No session ID provided")
         return None
-    
+
+    logger.info(f"[DEBUG] get_current_user - Looking up session: {sanitize_session_id(x_session_id)}")
+
     try:
         session = await _user_repo.get_active_session(x_session_id)
         if not session:
+            logger.info(f"[DEBUG] get_current_user - Session not found or expired: {sanitize_session_id(x_session_id)}")
             return None
-        
+
+        logger.info(f"[DEBUG] get_current_user - Session found, user: {sanitize_user_id(session.user_id)}")
+
         user = await _user_repo.get_user_by_id(session.user_id)
         if user:
+            logger.info(f"[DEBUG] get_current_user - User found: {user.username}")
             await _user_repo.update_session_activity(x_session_id)
-        
+        else:
+            logger.warning(f"[DEBUG] get_current_user - User not found for user: {sanitize_user_id(session.user_id)}")
+
         return user
     except Exception as e:
-        print(f"Error fetching current user: {e}")
+        log_error(logger, "get_current_user", e)
+        import traceback
+        traceback.print_exc()
         return None
     
 
 async def get_user_context(
     user: Optional[User] = Depends(get_current_user),
-    x_session_id: str = Header(None, alias="X-Session-ID")
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID")
 ) -> dict:
     """Dependency to fetch user context."""
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
     return {
-        "user_id": user.user_id if user else None,
+        "user_id": user.user_id,
         "user": user,
         "session_id": x_session_id
     }
@@ -424,30 +481,56 @@ async def get_user_fhir_repository(user_ctx: dict = Depends(get_user_context)) -
     current_user = user_ctx.get("user")
     
     if current_user:
-        print(f"[DEBUG] Attempting to create SMART FHIR repository for user: {current_user.username} (ID: {current_user.user_id})")
-        
+        logger.info(f"[DEBUG] Attempting to create SMART FHIR repository for user: {current_user.username} ({sanitize_user_id(current_user.user_id)})")
+
         # Try to get an authenticated SMART FHIR repository for this user
         try:
             user_repo = await _connection_service.create_fhir_repository(
-                current_user.user_id, 
+                current_user.user_id,
                 provider_type="smart_fhir"
             )
             if user_repo:
-                print(f"[API] SUCCESS: Using SMART FHIR repository for user {current_user.username}")
+                logger.info(f"[API] SUCCESS: Using SMART FHIR repository for user {current_user.username}")
                 return user_repo
             else:
-                print(f"[DEBUG] ERROR: create_fhir_repository returned None for user {current_user.username}")
+                logger.warning(f"[DEBUG] ERROR: create_fhir_repository returned None for user {current_user.username}")
         except Exception as e:
-            print(f"[API] ERROR: Failed to create SMART FHIR repo for user {current_user.username}: {e}")
+            log_error(logger, f"Failed to create SMART FHIR repo for user {current_user.username}", e)
     else:
-        print("[DEBUG] No current user found, using default repository")
-    
+        logger.info("[DEBUG] No current user found, using default repository")
+
     # Fallback to default HAPI repository
-    print("[API] Using default HAPI FHIR repository")
+    logger.info("[API] Using default HAPI FHIR repository")
     if _fhir is None:
         # Service not initialized yet
         raise HTTPException(status_code=503, detail="Service initializing, please try again shortly")
     return _fhir
+
+
+# Note template dependency getters
+async def get_template_repo():
+    """Dependency to get template repository."""
+    await _dependencies_ready.wait()
+    if _template_repo is None:
+        raise HTTPException(status_code=503, detail="Service initializing, please try again shortly")
+    return _template_repo
+
+
+async def get_template_service():
+    """Dependency to get template service."""
+    await _dependencies_ready.wait()
+    if _template_service is None:
+        raise HTTPException(status_code=503, detail="Service initializing, please try again shortly")
+    return _template_service
+
+
+async def get_note_generator():
+    """Dependency to get note generator."""
+    await _dependencies_ready.wait()
+    if _note_generator is None:
+        raise HTTPException(status_code=503, detail="Service initializing, please try again shortly")
+    return _note_generator
+
 
 # Removed duplicate /health endpoint (was redefining the same route)
 
@@ -492,9 +575,9 @@ async def list_user_sessions(
             )
             for session in sessions
         ]
-        
+
     except Exception as e:
-        print(f"[API] Error listing sessions: {e}")
+        log_error(logger, "List sessions", e)
         raise HTTPException(status_code=500, detail="Could not load sessions")
 
 @app.post("/sessions/create")
@@ -503,23 +586,49 @@ async def create_new_session(
     user_ctx: dict = Depends(get_user_context)
 ):
     """Create a new chat session."""
-    
+
     user_id = user_ctx.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID required")
-    
+
     try:
+        # Clean up all existing sessions for this user before creating a new one
+        logger.info(f"[Session Create] Cleaning up existing sessions for user: {sanitize_user_id(user_id)}")
+
+        # Clean up PDF documents for all sessions of this user
+        if hasattr(_pdf_service, 'sessions'):
+            sessions_to_cleanup = []
+            for session_key in _pdf_service.sessions.keys():
+                if user_id in session_key:
+                    sessions_to_cleanup.append(session_key)
+
+            for session_key in sessions_to_cleanup:
+                await _pdf_service.cleanup_session(session_key)
+                logger.info(f"[Session Create] Cleaned up PDF session: {sanitize_session_id(session_key)}")
+
+        # Clean up XML documents for all sessions of this user
+        if hasattr(_xml_service, 'sessions'):
+            sessions_to_cleanup = []
+            for session_key in _xml_service.sessions.keys():
+                if user_id in session_key:
+                    sessions_to_cleanup.append(session_key)
+
+            for session_key in sessions_to_cleanup:
+                await _xml_service.cleanup_session(session_key)
+                logger.info(f"[Session Create] Cleaned up XML session: {sanitize_session_id(session_key)}")
+
         session_id = await _engine.vector_store.create_chat_session(
             user_id=user_id,
             patient_id=request.patient_id,
             mode=request.mode,
             session_title=request.session_title
         )
-        
+
+        logger.info(f"[Session Create] Created new session: {sanitize_session_id(session_id)} for user: {sanitize_user_id(user_id)}")
         return {"session_id": session_id, "message": "Session created successfully"}
-        
+
     except Exception as e:
-        print(f"[API] Error creating session: {e}")
+        log_error(logger, "Create session", e, user_id=user_id)
         raise HTTPException(status_code=500, detail="Could not create session")
 
 @app.post("/sessions/{session_id}/join")
@@ -540,9 +649,9 @@ async def join_session(
             return {"message": "Successfully joined session", "session_id": session_id}
         else:
             return {"message": "Already a participant in this session", "session_id": session_id}
-        
+
     except Exception as e:
-        print(f"[API] Error joining session: {e}")
+        log_error(logger, "Join session", e)
         raise HTTPException(status_code=500, detail="Could not join session")
 
 @app.get("/sessions/{session_id}/participants")
@@ -567,9 +676,9 @@ async def get_session_participants(
                 for p in participants
             ]
         }
-        
+
     except Exception as e:
-        print(f"[API] Error getting session participants: {e}")
+        log_error(logger, "Get session participants", e)
         raise HTTPException(status_code=500, detail="Could not get session participants")
 
 
@@ -612,7 +721,7 @@ async def setup_session_encryption(
         )
 
     except Exception as e:
-        print(f"[API] Key exchange error: {e}")
+        log_error(logger, "Key exchange", e)
         raise HTTPException(status_code=500, detail="Key exchange failed")
 
 @app.get("/encryption/server-public-key")
@@ -629,7 +738,7 @@ async def get_server_public_key():
             "usage": "key_exchange"
         }
     except Exception as e:
-        print(f"[API] Error getting server public key: {e}")
+        log_error(logger, "Get server public key", e)
         raise HTTPException(status_code=500, detail="Could not retrieve server public key")
 
 
@@ -750,9 +859,9 @@ async def initiate_ehr_login(req: EHRLoginRequest):
             }
         
         authorization_url = f"{auth_url}?{urlencode(auth_params)}"
-        
-        print(f"[DEBUG] Authorization URL: {authorization_url}")
-        
+
+        logger.info("[DEBUG] Authorization URL generated successfully")
+
         return EHRLoginResponse(
             authorization_url=authorization_url,
             connection_id=connection_id,
@@ -764,14 +873,32 @@ async def initiate_ehr_login(req: EHRLoginRequest):
 
 @app.get("/patients", response_model=list[PatientOut], summary="Search patients")
 async def search_patients(
+    request: Request,
     q: str = Query("", alias="q"),
     fhir_repo: FHIRRepository = Depends(get_user_fhir_repository)
 ):
-    
+
     try:
         # Use the user-specific repository instead of the global _fhir
-        domain_objs = await fhir_repo.search_patients(q)  
-        
+        domain_objs = await fhir_repo.search_patients(q)
+
+        # GDPR compliance event logging (Article 30 - Records of Processing Activities)
+        try:
+            user = getattr(request.state, 'user', None)
+            session_id = getattr(request.state, 'session_id', None)
+
+            await _audit_repo.log_compliance_event(
+                event_type="patient_data_access",
+                compliance_framework="GDPR",
+                session_id=session_id,
+                user_id=user.user_id if user else "anonymous",
+                data_categories=["health_data", "personal_identifiers"],
+                processing_purposes=["clinical_decision_support", "patient_search"],                compliance_status="compliant",
+                additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation (healthcare delivery)"}
+            )
+        except Exception as e:
+            log_error(logger, "Patient access logging", e)
+
         return [
             PatientOut(
                 id=p.patient_id,
@@ -891,10 +1018,11 @@ async def complete_ehr_login(
 ):
     """Complete EHR-based login and create/update user."""
     frontend_base = os.getenv("FRONTEND_URL", "http://localhost:3000")
-    
+
+
     if error:
-        print(f"[ERROR] OAuth error received: {error} - {error_description}")
-        
+        logger.error(f"[ERROR] OAuth error received: {error} - {error_description}")
+
         # Map common errors to user-friendly messages
         if error == "access_denied":
             error_msg = "Access was denied. Please try again if you want to connect your EHR."
@@ -912,7 +1040,7 @@ async def complete_ehr_login(
     
     # Check for missing required parameters
     if not code or not state:
-        print(f"[ERROR] Missing required parameters - code: {bool(code)}, state: {bool(state)}")
+        logger.error(f"[ERROR] Missing required parameters - code: {bool(code)}, state: {bool(state)}")
         frontend_url = f"{frontend_base}/login?error=Missing authorization parameters"
         return RedirectResponse(url=frontend_url, status_code=302)
     
@@ -922,20 +1050,20 @@ async def complete_ehr_login(
             state_data = json.loads(base64.urlsafe_b64decode(state).decode())
             connection_id = state_data["connection_id"]
         except Exception as e:
-            print(f"[ERROR] Invalid state parameter: {e}")
+            log_error(logger, "Invalid state parameter", e)
             frontend_url = f"{frontend_base}/login?error=Invalid state parameter"
             return RedirectResponse(url=frontend_url, status_code=302)
         
         # Get the temporary session data
         session_data = await _connection_repo.get_ehr_login_session(connection_id)
         if not session_data:
-            print(f"[ERROR] Login session expired for connection: {connection_id}")
+            logger.error("[ERROR] Login session expired")
             frontend_url = f"{frontend_base}/login?error=Login session expired"
             return RedirectResponse(url=frontend_url, status_code=302)
         
         # Verify state parameter
         if session_data["state"] != state:
-            print("[ERROR] State parameter mismatch")
+            logger.error("[ERROR] State parameter mismatch")
             frontend_url = f"{frontend_base}/login?error=Security validation failed"
             return RedirectResponse(url=frontend_url, status_code=302)
         
@@ -972,7 +1100,7 @@ async def complete_ehr_login(
         
         if existing_user:
             final_user = existing_user
-            print(f"[INFO] Using existing user: {final_user.username}")
+            logger.info(f"[INFO] Using existing user: {final_user.username}")
         else:
             # Create new user with unique username
             user_id = f"ehr_user_{uuid.uuid4()}"
@@ -995,8 +1123,8 @@ async def complete_ehr_login(
             
             await _user_repo.create_user(new_user)
             final_user = new_user
-            print(f"[INFO] Created new user: {final_user.username}")
-        
+            logger.info(f"[INFO] Created new user: {final_user.username}")
+
         # Create the EHR connection
         connection = UserEHRConnection(
             connection_id=connection_id,
@@ -1035,9 +1163,10 @@ async def complete_ehr_login(
         # Redirect to frontend with success and session info
         frontend_url = f"{frontend_base}/auth/ehr-success?session_id={session.session_id}&user_id={final_user.user_id}"
         return RedirectResponse(url=frontend_url)
-        
+
+
     except Exception as e:
-        print(f"[ERROR] EHR callback failed: {e}")
+        log_error(logger, "EHR callback", e)
         # Redirect to frontend with error
         frontend_url = f"{frontend_base}/login?error=Authentication failed: {str(e)}"
         return RedirectResponse(url=frontend_url)
@@ -1057,9 +1186,9 @@ async def exchange_code_for_token(code: str, client_id: str, redirect_uri: str, 
         # Remove /fhir suffix if present
         base_url = fhir_server_url.replace("/fhir", "")
         token_url = f"{base_url.rstrip('/')}/auth/token"
-    
-    print(f"[DEBUG] Token URL: {token_url}")  # Add this for debugging
-    
+
+    logger.info("[DEBUG] Token URL generated successfully")
+
     token_data = {
         "grant_type": "authorization_code",
         "code": code,
@@ -1073,10 +1202,9 @@ async def exchange_code_for_token(code: str, client_id: str, redirect_uri: str, 
             data=token_data,
             headers={"Content-Type": "application/x-www-form-urlencoded"}
         )
-        
-        print(f"[DEBUG] Token response status: {response.status_code}")
-        print(f"[DEBUG] Token response: {response.text}")
-        
+
+        logger.info(f"[DEBUG] Token response status: {response.status_code}")
+
         response.raise_for_status()
         return response.json()
 
@@ -1128,13 +1256,29 @@ async def diagnose(
     current_user = user_ctx.get("user")
 
     if current_user:
-        print(f"[API] Diagnosis request from {current_user.display_name} ({current_user.role.value})")
+        logger.info(f"[API] Diagnosis request from {current_user.display_name} ({current_user.role.value})")
 
     try:
         # Use the user-specific repository
         patient_ctx: PatientContext = await fhir_repo.get_patient(str(req.patient_id))
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Patient not found: {e}")
+
+    # GDPR compliance event logging (Article 30 - Records of Processing Activities)
+    try:
+        import hashlib
+        await _audit_repo.log_compliance_event(
+            event_type="ai_diagnosis_request",
+            compliance_framework="GDPR",
+            session_id=req.session_id or user_ctx.get("session_id"),
+            user_id=user_id,
+            patient_id_hash=hashlib.sha256(str(req.patient_id).encode()).hexdigest() if req.patient_id else None,
+            data_categories=["health_data", "diagnostic_data", "ai_generated_content"],
+            processing_purposes=["clinical_decision_support", "ai_diagnosis", "healthcare_delivery"],            compliance_status="compliant",
+            additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation, Article 9(2)(h) - Medical diagnosis"}
+        )
+    except Exception as e:
+        log_error(logger, "Diagnosis request logging", e)
 
     result = await _engine.run(patient_ctx, req.user_prompt, chat_mode=req.chat_mode, user_id=user_id, session_id=req.session_id)
     if hasattr(result, 'model_dump'):
@@ -1152,7 +1296,7 @@ async def get_chat_history(
     session_id = request.get("session_id")
     mode = request.get("mode", "diagnose")
     
-    print(f"[GDPR] Chat history request blocked for patient_id={patient_id}, session_id={session_id}, mode={mode}")
+    logger.info(f"[GDPR] Chat history request blocked - patient: {sanitize_patient_id(patient_id)}, session: {sanitize_session_id(session_id)}, mode={mode}")
     
     # GDPR Compliance: Return empty history to prevent PHI exposure
     return {"messages": [], "total": 0, "gdpr_compliant": True}
@@ -1278,7 +1422,7 @@ async def get_patient(
 @app.delete("/patients/{patient_id}/chat-history", summary="GDPR-compliant: No chat history to clear")
 async def clear_patient_chat_history(patient_id: str = Path(..., description="The patient ID")):
     """GDPR-compliant: No chat history stored, so nothing to clear."""
-    print(f"[GDPR] Chat history clear request blocked for patient_id={patient_id}")
+    logger.info(f"[GDPR] Chat history clear request blocked for patient: {sanitize_patient_id(patient_id)}")
     return {"message": "No chat history stored (GDPR compliant)", "gdpr_compliant": True}
 
 @app.get("/analytics/user-metrics", summary="Get GDPR-safe user metrics")
@@ -1304,7 +1448,7 @@ async def get_user_metrics(
         }
         
     except Exception as e:
-        print(f"[get_user_metrics] Error: {e}")
+        log_error(logger, "Get user metrics", e)
         raise HTTPException(status_code=500, detail=f"Could not retrieve metrics: {e}")
 
 async def _event_stream(patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[str, None]:
@@ -1354,7 +1498,7 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
             
             elif update.get("type") == "differential_diagnosis_progress":
                 # Handle differential diagnosis progress updates
-                print(f"[DEBUG] API Gateway received differential diagnosis progress: {update}")
+                logger.info("[DEBUG] API Gateway received differential diagnosis progress")
                 diagnosis_progress_data = {
                     "type": "differential_diagnosis_progress",
                     "diagnosis_name": update.get("diagnosis_name", ""),
@@ -1363,7 +1507,7 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
                     "message": update.get("message", ""),
                     "timestamp": update.get("timestamp", datetime.now().isoformat())
                 }
-                print(f"[DEBUG] Emitting diagnosis progress data: {diagnosis_progress_data}")
+                logger.info("[DEBUG] Emitting diagnosis progress data")
                 yield f"data: {json.dumps(diagnosis_progress_data)}\n\n"
             
             elif update.get("type") == "response_chunk":
@@ -1472,16 +1616,32 @@ async def diagnose_stream(
             # Explicitly remove Content-Length header to prevent mismatch
             if "content-length" in response.headers:
                 del response.headers["content-length"]
-            
+
             return response
-    
+
+    # GDPR compliance event logging (Article 30 - Records of Processing Activities)
+    try:
+        import hashlib
+        await _audit_repo.log_compliance_event(
+            event_type="ai_diagnosis_stream",
+            compliance_framework="GDPR",
+            session_id=req.session_id or user_ctx.get("session_id"),
+            user_id=user_id,
+            patient_id_hash=hashlib.sha256(str(req.patient_id).encode()).hexdigest() if req.patient_id else None,
+            data_categories=["health_data", "diagnostic_data", "ai_generated_content"],
+            processing_purposes=["clinical_decision_support", "ai_diagnosis", "real_time_streaming"],            compliance_status="compliant",
+            additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation, Article 9(2)(h) - Medical diagnosis"}
+        )
+    except Exception as e:
+        log_error(logger, "Diagnosis stream logging", e)
+
     response = StreamingResponse(
         _event_stream(
             patient=patient_ctx,
-            user_prompt=req.user_prompt, 
+            user_prompt=req.user_prompt,
             chat_mode=req.chat_mode,
             diagnostic_mode=req.diagnostic_mode,  # Add this parameter
-            user_id=user_id, 
+            user_id=user_id,
             session_id=req.session_id
         ), 
         media_type="text/event-stream",
@@ -1522,14 +1682,31 @@ async def chat_stream(
         try:
             patient_ctx = await fhir_repo.get_patient(req.patient_id)
         except Exception as e:
-            print(f"Could not fetch patient {req.patient_id}: {e}")
-    
+            log_error(logger, "Fetch patient for chat", e, patient_id=req.patient_id)
+
+    # GDPR compliance event logging (Article 30 - Records of Processing Activities)
+    try:
+        import hashlib
+        await _audit_repo.log_compliance_event(
+            event_type="ai_chat_stream",
+            compliance_framework="GDPR",
+            session_id=req.session_id or user_ctx.get("session_id"),
+            user_id=user_id,
+            patient_id_hash=hashlib.sha256(str(req.patient_id).encode()).hexdigest() if req.patient_id else None,
+            data_categories=["health_data", "ai_generated_content"] if patient_ctx else ["ai_generated_content"],
+            processing_purposes=["clinical_decision_support", "conversational_ai", "real_time_streaming"],
+            compliance_status="compliant",
+            additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation" if patient_ctx else "Article 6(1)(a) - Consent"}
+        )
+    except Exception as e:
+        log_error(logger, "Chat stream logging", e)
+
     response = StreamingResponse(
         _event_stream(
             patient=patient_ctx,
-            user_prompt=req.user_prompt, 
+            user_prompt=req.user_prompt,
             chat_mode=True,  # Always true for chat
-            user_id=user_id, 
+            user_id=user_id,
             session_id=req.session_id
         ), 
         media_type="text/event-stream",
@@ -1559,7 +1736,7 @@ async def chat(
     current_user = user_ctx.get("user")
 
     if current_user:
-        print(f"[API] Chat request from {current_user.display_name} ({current_user.role.value})")
+        logger.info(f"[API] Chat request from {current_user.display_name} ({current_user.role.value})")
 
     patient_ctx = None
     if req.patient_id is not None:
@@ -1568,8 +1745,25 @@ async def chat(
             patient_ctx = await fhir_repo.get_patient(req.patient_id)
         except Exception as e:
             # Log the error but continue with general chat
-            print(f"Could not fetch patient {req.patient_id}: {e}")
-    
+            log_error(logger, "Fetch patient for chat", e, patient_id=req.patient_id)
+
+    # GDPR compliance event logging (Article 30 - Records of Processing Activities)
+    try:
+        import hashlib
+        await _audit_repo.log_compliance_event(
+            event_type="ai_chat_request",
+            compliance_framework="GDPR",
+            session_id=req.session_id or user_ctx.get("session_id"),
+            user_id=user_id,
+            patient_id_hash=hashlib.sha256(str(req.patient_id).encode()).hexdigest() if req.patient_id else None,
+            data_categories=["health_data", "ai_generated_content"] if patient_ctx else ["ai_generated_content"],
+            processing_purposes=["clinical_decision_support", "conversational_ai", "healthcare_assistance"],
+            compliance_status="compliant",
+            additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation" if patient_ctx else "Article 6(1)(a) - Consent"}
+        )
+    except Exception as e:
+        log_error(logger, "Chat request logging", e)
+
     # Create a mock patient context for general chat
     if not patient_ctx:
         result = await _engine.run(user_prompt=req.user_prompt, chat_mode=req.chat_mode, user_id=user_id, session_id=req.session_id)
@@ -1738,7 +1932,23 @@ async def upload_dicom_image(
             processed_at=dicom_image.processed_at,
             storage_path=dicom_image.storage_path
         )
-        
+
+        # GDPR compliance event logging (Article 30 - Records of Processing Activities)
+        try:
+            import hashlib
+            await _audit_repo.log_compliance_event(
+                event_type="dicom_image_upload",
+                compliance_framework="GDPR",
+                session_id=session_id,
+                user_id=user.user_id,
+                patient_id_hash=hashlib.sha256(patient_id.encode()).hexdigest() if patient_id else None,
+                data_categories=["medical_imaging", "diagnostic_data", "health_data"],
+                processing_purposes=["clinical_decision_support", "diagnostic_analysis", "medical_imaging"],                compliance_status="compliant",
+                additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation (healthcare delivery), Article 9(2)(h) - Medical diagnosis"}
+            )
+        except Exception as e:
+            log_error(logger, "DICOM upload logging", e)
+
         return DICOMUploadResponse(
             image_id=dicom_image.image_id,
             message="DICOM image uploaded successfully",
@@ -1746,7 +1956,7 @@ async def upload_dicom_image(
         )
         
     except Exception as e:
-        print(f"[ERROR] DICOM upload failed: {e}")
+        log_error(logger, "DICOM upload", e)
         raise HTTPException(status_code=400, detail=f"Failed to upload DICOM image: {str(e)}")
 
 @app.get("/dicom/images", response_model=DICOMImageListResponse)
@@ -1799,15 +2009,15 @@ async def list_user_dicom_images(request: Request):
                     processed_at=img.processed_at,
                     storage_path=img.storage_path
                 ))
-            except Exception as e:
-                print(f"[ERROR] Failed to serialize image {img.image_id}: {e}")
+            except Exception:
+                logger.error(f"[ERROR] Failed to serialize image - doc: {sanitize_document_id(img.image_id)}")
                 # Skip this image and continue with others
                 continue
         
         return DICOMImageListResponse(images=image_responses)
         
     except Exception as e:
-        print(f"[ERROR] Failed to list DICOM images: {e}")
+        log_error(logger, "List DICOM images", e)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to list images: {str(e)}")
@@ -1862,7 +2072,7 @@ async def get_dicom_image(image_id: str, request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Failed to get DICOM image: {e}")
+        log_error(logger, "Get DICOM image", e)
         raise HTTPException(status_code=500, detail=f"Failed to get image: {str(e)}")
 
 @app.get("/dicom/images/{image_id}/pixel-data", response_model=DICOMPixelDataResponse)
@@ -1925,7 +2135,7 @@ async def get_dicom_pixel_data(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Failed to get pixel data: {e}")
+        log_error(logger, "Get pixel data", e)
         raise HTTPException(status_code=500, detail=f"Failed to get pixel data: {str(e)}")
 
 @app.delete("/dicom/images/{image_id}")
@@ -1952,7 +2162,7 @@ async def delete_dicom_image(image_id: str, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        print(f"[ERROR] Failed to delete DICOM image: {e}")
+        log_error(logger, "Delete DICOM image", e)
         raise HTTPException(status_code=500, detail=f"Failed to delete image: {str(e)}")
 
 @app.post("/dicom/images/{image_id}/analyze", response_model=dict)
@@ -2004,7 +2214,7 @@ async def analyze_dicom_image(
         }
         
     except Exception as e:
-        print(f"[ERROR] DICOM analysis failed: {e}")
+        log_error(logger, "DICOM analysis", e)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
@@ -2036,7 +2246,7 @@ async def find_similar_dicom_images(
         }
         
     except Exception as e:
-        print(f"[ERROR] Similar image search failed: {e}")
+        log_error(logger, "Similar image search", e)
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
     
 
@@ -2217,8 +2427,8 @@ Patient Information:
 - Current Medications: {', '.join([f"{k}: {v}" for k, v in list(patient.medications.items())[:5]])}
 - Active Diagnoses: {', '.join([f"{k}: {v}" for k, v in list(patient.diagnoses.items())[:3]])}
 """
-            except Exception as e:
-                print(f"[Warning] Could not fetch patient context: {e}")
+            except Exception:
+                logger.warning("[Warning] Could not fetch patient context")
                 patient_context = ""
         
         # Define entry type contexts and templates
@@ -2357,7 +2567,7 @@ Important language policy: Write both the title and content in '{active_lang}'. 
         }
         
     except Exception as e:
-        print(f"[Journal Generation] Error: {e}")
+        log_error(logger, "Journal generation", e)
         raise HTTPException(status_code=500, detail=f"Journal generation failed: {e}")
 
 @app.post("/journal/autocomplete")
@@ -2443,7 +2653,7 @@ Completion:"""
         }
         
     except Exception as e:
-        print(f"[Autocomplete] Error: {e}")
+        log_error(logger, "Autocomplete", e)
         raise HTTPException(status_code=500, detail=f"Autocomplete failed: {e}")
 
 
@@ -2495,7 +2705,7 @@ async def generate_image(
         }
         
     except Exception as e:
-        print(f"Error generating image: {e}")
+        log_error(logger, "Generate image", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/images/generated/{image_id}")
@@ -2532,7 +2742,7 @@ async def get_generated_image(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error retrieving image: {e}")
+        log_error(logger, "Retrieve image", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/images/user/{user_id}")
@@ -2572,7 +2782,7 @@ async def get_user_generated_images(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error retrieving user images: {e}")
+        log_error(logger, "Retrieve user images", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/images/service/status")
@@ -2597,7 +2807,7 @@ async def get_image_generation_status(
         }
         
     except Exception as e:
-        print(f"Error checking image generation status: {e}")
+        logger.error("Error checking image generation status")
         return {
             "enabled": True,
             "available": False,
@@ -2720,8 +2930,8 @@ async def lookup_term(
 
             if llm_resp and llm_resp.content and len(llm_resp.content.strip()) > 0:
                 summary_text = llm_resp.content.strip()
-        except Exception as e:
-            print(f"[Lookup] Structured summary generation failed, using default summary. Error: {e}")
+        except Exception:
+            logger.warning("[Lookup] Structured summary generation failed, using default summary")
 
         return LookupResponse(
             term=term,
@@ -2733,7 +2943,7 @@ async def lookup_term(
             ]
         )
     except Exception as e:
-        print(f"[Lookup] Error: {e}")
+        log_error(logger, "Lookup", e)
         raise HTTPException(status_code=500, detail="Lookup failed")
 
 
@@ -2758,6 +2968,112 @@ class XMLUploadResponse(BaseModel):
     document_type: Optional[str] = None
 
 
+class UploadContextResponse(BaseModel):
+    session_id: Optional[str] = None
+    user_id: Optional[str] = None
+    patient_id: Optional[str] = None
+    chat_session_id: Optional[str] = None
+
+
+@app.get("/documents/test-session")
+async def test_session(request: Request):
+    """Test endpoint to debug session issues"""
+    headers = dict(request.headers)
+    session_id = headers.get('x-session-id')
+
+    result = {
+        "received_session_id": session_id,
+        "session_id_length": len(session_id) if session_id else 0,
+        "all_headers": headers,
+    }
+
+    if session_id:
+        try:
+            session = await _user_repo.get_active_session(session_id)
+            if session:
+                result["session_exists"] = True
+                result["session_user_id"] = session.user_id
+                user = await _user_repo.get_user_by_id(session.user_id)
+                if user:
+                    result["user_found"] = True
+                    result["username"] = user.username
+                else:
+                    result["user_found"] = False
+            else:
+                result["session_exists"] = False
+        except Exception as e:
+            result["error"] = str(e)
+
+    return result
+
+
+@app.get("/documents/upload-context", response_model=UploadContextResponse)
+async def get_upload_context(
+    request: Request,
+    filename: Optional[str] = Query(None),
+    file_type: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Provide upload context for file watcher clients.
+
+    This endpoint is used by the CLARA file watcher agent to fetch
+    dynamic upload parameters (patient_id, chat_session_id) before
+    uploading documents.
+
+    Args:
+        filename: Name of the file to be uploaded
+        file_type: Type of file ("pdf" or "xml")
+        user_ctx: User context from session (injected by dependency)
+
+    Returns:
+        UploadContextResponse with patient_id and chat_session_id
+    """
+
+    user_id = user_ctx.get("user_id")
+    session_id = user_ctx.get("session_id")
+
+    # Debug: Log headers
+    logger.info("[DEBUG] upload-context - Headers received")
+    logger.info(f"[DEBUG] upload-context - user: {sanitize_user_id(user_id) if user_id else "none"}, session: {sanitize_session_id(session_id) if session_id else "none"}")
+
+    if not user_id:
+        logger.error(f"[ERROR] User ID not found in user context - session: {sanitize_session_id(session_id) if session_id else "none"}")
+        return UploadContextResponse(patient_id=None, chat_session_id=None)
+
+    try:
+        # Query database for most recent session for this user
+        sessions = await _vector_store.get_user_sessions_for_patient(
+            user_id=user_id,
+            limit=1
+        )
+
+        logger.info(f"[DEBUG] upload-context - Found {len(sessions) if sessions else 0} sessions in vector store")
+
+        if sessions and len(sessions) > 0:
+            most_recent_session = sessions[0]
+            logger.info("[INFO] upload-context - Returning most recent session from DB")
+            return UploadContextResponse(
+                patient_id=most_recent_session.patient_id,
+                chat_session_id=most_recent_session.session_id
+            )
+        else:
+            # No sessions in vector store yet - use auth session_id as fallback
+            logger.info(f"[INFO] upload-context - No sessions in DB, using auth session as fallback: {sanitize_session_id(session_id)}")
+            return UploadContextResponse(
+                patient_id=None,
+                chat_session_id=session_id  # Use auth session_id as chat_session_id
+            )
+    except Exception as e:
+        log_error(logger, "upload-context", e)
+        import traceback
+        traceback.print_exc()
+        # Still return session_id as fallback on error
+        return UploadContextResponse(
+            patient_id=None,
+            chat_session_id=session_id
+        )
+
+
 @app.post("/documents/upload", response_model=PDFUploadResponse)
 async def upload_pdf_document(
     request: Request,
@@ -2767,10 +3083,10 @@ async def upload_pdf_document(
     user_ctx: dict = Depends(get_user_context)
 ):
     """Upload a PDF document file."""
-    print("=" * 50)
-    print("PDF UPLOAD ENDPOINT HIT WITH NEW CODE!")
-    print(f"[PDF Upload] Raw form data - chat_session_id: {chat_session_id}, patient_id: {patient_id}")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("PDF UPLOAD ENDPOINT HIT WITH NEW CODE!")
+    logger.info(f"[PDF Upload] Raw form data - chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
+    logger.info("=" * 50)
 
     # Get session ID from user context
     session_id = user_ctx.get("session_id")
@@ -2796,20 +3112,41 @@ async def upload_pdf_document(
         # Use chat_session_id if provided, otherwise fall back to auth session_id
         effective_session_id = chat_session_id or session_id
 
-        print(f"[PDF Upload] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, filename: {file.filename}, patient_id: {patient_id}")
+        logger.info(f"[PDF Upload] Request - user: {sanitize_user_id(user.user_id)}, auth_session: {sanitize_session_id(session_id)}, chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, effective_session: {sanitize_session_id(effective_session_id)}, filename: {file.filename}, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
-        # Process upload using memory service
-        pdf_document = await _pdf_service.upload_document(
+        # Create upload request
+        from optimed.core.domain.pdf_document import PDFUploadRequest
+        upload_request = PDFUploadRequest(
             user_id=user.user_id,
             session_id=effective_session_id,
             filename=file.filename,
-            content=file_content,
+            file_content=file_content,
             patient_id=patient_id
         )
 
-        print(f"[PDF Upload] Success - document_id: {pdf_document.document_id}, status: {pdf_document.status}")
+        # Process upload using memory service
+        pdf_document = await _pdf_service.upload_document(upload_request)
 
-        return PDFUploadResponse(
+        logger.info(f"[PDF Upload] Success - document: {sanitize_document_id(pdf_document.document_id)}, status: {pdf_document.status}")
+
+        # GDPR compliance event logging (Article 30)
+        try:
+            import hashlib
+            await _audit_repo.log_compliance_event(
+                event_type="document_upload",
+                compliance_framework="GDPR",
+                session_id=session_id,
+                user_id=user.user_id,
+                patient_id_hash=hashlib.sha256(patient_id.encode()).hexdigest() if patient_id else None,
+                data_categories=["health_documents", "clinical_reports"],
+                processing_purposes=["clinical_decision_support", "document_analysis"],
+                compliance_status="compliant",
+                additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation"}
+            )
+        except Exception as e:
+            log_error(logger, "Document upload logging", e)
+
+        response = PDFUploadResponse(
             document_id=pdf_document.document_id,
             filename=pdf_document.filename,
             file_size=pdf_document.file_size,
@@ -2818,10 +3155,28 @@ async def upload_pdf_document(
             patient_id=pdf_document.patient_id
         )
 
+        # Broadcast real-time event
+        try:
+            broadcaster = get_broadcaster()
+            event = DocumentEvent(
+                type="uploaded",
+                document_id=pdf_document.document_id,
+                filename=pdf_document.filename,
+                document_type="pdf",
+                session_id=effective_session_id,
+                patient_id=patient_id
+            )
+            await broadcaster.broadcast(user.user_id, event)
+            logger.info(f"[PDF Upload] Event broadcasted to user {sanitize_user_id(user.user_id)}")
+        except Exception as e:
+            log_error(logger, "PDF Upload broadcast", e)
+
+        return response
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        print(f"[PDF Upload] Error: {e}")
+        log_error(logger, "PDF Upload", e)
         raise HTTPException(status_code=500, detail="PDF upload failed")
 
 
@@ -2844,18 +3199,44 @@ async def list_xml_documents(
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    # Use chat_session_id if provided, otherwise fall back to auth session_id
-    effective_session_id = chat_session_id or session_id
-
     try:
-        print(f"[XML List] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, patient_id: {patient_id}")
+        logger.info(f"[XML List] Request - user: {sanitize_user_id(user.user_id)}, auth_session: {sanitize_session_id(session_id)}, chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
-        # Get documents for current session (filtered by patient_id)
-        documents = await _xml_service.list_documents(
-            user_id=user.user_id,
-            session_id=effective_session_id,
-            patient_id=patient_id
-        )
+        documents = []
+        seen_ids = set()
+
+        # Strategy: Always search both chat session (if provided) and auth session (where watcher uploads)
+        # Frontend is responsible for clearing state on new session
+
+        # First, search chat session if provided
+        if chat_session_id:
+            logger.info(f"[XML List] Searching in chat session: {sanitize_session_id(chat_session_id)}")
+            chat_docs = await _xml_service.list_documents(
+                user_id=user.user_id,
+                session_id=chat_session_id,
+                patient_id=patient_id
+            )
+            for doc in chat_docs:
+                if doc.document_id not in seen_ids:
+                    documents.append(doc)
+                    seen_ids.add(doc.document_id)
+            logger.info(f"[XML List] Found {len(chat_docs)} documents in chat session")
+
+        # Always check auth session (where watcher uploads go)
+        if session_id != chat_session_id:
+            logger.info(f"[XML List] Searching in auth session: {sanitize_session_id(session_id)}")
+            auth_docs = await _xml_service.list_documents(
+                user_id=user.user_id,
+                session_id=session_id,
+                patient_id=patient_id
+            )
+            for doc in auth_docs:
+                if doc.document_id not in seen_ids:
+                    documents.append(doc)
+                    seen_ids.add(doc.document_id)
+            logger.info(f"[XML List] Found {len(auth_docs)} documents in auth session")
+
+        logger.info(f"[XML List] Total unique documents: {len(documents)}")
 
         # Separate counts
         total_count = len(documents)
@@ -2872,7 +3253,7 @@ async def list_xml_documents(
         )
 
     except Exception as e:
-        print(f"[XML List] Error: {e}")
+        log_error(logger, "XML List", e)
         raise HTTPException(status_code=500, detail="Failed to list XML documents")
 
 
@@ -2934,7 +3315,7 @@ async def get_xml_document(
     except HTTPException as he:
         raise he
     except Exception as e:
-        print(f"[XML Get] Error: {e}")
+        log_error(logger, "XML Get", e)
         raise HTTPException(status_code=500, detail="Failed to get XML document")
 
 
@@ -2947,7 +3328,7 @@ async def list_pdf_documents(
     user_ctx: dict = Depends(get_user_context)
 ):
     """List PDF documents for the current session."""
-    print(f"[PDF List] Raw query params - chat_session_id: {chat_session_id}, patient_id: {patient_id}")
+    logger.info(f"[PDF List] Raw query params - chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
     # Get session ID from user context
     session_id = user_ctx.get("session_id")
@@ -2959,21 +3340,45 @@ async def list_pdf_documents(
         raise HTTPException(status_code=401, detail="User not found")
 
     try:
-        # Use chat_session_id if provided, otherwise fall back to auth session_id
-        effective_session_id = chat_session_id or session_id
+        logger.info(f"[PDF List] Request - user: {sanitize_user_id(user.user_id)}, auth_session: {sanitize_session_id(session_id)}, chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
-        print(f"[PDF List] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, patient_id: {patient_id}")
+        documents = []
+        seen_ids = set()
 
-        # Get documents for current session (filtered by patient_id)
-        documents = await _pdf_service.list_documents(
-            user_id=user.user_id,
-            session_id=effective_session_id,
-            patient_id=patient_id
-        )
+        # Strategy: Always search both chat session (if provided) and auth session (where watcher uploads)
+        # Frontend is responsible for clearing state on new session
 
-        print(f"[PDF List] Found {len(documents)} documents")
+        # First, search chat session if provided
+        if chat_session_id:
+            logger.info(f"[PDF List] Searching in chat session: {sanitize_session_id(chat_session_id)}")
+            chat_docs = await _pdf_service.list_documents(
+                user_id=user.user_id,
+                session_id=chat_session_id,
+                patient_id=patient_id
+            )
+            for doc in chat_docs:
+                if doc.document_id not in seen_ids:
+                    documents.append(doc)
+                    seen_ids.add(doc.document_id)
+            logger.info(f"[PDF List] Found {len(chat_docs)} documents in chat session")
+
+        # Always check auth session (where watcher uploads go)
+        if session_id != chat_session_id:
+            logger.info(f"[PDF List] Searching in auth session: {sanitize_session_id(session_id)}")
+            auth_docs = await _pdf_service.list_documents(
+                user_id=user.user_id,
+                session_id=session_id,
+                patient_id=patient_id
+            )
+            for doc in auth_docs:
+                if doc.document_id not in seen_ids:
+                    documents.append(doc)
+                    seen_ids.add(doc.document_id)
+            logger.info(f"[PDF List] Found {len(auth_docs)} documents in auth session")
+
+        logger.info(f"[PDF List] Total unique documents: {len(documents)}")
         for doc in documents:
-            print(f"[PDF List] Document: {doc.filename} (status: {doc.status}, patient_id: {doc.patient_id})")
+            logger.info(f"[PDF List] Document: {doc.filename} (status: {doc.status}, patient: {sanitize_patient_id(doc.patient_id) if doc.patient_id else "none"})")
 
         # Separate patient-specific and general documents
         patient_docs = [doc for doc in documents if doc.patient_id is not None]
@@ -2987,8 +3392,78 @@ async def list_pdf_documents(
         )
 
     except Exception as e:
-        print(f"[PDF List] Error: {e}")
+        log_error(logger, "PDF List", e)
         raise HTTPException(status_code=500, detail="Failed to list PDF documents")
+
+
+@app.get("/documents/events")
+async def document_events_stream(
+    request: Request,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """
+    SSE stream for real-time document notifications.
+    Uses same streaming approach as /chat/stream.
+    """
+    try:
+        logger.info("[DocEvents] SSE request received")
+
+        session_id = user_ctx.get("session_id")
+        if not session_id:
+            raise HTTPException(status_code=401, detail="Session required")
+
+        user = user_ctx.get("user")
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        user_id = user.user_id
+        logger.info(f"[DocEvents] User {sanitize_user_id(user_id)} connecting to SSE stream")
+
+        broadcaster = get_broadcaster()
+    except Exception as e:
+        log_error(logger, "DocEvents setup", e)
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"SSE setup failed: {str(e)}")
+
+    # Subscribe to events
+    queue = await broadcaster.subscribe(user_id)
+
+    async def event_generator():
+        try:
+            # Send connection confirmation
+            yield f"data: {json.dumps({'type': 'connected', 'user_id': user_id})}\n\n"
+
+            while True:
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    logger.info(f"[DocEvents] Client disconnected: {sanitize_user_id(user_id)}")
+                    break
+
+                try:
+                    # Wait for event (30s timeout for keepalive)
+                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+
+                    # Send event in SSE format
+                    yield format_sse_event(event)
+
+                except asyncio.TimeoutError:
+                    # Send keepalive
+                    yield ": keepalive\n\n"
+
+        except Exception as e:
+            log_error(logger, "DocEvents stream", e)
+        finally:
+            await broadcaster.unsubscribe(user_id, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @app.get("/documents/{document_id}")
@@ -3039,7 +3514,7 @@ async def get_pdf_document(
         }
 
     except Exception as e:
-        print(f"[PDF Get] Error: {e}")
+        log_error(logger, "PDF Get", e)
         raise HTTPException(status_code=500, detail="Failed to get PDF document")
 
 
@@ -3061,48 +3536,116 @@ async def delete_pdf_document(
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    # Use chat_session_id if provided, otherwise fall back to auth session_id (same as upload)
-    effective_session_id = chat_session_id or session_id
-
     try:
-        print("[PDF Delete] Request details:")
-        print(f"  - document_id: {document_id}")
-        print(f"  - user_id: {user.user_id}")
-        print(f"  - auth_session_id: {session_id}")
-        print(f"  - chat_session_id: {chat_session_id}")
-        print(f"  - effective_session_id: {effective_session_id}")
-        print(f"  - patient_id: {patient_id}")
+        logger.info("[PDF Delete] Request details:")
+        logger.info(f"  - document: {sanitize_document_id(document_id)}")
+        logger.info(f"  - user: {sanitize_user_id(user.user_id)}")
+        logger.info(f"  - auth_session: {sanitize_session_id(session_id)}")
+        logger.info(f"  - chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}")
+        logger.info(f"  - patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
-        print("[PDF Delete] Before deletion - showing all sessions:")
-        _pdf_service.debug_all_sessions()
+        # Try deleting from chat session first, then auth session (search both like list does)
+        success = False
 
-        success = await _pdf_service.delete_document(
-            document_id=document_id,
-            user_id=user.user_id,
-            session_id=effective_session_id,
-            patient_id=patient_id
-        )
+        if chat_session_id:
+            logger.info(f"[PDF Delete] Trying chat session: {sanitize_session_id(chat_session_id)}")
+            success = await _pdf_service.delete_document(
+                document_id=document_id,
+                user_id=user.user_id,
+                session_id=chat_session_id,
+                patient_id=patient_id
+            )
 
-        print(f"[PDF Delete] Delete operation returned: {success}")
+        if not success:
+            logger.info(f"[PDF Delete] Trying auth session: {sanitize_session_id(session_id)}")
+            success = await _pdf_service.delete_document(
+                document_id=document_id,
+                user_id=user.user_id,
+                session_id=session_id,
+                patient_id=patient_id
+            )
 
-        print("[PDF Delete] After deletion - showing all sessions:")
-        _pdf_service.debug_all_sessions()
+        logger.info(f"[PDF Delete] Delete operation returned: {success}")
 
         if success:
             return {"message": "Document deleted successfully"}
         else:
-            print("[PDF Delete] Document not found, returning 404")
+            logger.warning("[PDF Delete] Document not found in any session, returning 404")
             raise HTTPException(status_code=404, detail="Document not found")
 
     except HTTPException as he:
         # Re-raise HTTP exceptions as-is
-        print(f"[PDF Delete] HTTP Exception: {he.status_code} - {he.detail}")
+        logger.error(f"[PDF Delete] HTTP Exception: {he.status_code} - {he.detail}")
         raise he
     except Exception as e:
-        print(f"[PDF Delete] Unexpected error: {e}")
+        log_error(logger, "PDF Delete", e)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to delete PDF document")
+
+
+@app.post("/documents/cleanup-session")
+async def cleanup_session_documents(
+    request: Request,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Clean up old documents from auth session when starting a new chat session.
+
+    This endpoint is called by the frontend when creating a new session to prevent
+    old watcher uploads from accumulating in memory.
+    """
+    session_id = user_ctx.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    try:
+        logger.info(f"[Cleanup] Starting cleanup for auth session: {sanitize_session_id(session_id)}, user: {sanitize_user_id(user.user_id)}")
+
+        # Get all documents from auth session
+        pdf_docs = await _pdf_service.list_documents(
+            user_id=user.user_id,
+            session_id=session_id,
+            patient_id=None
+        )
+
+        xml_docs = await _xml_service.list_documents(
+            user_id=user.user_id,
+            session_id=session_id,
+            patient_id=None
+        )
+
+        # Delete all documents from auth session
+        deleted_pdfs = 0
+        for doc in pdf_docs:
+            try:
+                await _pdf_service.delete_document(doc.document_id, user.user_id, session_id)
+                deleted_pdfs += 1
+            except Exception:
+                logger.error(f"[Cleanup] Failed to delete PDF {sanitize_document_id(doc.document_id)}")
+
+        deleted_xmls = 0
+        for doc in xml_docs:
+            try:
+                await _xml_service.delete_document(doc.document_id, user.user_id, session_id)
+                deleted_xmls += 1
+            except Exception:
+                logger.error(f"[Cleanup] Failed to delete XML {sanitize_document_id(doc.document_id)}")
+
+        logger.info(f"[Cleanup] Cleaned up {deleted_pdfs} PDFs and {deleted_xmls} XMLs from auth session")
+
+        return {
+            "message": "Session cleaned up successfully",
+            "deleted_pdfs": deleted_pdfs,
+            "deleted_xmls": deleted_xmls
+        }
+
+    except Exception as e:
+        log_error(logger, "Cleanup", e)
+        raise HTTPException(status_code=500, detail="Failed to cleanup session")
 
 
 # XML Document Upload and Management Endpoints
@@ -3138,9 +3681,9 @@ async def upload_xml_document(
         # Read file content
         content = await file.read()
 
-        print(f"[XML Upload] Request - user_id: {user.user_id}, auth_session_id: {session_id}, chat_session_id: {chat_session_id}, effective_session_id: {effective_session_id}, filename: {file.filename}, patient_id: {patient_id}")
+        logger.info(f"[XML Upload] Request - user: {sanitize_user_id(user.user_id)}, auth_session: {sanitize_session_id(session_id)}, chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, effective_session: {sanitize_session_id(effective_session_id)}, filename: {file.filename}, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
-        # Process upload using memory service
+        # Process upload using memory service (XML service uses individual parameters)
         xml_document = await _xml_service.upload_document(
             user_id=user.user_id,
             session_id=effective_session_id,
@@ -3149,7 +3692,7 @@ async def upload_xml_document(
             patient_id=patient_id
         )
 
-        return XMLUploadResponse(
+        response = XMLUploadResponse(
             document_id=xml_document.document_id,
             filename=xml_document.filename,
             file_size=xml_document.file_size,
@@ -3159,8 +3702,26 @@ async def upload_xml_document(
             document_type=xml_document.get_document_type()
         )
 
+        # Broadcast real-time event
+        try:
+            broadcaster = get_broadcaster()
+            event = DocumentEvent(
+                type="uploaded",
+                document_id=xml_document.document_id,
+                filename=xml_document.filename,
+                document_type="xml",
+                session_id=effective_session_id,
+                patient_id=patient_id
+            )
+            await broadcaster.broadcast(user.user_id, event)
+            logger.info(f"[XML Upload] Event broadcasted to user {sanitize_user_id(user.user_id)}")
+        except Exception as e:
+            log_error(logger, "XML Upload broadcast", e)
+
+        return response
+
     except Exception as e:
-        print(f"[XML Upload] Error: {e}")
+        log_error(logger, "XML Upload", e)
         raise HTTPException(status_code=500, detail="XML upload failed")
 
 
@@ -3183,45 +3744,346 @@ async def delete_xml_document(
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    # Use chat_session_id if provided, otherwise fall back to auth session_id (same as upload)
-    effective_session_id = chat_session_id or session_id
-
     try:
-        print("[XML Delete] Request details:")
-        print(f"  - document_id: {document_id}")
-        print(f"  - user_id: {user.user_id}")
-        print(f"  - auth_session_id: {session_id}")
-        print(f"  - chat_session_id: {chat_session_id}")
-        print(f"  - effective_session_id: {effective_session_id}")
-        print(f"  - patient_id: {patient_id}")
+        logger.info("[XML Delete] Request details:")
+        logger.info(f"  - document: {sanitize_document_id(document_id)}")
+        logger.info(f"  - user: {sanitize_user_id(user.user_id)}")
+        logger.info(f"  - auth_session: {sanitize_session_id(session_id)}")
+        logger.info(f"  - chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}")
+        logger.info(f"  - patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
-        print("[XML Delete] Before deletion - showing all sessions:")
-        _xml_service.debug_all_sessions()
+        # Try deleting from chat session first, then auth session (search both like list does)
+        success = False
 
-        success = await _xml_service.delete_document(
-            document_id=document_id,
-            user_id=user.user_id,
-            session_id=effective_session_id,
-            patient_id=patient_id
-        )
+        if chat_session_id:
+            logger.info(f"[XML Delete] Trying chat session: {sanitize_session_id(chat_session_id)}")
+            success = await _xml_service.delete_document(
+                document_id=document_id,
+                user_id=user.user_id,
+                session_id=chat_session_id,
+                patient_id=patient_id
+            )
 
-        print(f"[XML Delete] Delete operation returned: {success}")
+        if not success:
+            logger.info(f"[XML Delete] Trying auth session: {sanitize_session_id(session_id)}")
+            success = await _xml_service.delete_document(
+                document_id=document_id,
+                user_id=user.user_id,
+                session_id=session_id,
+                patient_id=patient_id
+            )
 
-        print("[XML Delete] After deletion - showing all sessions:")
-        _xml_service.debug_all_sessions()
+        logger.info(f"[XML Delete] Delete operation returned: {success}")
 
         if success:
             return {"message": "XML document deleted successfully"}
         else:
-            print("[XML Delete] Document not found, returning 404")
+            logger.warning("[XML Delete] Document not found in any session, returning 404")
             raise HTTPException(status_code=404, detail="XML document not found")
 
     except HTTPException as he:
         # Re-raise HTTP exceptions as-is
-        print(f"[XML Delete] HTTP Exception: {he.status_code} - {he.detail}")
+        logger.error(f"[XML Delete] HTTP Exception: {he.status_code} - {he.detail}")
         raise he
     except Exception as e:
-        print(f"[XML Delete] Unexpected error: {e}")
+        log_error(logger, "XML Delete", e)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to delete XML document")
+
+
+# ==================== NOTE TEMPLATE ENDPOINTS ====================
+
+class NoteGenerationRequestModel(BaseModel):
+    template_id: str
+    session_id: str
+    patient_id: Optional[str] = None
+    context_prompt: Optional[str] = None
+    include_conversation_history: bool = True
+
+
+@app.post("/templates/upload")
+async def upload_template(
+    file: UploadFile = File(...),
+    name: str = Form(...),
+    language: str = Form(...),
+    template_type: str = Form(...),
+    user_ctx: dict = Depends(get_user_context),
+    template_service = Depends(get_template_service)
+):
+    """Upload and parse a template file (DOCX, PDF, XLSX, TXT)."""
+    try:
+        logger.info(f"[Template Upload] User {sanitize_user_id(user_ctx["user_id"])} uploading template: {name}")
+
+        # Read file content
+        content = await file.read()
+
+        # Create template using service
+        from optimed.core.domain import TemplateType
+        template = await template_service.create_template_from_upload(
+            user_id=user_ctx["user_id"],
+            name=name,
+            language=language,
+            template_type=TemplateType(template_type),
+            file_content=content,
+            filename=file.filename
+        )
+
+        logger.info("[Template Upload] Template created successfully")
+
+        return {
+            "template_id": template.template_id,
+            "name": template.name,
+            "language": template.language,
+            "template_type": template.template_type.value,
+            "fields": template.template_structure.get("fields", [])
+        }
+
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        log_error(logger, "Template Upload", e)
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to upload template")
+
+
+@app.get("/templates/list")
+async def list_templates(
+    language: Optional[str] = Query(None),
+    template_type: Optional[str] = Query(None),
+    user_ctx: dict = Depends(get_user_context),
+    template_repo = Depends(get_template_repo)
+):
+    """List available templates (user + system)."""
+    try:
+        templates = await template_repo.list_templates(
+            user_id=user_ctx["user_id"],
+            include_system=True,
+            language=language,
+            template_type=template_type
+        )
+
+        return {
+            "templates": [
+                {
+                    "template_id": t.template_id,
+                    "name": t.name,
+                    "language": t.language,
+                    "template_type": t.template_type.value,
+                    "is_system_template": t.is_system_template,
+                    "file_format": t.file_format,
+                    "template_structure": t.template_structure if isinstance(t.template_structure, dict) else {},
+                    "created_at": t.created_at.isoformat()
+                }
+                for t in templates
+            ]
+        }
+
+    except Exception as e:
+        log_error(logger, "Template List", e)
+        raise HTTPException(status_code=500, detail="Failed to list templates")
+
+
+@app.get("/templates/{template_id}")
+async def get_template(
+    template_id: str,
+    user_ctx: dict = Depends(get_user_context),
+    template_repo = Depends(get_template_repo)
+):
+    """Get template details by ID."""
+    try:
+        template = await template_repo.get_template_by_id(template_id)
+
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        # Check access (user templates are private, system templates are public)
+        if not template.is_system_template and template.user_id != user_ctx["user_id"]:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        return {
+            "template_id": template.template_id,
+            "name": template.name,
+            "language": template.language,
+            "template_type": template.template_type.value,
+            "template_structure": template.template_structure,
+            "is_system_template": template.is_system_template,
+            "file_format": template.file_format,
+            "created_at": template.created_at.isoformat(),
+            "updated_at": template.updated_at.isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(logger, "Template Get", e)
+        raise HTTPException(status_code=500, detail="Failed to get template")
+
+
+@app.delete("/templates/{template_id}")
+async def delete_template(
+    template_id: str,
+    user_ctx: dict = Depends(get_user_context),
+    template_repo = Depends(get_template_repo)
+):
+    """Delete a user template (system templates cannot be deleted)."""
+    try:
+        template = await template_repo.get_template_by_id(template_id)
+
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        if template.user_id != user_ctx["user_id"]:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        if template.is_system_template:
+            raise HTTPException(status_code=400, detail="Cannot delete system template")
+
+        success = await template_repo.delete_template(template_id)
+
+        return {"success": success}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(logger, "Template Delete", e)
+        raise HTTPException(status_code=500, detail="Failed to delete template")
+
+
+@app.post("/notes/generate/stream")
+async def generate_note_stream(
+    req: NoteGenerationRequestModel,
+    user_ctx: dict = Depends(get_user_context),
+    fhir_repo: FHIRRepository = Depends(get_user_fhir_repository),
+    template_repo = Depends(get_template_repo)
+):
+    """Generate clinical note with streaming (GDPR: content never stored)."""
+    try:
+        logger.info("[Note Generate] Starting generation for template")
+
+        # Get template
+        template = await template_repo.get_template_by_id(req.template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        # Get patient context if provided
+        patient_ctx = None
+        if req.patient_id:
+            try:
+                patient_ctx = await fhir_repo.get_patient(req.patient_id)
+            except Exception:
+                logger.warning("[Note Generate] Warning: Could not fetch patient")
+
+        # Start metadata tracking
+        import hashlib
+        generation_id = str(uuid.uuid4())
+        from optimed.core.domain import NoteGenerationMetadata, NoteGenerationStatus
+
+        context_hash = None
+        if req.context_prompt:
+            context_hash = hashlib.sha256(req.context_prompt.encode()).hexdigest()
+
+        metadata = NoteGenerationMetadata(
+            generation_id=generation_id,
+            user_id=user_ctx["user_id"],
+            patient_id=req.patient_id,
+            template_id=req.template_id,
+            session_id=req.session_id,
+            template_name=template.name,
+            template_type=template.template_type,
+            language=template.language,
+            status=NoteGenerationStatus.STARTED,
+            context_prompt_hash=context_hash,
+            created_at=datetime.now(timezone.utc)
+        )
+        await template_repo.save_generation_metadata(metadata)
+
+        # Stream generation using orchestrator
+        async def event_stream():
+            try:
+                async for event in _engine.run_stream(
+                    patient=patient_ctx,
+                    user_prompt=req.context_prompt or "Generate clinical note",
+                    user_id=user_ctx["user_id"],
+                    session_id=req.session_id,
+                    note_template=template,
+                    note_generation_id=generation_id,
+                    note_context_prompt=req.context_prompt
+                ):
+                    # Forward all events to frontend
+                    yield f"data: {json.dumps(event)}\n\n"
+
+                # Update metadata on completion
+                await template_repo.update_generation_metadata(
+                    generation_id=generation_id,
+                    status=NoteGenerationStatus.COMPLETED
+                )
+
+            except Exception as e:
+                error_event = {"type": "error", "message": str(e)}
+                yield f"data: {json.dumps(error_event)}\n\n"
+
+                await template_repo.update_generation_metadata(
+                    generation_id=generation_id,
+                    status=NoteGenerationStatus.ERROR,
+                    error_message=str(e)
+                )
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive"
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(logger, "Note Generate", e)
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to generate note")
+
+
+@app.get("/notes/metadata/history")
+async def get_generation_history(
+    patient_id: Optional[str] = Query(None),
+    limit: int = Query(50, le=100),
+    user_ctx: dict = Depends(get_user_context),
+    template_repo = Depends(get_template_repo)
+):
+    """Get generation metadata history (GDPR: no actual note content)."""
+    try:
+        history = await template_repo.get_generation_history(
+            user_id=user_ctx["user_id"],
+            patient_id=patient_id,
+            limit=limit
+        )
+
+        return {
+            "history": [
+                {
+                    "generation_id": h.generation_id,
+                    "template_name": h.template_name,
+                    "template_type": h.template_type.value,
+                    "language": h.language,
+                    "status": h.status.value,
+                    "patient_id": h.patient_id,
+                    "chunks_used_count": h.chunks_used_count,
+                    "conversation_turns_included": h.conversation_turns_included,
+                    "export_method": h.export_method.value if h.export_method else None,
+                    "created_at": h.created_at.isoformat(),
+                    "completed_at": h.completed_at.isoformat() if h.completed_at else None,
+                    "duration_seconds": h.duration_seconds
+                }
+                for h in history
+            ]
+        }
+
+    except Exception as e:
+        log_error(logger, "Note History", e)
+        raise HTTPException(status_code=500, detail="Failed to get history")

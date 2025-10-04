@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@/contexts/UserContext';
 import { completeEHRLogin } from '@/lib/api';
+import { sendSessionToWatcher } from '@/lib/watcherService';
 
 export default function EHRCallbackPage() {
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
@@ -28,15 +29,20 @@ export default function EHRCallbackPage() {
 
         setStatus('success');
         setMessage(data.message);
-        
+
         // Set user context
         setUser(data.user);
         setIsAuthenticated(true);
-        
+
         // Store session
         localStorage.setItem('session_id', data.session_id);
         localStorage.removeItem('ehr_login_connection_id');
-        
+
+        // Send session to local CLARA watcher (fails silently if not running)
+        sendSessionToWatcher(data.session_id).catch(() => {
+          // Ignore errors - watcher is optional
+        });
+
         // Redirect after success
         setTimeout(() => {
           router.push('/patients');

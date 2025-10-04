@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useStreamDecryption } from './useEncryption';
+import { sanitizeUserId, sanitizePatientId, sanitizeSessionId, sanitizeDocumentId, logInfo, logError, logWarning } from '@/lib/logger';
 
 interface DifferentialDiagnosis {
   icd_code: string;
@@ -17,7 +18,7 @@ interface GeneratedImage {
 }
 
 interface StreamingUpdate {
-  type: 'status' | 'reasoning' | 'reasoning_complete' | 'response_chunk' | 'completion' | 'error' | 'differential_diagnosis_progress';
+  type: 'status' | 'reasoning' | 'reasoning_complete' | 'response_chunk' | 'completion' | 'error' | 'differential_diagnosis_progress' | 'note_generation_progress';
   step?: string;
   description?: string;
   message?: string;
@@ -34,6 +35,10 @@ interface StreamingUpdate {
   // New fields for differential diagnosis progress
   diagnosis_name?: string;
   details?: string;
+  // New fields for note generation progress
+  template_type?: string;
+  template_name?: string;
+  note_generation_step?: string;
 }
 
 interface StreamingState {
@@ -55,6 +60,13 @@ interface StreamingState {
     currentStep: string;
     details: string;
   };
+  // New fields for note generation progress
+  noteGenerationProgress: {
+    isGenerating: boolean;
+    templateType: string;
+    templateName: string;
+    currentStep: string;
+  };
 }
 
 export const useStreamingChat = (sessionId?: string) => {
@@ -75,6 +87,12 @@ export const useStreamingChat = (sessionId?: string) => {
       currentDiagnosis: '',
       currentStep: '',
       details: ''
+    },
+    noteGenerationProgress: {
+      isGenerating: false,
+      templateType: '',
+      templateName: '',
+      currentStep: ''
     }
   });
 
@@ -88,7 +106,7 @@ export const useStreamingChat = (sessionId?: string) => {
 
   // Handle streaming updates
   const handleStreamUpdate = useCallback((update: StreamingUpdate) => {
-    console.log('🔄 Processing update:', update.type, update);
+    logInfo(`Processing update: ${update.type}`);
     
     setState(prev => {
       const newUpdates = [...prev.updates, update];
@@ -107,7 +125,7 @@ export const useStreamingChat = (sessionId?: string) => {
 
         case 'reasoning':
           const newReasoning = [...prev.reasoning, update.reasoning || ''];
-          console.log('🧠 Adding reasoning step:', update.reasoning, 'Total steps:', newReasoning.length);
+          logInfo(`Adding reasoning step, total steps: ${newReasoning.length}`);
           
           if (reasoningTimeoutRef.current) {
             clearTimeout(reasoningTimeoutRef.current);
@@ -132,7 +150,7 @@ export const useStreamingChat = (sessionId?: string) => {
           return newState;
 
         case 'reasoning_complete':
-          console.log('🧠 Reasoning complete, total steps:', prev.reasoning.length);
+          logInfo(`Reasoning complete, total steps: ${prev.reasoning.length}`);
           
           if (reasoningTimeoutRef.current) {
             clearTimeout(reasoningTimeoutRef.current);
@@ -148,11 +166,7 @@ export const useStreamingChat = (sessionId?: string) => {
           };
 
         case 'response_chunk':
-          console.log('📝 Streaming response chunk received:', {
-            currentLength: prev.streamingResponse.length,
-            contentLength: update.content?.length || 0,
-            accumulatedLength: update.accumulated_content?.length || 0
-          });
+          logInfo(`Streaming response chunk received - current: ${prev.streamingResponse.length}, content: ${update.content?.length || 0}, accumulated: ${update.accumulated_content?.length || 0}`);
           
           // CRITICAL: Make sure we actually update the streamingResponse
           const newStreamingResponse = update.accumulated_content || prev.streamingResponse + (update.content || '');
@@ -167,17 +181,17 @@ export const useStreamingChat = (sessionId?: string) => {
           };
 
         case 'completion':
-          console.log('✅ Completion received with content:', update.content);
-          console.log('🖼️ Generated image:', update.generated_image);
-          console.log('🩺 Differential diagnoses received:', update.differential_diagnoses);
-          console.log('🧠 Reasoning steps received:', update.reasoning_steps);
+          logInfo(`Completion received with content length: ${update.content?.length || 0}`);
+          logInfo(`Generated image present: ${!!update.generated_image}`);
+          logInfo(`Differential diagnoses count: ${update.differential_diagnoses?.length || 0}`);
+          logInfo(`Reasoning steps count: ${update.reasoning_steps?.length || 0}`);
           
           // Handle differential diagnoses - set them immediately
           if (update.differential_diagnoses && Array.isArray(update.differential_diagnoses) && update.differential_diagnoses.length > 0) {
-            console.log('🩺 Setting differential diagnoses state:', update.differential_diagnoses);
+            logInfo(`Setting differential diagnoses state with ${update.differential_diagnoses.length} items`);
             setStreamDifferentialDiagnoses(update.differential_diagnoses);
           } else {
-            console.log('🩺 No differential diagnoses in completion or empty array');
+            logInfo('No differential diagnoses in completion or empty array');
             setStreamDifferentialDiagnoses([]);
           }
           
@@ -188,13 +202,13 @@ export const useStreamingChat = (sessionId?: string) => {
           // CRITICAL FIX: Prioritize reasoning from completion, but preserve streaming reasoning if completion has none
           let finalReasoning = prev.reasoning;
           if (update.reasoning_steps && Array.isArray(update.reasoning_steps) && update.reasoning_steps.length > 0) {
-            console.log('🧠 Using reasoning from completion:', update.reasoning_steps);
+            logInfo(`Using reasoning from completion: ${update.reasoning_steps.length} steps`);
             finalReasoning = update.reasoning_steps;
           } else if (prev.reasoning.length > 0) {
-            console.log('🧠 Using reasoning from streaming:', prev.reasoning);
+            logInfo(`Using reasoning from streaming: ${prev.reasoning.length} steps`);
             finalReasoning = prev.reasoning;
           } else {
-            console.log('🧠 No reasoning available from either source');
+            logInfo('No reasoning available from either source');
             finalReasoning = prev.reasoning;
           }
           
@@ -215,20 +229,25 @@ export const useStreamingChat = (sessionId?: string) => {
               currentStep: '',
               details: ''
             },
+            noteGenerationProgress: {
+              isGenerating: false,
+              templateType: '',
+              templateName: '',
+              currentStep: ''
+            },
             updates: newUpdates
           };
 
         case 'differential_diagnosis_progress':
-          console.log('🩺 Differential diagnosis progress received:', update);
-          console.log('🩺 Current diagnosis:', update.diagnosis_name, 'Step:', update.step, 'Details:', update.details);
-          
+          logInfo(`Differential diagnosis progress - diagnosis: ${update.diagnosis_name}, step: ${update.step}`);
+
           // Check if this is a completion update
-          const isCompleting = update.step?.toLowerCase().includes('complete') || 
-                              update.step?.toLowerCase().includes('finished') || 
+          const isCompleting = update.step?.toLowerCase().includes('complete') ||
+                              update.step?.toLowerCase().includes('finished') ||
                               update.diagnosis_name?.toLowerCase().includes('complete');
-          
-          console.log('🩺 Is completing?', isCompleting);
-          
+
+          logInfo(`Differential diagnosis is completing: ${isCompleting}`);
+
           return {
             ...prev,
             differentialDiagnosisProgress: {
@@ -242,8 +261,30 @@ export const useStreamingChat = (sessionId?: string) => {
             updates: newUpdates
           };
 
+        case 'note_generation_progress':
+          logInfo(`Note generation progress - template: ${update.template_name}, type: ${update.template_type}, step: ${update.note_generation_step}`);
+
+          // Check if note generation is complete
+          const isNoteComplete = update.note_generation_step?.toLowerCase().includes('complete') ||
+                                 update.note_generation_step?.toLowerCase().includes('finished');
+
+          logInfo(`Note generation is complete: ${isNoteComplete}`);
+
+          return {
+            ...prev,
+            noteGenerationProgress: {
+              isGenerating: !isNoteComplete,
+              templateType: update.template_type || prev.noteGenerationProgress.templateType,
+              templateName: update.template_name || prev.noteGenerationProgress.templateName,
+              currentStep: update.note_generation_step || update.step || ''
+            },
+            currentStep: isNoteComplete ? 'Note Generation Complete' : 'Generating Clinical Note',
+            currentDescription: update.description || `Generating ${update.template_type || 'clinical'} note...`,
+            updates: newUpdates
+          };
+
         case 'error':
-          console.error('❌ Stream error:', update.error);
+          logError(`Stream error: ${update.error || 'Unknown error'}`);
           
           if (reasoningTimeoutRef.current) {
             clearTimeout(reasoningTimeoutRef.current);
@@ -262,7 +303,7 @@ export const useStreamingChat = (sessionId?: string) => {
           };
 
         default:
-          console.log('🔄 Unknown update type:', update.type);
+          logInfo(`Unknown update type: ${update.type}`);
           return { ...prev, updates: newUpdates };
       }
     });
@@ -299,6 +340,12 @@ export const useStreamingChat = (sessionId?: string) => {
         currentDiagnosis: '',
         currentStep: '',
         details: ''
+      },
+      noteGenerationProgress: {
+        isGenerating: false,
+        templateType: '',
+        templateName: '',
+        currentStep: ''
       }
     });
 
@@ -307,7 +354,7 @@ export const useStreamingChat = (sessionId?: string) => {
     stepCountRef.current = 0;
 
     try {
-      console.log('🚀 Starting stream with payload:', payload);
+      logInfo('Starting stream with payload');
       
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -336,7 +383,7 @@ export const useStreamingChat = (sessionId?: string) => {
           while (true) {
             const { done, value } = await reader.read();
             if (done) {
-              console.log('📡 Stream ended');
+              logInfo('Stream ended');
               break;
             }
 
@@ -346,7 +393,7 @@ export const useStreamingChat = (sessionId?: string) => {
             buffer = lines.pop() || '';
 
             for (const line of lines) {
-              console.log('🔍 Processing SSE line:', line.slice(0, 100) + '...');
+              logInfo(`Processing SSE line: ${line.slice(0, 100)}...`);
               if (line.startsWith('data: ')) {
                 const data = line.slice(6).trim();
                 if (data && data !== '[DONE]') {
@@ -356,16 +403,16 @@ export const useStreamingChat = (sessionId?: string) => {
                     const update = JSON.parse(decryptedData);
                     handleStreamUpdate(update);
                   } catch (e) {
-                    console.error('❌ Failed to parse SSE data:', e, 'Raw data:', data.slice(0, 200));
+                    logError(`Failed to parse SSE data: ${data.slice(0, 200)}`, e instanceof Error ? e : new Error(String(e)));
                   }
                 }
               } else if (line.trim()) {
-                console.log('⚠️ Non-data SSE line:', line);
+                logInfo(`Non-data SSE line: ${line}`);
               }
             }
           }
         } catch (error) {
-          console.error('Stream processing error:', error);
+          logError('Stream processing error', error instanceof Error ? error : new Error(String(error)));
           setState(prev => ({
             ...prev,
             isStreaming: false,
@@ -377,7 +424,7 @@ export const useStreamingChat = (sessionId?: string) => {
       await processStream();
 
     } catch (error) {
-      console.error('Streaming error:', error);
+      logError('Streaming error', error instanceof Error ? error : new Error(String(error)));
       setState(prev => ({
         ...prev,
         isStreaming: false,
@@ -428,10 +475,11 @@ export const useStreamingChat = (sessionId?: string) => {
     currentReasoning: state.currentReasoning,
     generatedImage: state.generatedImage,
     differentialDiagnosisProgress: state.differentialDiagnosisProgress,
-    
+    noteGenerationProgress: state.noteGenerationProgress,
+
     // Additional state
     streamDifferentialDiagnoses,
-    
+
     // Functions
     startStream,
     stopStream,

@@ -3,6 +3,8 @@
  * Implements AES-256-GCM encryption with RSA key exchange
  */
 
+import { sanitizeUserId, sanitizePatientId, sanitizeSessionId, sanitizeDocumentId, logInfo, logError, logWarning } from '@/lib/logger';
+
 export interface KeyExchangeRequest {
   session_id: string;
   client_public_key?: string;
@@ -48,7 +50,7 @@ export class E2EEncryptionClient {
         ["encrypt", "decrypt"]
       );
     } catch (error) {
-      console.error("Failed to generate client key pair:", error);
+      logError("Failed to generate client key pair", error instanceof Error ? error : new Error(String(error)));
       throw new Error("Encryption initialization failed");
     }
   }
@@ -126,10 +128,10 @@ export class E2EEncryptionClient {
         this.sessionKeys.set(sessionId, sessionKey);
       }
 
-      console.log(`✅ [E2E] Session encryption setup complete for session: ${sessionId}`);
+      logInfo(`[E2E] Session encryption setup complete for session: ${sanitizeSessionId(sessionId)}`);
       return true;
     } catch (error) {
-      console.error("Session encryption setup failed:", error);
+      logError("Session encryption setup failed", error instanceof Error ? error : new Error(String(error)));
       return false;
     }
   }
@@ -204,7 +206,7 @@ export class E2EEncryptionClient {
         timestamp: Date.now().toString(),
       };
     } catch (error) {
-      console.error("Data encryption failed:", error);
+      logError("Data encryption failed", error instanceof Error ? error : new Error(String(error)));
       throw new Error("Failed to encrypt data");
     }
   }
@@ -240,7 +242,7 @@ export class E2EEncryptionClient {
       const jsonString = new TextDecoder().decode(decryptedBuffer);
       return JSON.parse(jsonString);
     } catch (error) {
-      console.error("Data decryption failed:", error);
+      logError("Data decryption failed", error instanceof Error ? error : new Error(String(error)));
       throw new Error("Failed to decrypt data");
     }
   }
@@ -251,7 +253,7 @@ export class E2EEncryptionClient {
   async decryptStreamChunk(encryptedChunk: string, sessionId: string): Promise<string> {
     const sessionKey = this.sessionKeys.get(sessionId);
     if (!sessionKey) {
-      console.warn(`No session key found for session: ${sessionId}, returning raw chunk`);
+      logWarning(`No session key found for session: ${sanitizeSessionId(sessionId)}, returning raw chunk`);
       return encryptedChunk;
     }
 
@@ -272,7 +274,7 @@ export class E2EEncryptionClient {
       const decryptedData = await this.decryptData(chunkData, sessionId);
       return typeof decryptedData === 'string' ? decryptedData : JSON.stringify(decryptedData);
     } catch (error) {
-      console.error("Stream chunk decryption failed:", error);
+      logError("Stream chunk decryption failed", error instanceof Error ? error : new Error(String(error)));
       return encryptedChunk; // Return original on error
     }
   }
@@ -333,7 +335,7 @@ export async function makeEncryptedRequest(
         'X-Session-ID': sessionId,
       };
     } catch (error) {
-      console.warn("Failed to encrypt request body:", error);
+      logWarning("Failed to encrypt request body");
     }
   }
 
@@ -355,7 +357,7 @@ export async function handleEncryptedResponse(
       const encryptedData = await response.json();
       return await encryptionClient.decryptData(encryptedData, sessionId);
     } catch (error) {
-      console.error("Failed to decrypt response:", error);
+      logError("Failed to decrypt response", error instanceof Error ? error : new Error(String(error)));
       throw new Error("Failed to decrypt server response");
     }
   }

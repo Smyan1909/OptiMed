@@ -1,3 +1,5 @@
+import { sanitizeUserId, sanitizePatientId, sanitizeSessionId, sanitizeDocumentId, logInfo, logError, logWarning } from '@/lib/logger';
+
 export type Patient = { id: string; name: string; dob?: string; age?: number; sex?: string };
 export type PatientDetail = {
   id: string;
@@ -348,9 +350,9 @@ function getSessionHeaders(excludeContentType = false): Record<string, string> {
     const sessionId = localStorage.getItem('session_id');
     if (sessionId) {
       headers['X-Session-ID'] = sessionId;
-      console.log('[API] Using session ID from localStorage:', sessionId);
+      logInfo(`[API] Using session ID from localStorage: ${sanitizeSessionId(sessionId)}`);
     } else {
-      console.warn('[API] No session ID found in localStorage');
+      logWarning('[API] No session ID found in localStorage');
     }
 
     // Attach the current UI locale as Accept-Language for backend language handling
@@ -375,7 +377,7 @@ async function makeEncryptedRequest(url: string, options: RequestInit): Promise<
     const sessionId = typeof window !== 'undefined' ? localStorage.getItem('session_id') : null;
     return await encrypt(url, options, sessionId || undefined);
   } catch (error) {
-    console.warn('Encryption not available, making unencrypted request:', error);
+    logWarning('Encryption not available, making unencrypted request');
     return fetch(url, options);
   }
 }
@@ -386,7 +388,7 @@ async function handleEncryptedResponse(response: Response): Promise<any> {
     const sessionId = typeof window !== 'undefined' ? localStorage.getItem('session_id') : null;
     return await decrypt(response, sessionId || undefined);
   } catch (error) {
-    console.warn('Decryption not available, handling as regular response:', error);
+    logWarning('Decryption not available, handling as regular response');
     return response.json();
   }
 }
@@ -584,7 +586,7 @@ export async function fetchPatientJournalEntries(patientId: string): Promise<Jou
   });
   if (!res.ok) {
     const errorText = await res.text();
-    console.error('Failed to fetch journal entries:', res.status, errorText);
+    logError(`Failed to fetch journal entries for patient: ${sanitizePatientId(patientId)}, status: ${res.status}, error: ${errorText}`);
     throw new Error(`Failed to load journal entries: ${errorText}`);
   }
   return res.json();
@@ -687,7 +689,7 @@ export async function downloadGeneratedImage(imageId: string, filename?: string)
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
   } catch (error) {
-    console.error('Error downloading image:', error);
+    logError('Error downloading image', error instanceof Error ? error : new Error(String(error)));
     throw error;
   }
 }
@@ -804,19 +806,19 @@ export type XMLListResponse = {
 
 // PDF Document API Functions
 export async function uploadPDFDocument(file: File, patientId?: string, chatSessionId?: string): Promise<PDFUploadResponse> {
-  console.log('[API] uploadPDFDocument called with:', { patientId, chatSessionId });
+  logInfo(`[API] uploadPDFDocument called with patient: ${sanitizePatientId(patientId || null)}, session: ${sanitizeSessionId(chatSessionId || null)}`);
 
   const formData = new FormData();
   formData.append('file', file);
   if (patientId) {
-    console.log('[API] Adding patient_id:', patientId);
+    logInfo(`[API] Adding patient_id: ${sanitizePatientId(patientId)}`);
     formData.append('patient_id', patientId);
   }
   if (chatSessionId) {
-    console.log('[API] Adding chat_session_id:', chatSessionId);
+    logInfo(`[API] Adding chat_session_id: ${sanitizeSessionId(chatSessionId)}`);
     formData.append('chat_session_id', chatSessionId);
   } else {
-    console.log('[API] No chat_session_id provided');
+    logInfo('[API] No chat_session_id provided');
   }
 
   const res = await fetch('/api/documents/upload', {
@@ -870,10 +872,10 @@ export async function getPDFDocument(documentId: string): Promise<PDFDocument> {
 }
 
 export async function deletePDFDocument(documentId: string, patientId?: string, chatSessionId?: string): Promise<{ message: string }> {
-  console.log('[API] deletePDFDocument called with:', { documentId, patientId, chatSessionId });
+  logInfo(`[API] deletePDFDocument called with doc: ${sanitizeDocumentId(documentId)}, patient: ${sanitizePatientId(patientId || null)}, session: ${sanitizeSessionId(chatSessionId || null)}`);
 
   const headers = getSessionHeaders();
-  console.log('[API] Delete request headers:', headers);
+  logInfo('[API] Delete request headers prepared');
 
   // Add query parameters if provided
   const params = new URLSearchParams();
@@ -885,39 +887,38 @@ export async function deletePDFDocument(documentId: string, patientId?: string, 
   }
 
   const url = `/api/documents/${encodeURIComponent(documentId)}${params.toString() ? '?' + params.toString() : ''}`;
-  console.log('[API] Delete request URL:', url);
+  logInfo(`[API] Delete request URL prepared for doc: ${sanitizeDocumentId(documentId)}`);
 
   const res = await fetch(url, {
     method: 'DELETE',
     headers: headers,
   });
 
-  console.log('[API] Delete response status:', res.status);
-  console.log('[API] Delete response headers:', Object.fromEntries(res.headers.entries()));
+  logInfo(`[API] Delete response status: ${res.status} for doc: ${sanitizeDocumentId(documentId)}`);
 
   if (!res.ok) {
     const errorText = await res.text();
-    console.error('[API] Delete failed with error:', errorText);
+    logError(`[API] Delete failed for doc: ${sanitizeDocumentId(documentId)}, status: ${res.status}, error: ${errorText}`);
     throw new Error(`Failed to delete PDF document: ${res.status} - ${errorText}`);
   }
 
   const responseData = await res.json();
-  console.log('[API] Delete response data:', responseData);
+  logInfo(`[API] Delete successful for doc: ${sanitizeDocumentId(documentId)}`);
   return responseData;
 }
 
 // XML Document API Functions
 export async function uploadXMLDocument(file: File, patientId?: string, chatSessionId?: string): Promise<XMLUploadResponse> {
-  console.log('[API] uploadXMLDocument called with:', { patientId, chatSessionId });
+  logInfo(`[API] uploadXMLDocument called with patient: ${sanitizePatientId(patientId || null)}, session: ${sanitizeSessionId(chatSessionId || null)}`);
 
   const formData = new FormData();
   formData.append('file', file);
   if (patientId) {
-    console.log('[API] Adding patient_id:', patientId);
+    logInfo(`[API] Adding patient_id: ${sanitizePatientId(patientId)}`);
     formData.append('patient_id', patientId);
   }
   if (chatSessionId) {
-    console.log('[API] Adding chat_session_id:', chatSessionId);
+    logInfo(`[API] Adding chat_session_id: ${sanitizeSessionId(chatSessionId)}`);
     formData.append('chat_session_id', chatSessionId);
   }
 
@@ -971,10 +972,10 @@ export async function getXMLDocument(documentId: string): Promise<XMLDocument> {
 }
 
 export async function deleteXMLDocument(documentId: string, patientId?: string, chatSessionId?: string): Promise<{ message: string }> {
-  console.log('[API] deleteXMLDocument called with:', { documentId, patientId, chatSessionId });
+  logInfo(`[API] deleteXMLDocument called with doc: ${sanitizeDocumentId(documentId)}, patient: ${sanitizePatientId(patientId || null)}, session: ${sanitizeSessionId(chatSessionId || null)}`);
 
   const headers = getSessionHeaders();
-  console.log('[API] Delete request headers:', headers);
+  logInfo('[API] Delete request headers prepared');
 
   // Add query parameters if provided
   const params = new URLSearchParams();
@@ -986,25 +987,317 @@ export async function deleteXMLDocument(documentId: string, patientId?: string, 
   }
 
   const url = `/api/documents/xml/${encodeURIComponent(documentId)}${params.toString() ? '?' + params.toString() : ''}`;
-  console.log('[API] Delete request URL:', url);
+  logInfo(`[API] Delete request URL prepared for XML doc: ${sanitizeDocumentId(documentId)}`);
 
   const res = await fetch(url, {
     method: 'DELETE',
     headers: headers,
   });
 
-  console.log('[API] Delete response status:', res.status);
-  console.log('[API] Delete response headers:', Object.fromEntries(res.headers.entries()));
+  logInfo(`[API] Delete response status: ${res.status} for XML doc: ${sanitizeDocumentId(documentId)}`);
 
   if (!res.ok) {
     const errorText = await res.text();
-    console.error('[API] Delete failed with error:', errorText);
+    logError(`[API] Delete failed for XML doc: ${sanitizeDocumentId(documentId)}, status: ${res.status}, error: ${errorText}`);
     throw new Error(`Failed to delete XML document: ${res.status} - ${errorText}`);
   }
 
   const responseData = await res.json();
-  console.log('[API] Delete response data:', responseData);
+  logInfo(`[API] Delete successful for XML doc: ${sanitizeDocumentId(documentId)}`);
   return responseData;
+}
+
+export async function cleanupSessionDocuments(): Promise<{ message: string; deleted_pdfs: number; deleted_xmls: number }> {
+  logInfo('[API] cleanupSessionDocuments called');
+
+  const headers = getSessionHeaders();
+  logInfo('[API] Cleanup request headers prepared');
+
+  const res = await fetch('/api/documents/cleanup-session', {
+    method: 'POST',
+    headers: headers,
+  });
+
+  logInfo(`[API] Cleanup response status: ${res.status}`);
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    logError(`[API] Cleanup failed with status: ${res.status}, error: ${errorText}`);
+    throw new Error(`Failed to cleanup session: ${res.status} - ${errorText}`);
+  }
+
+  const responseData = await res.json();
+  logInfo('[API] Cleanup successful');
+  return responseData;
+}
+
+// Note Template Types
+export type NoteTemplate = {
+  template_id: string;
+  user_id: string;
+  name: string;
+  language: 'en' | 'sv';
+  template_type: 'journal_entry' | 'referral' | 'soap' | 'progress_note' | 'sbar' | 'consultation' | 'custom';
+  template_structure: Record<string, any>;
+  is_system_template: boolean;
+  file_format: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type NoteGenerationMetadata = {
+  generation_id: string;
+  user_id: string;
+  patient_id?: string;
+  template_id: string;
+  session_id: string;
+  template_name: string;
+  template_type: string;
+  language: string;
+  status: 'started' | 'generating' | 'completed' | 'exported' | 'cancelled' | 'error';
+  context_prompt_hash?: string;
+  chunks_used_count: number;
+  conversation_turns_included: number;
+  export_method?: 'clipboard' | 'download' | 'ehr' | 'cancelled';
+  error_message?: string;
+  created_at: string;
+  completed_at?: string;
+};
+
+export type NoteTemplateUploadRequest = {
+  file: File;
+  name: string;
+  language: 'en' | 'sv';
+  template_type: string;
+};
+
+export type NoteGenerationRequest = {
+  template_id: string;
+  patient_id?: string;
+  session_id: string;
+  context_prompt?: string;
+};
+
+export type TemplateListResponse = {
+  templates: NoteTemplate[];
+};
+
+export type GenerationHistoryResponse = {
+  generations: NoteGenerationMetadata[];
+  total_count: number;
+};
+
+// Note Template API Functions
+export async function uploadNoteTemplate(
+  file: File,
+  name: string,
+  language: 'en' | 'sv',
+  templateType: string
+): Promise<NoteTemplate> {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('name', name);
+  formData.append('language', language);
+  formData.append('template_type', templateType);
+
+  const res = await fetch('/api/templates/upload', {
+    method: 'POST',
+    headers: getSessionHeaders(true), // Exclude Content-Type for FormData
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Template upload failed: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function listNoteTemplates(
+  includeSystem: boolean = true,
+  language?: 'en' | 'sv',
+  templateType?: string
+): Promise<TemplateListResponse> {
+  const params = new URLSearchParams();
+  params.set('include_system', includeSystem.toString());
+  if (language) {
+    params.set('language', language);
+  }
+  if (templateType) {
+    params.set('template_type', templateType);
+  }
+
+  const res = await fetch(`/api/templates/list?${params}`, {
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to list templates: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function getNoteTemplate(templateId: string): Promise<NoteTemplate> {
+  const res = await fetch(`/api/templates/${encodeURIComponent(templateId)}`, {
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to get template: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function deleteNoteTemplate(templateId: string): Promise<{ message: string }> {
+  const res = await fetch(`/api/templates/${encodeURIComponent(templateId)}`, {
+    method: 'DELETE',
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to delete template: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
+export async function generateNoteStreaming(
+  request: NoteGenerationRequest,
+  onProgress?: (event: any) => void,
+  onComplete?: (finalNote: string) => void,
+  onError?: (error: string) => void
+): Promise<void> {
+  const res = await fetch('/api/notes/generate/stream', {
+    method: 'POST',
+    headers: getSessionHeaders(),
+    body: JSON.stringify(request),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    const error = `Note generation failed: ${res.status} - ${errorText}`;
+    if (onError) onError(error);
+    throw new Error(error);
+  }
+
+  // Handle SSE stream
+  const reader = res.body?.getReader();
+  const decoder = new TextDecoder();
+
+  if (!reader) {
+    const error = 'No response stream available';
+    if (onError) onError(error);
+    throw new Error(error);
+  }
+
+  try {
+    let buffer = ''; // Buffer for incomplete lines
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      // Decode chunk and add to buffer
+      buffer += decoder.decode(value, { stream: true });
+
+      // Split by lines, but keep last incomplete line in buffer
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Keep last (potentially incomplete) line
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            logInfo(`[NOTE GEN] Received SSE event: ${data.type}`);
+            logInfo(`[NOTE GEN] Full event data: ${JSON.stringify(data).substring(0, 500)}`);
+
+            // Handle status/progress updates
+            if ((data.type === 'status' || data.type === 'progress') && onProgress) {
+              onProgress({
+                type: 'progress',
+                message: data.description || data.details || data.step || 'Processing...',
+                progress: data.progress || 0,
+                step: data.step || '',
+                status: data.status || ''
+              });
+            }
+            // Handle completion with final note
+            else if (data.type === 'completion') {
+              logInfo(`[NOTE GEN] Completion event received, final_response present: ${!!data.final_response}`);
+              if (data.final_response) {
+                try {
+                  // Try to parse final_response as JSON (note generation format)
+                  const noteData = JSON.parse(data.final_response);
+                  logInfo(`[NOTE GEN] Parsed note data: ${noteData.type}`);
+                  if (noteData.type === 'generated_note' && noteData.content) {
+                    logInfo(`[NOTE GEN] Calling onComplete with note content, length: ${noteData.content.length}`);
+                    if (onComplete) onComplete(noteData.content);
+                  } else if (noteData.type === 'error') {
+                    logError(`[NOTE GEN] Backend returned error: ${noteData.message}`);
+                    if (onError) onError(noteData.message || 'Note generation failed');
+                  } else {
+                    logWarning('[NOTE GEN] Note data missing type or content');
+                    if (onError) onError('Generated note is missing content');
+                  }
+                } catch (parseError) {
+                  logInfo('[NOTE GEN] Failed to parse as JSON, treating as plain text');
+                  // If not JSON, treat as plain text
+                  if (onComplete) onComplete(data.final_response);
+                }
+              } else {
+                logError('[NOTE GEN] Completion event has no final_response');
+                if (onError) onError('Note generation completed but no content was produced');
+              }
+            }
+            // Handle direct generated_note event
+            else if (data.type === 'generated_note' && onComplete) {
+              logInfo('[NOTE GEN] Direct generated_note event');
+              onComplete(data.content || '');
+            }
+            // Handle errors
+            else if (data.type === 'error' && onError) {
+              logError(`[NOTE GEN] Error event: ${data.message}`);
+              onError(data.message || 'Generation error');
+            }
+          } catch (parseErr) {
+            logWarning(`Failed to parse SSE event: ${line}`);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Stream reading failed';
+    if (onError) onError(errorMessage);
+    throw error;
+  }
+}
+
+export async function getNoteGenerationHistory(
+  patientId?: string,
+  limit: number = 20
+): Promise<GenerationHistoryResponse> {
+  const params = new URLSearchParams();
+  if (patientId) {
+    params.set('patient_id', patientId);
+  }
+  params.set('limit', limit.toString());
+
+  const res = await fetch(`/api/notes/metadata/history?${params}`, {
+    headers: getSessionHeaders(),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to get generation history: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
 }
 
 // Encryption API functions
@@ -1014,7 +1307,7 @@ export async function setupSessionEncryption(sessionId: string): Promise<boolean
     const encryptionClient = getEncryptionClient();
     return await encryptionClient.setupSessionEncryption(sessionId);
   } catch (error) {
-    console.error('Failed to setup session encryption:', error);
+    logError('Failed to setup session encryption', error instanceof Error ? error : new Error(String(error)));
     return false;
   }
 }

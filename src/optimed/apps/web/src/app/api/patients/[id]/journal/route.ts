@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { sanitizePatientId, logInfo, logError } from '@/lib/logger';
 
 export async function GET(
   request: Request,
@@ -18,23 +19,23 @@ export async function GET(
     if (sessionId) {
       headers['X-Session-ID'] = sessionId;
     }
-    
-    console.log(`Fetching journal entries for patient ${patientId}`);
+
+    logInfo('Patient journal: Fetching journal entries', { patientId: sanitizePatientId(patientId) });
     
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
     const response = await fetch(`${baseUrl}/patients/${patientId}/journal`, { headers });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Backend journal API error:', response.status, errorText);
+      logError('Patient journal: Backend journal API error', { status: response.status, error: errorText });
       return NextResponse.json({ error: errorText }, { status: response.status });
     }
 
     const data = await response.json();
-    console.log('Journal entries from backend:', data.length + ' entries');
+    logInfo('Patient journal: Journal entries retrieved', { count: data.length });
     return NextResponse.json(data);
   } catch (error) {
-    console.error('Journal entries API error:', error);
+    logError('Patient journal: Journal entries API error', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }
@@ -73,7 +74,7 @@ export async function POST(
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
-    console.error('Create journal entry API error:', error);
+    logError('Create journal entry API error', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

@@ -16,6 +16,9 @@ from .encryption_service import (
     encrypt_patient_data,
     decrypt_patient_data
 )
+from optimed.core.logging_utils import get_logger, log_error
+
+logger = get_logger(__name__)
 
 class E2EEncryptionMiddleware(BaseHTTPMiddleware):
     """End-to-end encryption middleware for all API communications."""
@@ -61,7 +64,7 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
         # Skip encryption for excluded routes and streaming routes
         if (any(request.url.path.startswith(route) for route in self.excluded_routes) or
             any(request.url.path.startswith(route) for route in self.streaming_routes)):
-            print(f"[E2E] Bypassing encryption for route: {request.url.path}")
+            logger.info(f"Bypassing encryption for route: {request.url.path}")
             response = await call_next(request)
             return response
         
@@ -87,16 +90,52 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
                     
                     # Create new request object
                     request = Request(scope, receive=self._create_receive(new_body))
-                    
+
+                    # Log encryption audit event (GDPR Article 32 compliance)
+                    if hasattr(request.app.state, '_audit_repo'):
+                        try:
+                            audit_repo = request.app.state._audit_repo
+                            user = getattr(request.state, 'user', None)
+                            await audit_repo.log_usage_metric(
+                                metric_type="encryption",
+                                metric_name="request_decrypted",
+                                value=len(body),
+                                unit="bytes",
+                                dimensions={
+                                    "algorithm": "AES-256-GCM",
+                                    "endpoint": request.url.path,
+                                    "success": True,
+                                    "user_id": user.user_id if user else None
+                                }
+                            )
+                        except Exception as audit_error:
+                            log_error(logger, "Encryption audit logging", audit_error)
+
             except Exception as e:
-                print(f"[E2E] Request decryption failed: {e}")
+                log_error(logger, "Request decryption", e)
+                # Log failed decryption
+                if hasattr(request.app.state, '_audit_repo'):
+                    try:
+                        audit_repo = request.app.state._audit_repo
+                        await audit_repo.log_usage_metric(
+                            metric_type="encryption",
+                            metric_name="request_decryption_failed",
+                            value=1,
+                            unit="count",
+                            dimensions={
+                                "endpoint": request.url.path,
+                                "error": str(e)
+                            }
+                        )
+                    except Exception:
+                        pass
                 # Continue with original request if decryption fails
         
         # Process the request
         response = await call_next(request)
         
         # Encrypt outgoing response if needed (skip for streaming responses)
-        print(f"[E2E] Response media type: {response.media_type}, path: {request.url.path}")
+        logger.info(f"Response media type: {response.media_type}, path: {request.url.path}")
         is_streaming = (response.media_type == "text/event-stream" or
                        hasattr(response, 'body_iterator') and
                        hasattr(response.body_iterator, '__aiter__'))
@@ -127,15 +166,51 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
                     # Update Content-Length to match encrypted response size
                     headers["Content-Length"] = str(len(new_response_body))
 
+                    # Log encryption audit event (GDPR Article 32 compliance)
+                    if hasattr(request.app.state, '_audit_repo'):
+                        try:
+                            audit_repo = request.app.state._audit_repo
+                            user = getattr(request.state, 'user', None)
+                            await audit_repo.log_usage_metric(
+                                metric_type="encryption",
+                                metric_name="response_encrypted",
+                                value=len(new_response_body),
+                                unit="bytes",
+                                dimensions={
+                                    "algorithm": "AES-256-GCM",
+                                    "endpoint": request.url.path,
+                                    "success": True,
+                                    "user_id": user.user_id if user else None
+                                }
+                            )
+                        except Exception as audit_error:
+                            log_error(logger, "Encryption audit logging", audit_error)
+
                     return Response(
                         content=new_response_body,
                         status_code=response.status_code,
                         headers=headers,
                         media_type=response.media_type
                     )
-                    
+
             except Exception as e:
-                print(f"[E2E] Response encryption failed: {e}")
+                log_error(logger, "Response encryption", e)
+                # Log failed encryption
+                if hasattr(request.app.state, '_audit_repo'):
+                    try:
+                        audit_repo = request.app.state._audit_repo
+                        await audit_repo.log_usage_metric(
+                            metric_type="encryption",
+                            metric_name="response_encryption_failed",
+                            value=1,
+                            unit="count",
+                            dimensions={
+                                "endpoint": request.url.path,
+                                "error": str(e)
+                            }
+                        )
+                    except Exception:
+                        pass
                 # Return original response if encryption fails
         
         # Add security headers to all responses

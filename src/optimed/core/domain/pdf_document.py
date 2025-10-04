@@ -106,6 +106,7 @@ class PDFDocument(FrozenModel):
 class PDFUploadRequest(FrozenModel):
     """Request for uploading a PDF document."""
     user_id: str
+    session_id: str
     filename: str
     file_content: bytes
     patient_id: Optional[str] = None

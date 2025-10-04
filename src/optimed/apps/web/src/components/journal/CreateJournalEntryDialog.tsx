@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { JournalEntryType, JournalEntryCreate, createJournalEntry } from '@/lib/api';
+import { logError } from '@/lib/logger';
 import {
   Dialog,
   DialogContent,
@@ -174,7 +175,7 @@ export default function CreateJournalEntryDialog({
       // Close the dialog
       onClose();
     } catch (err) {
-      console.error('Failed to create journal entry:', err);
+      logError('Create Journal Entry Dialog: Failed to create journal entry', err);
       setError(err instanceof Error ? err.message : 'Failed to create journal entry');
     } finally {
       setIsSubmitting(false);

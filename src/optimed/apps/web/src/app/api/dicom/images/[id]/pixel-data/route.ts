@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { logError } from '@/lib/logger';
 
 export async function GET(
   req: Request,
@@ -40,7 +41,7 @@ export async function GET(
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
-    console.error('DICOM pixel data API error:', error);
+    logError('DICOM pixel data API error', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

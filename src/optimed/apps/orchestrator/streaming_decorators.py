@@ -1,5 +1,8 @@
 from functools import wraps
 from typing import Callable
+from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, log_error
+
+logger = get_logger(__name__)
 
 class StreamingStatus:
     """Context manager for streaming status updates."""
@@ -62,7 +65,7 @@ class StreamingStatus:
             try:
                 asyncio.create_task(self.state.stream_callback(update))
             except Exception as e:
-                print(f"[streaming] Error emitting differential diagnosis update: {e}")
+                log_error(logger, "emit_differential_diagnosis_update", e)
     
     def _generate_detailed_description(self, status: str) -> str:
         """Generate detailed descriptions based on step name and current state."""
@@ -78,25 +81,35 @@ class StreamingStatus:
     def _get_starting_description(self, step_lower: str) -> str:
         """Get detailed starting descriptions."""
         descriptions = {
-            "load_user_context": f"Loading user profile and permissions for user ID: {getattr(self.state, 'user_id', 'unknown')}",
-            "fetch_patient": f"Retrieving patient data from medical records for patient ID: {getattr(self.state, 'patient_id', 'unknown')}",
-            "store_patient_chunks": f"Breaking down patient context into searchable chunks for patient {getattr(self.state, 'patient_id', 'unknown')}",
+            "load_user_context": f"Loading user profile and permissions for user ID: {sanitize_user_id(getattr(self.state, 'user_id', 'unknown'))}",
+            "fetch_patient": f"Retrieving patient data from medical records for patient ID: {sanitize_patient_id(getattr(self.state, 'patient_id', 'unknown'))}",
+            "store_patient_chunks": f"Breaking down patient context into searchable chunks for patient {sanitize_patient_id(getattr(self.state, 'patient_id', 'unknown'))}",
             "intelligent_retrieve_chunks": f"Analyzing clinical records using AI to find information relevant to: '{getattr(self.state, 'user_prompt', '')[:50]}...'",
             "evaluate_web_search_need": f"Evaluating if current medical literature search is needed for query: '{getattr(self.state, 'user_prompt', '')[:50]}...'",
             "perform_web_search": f"Searching latest medical literature and clinical guidelines for: '{getattr(self.state, 'user_prompt', '')[:50]}...'",
             "evaluate_image_generation_need": f"Analyzing if visual medical illustrations would help explain concepts for: '{getattr(self.state, 'user_prompt', '')[:50]}...'",
             "generate_image": f"Creating educational medical illustration: '{getattr(self.state, 'image_generation_prompt', '')[:100]}...'",
-            "load_current_session_history": f"Loading conversation history for session {getattr(self.state, 'session_id', 'unknown')}",
+            "load_current_session_history": "Loading conversation history for current session",
             "evaluate_cross_session_history_need": "Evaluating if previous conversations from other sessions are relevant",
             "search_cross_session_history": "Searching previous conversations across all sessions for relevant context",
             "diagnose": "AI model analyzing all available information to provide comprehensive response...",
-            "store_user_message": f"Storing user message in chat history for session {getattr(self.state, 'session_id', 'unknown')}",
+            "store_user_message": "Storing user message in chat history for current session",
             "store_assistant_response": "Saving AI response and reasoning to chat history",
             "evaluate_query_complexity": "Determining if the user query requires full processing or can be answered directly",
             "evaluate_icd_parsing_need": "Analyzing if differential diagnoses should be generated for this patient case",
             "parse_icd": "Computing differential diagnoses with confidence scores using Bayesian analysis...",
+            # Timeline flow descriptions
+            "extract_timeline_events": "Analyzing medical history to identify key temporal events and time periods...",
+            "retrieve_timeline_chunks": "Retrieving medical records for each timeline event from patient history...",
+            "generate_timeline_bubbles": "Generating timeline explanations with clinical findings and citations...",
+            "merge_timeline_results": "Formatting timeline for display with temporal sequence...",
+            # Note generation flow descriptions
+            "load_note_template": f"Loading clinical note template ({getattr(self.state, 'note_template_type_preference', 'journal entry')})...",
+            "generate_note_section": f"Generating clinical note sections using template: {getattr(getattr(self.state, 'note_template', None), 'name', 'Unknown') if getattr(self.state, 'note_template', None) else 'Unknown'}...",
+            "format_note_response": "Formatting generated note for final review and export...",
+            "store_note_metadata": "Recording note generation metadata (GDPR-compliant, no content stored)...",
         }
-        
+
         return descriptions.get(step_lower, f"Starting {self.step_name}...")
     
     def _get_completed_description(self, step_lower: str) -> str:
@@ -210,10 +223,41 @@ class StreamingStatus:
             return "User message stored in chat history"
         
         elif step_lower == "store_assistant_response":
-            reasoning_stored = hasattr(self.state, 'llm_reasoning') and getattr(self.state, 'llm_reasoning', '') # type: ignore 
+            reasoning_stored = hasattr(self.state, 'llm_reasoning') and getattr(self.state, 'llm_reasoning', '') # type: ignore
             image_stored = hasattr(self.state, 'generated_image') and getattr(self.state, 'generated_image', None)
             return f"AI response saved to chat history{' with reasoning' if reasoning_stored else ''}{' and image' if image_stored else ''}"
-        
+
+        # Note generation flow completions
+        elif step_lower == "load_note_template":
+            note_template = getattr(self.state, 'note_template', None)
+            if note_template and hasattr(note_template, 'name'):
+                return f"Loaded template: {note_template.name} ({note_template.template_type.value})"
+            else:
+                return "Template loaded successfully"
+
+        elif step_lower == "generate_note_section":
+            note_sections = getattr(self.state, 'note_sections', {})
+            note_content = getattr(self.state, 'note_final_content', '')
+            if note_content:
+                return f"Generated {len(note_sections)} note sections - Total: {len(note_content)} characters"
+            else:
+                return "Note section generation completed"
+
+        elif step_lower == "format_note_response":
+            note_content = getattr(self.state, 'note_final_content', '')
+            note_sources = getattr(self.state, 'note_sources', [])
+            if note_content:
+                return f"Note formatted for review - {len(note_content)} characters with {len(note_sources)} citations"
+            else:
+                return "Note formatting completed"
+
+        elif step_lower == "store_note_metadata":
+            generation_id = getattr(self.state, 'note_generation_id', None)
+            if generation_id:
+                return f"Metadata stored for generation ID: {generation_id[:8]}..."
+            else:
+                return "Note metadata stored successfully"
+
         # Fallback
         return f"Completed {self.step_name}"
 
