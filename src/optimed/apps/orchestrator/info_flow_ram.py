@@ -2,11 +2,12 @@ from __future__ import annotations
 from .streaming_decorators import streaming_step
 from .streaming_llm import StreamingLLMWrapper
 
-import uuid 
+import uuid
 import json
 import time
 import math
 import asyncio
+import re
 from typing import List, Any, Union, AsyncGenerator, Optional, Dict
 from datetime import datetime, timezone
 
@@ -21,6 +22,7 @@ from optimed.core.lang import detect_language_code
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, PDFService, XMLService, AuditRepository
 
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
+from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder, MultilingualZeroShotClassifier
 
 from optimed.embeddings.minilm import embed
 from optimed.adapters.security.e2e_encryption_middleware import get_session_encryption_manager
@@ -31,8 +33,6 @@ from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiReda
 from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, sanitize_session_id, log_error
 
 logger = get_logger(__name__)
-from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder, MultilingualZeroShotClassifier
-import re
 
 # Global session memory store to persist across instances
 _GLOBAL_SESSION_MEMORY: dict[str, list[dict[str, Any]]] = {}

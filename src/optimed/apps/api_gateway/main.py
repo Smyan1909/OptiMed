@@ -10,7 +10,7 @@ import io
 from PIL import Image
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode
-from typing import AsyncGenerator, Dict, Optional, Any, List
+from typing import AsyncGenerator, Dict, Optional, Any, List, Any as _Any
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, UploadFile, Request, Query, Path, Header, Depends, File, Form, Body, Response # type: ignore
 from fastapi.responses import StreamingResponse, RedirectResponse
@@ -44,8 +44,6 @@ logger = get_logger(__name__)
 
 # Defer heavy dependency wiring to startup to avoid crashing on import
 # if env vars (e.g., PGVECTOR_DSN) are missing at container boot.
-from typing import Any as _Any  # local alias to annotate dynamic singletons
-
 _engine: _Any = None
 _fhir: _Any = None
 _vector_store: _Any = None

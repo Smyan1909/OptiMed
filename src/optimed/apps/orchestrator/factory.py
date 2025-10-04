@@ -1,19 +1,19 @@
 import os
 from typing import Tuple, Callable, Optional
+from datetime import datetime, timezone
+from dotenv import load_dotenv # type: ignore
 from optimed.apps.orchestrator.patient_flow import LangGraphDiagnosticEngine
 from optimed.apps.orchestrator.info_flow_ram import LangGraphRAMInformationEngine
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
+from optimed.apps.orchestrator.image_flow import LangGraphImageAnalysisEngine
+from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder, MultilingualZeroShotClassifier
 from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
 from optimed.adapters.smart_fhir.repository import SMARTFHIRRepository
 from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
 from optimed.adapters.openai_gpt.azure_gpt5_mini_client import AzureOpenAIGPT5MiniClient # type: ignore
 from optimed.adapters.user_repository.pg_user_repository import PGUserRepository
 from optimed.adapters.user_repository.pg_ehr_connection_repository import PGUserEHRConnectionRepository
-from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine, ImageGenerationService, GeneratedImageRepository, LLMClient, PDFService, XMLService
 from optimed.adapters.dicom.pydicom_processor import PyDICOMProcessor
-from optimed.core.logging_utils import get_logger
-
-logger = get_logger(__name__)
 from optimed.adapters.dicom.image_service import ImageServiceImpl
 from optimed.adapters.dicom.pg_image_repository import PostgreSQLImageRepository
 from optimed.adapters.dicom.image_storage import FileSystemImageStorage
@@ -21,19 +21,18 @@ from optimed.adapters.dicom.image_embedding_service import DICOMImageEmbeddingSe
 from optimed.adapters.web_search.web_service import TavilyWebSearchService
 from optimed.adapters.image_generation.stabilityai_client import StabilityAIClient
 from optimed.adapters.image_generation.repository import PostgresGeneratedImageRepository
-from optimed.apps.orchestrator.image_flow import LangGraphImageAnalysisEngine
-from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder, MultilingualZeroShotClassifier
 from optimed.adapters.pdf.pdf_processor import PyMuPDFProcessor
-from optimed.apps.pdf.memory_pdf_service import MemoryPDFService
 from optimed.adapters.xml.xml_processor import LibXML2Processor
-from optimed.apps.xml.memory_xml_service import MemoryXMLService
-from optimed.core.domain import UserEHRConnection
-from datetime import datetime, timezone
-from dotenv import load_dotenv # type: ignore
 from optimed.adapters.security.session_cleanup import initialize_cleanup_service
 from optimed.adapters.note_templates import PGTemplateRepository, TemplateServiceAdapter, NoteGeneratorAdapter
-from optimed.core.ports import TemplateRepository, TemplateService, NoteGenerator, AuditRepository
 from optimed.adapters.audit import PGAuditRepository
+from optimed.apps.pdf.memory_pdf_service import MemoryPDFService
+from optimed.apps.xml.memory_xml_service import MemoryXMLService
+from optimed.core.domain import UserEHRConnection
+from optimed.core.ports import DiagnosticEngine, FHIRRepository, VectorStore, UserRepository, UserEHRConnectionRepository, ImageAnalysisEngine, ImageGenerationService, GeneratedImageRepository, LLMClient, PDFService, XMLService, TemplateRepository, TemplateService, NoteGenerator, AuditRepository
+from optimed.core.logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 def create_smart_fhir_repository() -> SMARTFHIRRepository:
