@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, FormEvent, useRef } from "react";
+import { useState, useEffect, FormEvent, useRef, useCallback } from "react";
 import { useUser } from '@/contexts/UserContext';
 import { Download, Image as ImageIcon, ExternalLink, Paperclip, FileText, X, FileEdit } from 'lucide-react';
-import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse, uploadPDFDocument, listPDFDocuments, deletePDFDocument, PDFDocument, uploadXMLDocument, listXMLDocuments, deleteXMLDocument, XMLDocument } from '@/lib/api';
+import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse, uploadPDFDocument, listPDFDocuments, deletePDFDocument, PDFDocument, uploadXMLDocument, listXMLDocuments, deleteXMLDocument, XMLDocument, cleanupSessionDocuments } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
 import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
@@ -843,7 +843,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
   }, [uploadedXMLs]);
 
   // Load PDF documents for the current session context
-  const loadPDFs = async () => {
+  const loadPDFs = useCallback(async () => {
     try {
       console.log('[ChatBox] Loading PDFs for session:', { patientId, currentSessionId });
 
@@ -853,9 +853,20 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
       console.log('[ChatBox] Raw API response:', pdfList);
 
-      const newDocs = pdfList.documents || [];
+      const allDocs = pdfList.documents || [];
 
-      console.log(`[ChatBox] Parsed ${newDocs.length} PDFs for session (patient: ${patientId || 'general'})`);
+      // Filter to only show documents uploaded after this session started
+      // This prevents old auth session documents from appearing in new sessions
+      const newDocs = allDocs.filter(doc => {
+        const uploadedAt = new Date(doc.uploaded_at).getTime();
+        const isNew = uploadedAt >= sessionStartTime.current;
+        if (!isNew) {
+          console.log(`[ChatBox] Filtering out old PDF: ${doc.filename} (uploaded before session start)`);
+        }
+        return isNew;
+      });
+
+      console.log(`[ChatBox] Parsed ${newDocs.length} PDFs for session (patient: ${patientId || 'general'}) - filtered from ${allDocs.length} total`);
       console.log('[ChatBox] PDF details:', newDocs.map(pdf => ({
         id: pdf.document_id,
         name: pdf.filename,
@@ -877,10 +888,10 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     } catch (error) {
       console.error('[ChatBox] Failed to load PDFs:', error);
     }
-  };
+  }, [patientId, currentSessionId]);
 
   // Load XML documents for the current session context
-  const loadXMLs = async () => {
+  const loadXMLs = useCallback(async () => {
     try {
       console.log('[ChatBox] Loading XMLs for session:', { patientId, currentSessionId });
 
@@ -890,9 +901,20 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
       console.log('[ChatBox] Raw XML API response:', xmlList);
 
-      const newDocs = xmlList.documents || [];
+      const allDocs = xmlList.documents || [];
 
-      console.log(`[ChatBox] Parsed ${newDocs.length} XMLs for session (patient: ${patientId || 'general'})`);
+      // Filter to only show documents uploaded after this session started
+      // This prevents old auth session documents from appearing in new sessions
+      const newDocs = allDocs.filter(doc => {
+        const uploadedAt = new Date(doc.uploaded_at).getTime();
+        const isNew = uploadedAt >= sessionStartTime.current;
+        if (!isNew) {
+          console.log(`[ChatBox] Filtering out old XML: ${doc.filename} (uploaded before session start)`);
+        }
+        return isNew;
+      });
+
+      console.log(`[ChatBox] Parsed ${newDocs.length} XMLs for session (patient: ${patientId || 'general'}) - filtered from ${allDocs.length} total`);
       console.log('[ChatBox] XML details:', newDocs.map(xml => ({
         id: xml.document_id,
         name: xml.filename,
@@ -915,7 +937,32 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     } catch (error) {
       console.error('[ChatBox] Failed to load XMLs:', error);
     }
-  };
+  }, [patientId, currentSessionId]);
+
+  // Track session start time to filter out old auth session documents
+  const sessionStartTime = useRef<number>(Date.now());
+
+  // Reset session start time when session changes
+  useEffect(() => {
+    console.log('[ChatBox] Session changed, resetting session start time and clearing documents');
+    sessionStartTime.current = Date.now();
+    setUploadedPDFs([]);
+    setUploadedXMLs([]);
+
+    // Clean up old documents from backend auth session
+    const cleanup = async () => {
+      try {
+        console.log('[ChatBox] Calling backend to cleanup old documents from auth session');
+        const result = await cleanupSessionDocuments();
+        console.log(`[ChatBox] Backend cleanup complete: ${result.deleted_pdfs} PDFs, ${result.deleted_xmls} XMLs deleted`);
+      } catch (error) {
+        console.error('[ChatBox] Backend cleanup failed:', error);
+        // Don't fail the session start if cleanup fails
+      }
+    };
+
+    cleanup();
+  }, [currentSessionId]);
 
   // GDPR-compliant: No chat history loading to prevent PHI storage
   useEffect(() => {
@@ -1117,7 +1164,56 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
       loadPDFs();
       loadXMLs();
     }
-  }, [currentSessionId, patientId, mode]);
+  }, [currentSessionId, patientId, mode, loadPDFs, loadXMLs]);
+
+  // Real-time document updates via SSE (same as chat streaming)
+  useEffect(() => {
+    if (!((mode === 'diagnose' && patientId) || mode === 'chat')) {
+      return;
+    }
+
+    console.log('[ChatBox] Connecting to document events stream...');
+
+    const sessionId = localStorage.getItem('session_id');
+    if (!sessionId) {
+      console.error('[ChatBox] No session ID in localStorage');
+      return;
+    }
+
+    const eventSource = new EventSource(`/api/documents/events?session_id=${sessionId}`);
+
+    eventSource.onopen = () => {
+      console.log('[ChatBox] Document events connected');
+    };
+
+    eventSource.onmessage = async (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        console.log('[ChatBox] Document event:', data);
+
+        if (data.type === 'uploaded') {
+          console.log(`[ChatBox] Document uploaded: ${data.filename}`);
+          // Reload documents to show new upload
+          await loadPDFs();
+          await loadXMLs();
+        }
+      } catch (err) {
+        console.error('[ChatBox] Event parse error:', err);
+      }
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('[ChatBox] SSE error:', error);
+      console.error('[ChatBox] EventSource readyState:', eventSource.readyState);
+      console.error('[ChatBox] EventSource url:', eventSource.url);
+      // EventSource auto-reconnects
+    };
+
+    return () => {
+      console.log('[ChatBox] Closing document events stream');
+      eventSource.close();
+    };
+  }, [currentSessionId, patientId, mode, loadPDFs, loadXMLs]);
 
     // Update the final response effect to include differential diagnoses
     useEffect(() => {

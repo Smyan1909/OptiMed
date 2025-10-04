@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@/contexts/UserContext';
 import { Loader2, CheckCircle, XCircle, Hospital } from 'lucide-react';
+import { sendSessionToWatcher } from '@/lib/watcherService';
 
 export default function EHRSuccessPage() {
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
@@ -27,7 +28,12 @@ export default function EHRSuccessPage() {
         // Store session data
         localStorage.setItem('session_id', sessionId);
         localStorage.setItem('user_id', userId);
-        
+
+        // Send session to local CLARA watcher (fails silently if not running)
+        sendSessionToWatcher(sessionId).catch(() => {
+          // Ignore errors - watcher is optional
+        });
+
         // Fetch user details using the API proxy
         const response = await fetch('/api/auth/me', {
           headers: {
@@ -39,10 +45,10 @@ export default function EHRSuccessPage() {
           const userData = await response.json();
           setUser(userData);
           setIsAuthenticated(true);
-          
+
           setStatus('success');
           setMessage('EHR authentication successful! Redirecting to patients...');
-          
+
           // Redirect to patients page after 2 seconds
           setTimeout(() => {
             router.push('/patients');

@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { getCurrentUser, loginUser, logoutUser, User, setupSessionEncryption } from '@/lib/api';
+import { sendSessionToWatcher, clearSessionFromWatcher } from '@/lib/watcherService';
 
 type UserContextType = {
   user: User | null;
@@ -28,6 +29,17 @@ export function UserProvider({ children }: { children: ReactNode }) {
       const currentUser = await getCurrentUser();
       setUser(currentUser);
       setIsAuthenticated(!!currentUser);
+
+      // If user is authenticated, send existing session to watcher
+      // This handles page refresh scenarios
+      if (currentUser) {
+        const sessionId = localStorage.getItem('session_id');
+        if (sessionId) {
+          sendSessionToWatcher(sessionId).catch(() => {
+            // Ignore errors - watcher is optional
+          });
+        }
+      }
     } catch (err) {
       setUser(null);
       setIsAuthenticated(false);
@@ -45,10 +57,15 @@ export function UserProvider({ children }: { children: ReactNode }) {
       setError(null);
       setIsLoading(true);
       const response = await loginUser(username, password);
-      
+
       localStorage.setItem('session_id', response.session.session_id);
       setUser(response.user);
       setIsAuthenticated(true);
+
+      // Send session to local CLARA watcher (fails silently if not running)
+      sendSessionToWatcher(response.session.session_id).catch(() => {
+        // Ignore errors - watcher is optional
+      });
 
       // Setup encryption for the session
       try {
@@ -72,6 +89,11 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     try {
+      // Clear session from local CLARA watcher (fails silently if not running)
+      clearSessionFromWatcher().catch(() => {
+        // Ignore errors - watcher is optional
+      });
+
       await logoutUser();
     } catch (err) {
       console.error('Logout error:', err);

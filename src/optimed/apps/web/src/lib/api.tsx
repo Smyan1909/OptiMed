@@ -1007,6 +1007,30 @@ export async function deleteXMLDocument(documentId: string, patientId?: string, 
   return responseData;
 }
 
+export async function cleanupSessionDocuments(): Promise<{ message: string; deleted_pdfs: number; deleted_xmls: number }> {
+  console.log('[API] cleanupSessionDocuments called');
+
+  const headers = getSessionHeaders();
+  console.log('[API] Cleanup request headers:', headers);
+
+  const res = await fetch('/api/documents/cleanup-session', {
+    method: 'POST',
+    headers: headers,
+  });
+
+  console.log('[API] Cleanup response status:', res.status);
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error('[API] Cleanup failed with error:', errorText);
+    throw new Error(`Failed to cleanup session: ${res.status} - ${errorText}`);
+  }
+
+  const responseData = await res.json();
+  console.log('[API] Cleanup response data:', responseData);
+  return responseData;
+}
+
 // Note Template Types
 export type NoteTemplate = {
   template_id: string;

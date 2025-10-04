@@ -1796,6 +1796,7 @@ Return ONLY the JSON array, no additional text.
 """
 
                 messages = [
+                    self._get_language_policy_message(state),
                     ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist extracting temporal events from medical histories. Always respond with valid JSON only."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
@@ -1917,7 +1918,7 @@ Return ONLY the JSON array, no additional text.
                     print(f"[generate_timeline_bubbles] Generating content for: {title}")
 
                     # Citation format
-                    citation_format = "Use **page X** format"
+                    citation_format = "Use **page X** format" if detect_language_code(state.user_prompt) == "en" else "Use **sida X** format"
 
                     # Build chunks context
                     chunks_text = "\n\n---\n\n".join(chunks) if chunks else "No specific information available"
