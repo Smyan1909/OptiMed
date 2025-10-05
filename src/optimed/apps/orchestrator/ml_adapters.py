@@ -339,7 +339,17 @@ class MultilingualZeroShotClassifier:
             "fel", "wrong", "problem", "sjukdom", "disease"
         ]
 
-        if any(keyword in text_lower for keyword in summary_keywords):
+        # Check for SBAR handoff keywords
+        sbar_handoff_keywords = [
+            "sbar", "handoff", "handover", "hand-off", "hand over",
+            "överlämning", "overlamning", "overlämnin",
+            "transfer", "shift change", "new doctor", "change of doctor",
+            "transition of care", "patient transfer", "vaktskifte"
+        ]
+
+        if any(keyword in text_lower for keyword in sbar_handoff_keywords):
+            return "sbar_handoff"
+        elif any(keyword in text_lower for keyword in summary_keywords):
             return "summary"
         elif any(keyword in text_lower for keyword in diagnostic_keywords):
             return "diagnostic"
@@ -347,8 +357,38 @@ class MultilingualZeroShotClassifier:
         # Try to use the actual model if available
         if self._ensure_loaded() and self._model is not None:
             try:
-                result = self._model(text, candidate_labels)
-                return result['labels'][0]  # Return highest confidence label
+                # Map technical labels to natural language for better zero-shot understanding
+                label_mapping = {
+                    "sbar_handoff": "patient handoff communication for shift change or care transition",
+                    "summary": "patient summary or overview",
+                    "timeline": "temporal sequence or timeline of events",
+                    "note_generation": "clinical note or documentation generation",
+                    "discharge_summary": "discharge summary or exit documentation",
+                    "lookup": "information lookup or fact finding",
+                    "temporal-trend": "trend analysis over time",
+                    "comparative": "comparison between conditions or treatments",
+                    "reasoning": "clinical reasoning or differential diagnosis",
+                    "guideline": "clinical guidelines or protocols"
+                }
+
+                # Convert labels to natural language if mapping exists
+                natural_labels = [label_mapping.get(label, label) for label in candidate_labels]
+
+                result = self._model(text, natural_labels)
+
+                # Map back to original label
+                top_natural_label = result['labels'][0]
+                for original_label, natural_label in label_mapping.items():
+                    if natural_label == top_natural_label:
+                        return original_label
+
+                # If no mapping found, try direct match
+                if top_natural_label in candidate_labels:
+                    return top_natural_label
+
+                # Fallback to first candidate
+                return candidate_labels[0]
+
             except Exception as e:
                 logger.warning(f"Classification failed: {e}")
 
