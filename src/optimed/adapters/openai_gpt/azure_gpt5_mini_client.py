@@ -24,7 +24,7 @@ class AzureOpenAIGPT5MiniClient(LLMClient):
     def __init__(
         self,
         *,
-        model: str = "gpt-5-mini",
+        model: str = "gpt-5-mini-europe",  # Azure deployment name
         api_key: str | None = None,
         timeout: float | None = None,
         minimal_reasoning: bool = True,

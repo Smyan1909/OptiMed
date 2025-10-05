@@ -2198,11 +2198,12 @@ CRITICAL GUIDELINES:
 - Be CONCISE and FOCUSED - include only essential clinical information
 - Do NOT include source references, citations, or document names (write directly from the information)
 - Use medical terminology appropriate for {lang_name}
-- If information is not available for a section, write "Information not available" or "Uppgifter saknas"
+- If information is not available for a section, write "Information not available" in {lang_name}
 - Maintain professional medical documentation style
 - Include relevant timestamps when available
 - Avoid unnecessary elaboration or repetition between sections
 - Write in clear, direct clinical language without filler words
+- Do NOT interpret or assume - only document what is explicitly provided
 
 Generate content for each section separately with only the necessary clinical facts."""
 
