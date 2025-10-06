@@ -1,0 +1,83 @@
+/* PDF Export Styling for OptiMed Documentation */
+
+@page {
+  size: A4;
+  margin: 2cm 1.5cm;
+
+  @top-center {
+    content: "CLARA (OptiMed AI) - Technical Documentation";
+    font-size: 10pt;
+    color: #666;
+  }
+
+  @bottom-center {
+    content: "Page " counter(page);
+    font-size: 10pt;
+    color: #666;
+  }
+
+  @bottom-right {
+    content: "© 2025 OptiMed AI";
+    font-size: 9pt;
+    color: #999;
+  }
+}
+
+/* Ensure diagrams don't break across pages */
+pre, .mermaid, svg {
+  page-break-inside: avoid;
+}
+
+/* Better code block formatting */
+pre code {
+  font-size: 9pt;
+  line-height: 1.4;
+}
+
+/* Table styling */
+table {
+  page-break-inside: avoid;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table th {
+  background-color: #0078D4;
+  color: white;
+  padding: 8px;
+}
+
+table td {
+  padding: 6px;
+  border: 1px solid #ddd;
+}
+
+/* Headings */
+h1 {
+  page-break-before: always;
+  color: #0078D4;
+  border-bottom: 3px solid #0078D4;
+  padding-bottom: 10px;
+}
+
+h1:first-of-type {
+  page-break-before: avoid;
+}
+
+h2 {
+  color: #0078D4;
+  margin-top: 1.5em;
+}
+
+/* Links - show URL in print */
+a[href]:after {
+  content: " (" attr(href) ")";
+  font-size: 0.8em;
+  color: #666;
+}
+
+/* Mermaid diagrams */
+.mermaid {
+  max-width: 100%;
+  margin: 1em 0;
+}

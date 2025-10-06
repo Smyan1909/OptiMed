@@ -45,32 +45,6 @@ markdown_extensions:
 plugins:
   - search
   - mermaid2
-  - with-pdf:
-      author: OptiMed AI
-      copyright: Copyright © 2025 OptiMed AI. All rights reserved.
-      cover_title: CLARA (OptiMed AI)
-      cover_subtitle: Technical Documentation - Version 2.0.0
-      output_path: pdf/optimed-documentation-complete.pdf
-      enabled_if_env: ENABLE_PDF_EXPORT
-      # Mermaid diagram rendering (CRITICAL for flowcharts)
-      render_js: true
-      headless_chrome_path: chromium  # Will auto-detect Chrome/Chromium/Playwright
-      # Cover page
-      cover: true
-      back_cover: true
-      cover_subtitle: "RAM-Only Architecture | Azure Sweden Central | GDPR Compliant"
-      # Table of contents
-      toc_title: Table of Contents
-      toc_level: 3
-      # Exclude patterns
-      exclude_pages:
-        - openapi/openapi.yaml
-      # PDF styling for professional output
-      two_columns_level: 0
-      ordered_chapter_level: 2
-      # Ensure diagrams render properly
-      verbose: true
-      debug_html: false
 
 extra:
   version:

@@ -1,0 +1,67 @@
+/* Custom CSS for Markdown PDF - OptiMed Documentation */
+
+/* Ensure Mermaid diagrams don't break across pages */
+.mermaid,
+pre.mermaid,
+svg {
+  page-break-inside: avoid !important;
+  max-width: 100%;
+  margin: 1em auto;
+  display: block;
+}
+
+/* Better code block formatting */
+pre {
+  page-break-inside: avoid;
+  background-color: #f6f8fa;
+  border: 1px solid #e1e4e8;
+  border-radius: 6px;
+  padding: 16px;
+}
+
+pre code {
+  font-size: 10pt;
+  line-height: 1.5;
+}
+
+/* Table styling */
+table {
+  page-break-inside: avoid;
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+}
+
+table th {
+  background-color: #0078D4;
+  color: white;
+  padding: 10px;
+}
+
+table td {
+  padding: 8px;
+  border: 1px solid #ddd;
+}
+
+/* Headings */
+h1 {
+  page-break-before: always;
+  color: #0078D4;
+  border-bottom: 3px solid #0078D4;
+  padding-bottom: 10px;
+}
+
+h1:first-of-type {
+  page-break-before: avoid;
+}
+
+h2 {
+  color: #0078D4;
+  margin-top: 1.5em;
+}
+
+/* Images */
+img {
+  max-width: 100%;
+  page-break-inside: avoid;
+}
