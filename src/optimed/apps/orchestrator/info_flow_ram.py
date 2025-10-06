@@ -1083,7 +1083,7 @@ Keep queries concise and medical terminology appropriate.
                             role = "User" if msg.role == ChatRole.USER else "CLARA"
                             history_lines.append(f"{role}: {msg.content[:100]}")
                     if history_lines:
-                        history_context = f"\n\nRecent conversation:\n" + "\n".join(history_lines) + "\n"
+                        history_context = "\n\nRecent conversation:\n" + "\n".join(history_lines) + "\n"
 
                 prompt = f"""
 Based on this user query: "{state.user_prompt}"{history_context}
