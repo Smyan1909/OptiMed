@@ -502,25 +502,36 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         async def evaluate_web_search_need(state: FlowState) -> FlowState:
             """Evaluate if web search is needed for medical information."""
             try:
+                # ALWAYS use web search for factoid/guideline questions (general medical knowledge)
+                # This prevents hallucinations and ensures current medical information
+                classification = getattr(state, 'query_classification', None)
+
+                # Force web search for general medical knowledge questions
+                factoid_classifications = ["guideline", "reasoning", "comparative"]
+                if classification in factoid_classifications:
+                    logger.info(f"Factoid question detected ({classification}) - FORCING web search for credible sources")
+                    state.web_search_performed = True
+                    return state
+
                 # For other modes, evaluate based on query content
                 # Note: No patient data is sent to external APIs for GDPR compliance
                 chat_history_str = None
                 if state.chat_history:
                     chat_history_str = [msg.content for msg in state.chat_history[-3:]]
-                
+
                 needs_search = await self._web_search.evaluate_search_need(
                     user_query=state.user_prompt,
                     patient_context=None,  # No patient data sent to external APIs
                     chat_history=chat_history_str
                 )
-                
+
                 state.web_search_performed = needs_search
                 logger.info(f"Web search needed: {needs_search}")
-                
+
             except Exception as e:
                 log_error(logger, "web_search", e)
                 state.web_search_performed = False
-            
+
             return state
 
         @streaming_step("perform_web_search")
@@ -1062,8 +1073,20 @@ Keep queries concise and medical terminology appropriate.
                     "deepdive": "Hospital admission details, specialist letters, imaging reports, detailed clinical notes"
                 }
 
+                # Add chat history context if available for better query generation
+                history_context = ""
+                recent_history = state.chat_history[-5:] if state.chat_history else []
+                if recent_history:
+                    history_lines = []
+                    for msg in recent_history:
+                        if msg.content and msg.content.strip():
+                            role = "User" if msg.role == ChatRole.USER else "CLARA"
+                            history_lines.append(f"{role}: {msg.content[:100]}")
+                    if history_lines:
+                        history_context = f"\n\nRecent conversation:\n" + "\n".join(history_lines) + "\n"
+
                 prompt = f"""
-Based on this user query: "{state.user_prompt}"
+Based on this user query: "{state.user_prompt}"{history_context}
 
 Generate 3 specific search queries focused on the {component.upper()} component of a comprehensive patient summary.
 
@@ -2106,31 +2129,33 @@ Keep queries concise and focused on the temporal aspect.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                List current medications - BRIEF format only.
+                List current medications with BRIEF purpose/indication.
 
                 USER QUERY: {state.user_prompt}
 
                 Format (ONE line per medication):
-                • Drug name dose - {citation_format}
-                • ⚠️ High-risk drug dose - {citation_format}  ← Mark anticoagulants, opioids, insulin with ⚠️
+                • Drug name dose (brief purpose) - {citation_format}
+                • ⚠️ High-risk drug dose (brief purpose) - {citation_format}  ← Mark anticoagulants, opioids, insulin with ⚠️
 
                 Example:
-                • Metformin 1000mg - Enligt Läkemedelslista, sida 2
-                • ⚠️ Warfarin 5mg - Enligt Läkemedelslista, sida 2
-                • Enalapril 10mg - Enligt Läkemedelslista, sida 2
+                • Metformin 1000mg (diabetes) - Enligt Läkemedelslista, sida 2
+                • ⚠️ Warfarin 5mg (anticoagulation) - Enligt Läkemedelslista, sida 2
+                • Enalapril 10mg (blood pressure) - Enligt Läkemedelslista, sida 2
 
                 Add blank line between each bullet point for readability.
+
+                Include brief medication purpose in parentheses if indicated in the data. If purpose not clear from data, just state drug class (e.g., "beta-blocker", "SSRI", "ACE inhibitor").
 
                 If there are MORE medications (beyond 8-10), add at the end:
                 "_Fråga om fler läkemedel_" (Swedish) or "_Ask for more medications_" (English)
 
                 MANDATORY: Cite page numbers: {citation_format}
-                CRITICAL: ONE line per drug. Blank lines between bullets. List max 8-10 meds. Prioritize high-risk.
+                CRITICAL: ONE line per drug. Blank lines between bullets. Brief purpose in parentheses. List max 8-10 meds. Prioritize high-risk.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List medications briefly. One line per drug with blank lines between. Max 8-10 drugs. Mark high-risk with ⚠️. Add 'ask for more' if additional meds exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List medications with brief purpose. One line per drug with blank lines between. Max 8-10 drugs. Mark high-risk with ⚠️. Add purpose in parentheses.\n\nMANDATORY: Always cite page numbers: {citation_format}"),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2437,6 +2462,7 @@ Keep queries concise and focused on the temporal aspect.
                 • Date Type: Finding - {citation_format}
 
                 Add blank line between each bullet point for readability.
+                Make the Language consistent (either Swedish or English) for everything in the generated outputs including headers (Hospital Admissions, Specialist Letters, Imaging).
 
                 For EACH section that has more items available (beyond 2-3), add:
                 "_Fråga om fler [X]_" (Swedish) or "_Ask for more [X]_" (English)

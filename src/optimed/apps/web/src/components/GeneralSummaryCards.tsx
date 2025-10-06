@@ -418,12 +418,17 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
       )}
 
       <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-        <p className="text-sm text-blue-700 flex items-start leading-relaxed">
+        <p className="text-sm text-blue-700 flex items-start leading-relaxed mb-3">
           <User className="h-4 w-4 inline mr-3 flex-shrink-0 mt-0.5" />
           <span>
             <strong>Patient Summary</strong> provides a comprehensive at-a-glance view of the patient's medical history,
             current conditions, medications, trends, and recent care for efficient clinical decision-making.
           </span>
+        </p>
+        <p className="text-xs text-gray-600 leading-relaxed border-t border-blue-200 pt-3">
+          <strong>Disclaimer:</strong> This is an information system, not a medical device.
+          Information provided is for clinical decision support only. Healthcare professionals must use their own
+          clinical judgment and verify all information before making medical decisions.
         </p>
       </div>
     </div>
