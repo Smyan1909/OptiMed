@@ -10,6 +10,7 @@ import { StreamingProgress } from "./StreamingProgress";
 import { ReasoningViewer } from "./ReasoningViewer";
 import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCards";
 import { SBARSummaryCards } from "./SBARSummaryCards";
+import { GeneralSummaryCards } from "./GeneralSummaryCards";
 import { TimelineView } from "./TimelineView";
 import { NoteGenerationDialog } from "./NoteGenerationDialog";
 import { useLayoutEffect } from "react";
@@ -75,6 +76,17 @@ interface TimelineResults {
   events: TimelineEvent[];
 }
 
+interface GeneralSummaryResults {
+  snapshot?: string;
+  problems?: string;
+  medications?: string;
+  trends?: string;
+  history?: string;
+  risks?: string;
+  encounters?: string;
+  deepdive?: string;
+}
+
 interface Message {
   sender: "user" | "system";
   text: string;
@@ -85,6 +97,7 @@ interface Message {
   reasoning?: string;
   differentialDiagnoses?: DifferentialDiagnosis[];
   sbarResults?: SBARResults;
+  generalSummaryResults?: GeneralSummaryResults;
   timelineResults?: TimelineResults;
 }
 
@@ -1058,6 +1071,21 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                     // Clear the content so we don't display the raw JSON
                     formattedMessage.text = '';
                     logInfo(`✅ Successfully processed SBAR cards, cleared text`);
+                  } else if (parsedContent.type === 'general_summary_cards' && parsedContent.components) {
+                    logInfo(`📋 Processing JSON General Summary cards for message ${index}`);
+                    formattedMessage.generalSummaryResults = {
+                      snapshot: parsedContent.components.snapshot?.content || undefined,
+                      problems: parsedContent.components.problems?.content || undefined,
+                      medications: parsedContent.components.medications?.content || undefined,
+                      trends: parsedContent.components.trends?.content || undefined,
+                      history: parsedContent.components.history?.content || undefined,
+                      risks: parsedContent.components.risks?.content || undefined,
+                      encounters: parsedContent.components.encounters?.content || undefined,
+                      deepdive: parsedContent.components.deepdive?.content || undefined
+                    };
+                    // Clear the content so we don't display the raw JSON
+                    formattedMessage.text = '';
+                    logInfo(`✅ Successfully processed General Summary cards, cleared text`);
                   } else if (parsedContent.type === 'timeline_view' && parsedContent.events) {
                     logInfo(`📅 Processing JSON Timeline for message ${index}`);
                     formattedMessage.timelineResults = {
@@ -1195,9 +1223,10 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         const reasoningText = reasoning && reasoning.length > 0 ? reasoning.join('\n') : '';
         logInfo(`🧠 Final reasoning for message - hasArray: ${!!reasoning}, textLength: ${reasoningText.length}, hasReasoning: ${!!reasoningText}`);
         
-        // Check if finalResponse is SBAR, Timeline, or Generated Note JSON format and parse it
+        // Check if finalResponse is SBAR, General Summary, Timeline, or Generated Note JSON format and parse it
         let messageText = finalResponse;
         let sbarResults = undefined;
+        let generalSummaryResults = undefined;
         let timelineResults = undefined;
 
         try {
@@ -1226,6 +1255,21 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
               // Clear the text so we don't display the raw JSON
               messageText = '';
               logInfo(`✅ Successfully processed streaming SBAR cards, cleared text`);
+            } else if (parsedContent.type === 'general_summary_cards' && parsedContent.components) {
+              logInfo(`📋 Processing streaming General Summary cards`);
+              generalSummaryResults = {
+                snapshot: parsedContent.components.snapshot?.content || undefined,
+                problems: parsedContent.components.problems?.content || undefined,
+                medications: parsedContent.components.medications?.content || undefined,
+                trends: parsedContent.components.trends?.content || undefined,
+                history: parsedContent.components.history?.content || undefined,
+                risks: parsedContent.components.risks?.content || undefined,
+                encounters: parsedContent.components.encounters?.content || undefined,
+                deepdive: parsedContent.components.deepdive?.content || undefined
+              };
+              // Clear the text so we don't display the raw JSON
+              messageText = '';
+              logInfo(`✅ Successfully processed streaming General Summary cards, cleared text`);
             } else if (parsedContent.type === 'timeline_view' && parsedContent.events) {
               logInfo(`📅 Processing streaming Timeline`);
               timelineResults = {
@@ -1249,6 +1293,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           generatedImage: formattedGeneratedImage,
           differentialDiagnoses: streamDifferentialDiagnoses,
           sbarResults: sbarResults,
+          generalSummaryResults: generalSummaryResults,
           timelineResults: timelineResults
         };
 
@@ -1749,6 +1794,19 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                   <div className="mt-3">
                     <SBARSummaryCards
                       sbarResults={msg.sbarResults}
+                      isLoading={msg.loading}
+                      reasoning={msg.reasoning}
+                      reasoningSteps={msg.reasoningSteps}
+                      patientId={patientId}
+                      sessionId={sessionId}
+                    />
+                  </div>
+                )}
+
+                {msg.sender === 'system' && msg.generalSummaryResults && (
+                  <div className="mt-3">
+                    <GeneralSummaryCards
+                      summaryResults={msg.generalSummaryResults}
                       isLoading={msg.loading}
                       reasoning={msg.reasoning}
                       reasoningSteps={msg.reasoningSteps}

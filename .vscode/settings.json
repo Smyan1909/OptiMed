@@ -3,5 +3,46 @@
         "tests"
     ],
     "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true
+    "python.testing.pytestEnabled": true,
+
+    // Markdown PDF Configuration for Mermaid Flowcharts
+    // CRITICAL: Enable Mermaid diagram rendering
+    "markdown-pdf.mermaidServer": "https://unpkg.com/mermaid@10.4.0/dist/mermaid.min.js",
+
+    // Use Puppeteer/Chrome for rendering (needed for Mermaid)
+    "markdown-pdf.executablePath": "",
+
+    // Quality settings for high-resolution diagrams
+    "markdown-pdf.quality": 100,
+    "markdown-pdf.scale": 1,
+
+    // Enable syntax highlighting for code blocks
+    "markdown-pdf.highlight": true,
+    "markdown-pdf.highlightStyle": "github.css",
+
+    // Page format
+    "markdown-pdf.format": "A4",
+
+    // Headers and footers for professional output
+    "markdown-pdf.displayHeaderFooter": true,
+    "markdown-pdf.headerTemplate": "<div style='font-size: 9px; margin-left: 1cm; color: #666;'>CLARA (OptiMed AI) - Technical Documentation v2.0</div>",
+    "markdown-pdf.footerTemplate": "<div style='font-size: 9px; margin: 0 auto; color: #666;'><span>Page </span><span class='pageNumber'></span><span> / </span><span class='totalPages'></span><span style='margin-left: 3cm;'>© 2025 OptiMed AI - Confidential</span></div>",
+
+    // Page margins
+    "markdown-pdf.margin.top": "2cm",
+    "markdown-pdf.margin.bottom": "2cm",
+    "markdown-pdf.margin.right": "1.5cm",
+    "markdown-pdf.margin.left": "1.5cm",
+
+    // Output settings
+    "markdown-pdf.outputDirectory": "pdf",
+    "markdown-pdf.outputDirectoryRelativePathFile": true,
+
+    // Page breaks
+    "markdown-pdf.breaks": true,
+
+    // Include custom CSS for better diagram rendering
+    "markdown-pdf.styles": [
+        ".vscode/markdown-pdf-styles.css"
+    ]
 }

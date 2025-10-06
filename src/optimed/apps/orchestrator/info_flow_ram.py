@@ -196,6 +196,31 @@ class FlowState(BaseModel):
     note_final_content: Optional[str] = None
     note_sources: List[str] = Field(default_factory=list)
 
+    # General summary flow fields
+    is_general_summary_flow: bool = False
+
+    # Separate fields for each general summary component to avoid concurrent updates
+    general_snapshot_chunks: Optional[List[str]] = None
+    general_problems_chunks: Optional[List[str]] = None
+    general_medications_chunks: Optional[List[str]] = None
+    general_trends_chunks: Optional[List[str]] = None
+    general_history_chunks: Optional[List[str]] = None
+    general_risks_chunks: Optional[List[str]] = None
+    general_encounters_chunks: Optional[List[str]] = None
+    general_deepdive_chunks: Optional[List[str]] = None
+
+    general_snapshot_result: Optional[str] = None
+    general_problems_result: Optional[str] = None
+    general_medications_result: Optional[str] = None
+    general_trends_result: Optional[str] = None
+    general_history_result: Optional[str] = None
+    general_risks_result: Optional[str] = None
+    general_encounters_result: Optional[str] = None
+    general_deepdive_result: Optional[str] = None
+
+    # General summary retrieval cache for performance optimization
+    general_retrieval_cache: Optional[Dict[str, Any]] = None
+
 
 class LangGraphRAMInformationEngine(DiagnosticEngine):
     """Concrete engine that streams or returns full result."""
@@ -477,25 +502,36 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         async def evaluate_web_search_need(state: FlowState) -> FlowState:
             """Evaluate if web search is needed for medical information."""
             try:
+                # ALWAYS use web search for factoid/guideline questions (general medical knowledge)
+                # This prevents hallucinations and ensures current medical information
+                classification = getattr(state, 'query_classification', None)
+
+                # Force web search for general medical knowledge questions
+                factoid_classifications = ["guideline", "reasoning", "comparative"]
+                if classification in factoid_classifications:
+                    logger.info(f"Factoid question detected ({classification}) - FORCING web search for credible sources")
+                    state.web_search_performed = True
+                    return state
+
                 # For other modes, evaluate based on query content
                 # Note: No patient data is sent to external APIs for GDPR compliance
                 chat_history_str = None
                 if state.chat_history:
                     chat_history_str = [msg.content for msg in state.chat_history[-3:]]
-                
+
                 needs_search = await self._web_search.evaluate_search_need(
                     user_query=state.user_prompt,
                     patient_context=None,  # No patient data sent to external APIs
                     chat_history=chat_history_str
                 )
-                
+
                 state.web_search_performed = needs_search
                 logger.info(f"Web search needed: {needs_search}")
-                
+
             except Exception as e:
                 log_error(logger, "web_search", e)
                 state.web_search_performed = False
-            
+
             return state
 
         @streaming_step("perform_web_search")
@@ -931,26 +967,27 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                         logger.info(f"{focus} - No chunks available")
                         return []
 
-                # Simple keyword-based retrieval for maximum speed
+                # Bi-encoder retrieval using semantic similarity
+                # Embed the queries
+                query_vecs = await self._embed_many(queries, mode="query")
+                logger.info(f"{focus} - Embedded {len(query_vecs)} queries")
+
+                # Embed the chunks
+                chunk_vecs = await self._embed_many(chunks, mode="passage")
+                logger.info(f"{focus} - Embedded {len(chunk_vecs)} chunks")
+
+                # Compute bi-encoder scores (max cosine similarity across all queries)
                 scored_chunks = []
-                for i, chunk in enumerate(chunks):
-                    score = 0.0
-                    chunk_lower = chunk.lower()
-
-                    for query in queries:
-                        query_words = query.lower().split()
-                        for word in query_words:
-                            if word in chunk_lower:
-                                score += 1.0
-
-                    if score > 0:
-                        scored_chunks.append((score, chunk))
+                for i, chunk_vec in enumerate(chunk_vecs):
+                    max_score = max(self._cosine(chunk_vec, qv) for qv in query_vecs)
+                    if max_score > 0.0:  # Only include chunks with some similarity
+                        scored_chunks.append((max_score, chunks[i]))
 
                 # Sort by score and return top chunks
                 scored_chunks.sort(key=lambda x: x[0], reverse=True)
                 result_chunks = [chunk for _, chunk in scored_chunks[:15]]
 
-                logger.info(f"{focus} - Retrieved {len(result_chunks)} chunks using keyword matching")
+                logger.info(f"{focus} - Retrieved {len(result_chunks)} chunks using bi-encoder similarity")
                 return result_chunks
 
             except Exception as e:
@@ -1018,6 +1055,136 @@ Keep queries concise and medical terminology appropriate.
                     "recommendation": ["treatment plans", "medications", "follow-up"]
                 }
                 return fallback_queries.get(sbar_component, ["medical information"])
+
+        async def _generate_general_summary_queries(state: FlowState, component: str, focus_instruction: str) -> List[str]:
+            """Generate focused queries for each general summary component based on the user's original query."""
+            try:
+                logger.info(f"Generating {component} queries from: '{state.user_prompt[:100]}...'")
+
+                # Define component-specific instructions
+                component_prompts = {
+                    "snapshot": "Age, sex, living situation, social context, smoking/alcohol history, top 3-5 chronic conditions",
+                    "problems": "Chronic diseases with onset dates, active problems, diagnosed conditions, current visit reason",
+                    "medications": "Current medications with dosages, high-risk drugs (anticoagulants, opioids, insulin)",
+                    "trends": "Lab values and vital signs trends over 6-12 months (HbA1c, eGFR, weight, blood pressure)",
+                    "history": "Major hospitalizations, surgeries, significant medical events with dates",
+                    "risks": "Allergies, fall risk, bleeding risk, DNR status, cognitive impairment, medication side-effects",
+                    "encounters": "Recent GP visits, specialist consultations, care plans, recent decisions, hospital encounters",
+                    "deepdive": "Hospital admission details, specialist letters, imaging reports, detailed clinical notes"
+                }
+
+                # Add chat history context if available for better query generation
+                history_context = ""
+                recent_history = state.chat_history[-5:] if state.chat_history else []
+                if recent_history:
+                    history_lines = []
+                    for msg in recent_history:
+                        if msg.content and msg.content.strip():
+                            role = "User" if msg.role == ChatRole.USER else "CLARA"
+                            history_lines.append(f"{role}: {msg.content[:100]}")
+                    if history_lines:
+                        history_context = "\n\nRecent conversation:\n" + "\n".join(history_lines) + "\n"
+
+                prompt = f"""
+Based on this user query: "{state.user_prompt}"{history_context}
+
+Generate 3 specific search queries focused on the {component.upper()} component of a comprehensive patient summary.
+
+{component.upper()} should focus on: {component_prompts.get(component, focus_instruction)}
+
+Return only the 3 queries, one per line, without numbers or bullets.
+Keep queries concise and medical terminology appropriate.
+"""
+
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist generating focused search queries for patient summary components."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                response = await self._llm.chat(messages)
+
+                # Parse response into individual queries
+                queries = []
+                for line in response.content.strip().split('\n'):
+                    query = line.strip()
+                    if query and not query.startswith(('1.', '2.', '3.', '-', '•')):
+                        queries.append(query)
+
+                if len(queries) < 3:
+                    # Fallback queries if LLM didn't generate enough
+                    fallback = {
+                        "snapshot": ["demographics age sex", "living situation social", "chronic conditions"],
+                        "problems": ["active problems", "chronic diseases", "diagnosis onset date"],
+                        "medications": ["current medications", "high-risk drugs", "anticoagulants insulin"],
+                        "trends": ["HbA1c trend", "eGFR kidney function", "weight vital signs"],
+                        "history": ["hospitalizations surgeries", "major medical events", "surgical history"],
+                        "risks": ["allergies", "fall risk DNR", "bleeding risk cognitive"],
+                        "encounters": ["recent visits", "GP consultation", "specialist referral"],
+                        "deepdive": ["hospital admissions", "imaging reports", "specialist letters"]
+                    }
+                    queries.extend(fallback.get(component, ["medical information"])[:3-len(queries)])
+
+                logger.info(f"Generated {len(queries)} {component} queries: {queries}")
+                return queries[:3]  # Limit to 3 queries
+
+            except Exception as e:
+                log_error(logger, "_generate_general_summary_queries", e)
+                # Return fallback queries
+                fallback_queries = {
+                    "snapshot": ["demographics", "social history", "chronic conditions"],
+                    "problems": ["active problems", "chronic diseases", "diagnosis"],
+                    "medications": ["current medications", "high-risk drugs"],
+                    "trends": ["lab trends", "vital signs trends"],
+                    "history": ["hospitalizations", "surgeries"],
+                    "risks": ["allergies", "fall risk", "DNR"],
+                    "encounters": ["recent visits", "specialist consultations"],
+                    "deepdive": ["hospital admissions", "imaging reports"]
+                }
+                return fallback_queries.get(component, ["medical information"])
+
+        async def _fast_general_summary_retrieve(state: FlowState, focus: str, queries: List[str]) -> List[str]:
+            """Fast general summary retrieval using only bi-encoder similarity (same pattern as SBAR)."""
+            try:
+                logger.info(f"{focus} - Starting fast bi-encoder retrieval")
+
+                # Get chunks from state - try multiple sources
+                chunks = []
+                if state.retrieved_chunks:
+                    chunks = state.retrieved_chunks[:50]  # Use cached chunks if available
+                    logger.info(f"{focus} - Using {len(chunks)} cached chunks")
+                else:
+                    logger.info(f"{focus} - No cached chunks available, using keyword matching only")
+
+                if not chunks:
+                    logger.info(f"{focus} - No chunks available for retrieval")
+                    return []
+
+                # Bi-encoder retrieval using semantic similarity (same as _fast_sbar_retrieve)
+                # Embed the queries
+                query_vecs = await self._embed_many(queries, mode="query")
+                logger.info(f"{focus} - Embedded {len(query_vecs)} queries")
+
+                # Embed the chunks
+                chunk_vecs = await self._embed_many(chunks, mode="passage")
+                logger.info(f"{focus} - Embedded {len(chunk_vecs)} chunks")
+
+                # Compute bi-encoder scores (max cosine similarity across all queries)
+                scored_chunks = []
+                for i, chunk_vec in enumerate(chunk_vecs):
+                    max_score = max(self._cosine(chunk_vec, qv) for qv in query_vecs)
+                    if max_score > 0.0:  # Only include chunks with some similarity
+                        scored_chunks.append((max_score, chunks[i]))
+
+                # Sort by score and return top chunks
+                scored_chunks.sort(key=lambda x: x[0], reverse=True)
+                result_chunks = [chunk for _, chunk in scored_chunks[:15]]
+
+                logger.info(f"{focus} - Retrieved {len(result_chunks)} chunks using bi-encoder similarity")
+                return result_chunks
+
+            except Exception as e:
+                logger.info(f"{focus} - Error: {e}")
+                return []
 
         async def _generate_timeline_queries(state: FlowState, event_description: str, time_period: str) -> List[str]:
             """Generate focused temporal queries for each timeline event."""
@@ -1153,6 +1320,158 @@ Keep queries concise and focused on the temporal aspect.
             except Exception as e:
                 logger.info(f"Error: {e}")
                 state.sbar_recommendation_chunks = []
+
+            return state
+
+        @streaming_step("retrieve_snapshot_chunks")
+        async def retrieve_snapshot_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on patient snapshot (demographics, social context, top conditions)."""
+            try:
+                logger.info("Generating snapshot-focused queries from user prompt")
+
+                snapshot_queries = await _generate_general_summary_queries(state, "snapshot",
+                    "Generate queries focused on patient demographics, living situation, and chronic conditions")
+
+                chunks = await _fast_general_summary_retrieve(state, "snapshot", snapshot_queries)
+                state.general_snapshot_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.general_snapshot_chunks)} chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_snapshot_chunks = []
+
+            return state
+
+        @streaming_step("retrieve_problems_chunks")
+        async def retrieve_problems_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on active problems and chronic diseases."""
+            try:
+                logger.info("Generating problems-focused queries from user prompt")
+
+                problems_queries = await _generate_general_summary_queries(state, "problems",
+                    "Generate queries focused on active medical problems and chronic diseases")
+
+                chunks = await _fast_general_summary_retrieve(state, "problems", problems_queries)
+                state.general_problems_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.general_problems_chunks)} chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_problems_chunks = []
+
+            return state
+
+        @streaming_step("retrieve_medications_chunks")
+        async def retrieve_medications_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on current medications and high-risk drugs."""
+            try:
+                logger.info("Generating medications-focused queries from user prompt")
+
+                medications_queries = await _generate_general_summary_queries(state, "medications",
+                    "Generate queries focused on current medications and high-risk drugs")
+
+                chunks = await _fast_general_summary_retrieve(state, "medications", medications_queries)
+                state.general_medications_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.general_medications_chunks)} chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_medications_chunks = []
+
+            return state
+
+        @streaming_step("retrieve_trends_chunks")
+        async def retrieve_trends_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on lab and vital sign trends."""
+            try:
+                logger.info("Generating trends-focused queries from user prompt")
+
+                trends_queries = await _generate_general_summary_queries(state, "trends",
+                    "Generate queries focused on lab values and vital signs trends")
+
+                chunks = await _fast_general_summary_retrieve(state, "trends", trends_queries)
+                state.general_trends_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.general_trends_chunks)} chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_trends_chunks = []
+
+            return state
+
+        @streaming_step("retrieve_history_chunks")
+        async def retrieve_history_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on past medical history (surgeries, hospitalizations)."""
+            try:
+                logger.info("Generating history-focused queries from user prompt")
+
+                history_queries = await _generate_general_summary_queries(state, "history",
+                    "Generate queries focused on major hospitalizations and surgeries")
+
+                chunks = await _fast_general_summary_retrieve(state, "history", history_queries)
+                state.general_history_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.general_history_chunks)} chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_history_chunks = []
+
+            return state
+
+        @streaming_step("retrieve_risks_chunks")
+        async def retrieve_risks_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on patient risks and alerts (allergies, falls, DNR)."""
+            try:
+                logger.info("Generating risks-focused queries from user prompt")
+
+                risks_queries = await _generate_general_summary_queries(state, "risks",
+                    "Generate queries focused on allergies, fall risk, and clinical alerts")
+
+                chunks = await _fast_general_summary_retrieve(state, "risks", risks_queries)
+                state.general_risks_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.general_risks_chunks)} chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_risks_chunks = []
+
+            return state
+
+        @streaming_step("retrieve_encounters_chunks")
+        async def retrieve_encounters_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on recent encounters and care plans."""
+            try:
+                logger.info("Generating encounters-focused queries from user prompt")
+
+                encounters_queries = await _generate_general_summary_queries(state, "encounters",
+                    "Generate queries focused on recent GP visits and specialist consultations")
+
+                chunks = await _fast_general_summary_retrieve(state, "encounters", encounters_queries)
+                state.general_encounters_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.general_encounters_chunks)} chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_encounters_chunks = []
+
+            return state
+
+        @streaming_step("retrieve_deepdive_chunks")
+        async def retrieve_deepdive_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks for deep dive section (detailed admissions, imaging, specialist letters)."""
+            try:
+                logger.info("Generating deep dive-focused queries from user prompt")
+
+                deepdive_queries = await _generate_general_summary_queries(state, "deepdive",
+                    "Generate queries focused on hospital admissions, imaging reports, and specialist letters")
+
+                chunks = await _fast_general_summary_retrieve(state, "deepdive", deepdive_queries)
+                state.general_deepdive_chunks = chunks[:15]  # Slightly more for deep dive
+                logger.info(f"Retrieved {len(state.general_deepdive_chunks)} chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_deepdive_chunks = []
 
             return state
 
@@ -1647,6 +1966,533 @@ Keep queries concise and focused on the temporal aspect.
 
             return state
 
+        @streaming_step("generate_snapshot_summary")
+        async def generate_snapshot_summary(state: FlowState) -> FlowState:
+            """Generate Patient Snapshot component."""
+            try:
+                logger.info("Starting Snapshot generation")
+
+                chunks = state.general_snapshot_chunks or []
+
+                # Detect user language for appropriate citation format
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                # Set language-appropriate citation format
+                if active_lang == "sv":
+                    citation_format = '"Enligt [Dokument], sida X"'
+                else:
+                    citation_format = '"According to [Document], page X"'
+
+                prompt = f"""
+                Create an ULTRA-BRIEF Patient Snapshot (scan in 5 seconds):
+
+                USER QUERY: {state.user_prompt}
+
+                Format as 3-4 SHORT lines ONLY:
+                1. Age, sex (e.g., "67M")
+                2. Living situation (e.g., "Lives alone, retired teacher")
+                3. Top 3 conditions (e.g., "T2DM, HTN, COPD")
+                4. ONE-LINE summary (e.g., "Multimorbid with good compliance")
+
+                MANDATORY: Cite page numbers for any document references: {citation_format}
+                Add blank line between each numbered item for readability.
+                CRITICAL: Maximum 4 short lines. No elaboration. No paragraphs.
+                """
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create ULTRA-BRIEF snapshots. Max 4 short lines total. No explanations. Just facts.\n\nMANDATORY: Always cite page numbers: {citation_format}. Add blank lines between items.\n\nInformation system only - NOT a medical device.")
+                ]
+
+                # Add conversation history for context (excluding current message)
+                recent_history = state.chat_history[-10:] if state.chat_history else []
+                if recent_history:
+                    conversation_lines = []
+                    for msg in recent_history:
+                        if not msg.content or not msg.content.strip():
+                            continue
+                        content = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
+                        role_name = "You" if msg.role == ChatRole.USER else "CLARA"
+                        conversation_lines.append(f"{role_name}: {content}")
+
+                    if conversation_lines:
+                        conversation_summary = "\n".join(conversation_lines)
+                        history_context = ChatMessage(
+                            role=ChatRole.USER,
+                            content=f"Recent conversation context:\n{conversation_summary}"
+                        )
+                        messages.append(history_context)
+
+                # Add the main prompt
+                messages.append(ChatMessage(role=ChatRole.USER, content=prompt))
+
+                # Add chunks if available
+                if chunks:
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.general_snapshot_result = response.content.strip()
+
+                logger.info(f"Generated snapshot summary: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_snapshot_result = f"Error generating snapshot: {str(e)}"
+
+            return state
+
+        @streaming_step("generate_problems_summary")
+        async def generate_problems_summary(state: FlowState) -> FlowState:
+            """Generate Active Problems component."""
+            try:
+                logger.info("Starting Active Problems generation")
+
+                chunks = state.general_problems_chunks or []
+
+                # Detect user language for appropriate citation format
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                # Set language-appropriate citation format
+                if active_lang == "sv":
+                    citation_format = '"Enligt [Dokument], sida X"'
+                else:
+                    citation_format = '"According to [Document], page X"'
+
+                prompt = f"""
+                List ONLY the top 4-5 active problems. MAXIMUM 5 bullet points.
+
+                USER QUERY: {state.user_prompt}
+
+                Format (ONE line per problem):
+                • Disease name (year if known) - {citation_format}
+
+                Example:
+                • T2DM (2012) - Enligt Journalanteckning, sida 3
+                • HTN (2005) - Enligt Läkemedel, sida 1
+                • COPD GOLD II (2018) - Enligt Diagnoslista, sida 2
+
+                Add blank line between each bullet point for readability.
+
+                If there are MORE problems in the data (beyond top 5), add at the end:
+                "_Fråga om fler diagnoser_" (Swedish) or "_Ask for more diagnoses_" (English)
+
+                MANDATORY: Cite page numbers: {citation_format}
+                CRITICAL: Max 5 problems. ONE line each. Blank lines between bullets. No extra descriptions.
+                """
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List top 4-5 active problems ONLY. One line per problem with blank lines between. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.general_problems_result = response.content.strip()
+
+                logger.info(f"Generated problems summary: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_problems_result = f"Error generating problems: {str(e)}"
+
+            return state
+
+        @streaming_step("generate_medications_summary")
+        async def generate_medications_summary(state: FlowState) -> FlowState:
+            """Generate Medications Overview component."""
+            try:
+                logger.info("Starting Medications generation")
+
+                chunks = state.general_medications_chunks or []
+
+                # Detect user language for appropriate citation format
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                # Set language-appropriate citation format
+                if active_lang == "sv":
+                    citation_format = '"Enligt [Dokument], sida X"'
+                else:
+                    citation_format = '"According to [Document], page X"'
+
+                prompt = f"""
+                List current medications with BRIEF purpose/indication.
+
+                USER QUERY: {state.user_prompt}
+
+                Format (ONE line per medication):
+                • Drug name dose (brief purpose) - {citation_format}
+                • ⚠️ High-risk drug dose (brief purpose) - {citation_format}  ← Mark anticoagulants, opioids, insulin with ⚠️
+
+                Example:
+                • Metformin 1000mg (diabetes) - Enligt Läkemedelslista, sida 2
+                • ⚠️ Warfarin 5mg (anticoagulation) - Enligt Läkemedelslista, sida 2
+                • Enalapril 10mg (blood pressure) - Enligt Läkemedelslista, sida 2
+
+                Add blank line between each bullet point for readability.
+
+                Include brief medication purpose in parentheses if indicated in the data. If purpose not clear from data, just state drug class (e.g., "beta-blocker", "SSRI", "ACE inhibitor").
+
+                If there are MORE medications (beyond 8-10), add at the end:
+                "_Fråga om fler läkemedel_" (Swedish) or "_Ask for more medications_" (English)
+
+                MANDATORY: Cite page numbers: {citation_format}
+                CRITICAL: ONE line per drug. Blank lines between bullets. Brief purpose in parentheses. List max 8-10 meds. Prioritize high-risk.
+                """
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List medications with brief purpose. One line per drug with blank lines between. Max 8-10 drugs. Mark high-risk with ⚠️. Add purpose in parentheses.\n\nMANDATORY: Always cite page numbers: {citation_format}"),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.general_medications_result = response.content.strip()
+
+                logger.info(f"Generated medications summary: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_medications_result = f"Error generating medications: {str(e)}"
+
+            return state
+
+        @streaming_step("generate_trends_summary")
+        async def generate_trends_summary(state: FlowState) -> FlowState:
+            """Generate Lab/Vital Trends component."""
+            try:
+                logger.info("Starting Trends generation")
+
+                chunks = state.general_trends_chunks or []
+
+                # Detect user language for appropriate citation format
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                # Set language-appropriate citation format
+                if active_lang == "sv":
+                    citation_format = '"Enligt [Dokument], sida X"'
+                else:
+                    citation_format = '"According to [Document], page X"'
+
+                prompt = f"""
+                Show ONLY key trends (max 5-6 values). Use arrows: ↑ ↓ →
+
+                USER QUERY: {state.user_prompt}
+
+                Format (ONE line per value):
+                • Lab/Vital: old → new (arrow) - {citation_format}
+
+                Example:
+                • HbA1c: 62 → 68 mmol/mol (↑) - Enligt Provresultat, sida 5
+                • eGFR: 64 → 52 (↓) - Enligt Provresultat, sida 5
+                • Weight: 98 → 96 kg (↓) - Enligt Vitalparametrar, sida 2
+
+                Add blank line between each bullet point for readability.
+
+                If there are MORE lab values/trends available, add at the end:
+                "_Fråga om fler trender_" (Swedish) or "_Ask for more trends_" (English)
+
+                MANDATORY: Cite page numbers: {citation_format}
+                CRITICAL: Max 5-6 values. ONE line each. Blank lines between bullets. Values + trend only, no interpretation.
+                """
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Show 5-6 key trends. One line each with blank lines between. Values + arrows only. Add 'ask for more' if additional trends exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.general_trends_result = response.content.strip()
+
+                logger.info(f"Generated trends summary: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_trends_result = f"Error generating trends: {str(e)}"
+
+            return state
+
+        @streaming_step("generate_history_summary")
+        async def generate_history_summary(state: FlowState) -> FlowState:
+            """Generate Past Medical/Surgical History component."""
+            try:
+                logger.info("Starting History generation")
+
+                chunks = state.general_history_chunks or []
+
+                # Detect user language for appropriate citation format
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                # Set language-appropriate citation format
+                if active_lang == "sv":
+                    citation_format = '"Enligt [Dokument], sida X"'
+                else:
+                    citation_format = '"According to [Document], page X"'
+
+                prompt = f"""
+                List ONLY major past events (max 4-5). BRIEF format.
+
+                USER QUERY: {state.user_prompt}
+
+                Format (ONE line per event):
+                • Event name year - {citation_format}
+
+                Example:
+                • Cholecystectomy 2001 - Enligt Operationsprotokoll, sida 1
+                • Hip replacement 2015 - Enligt Operationsprotokoll, sida 3
+                • Stroke 2020 - Enligt Journalanteckning, sida 12
+
+                Add blank line between each bullet point for readability.
+
+                If there are MORE past events, add at the end:
+                "_Fråga om fler händelser_" (Swedish) or "_Ask for more history_" (English)
+
+                MANDATORY: Cite page numbers: {citation_format}
+                CRITICAL: Max 4-5 events. ONE line each. Blank lines between bullets. Event + year only, no details.
+                """
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List max 4-5 major past events. One line each with blank lines between. Event + year only. Add 'ask for more' if additional events exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.general_history_result = response.content.strip()
+
+                logger.info(f"Generated history summary: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_history_result = f"Error generating history: {str(e)}"
+
+            return state
+
+        @streaming_step("generate_risks_summary")
+        async def generate_risks_summary(state: FlowState) -> FlowState:
+            """Generate Red Flags / Alerts component."""
+            try:
+                logger.info("Starting Risks/Alerts generation")
+
+                chunks = state.general_risks_chunks or []
+
+                # Detect user language for appropriate citation format
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                # Set language-appropriate citation format
+                if active_lang == "sv":
+                    citation_format = '"Enligt [Dokument], sida X"'
+                else:
+                    citation_format = '"According to [Document], page X"'
+
+                prompt = f"""
+                List critical alerts/risks ONLY. Maximum 5-6 items.
+
+                USER QUERY: {state.user_prompt}
+
+                Format (SHORT phrases):
+                • ⚠️ Risk/Alert - {citation_format}
+
+                Example:
+                • ⚠️ Allergic to penicillin - Enligt Journalanteckning, sida 1
+                • ⚠️ On warfarin - bleeding risk - Enligt Läkemedelslista, sida 2
+                • ⚠️ Fall risk (previous falls) - Enligt Anteckning, sida 8
+                • ⚠️ DNR documented - Enligt Vårdplan, sida 1
+
+                Add blank line between each bullet point for readability.
+
+                If there are MORE risks/alerts, add at the end:
+                "_Fråga om fler risker_" (Swedish) or "_Ask for more risks_" (English)
+
+                MANDATORY: Cite page numbers: {citation_format}
+                CRITICAL: Max 5-6 alerts. SHORT phrases. Blank lines between bullets. Use ⚠️ for visibility.
+                """
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List max 5-6 critical alerts. Short phrases with blank lines between. Use ⚠️ marker. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.general_risks_result = response.content.strip()
+
+                logger.info(f"Generated risks summary: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_risks_result = f"Error generating risks: {str(e)}"
+
+            return state
+
+        @streaming_step("generate_encounters_summary")
+        async def generate_encounters_summary(state: FlowState) -> FlowState:
+            """Generate Recent Encounters & Plans component."""
+            try:
+                logger.info("Starting Encounters generation")
+
+                chunks = state.general_encounters_chunks or []
+
+                # Detect user language for appropriate citation format
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                # Set language-appropriate citation format
+                if active_lang == "sv":
+                    citation_format = '"Enligt [Dokument], sida X"'
+                else:
+                    citation_format = '"According to [Document], page X"'
+
+                prompt = f"""
+                Summarize recent encounters in 2-4 SHORT sentences. Like a quick handoff note.
+
+                USER QUERY: {state.user_prompt}
+
+                Format (2-4 sentences total):
+                Encounter Description (date): Action taken ({citation_format}). Specialist consult (date): Outcome ({citation_format}).
+
+                Example:
+                "Last GP visit (Apr 2025): Adjusted enalapril to 20mg, ordered HbA1c (Enligt Journalanteckning, sida 15). Cardiology consult (Feb 2025): Echo stable, continue meds (Enligt Specialistbrev, sida 2)."
+
+                Add blank line between sentences for readability.
+
+                If there are MORE encounters in the history, add at the end:
+                "_Fråga om fler besök_" (Swedish) or "_Ask for more encounters_" (English)
+
+                MANDATORY: Cite page numbers for each encounter: {citation_format}
+                CRITICAL: Max 2-4 sentences. Blank lines between sentences. Very condensed. Date + action + outcome only.
+                """
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Write 2-4 sentence encounter summary with blank lines between. Like a quick handoff. Add 'ask for more' if additional encounters exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.general_encounters_result = response.content.strip()
+
+                logger.info(f"Generated encounters summary: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_encounters_result = f"Error generating encounters: {str(e)}"
+
+            return state
+
+        @streaming_step("generate_deepdive_summary")
+        async def generate_deepdive_summary(state: FlowState) -> FlowState:
+            """Generate Deep Dive component (expandable details)."""
+            try:
+                logger.info("Starting Deep Dive generation")
+
+                chunks = state.general_deepdive_chunks or []
+
+                # Detect user language for appropriate citation format
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                # Set language-appropriate citation format
+                if active_lang == "sv":
+                    citation_format = '"Enligt [Dokument], sida X"'
+                else:
+                    citation_format = '"According to [Document], page X"'
+
+                prompt = f"""
+                Create expandable sections with brief summaries. User can ask for more if needed.
+
+                USER QUERY: {state.user_prompt}
+
+                Format with headers (include if data exists):
+
+                **Hospital Admissions** (if any)
+                • Date: Reason - Outcome - {citation_format}
+
+                **Specialist Letters** (if any)
+                • Date Specialty: Key conclusion - {citation_format}
+
+                **Imaging** (if any)
+                • Date Type: Finding - {citation_format}
+
+                Add blank line between each bullet point for readability.
+                Make the Language consistent (either Swedish or English) for everything in the generated outputs including headers (Hospital Admissions, Specialist Letters, Imaging).
+
+                For EACH section that has more items available (beyond 2-3), add:
+                "_Fråga om fler [X]_" (Swedish) or "_Ask for more [X]_" (English)
+                Where [X] is "admissions", "letters", or "imaging results"
+
+                MANDATORY: Cite page numbers: {citation_format}
+                CRITICAL: Each section 2-3 bullet points max. ONE line per item with blank lines between. User can ask "tell me more about X" if they need details.
+                """
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create brief expandable sections. 2-3 items per section with blank lines between items. Add 'ask for more' hint for each section with additional data available.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.general_deepdive_result = response.content.strip()
+
+                logger.info(f"Generated deep dive summary: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.general_deepdive_result = f"Error generating deep dive: {str(e)}"
+
+            return state
+
         @streaming_step("merge_sbar_results")
         async def merge_sbar_results(state: FlowState) -> FlowState:
             """Merge parallel SBAR results and prepare final response."""
@@ -1755,12 +2601,167 @@ Keep queries concise and focused on the temporal aspect.
                 # Initialize SBAR component fields if needed
                 logger.info("SBAR fields initialized for parallel processing")
 
+                # Disable refinement for SBAR flows (they use their own retrieval)
+                state.needs_refinement = False
+
                 # This node doesn't do much - it's just a dispatcher
                 # The actual parallel work will happen in the parallel tasks
                 logger.info("Dispatcher ready for parallel execution")
 
             except Exception as e:
                 log_error(logger, "sbar_parallel_dispatcher", e)
+
+            return state
+
+        @streaming_step("merge_general_summary_results")
+        async def merge_general_summary_results(state: FlowState) -> FlowState:
+            """Merge parallel general summary results and prepare final response."""
+            try:
+                logger.info("All parallel general summary components completed, merging results")
+
+                # Collect results from separate fields
+                general_results = {
+                    "snapshot": state.general_snapshot_result,
+                    "problems": state.general_problems_result,
+                    "medications": state.general_medications_result,
+                    "trends": state.general_trends_result,
+                    "history": state.general_history_result,
+                    "risks": state.general_risks_result,
+                    "encounters": state.general_encounters_result,
+                    "deepdive": state.general_deepdive_result
+                }
+
+                completed_components = [comp for comp, result in general_results.items() if result]
+                logger.info(f"Available components: {completed_components}")
+
+                if not completed_components:
+                    logger.info("No general summary results available")
+                    state.llm_response = ChatMessage(
+                        role=ChatRole.ASSISTANT,
+                        content="Error: No general summary results were generated"
+                    )
+                    return state
+
+                # Create structured general summary response for frontend cards
+                import json
+
+                # Add conversation context metadata for future reference
+                conversation_context = {
+                    "session_id": state.session_id,
+                    "user_prompt": state.user_prompt,
+                    "timestamp": str(int(time.time() * 1000)),
+                    "has_history": bool(state.chat_history)
+                }
+
+                structured_summary = {
+                    "type": "general_summary_cards",
+                    "context": conversation_context,
+                    "components": {
+                        "snapshot": {
+                            "title": "Patient Snapshot",
+                            "content": (general_results.get("snapshot") or "Content generation failed").strip() or "Content generation failed",
+                            "icon": "user",
+                            "color": "blue"
+                        },
+                        "problems": {
+                            "title": "Active Problems",
+                            "content": (general_results.get("problems") or "Content generation failed").strip() or "Content generation failed",
+                            "icon": "alert-circle",
+                            "color": "red"
+                        },
+                        "medications": {
+                            "title": "Medications",
+                            "content": (general_results.get("medications") or "Content generation failed").strip() or "Content generation failed",
+                            "icon": "pill",
+                            "color": "purple"
+                        },
+                        "trends": {
+                            "title": "Lab & Vital Trends",
+                            "content": (general_results.get("trends") or "Content generation failed").strip() or "Content generation failed",
+                            "icon": "trending-up",
+                            "color": "green"
+                        },
+                        "history": {
+                            "title": "Past Medical History",
+                            "content": (general_results.get("history") or "Content generation failed").strip() or "Content generation failed",
+                            "icon": "calendar",
+                            "color": "orange"
+                        },
+                        "risks": {
+                            "title": "Risks & Alerts",
+                            "content": (general_results.get("risks") or "Content generation failed").strip() or "Content generation failed",
+                            "icon": "alert-triangle",
+                            "color": "yellow"
+                        },
+                        "encounters": {
+                            "title": "Recent Care",
+                            "content": (general_results.get("encounters") or "Content generation failed").strip() or "Content generation failed",
+                            "icon": "file-text",
+                            "color": "indigo"
+                        },
+                        "deepdive": {
+                            "title": "Deep Dive",
+                            "content": (general_results.get("deepdive") or "Content generation failed").strip() or "Content generation failed",
+                            "icon": "archive",
+                            "color": "gray"
+                        }
+                    }
+                }
+
+                # Create JSON response for frontend
+                json_response = json.dumps(structured_summary, indent=2)
+
+                # Create response message with structured data
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content=json_response
+                )
+
+                logger.info(f"Created structured general summary response: {len(json_response)} chars")
+
+            except Exception as e:
+                log_error(logger, "merge_general_summary_results", e)
+                # Fallback response
+                import json
+                fallback_summary = {
+                    "type": "general_summary_cards",
+                    "error": str(e),
+                    "components": {
+                        "snapshot": {"title": "Patient Snapshot", "content": "Error generating content", "icon": "user", "color": "blue"},
+                        "problems": {"title": "Active Problems", "content": "Error generating content", "icon": "alert-circle", "color": "red"},
+                        "medications": {"title": "Medications", "content": "Error generating content", "icon": "pill", "color": "purple"},
+                        "trends": {"title": "Lab & Vital Trends", "content": "Error generating content", "icon": "trending-up", "color": "green"},
+                        "history": {"title": "Past Medical History", "content": "Error generating content", "icon": "calendar", "color": "orange"},
+                        "risks": {"title": "Risks & Alerts", "content": "Error generating content", "icon": "alert-triangle", "color": "yellow"},
+                        "encounters": {"title": "Recent Care", "content": "Error generating content", "icon": "file-text", "color": "indigo"},
+                        "deepdive": {"title": "Deep Dive", "content": "Error generating content", "icon": "archive", "color": "gray"}
+                    }
+                }
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content=json.dumps(fallback_summary, indent=2)
+                )
+
+            return state
+
+        @streaming_step("general_summary_parallel_dispatcher")
+        async def general_summary_parallel_dispatcher(state: FlowState) -> FlowState:
+            """Dispatcher node that triggers parallel general summary processing."""
+            try:
+                logger.info("Initiating parallel general summary processing")
+
+                # Initialize general summary cache if needed
+                if not state.general_retrieval_cache:
+                    state.general_retrieval_cache = {}
+
+                # Disable refinement for summary flows (they use their own retrieval)
+                state.needs_refinement = False
+
+                logger.info("General summary fields initialized for parallel processing")
+                logger.info("Dispatcher ready for parallel execution")
+
+            except Exception as e:
+                log_error(logger, "general_summary_parallel_dispatcher", e)
 
             return state
 
@@ -2198,11 +3199,12 @@ CRITICAL GUIDELINES:
 - Be CONCISE and FOCUSED - include only essential clinical information
 - Do NOT include source references, citations, or document names (write directly from the information)
 - Use medical terminology appropriate for {lang_name}
-- If information is not available for a section, write "Information not available" or "Uppgifter saknas"
+- If information is not available for a section, write "Information not available" in {lang_name}
 - Maintain professional medical documentation style
 - Include relevant timestamps when available
 - Avoid unnecessary elaboration or repetition between sections
 - Write in clear, direct clinical language without filler words
+- Do NOT interpret or assume - only document what is explicitly provided
 
 Generate content for each section separately with only the necessary clinical facts."""
 
@@ -2837,7 +3839,7 @@ Return ONLY the reformulated query, nothing else."""
                 # Use the existing classifier
                 classifier = self._zero_shot_classifier
                 label = classifier.classify_query(query_to_classify, [
-                    "lookup", "temporal-trend", "comparative", "reasoning", "summary", "guideline", "timeline", "note_generation", "discharge_summary"
+                    "lookup", "temporal-trend", "comparative", "reasoning", "summary", "sbar_handoff", "guideline", "timeline", "note_generation", "discharge_summary"
                 ])
 
                 logger.info(f"Query classified as: {label}")
@@ -2878,11 +3880,14 @@ Return ONLY the reformulated query, nothing else."""
                     state.is_timeline_flow = False
                     return state
 
-                # Determine if this should use SBAR flow (big picture queries)
-                sbar_query_types = ["summary"]
-                state.is_sbar_flow = label in sbar_query_types
+                # Determine if this should use SBAR flow (handoff/transition of care)
+                # SBAR is triggered by the classifier detecting handoff intent
+                state.is_sbar_flow = (label == "sbar_handoff")
+                logger.info(f"SBAR flow (classifier): {state.is_sbar_flow}")
 
-                logger.info(f"SBAR flow: {state.is_sbar_flow}")
+                # General summary flow is triggered by "summary" classification
+                state.is_general_summary_flow = (label == "summary")
+                logger.info(f"General summary flow (classifier): {state.is_general_summary_flow}")
 
                 # Determine if this should use Timeline flow (temporal sequence queries)
                 timeline_query_types = ["timeline", "temporal-trend"]
@@ -2890,14 +3895,18 @@ Return ONLY the reformulated query, nothing else."""
 
                 logger.info(f"Timeline flow: {state.is_timeline_flow}")
 
-                # Override DIRECT routing if SBAR or Timeline flow is detected
-                if state.is_sbar_flow or state.is_timeline_flow:
+                # Override DIRECT routing if any specialized flow is detected
+                if state.is_sbar_flow or state.is_timeline_flow or state.is_general_summary_flow:
                     state.requires_full_processing = True
-                    logger.info(f"⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, Timeline: {state.is_timeline_flow})")
+                    logger.info(f"⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, General Summary: {state.is_general_summary_flow}, Timeline: {state.is_timeline_flow})")
 
                 # Initialize SBAR cache if using SBAR flow
                 if state.is_sbar_flow:
                     state.sbar_retrieval_cache = {}
+
+                # Initialize general summary cache if using general summary flow
+                if state.is_general_summary_flow:
+                    state.general_retrieval_cache = {}
 
                 # Initialize Timeline cache if using Timeline flow
                 if state.is_timeline_flow:
@@ -2909,6 +3918,7 @@ Return ONLY the reformulated query, nothing else."""
                 state.is_sbar_flow = False
                 state.is_timeline_flow = False
                 state.is_note_generation_flow = False
+                state.is_general_summary_flow = False
 
             return state
 
@@ -2919,15 +3929,17 @@ Return ONLY the reformulated query, nothing else."""
             Returns True if:
             - Query complexity evaluation marked it as needing full processing, OR
             - SBAR flow is detected (needs specialized retrieval), OR
+            - General summary flow is detected (needs specialized retrieval), OR
             - Timeline flow is detected (needs specialized retrieval)
             """
             base_requirement = getattr(state, 'requires_full_processing', True)
             is_sbar = getattr(state, 'is_sbar_flow', False)
+            is_general_summary = getattr(state, 'is_general_summary_flow', False)
             is_timeline = getattr(state, 'is_timeline_flow', False)
 
-            # Override DIRECT routing if SBAR or Timeline flow is detected
-            if is_sbar or is_timeline:
-                logger.info(f"Overriding DIRECT - SBAR: {is_sbar}, Timeline: {is_timeline}")
+            # Override DIRECT routing if any specialized flow is detected
+            if is_sbar or is_general_summary or is_timeline:
+                logger.info(f"Overriding DIRECT - SBAR: {is_sbar}, General Summary: {is_general_summary}, Timeline: {is_timeline}")
                 return True
 
             return base_requirement
@@ -2935,6 +3947,10 @@ Return ONLY the reformulated query, nothing else."""
         def is_sbar_flow(state: FlowState) -> bool:
             """Conditional function to determine if SBAR flow should be used."""
             return getattr(state, 'is_sbar_flow', False)
+
+        def is_general_summary_flow(state: FlowState) -> bool:
+            """Conditional function to determine if general summary flow should be used."""
+            return getattr(state, 'is_general_summary_flow', False)
 
         def check_patient_exists(state: FlowState) -> FlowState:
             """Check if patient_id is provided in the state."""
@@ -2972,6 +3988,26 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_node("generate_sbar_recommendation", generate_sbar_recommendation)
         _builder.add_node("merge_sbar_results", merge_sbar_results)
         _builder.add_node("sbar_parallel_dispatcher", sbar_parallel_dispatcher)
+        # General summary parallel retrieval nodes
+        _builder.add_node("retrieve_snapshot_chunks", retrieve_snapshot_chunks)
+        _builder.add_node("retrieve_problems_chunks", retrieve_problems_chunks)
+        _builder.add_node("retrieve_medications_chunks", retrieve_medications_chunks)
+        _builder.add_node("retrieve_trends_chunks", retrieve_trends_chunks)
+        _builder.add_node("retrieve_history_chunks", retrieve_history_chunks)
+        _builder.add_node("retrieve_risks_chunks", retrieve_risks_chunks)
+        _builder.add_node("retrieve_encounters_chunks", retrieve_encounters_chunks)
+        _builder.add_node("retrieve_deepdive_chunks", retrieve_deepdive_chunks)
+        # General summary parallel generation nodes
+        _builder.add_node("generate_snapshot_summary", generate_snapshot_summary)
+        _builder.add_node("generate_problems_summary", generate_problems_summary)
+        _builder.add_node("generate_medications_summary", generate_medications_summary)
+        _builder.add_node("generate_trends_summary", generate_trends_summary)
+        _builder.add_node("generate_history_summary", generate_history_summary)
+        _builder.add_node("generate_risks_summary", generate_risks_summary)
+        _builder.add_node("generate_encounters_summary", generate_encounters_summary)
+        _builder.add_node("generate_deepdive_summary", generate_deepdive_summary)
+        _builder.add_node("merge_general_summary_results", merge_general_summary_results)
+        _builder.add_node("general_summary_parallel_dispatcher", general_summary_parallel_dispatcher)
         # Timeline flow nodes
         _builder.add_node("extract_timeline_events", extract_timeline_events)
         _builder.add_node("retrieve_timeline_chunks", retrieve_timeline_chunks)
@@ -3061,6 +4097,32 @@ Return ONLY the reformulated query, nothing else."""
         # SBAR merge to store response (skip web search for now in SBAR flow)
         _builder.add_edge("merge_sbar_results", "store_assistant_response")
 
+        # Sequential general summary execution to avoid concurrent state updates
+        _builder.add_edge("general_summary_parallel_dispatcher", "retrieve_snapshot_chunks")
+
+        # Sequential retrieval and generation chain for general summary
+        _builder.add_edge("retrieve_snapshot_chunks", "generate_snapshot_summary")
+        _builder.add_edge("generate_snapshot_summary", "retrieve_problems_chunks")
+        _builder.add_edge("retrieve_problems_chunks", "generate_problems_summary")
+        _builder.add_edge("generate_problems_summary", "retrieve_medications_chunks")
+        _builder.add_edge("retrieve_medications_chunks", "generate_medications_summary")
+        _builder.add_edge("generate_medications_summary", "retrieve_trends_chunks")
+        _builder.add_edge("retrieve_trends_chunks", "generate_trends_summary")
+        _builder.add_edge("generate_trends_summary", "retrieve_history_chunks")
+        _builder.add_edge("retrieve_history_chunks", "generate_history_summary")
+        _builder.add_edge("generate_history_summary", "retrieve_risks_chunks")
+        _builder.add_edge("retrieve_risks_chunks", "generate_risks_summary")
+        _builder.add_edge("generate_risks_summary", "retrieve_encounters_chunks")
+        _builder.add_edge("retrieve_encounters_chunks", "generate_encounters_summary")
+        _builder.add_edge("generate_encounters_summary", "retrieve_deepdive_chunks")
+        _builder.add_edge("retrieve_deepdive_chunks", "generate_deepdive_summary")
+
+        # Final generation node goes to merge
+        _builder.add_edge("generate_deepdive_summary", "merge_general_summary_results")
+
+        # General summary merge to store response
+        _builder.add_edge("merge_general_summary_results", "store_assistant_response")
+
         # Timeline flow edges - sequential processing
         _builder.add_edge("extract_timeline_events", "retrieve_timeline_chunks")
         _builder.add_edge("retrieve_timeline_chunks", "generate_timeline_bubbles")
@@ -3075,15 +4137,31 @@ Return ONLY the reformulated query, nothing else."""
 
         # Route after chunk retrieval: check flow type
         def route_after_chunks(state):
+            logger.info(f"🔀 route_after_chunks called - is_general_summary_flow: {getattr(state, 'is_general_summary_flow', False)}, is_sbar_flow: {getattr(state, 'is_sbar_flow', False)}, is_timeline_flow: {getattr(state, 'is_timeline_flow', False)}, needs_refinement: {getattr(state, 'needs_refinement', False)}")
+
+            # Check special flows FIRST (they have priority and don't need refinement)
             if hasattr(state, 'is_note_generation_flow') and state.is_note_generation_flow:
+                logger.info("📝 Routing to note generation flow")
                 return "load_note_template"
             elif hasattr(state, 'is_timeline_flow') and state.is_timeline_flow:
+                logger.info("📅 Routing to timeline flow")
                 return "extract_timeline_events"
             elif hasattr(state, 'is_sbar_flow') and state.is_sbar_flow:
+                logger.info("📋 Routing to SBAR flow")
                 return "sbar_parallel_dispatcher"
-            elif hasattr(state, 'needs_refinement') and state.needs_refinement:
+            elif hasattr(state, 'is_general_summary_flow') and state.is_general_summary_flow:
+                logger.info("📊 Routing to general summary flow")
+                return "general_summary_parallel_dispatcher"
+            # Only check refinement if NOT in a special flow
+            elif hasattr(state, 'needs_refinement') and state.needs_refinement and state.retrieval_retry_attempts < RETRY_MAX:
+                # Increment retry attempts to prevent infinite loop
+                state.retrieval_retry_attempts += 1
+                logger.info(f"🔄 Retrieval refinement needed, attempt {state.retrieval_retry_attempts}/{RETRY_MAX}")
                 return "intelligent_retrieve_chunks"
             else:
+                # Clear refinement flag for next query
+                state.needs_refinement = False
+                logger.info("➡️ Routing to web search evaluation")
                 return "evaluate_web_search_need"
 
         _builder.add_conditional_edges(
@@ -3093,6 +4171,7 @@ Return ONLY the reformulated query, nothing else."""
                 "load_note_template": "load_note_template",
                 "extract_timeline_events": "extract_timeline_events",
                 "sbar_parallel_dispatcher": "sbar_parallel_dispatcher",
+                "general_summary_parallel_dispatcher": "general_summary_parallel_dispatcher",
                 "intelligent_retrieve_chunks": "intelligent_retrieve_chunks",
                 "evaluate_web_search_need": "evaluate_web_search_need"
             }
@@ -3113,6 +4192,9 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_edge("provide_information", "store_assistant_response")
         _builder.add_edge("store_assistant_response", END)
 
+        # Compile the graph
+        # Note: recursion_limit is passed at runtime in ainvoke/astream config
+        # General summary flow: ~35 steps, SBAR: ~20, Timeline: ~15, Note generation: ~25
         return _builder.compile()
 
     def _format_ehr_links(self, text: str) -> str:
@@ -3729,6 +4811,9 @@ Content:
             )
 
         prompt = user_prompt or self._default_prompt
+        # Increase recursion limit for long flows (general summary has ~35 steps)
+        config = {"recursion_limit": 50}
+
         if patient is not None:
             data = await self._compiled_graph.ainvoke({
                 "patient_id": patient.patient_id,
@@ -3736,15 +4821,15 @@ Content:
                 "chat_mode": chat_mode,
                 "user_id": user_id,
                 "session_id": session_id
-            })
+            }, config=config)
         else:
             data = await self._compiled_graph.ainvoke({
                 "user_prompt": prompt,
                 "chat_mode": chat_mode,
                 "user_id": user_id,
                 "session_id": session_id
-            })
-        
+            }, config=config)
+
         if PERSISTENCE_ENABLED and session_id and user_id:
             await self._vec.update_session_activity(session_id=session_id, user_id=user_id)
         
@@ -3820,7 +4905,9 @@ Content:
                     previous_state = None
                     reasoning_emitted = set()  # Track which reasoning steps we've emitted
                     
-                    async for update in self._compiled_graph.astream(initial_input):
+                    # Increase recursion limit for long flows (general summary has ~35 steps)
+                    config = {"recursion_limit": 50}
+                    async for update in self._compiled_graph.astream(initial_input, config=config):
                         # Extract the current state from the update
                         for node_name, node_output in update.items():
                             if isinstance(node_output, dict):

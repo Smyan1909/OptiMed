@@ -1,0 +1,436 @@
+import React from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import {
+  User,
+  AlertCircle,
+  Pill,
+  TrendingUp,
+  Calendar,
+  AlertTriangle,
+  FileText,
+  Archive
+} from 'lucide-react';
+import { useTranslations } from 'next-intl';
+import { useLookup } from '@/hooks/useLookup';
+import { LookupPanel } from '@/components/LookupPanel';
+
+// Function to format numbers to 2 decimal places in text
+const formatNumbersInText = (text: string): string => {
+  return text.replace(/\b\d+\.\d{3,}\b/g, (match) => {
+    const num = parseFloat(match);
+    return num.toFixed(2);
+  });
+};
+
+interface GeneralSummaryResults {
+  snapshot?: string;
+  problems?: string;
+  medications?: string;
+  trends?: string;
+  history?: string;
+  risks?: string;
+  encounters?: string;
+  deepdive?: string;
+}
+
+interface GeneralSummaryCardsProps {
+  summaryResults: GeneralSummaryResults;
+  isLoading?: boolean;
+  reasoning?: string;
+  reasoningSteps?: string[];
+  patientId?: string;
+  sessionId?: string | null;
+}
+
+// Custom markdown components for summary cards
+const SummaryMarkdownComponents = {
+  // Style headings
+  h1: ({ children }: any) => <h1 className="text-sm font-bold text-gray-900 mt-2 mb-1">{children}</h1>,
+  h2: ({ children }: any) => <h2 className="text-sm font-semibold text-gray-900 mt-2 mb-1">{children}</h2>,
+  h3: ({ children }: any) => <h3 className="text-xs font-medium text-gray-900 mt-1 mb-1">{children}</h3>,
+
+  // Style paragraphs
+  p: ({ children }: any) => <p className="text-sm text-gray-700 leading-snug mb-1.5">{children}</p>,
+
+  // Style lists
+  ul: ({ children }: any) => <ul className="list-disc list-outside ml-3 space-y-2 mb-3">{children}</ul>,
+  ol: ({ children }: any) => <ol className="list-decimal list-outside ml-3 space-y-2 mb-3">{children}</ol>,
+  li: ({ children }: any) => <li className="text-sm text-gray-700 leading-relaxed py-1">{children}</li>,
+
+  // Style code blocks
+  code: ({ inline, children }: any) => {
+    if (inline) {
+      return <code className="bg-gray-100 text-gray-800 px-1 py-0.5 rounded text-xs font-mono">{children}</code>;
+    }
+    return (
+      <pre className="bg-gray-100 text-gray-800 p-2 rounded text-xs font-mono overflow-x-auto mb-1">
+        <code>{children}</code>
+      </pre>
+    );
+  },
+
+  // Style blockquotes
+  blockquote: ({ children }: any) => (
+    <blockquote className="border-l-2 border-gray-300 pl-2 italic text-gray-700 mb-1">
+      {children}
+    </blockquote>
+  ),
+
+  // Style strong/bold text
+  strong: ({ children }: any) => <strong className="font-semibold text-gray-900">{children}</strong>,
+
+  // Style emphasis/italic text
+  em: ({ children }: any) => <em className="italic text-gray-700">{children}</em>,
+
+  // Style links
+  a: ({ href, children }: any) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-blue-600 hover:text-blue-800 underline"
+    >
+      {children}
+    </a>
+  ),
+
+  // Style tables
+  table: ({ children }: any) => (
+    <div className="overflow-x-auto mb-1">
+      <table className="min-w-full border-collapse border border-gray-200">{children}</table>
+    </div>
+  ),
+  th: ({ children }: any) => (
+    <th className="border border-gray-200 bg-gray-50 px-2 py-1 text-xs font-semibold text-gray-900 text-left">
+      {children}
+    </th>
+  ),
+  td: ({ children }: any) => (
+    <td className="border border-gray-200 px-2 py-1 text-xs text-gray-600">{children}</td>
+  ),
+};
+
+// Component for summary card content with lookup functionality
+const SummaryCardContent: React.FC<{
+  content: string;
+  lookup: any;
+  isLoading: boolean;
+  component: string;
+  patientId?: string;
+  sessionId?: string | null;
+}> = ({ content, lookup, isLoading, component, patientId, sessionId }) => {
+  return (
+    <div
+      ref={lookup.contentRef}
+      className="text-sm leading-relaxed flex-grow overflow-hidden p-2 select-text"
+      onTouchEnd={lookup.handleTouchEnd}
+      onMouseUp={lookup.handleMouseUp}
+      onKeyUp={lookup.handleKeyUp}
+    >
+      <ReactMarkdown
+        components={SummaryMarkdownComponents}
+        remarkPlugins={[remarkGfm]}
+      >
+        {formatNumbersInText(content)}
+      </ReactMarkdown>
+      <lookup.LookupButton />
+      {lookup.showLookup && lookup.lookupTerm && (
+        <LookupPanel
+          term={lookup.lookupTerm}
+          onClose={lookup.closeLookup}
+          patientId={patientId}
+          sessionId={sessionId}
+        />
+      )}
+    </div>
+  );
+};
+
+const getSummaryConfig = (component: keyof GeneralSummaryResults) => {
+  const configs = {
+    snapshot: {
+      title: 'Patient Snapshot',
+      icon: User,
+      color: 'bg-blue-50 border-blue-200',
+      iconColor: 'text-blue-600',
+      badgeColor: 'bg-blue-100 text-blue-800',
+      description: 'At-a-glance patient overview'
+    },
+    problems: {
+      title: 'Active Problems',
+      icon: AlertCircle,
+      color: 'bg-red-50 border-red-200',
+      iconColor: 'text-red-600',
+      badgeColor: 'bg-red-100 text-red-800',
+      description: 'Current diagnoses and chronic conditions'
+    },
+    medications: {
+      title: 'Medications',
+      icon: Pill,
+      color: 'bg-purple-50 border-purple-200',
+      iconColor: 'text-purple-600',
+      badgeColor: 'bg-purple-100 text-purple-800',
+      description: 'Current medications and high-risk drugs'
+    },
+    trends: {
+      title: 'Lab & Vital Trends',
+      icon: TrendingUp,
+      color: 'bg-green-50 border-green-200',
+      iconColor: 'text-green-600',
+      badgeColor: 'bg-green-100 text-green-800',
+      description: 'Recent lab values and vital signs'
+    },
+    history: {
+      title: 'Past Medical History',
+      icon: Calendar,
+      color: 'bg-orange-50 border-orange-200',
+      iconColor: 'text-orange-600',
+      badgeColor: 'bg-orange-100 text-orange-800',
+      description: 'Major surgeries and hospitalizations'
+    },
+    risks: {
+      title: 'Risks & Alerts',
+      icon: AlertTriangle,
+      color: 'bg-yellow-50 border-yellow-200',
+      iconColor: 'text-yellow-600',
+      badgeColor: 'bg-yellow-100 text-yellow-800',
+      description: 'Allergies, fall risk, and clinical alerts'
+    },
+    encounters: {
+      title: 'Recent Care',
+      icon: FileText,
+      color: 'bg-indigo-50 border-indigo-200',
+      iconColor: 'text-indigo-600',
+      badgeColor: 'bg-indigo-100 text-indigo-800',
+      description: 'Recent encounters and care plans'
+    },
+    deepdive: {
+      title: 'Deep Dive',
+      icon: Archive,
+      color: 'bg-gray-50 border-gray-200',
+      iconColor: 'text-gray-600',
+      badgeColor: 'bg-gray-100 text-gray-800',
+      description: 'Detailed admissions, imaging, and specialist letters'
+    }
+  };
+  return configs[component];
+};
+
+export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
+  summaryResults,
+  isLoading = false,
+  reasoning,
+  reasoningSteps,
+  patientId,
+  sessionId
+}) => {
+  // Create separate lookup hooks for each card to avoid conflicts
+  const snapshotLookup = useLookup({ patientId, sessionId });
+  const problemsLookup = useLookup({ patientId, sessionId });
+  const medicationsLookup = useLookup({ patientId, sessionId });
+  const trendsLookup = useLookup({ patientId, sessionId });
+  const historyLookup = useLookup({ patientId, sessionId });
+  const risksLookup = useLookup({ patientId, sessionId });
+  const encountersLookup = useLookup({ patientId, sessionId });
+  const deepdiveLookup = useLookup({ patientId, sessionId });
+
+  const lookupMap = {
+    snapshot: snapshotLookup,
+    problems: problemsLookup,
+    medications: medicationsLookup,
+    trends: trendsLookup,
+    history: historyLookup,
+    risks: risksLookup,
+    encounters: encountersLookup,
+    deepdive: deepdiveLookup,
+  };
+
+  if (!summaryResults || Object.keys(summaryResults).length === 0) {
+    return null;
+  }
+
+  // Grid cards (Cards 1-6)
+  const gridComponents: (keyof GeneralSummaryResults)[] = [
+    'snapshot', 'problems', 'medications', 'trends', 'history', 'risks'
+  ];
+
+  return (
+    <div className="mt-6 space-y-4">
+      <div className="flex items-center gap-3 mb-4">
+        <User className="h-6 w-6 text-blue-600" />
+        <h3 className="text-xl font-semibold text-gray-900">Patient Summary</h3>
+        <Badge variant="secondary" className="text-sm px-3 py-1">
+          Comprehensive View
+        </Badge>
+      </div>
+
+      {/* Cards 1-6: Standard 2x3 grid */}
+      <div className="grid gap-6 grid-cols-1 xl:grid-cols-2">
+        {gridComponents.map((component) => {
+          const config = getSummaryConfig(component);
+          const Icon = config.icon;
+          const content = summaryResults[component];
+          const hasContent = content && content.trim() !== '';
+
+          return (
+            <Card
+              key={component}
+              className={`border-2 hover:shadow-lg transition-all duration-200 ${config.color} min-h-[350px] w-full max-w-none flex flex-col`}
+            >
+              <CardHeader className="pb-3 flex-shrink-0">
+                <CardTitle className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-3">
+                    <Icon className={`h-6 w-6 ${config.iconColor}`} />
+                    <span className="font-bold text-gray-900 text-lg">{config.title}</span>
+                  </div>
+                  <Badge
+                    className={`text-xs font-semibold ${config.badgeColor}`}
+                  >
+                    {isLoading && !hasContent ? 'Loading...' : hasContent ? 'Complete' : 'Pending'}
+                  </Badge>
+                </CardTitle>
+                <p className="text-xs text-gray-500 leading-tight">{config.description}</p>
+              </CardHeader>
+
+              <CardContent className="pt-0 flex-grow flex flex-col">
+                {isLoading && !hasContent ? (
+                  <div className="flex-grow flex items-center justify-center">
+                    <div className="animate-pulse text-sm text-gray-500">
+                      Generating {component}...
+                    </div>
+                  </div>
+                ) : hasContent ? (
+                  <SummaryCardContent
+                    content={content}
+                    lookup={lookupMap[component]}
+                    isLoading={isLoading}
+                    component={component}
+                    patientId={patientId}
+                    sessionId={sessionId}
+                  />
+                ) : (
+                  <div className="flex-grow flex items-center justify-center">
+                    <div className="text-sm text-gray-400 italic">
+                      {component.charAt(0).toUpperCase() + component.slice(1)} content not available
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Card 7: Recent Care (Full width narrative block) */}
+      {summaryResults.encounters && (
+        <Card className="border-2 bg-indigo-50 border-indigo-200 hover:shadow-lg transition-all duration-200 w-full">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-3">
+                <FileText className="h-6 w-6 text-indigo-600" />
+                <span className="font-bold text-gray-900 text-lg">Recent Care</span>
+              </div>
+              <Badge className="text-xs font-semibold bg-indigo-100 text-indigo-800">
+                {summaryResults.encounters && summaryResults.encounters.trim() !== '' ? 'Complete' : 'Pending'}
+              </Badge>
+            </CardTitle>
+            <p className="text-xs text-gray-500 leading-tight">Narrative summary of recent encounters</p>
+          </CardHeader>
+
+          <CardContent className="pt-0">
+            <SummaryCardContent
+              content={summaryResults.encounters}
+              lookup={encountersLookup}
+              isLoading={isLoading}
+              component="encounters"
+              patientId={patientId}
+              sessionId={sessionId}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Card 8: Deep Dive (Full width, larger, centered) */}
+      {summaryResults.deepdive && (
+        <Card className="border-2 bg-gray-50 border-gray-200 hover:shadow-lg transition-all duration-200 w-full min-h-[500px]">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-3">
+                <Archive className="h-7 w-7 text-gray-600" />
+                <span className="font-bold text-gray-900 text-xl">Deep Dive</span>
+              </div>
+              <Badge className="text-xs font-semibold bg-gray-100 text-gray-800">
+                {summaryResults.deepdive && summaryResults.deepdive.trim() !== '' ? 'Complete' : 'Pending'}
+              </Badge>
+            </CardTitle>
+            <p className="text-sm text-gray-500 leading-tight">
+              Detailed clinical information: hospital admissions, imaging reports, and specialist consultations
+            </p>
+          </CardHeader>
+
+          <CardContent className="pt-0">
+            <SummaryCardContent
+              content={summaryResults.deepdive}
+              lookup={deepdiveLookup}
+              isLoading={isLoading}
+              component="deepdive"
+              patientId={patientId}
+              sessionId={sessionId}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {(reasoning || (reasoningSteps && reasoningSteps.length > 0)) && (
+        <div className="mt-6">
+          <div className="bg-gray-50 rounded-lg border border-gray-200 p-4">
+            <h4 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <span className="text-blue-600">🧠</span>
+              AI Reasoning
+            </h4>
+
+            {reasoningSteps && reasoningSteps.length > 0 && (
+              <div className="mb-4">
+                <h5 className="text-sm font-medium text-gray-700 mb-2">Reasoning Steps:</h5>
+                <ul className="space-y-2">
+                  {reasoningSteps.map((step, index) => (
+                    <li key={index} className="text-sm text-gray-600 bg-white p-2 rounded border-l-4 border-blue-200">
+                      <span className="font-medium text-blue-600">Step {index + 1}:</span> {step}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {reasoning && (
+              <div>
+                <h5 className="text-sm font-medium text-gray-700 mb-2">Detailed Reasoning:</h5>
+                <div className="text-sm text-gray-600 bg-white p-3 rounded border">
+                  {reasoning}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+        <p className="text-sm text-blue-700 flex items-start leading-relaxed mb-3">
+          <User className="h-4 w-4 inline mr-3 flex-shrink-0 mt-0.5" />
+          <span>
+            <strong>Patient Summary</strong> provides a comprehensive at-a-glance view of the patient's medical history,
+            current conditions, medications, trends, and recent care for efficient clinical decision-making.
+          </span>
+        </p>
+        <p className="text-xs text-gray-600 leading-relaxed border-t border-blue-200 pt-3">
+          <strong>Disclaimer:</strong> This is an information system, not a medical device.
+          Information provided is for clinical decision support only. Healthcare professionals must use their own
+          clinical judgment and verify all information before making medical decisions.
+        </p>
+      </div>
+    </div>
+  );
+};

@@ -137,15 +137,97 @@ az containerapp create \
   --memory 1Gi
 ```
 
+## Azure AI Foundry Configuration
+
+### Deploy AI Foundry Resource (Data Zone Europe)
+```bash
+# Create Azure OpenAI resource in Sweden Central
+az cognitiveservices account create \
+  --name optimed-ai-sweden \
+  --resource-group $RG \
+  --location swedencentral \
+  --kind OpenAI \
+  --sku S0 \
+  --custom-domain optimed-ai-sweden
+
+# Deploy GPT-4o model
+az cognitiveservices account deployment create \
+  --resource-group $RG \
+  --name optimed-ai-sweden \
+  --deployment-name gpt-4o \
+  --model-name gpt-4o \
+  --model-version "2024-08-06" \
+  --sku-capacity 50 \
+  --sku-name "Standard"
+
+# Get endpoint and key
+az cognitiveservices account show \
+  --name optimed-ai-sweden \
+  --resource-group $RG \
+  --query "properties.endpoint" -o tsv
+
+az cognitiveservices account keys list \
+  --name optimed-ai-sweden \
+  --resource-group $RG
+```
+
+### Add AI Foundry Environment Variables
+```bash
+# Update Container App with AI Foundry config
+az containerapp update \
+  --name optimed-api-sweden \
+  --resource-group $RG \
+  --set-env-vars \
+    AZURE_OPENAI_ENDPOINT="https://optimed-ai-sweden.openai.azure.com/" \
+    AZURE_OPENAI_DEPLOYMENT="gpt-4o" \
+    AZURE_OPENAI_API_VERSION="2024-08-01-preview" \
+    AZURE_OPENAI_API_KEY="<your-api-key>" \
+    LLM_MODEL="gpt-4o" \
+    PERSISTENCE_ENABLED="false"
+```
+
+**Important**: Set `PERSISTENCE_ENABLED="false"` to ensure RAM-only processing (no PHI persistence).
+
 ## Secrets Management
-- Database credentials: Configured in Container Apps environment variables
-- API keys: Managed via Azure Key Vault integration
-- Encryption keys: Set via environment variables (`ENCRYPTION_MASTER_KEY`, `HASH_SALT`)
+- **Database Credentials**: Azure Container Apps environment variables (secure)
+- **Azure AI Foundry API Key**: Use managed identity (recommended) or Azure Key Vault
+- **Encryption Keys**: `ENCRYPTION_MASTER_KEY`, `HASH_SALT` via secure environment variables
+- **Managed Identity**: Enable for Container Apps to access AI Foundry without API keys
+
+### Using Managed Identity (Recommended)
+```bash
+# Enable managed identity for Container App
+az containerapp identity assign \
+  --name optimed-api-sweden \
+  --resource-group $RG \
+  --system-assigned
+
+# Grant AI Foundry access
+PRINCIPAL_ID=$(az containerapp identity show \
+  --name optimed-api-sweden \
+  --resource-group $RG \
+  --query principalId -o tsv)
+
+az role assignment create \
+  --assignee $PRINCIPAL_ID \
+  --role "Cognitive Services OpenAI User" \
+  --scope $(az cognitiveservices account show \
+    --name optimed-ai-sweden \
+    --resource-group $RG \
+    --query id -o tsv)
+
+# Update app to use managed identity
+az containerapp update \
+  --name optimed-api-sweden \
+  --resource-group $RG \
+  --set-env-vars USE_AZURE_MANAGED_IDENTITY="true"
+```
 
 ## Rollbacks
 - **Container Images**: Use previous image tags for instant rollback
 - **Database**: Run migration rollback scripts (if available)
 - **DNS**: Update custom domain mappings if needed
+- **AI Foundry**: No rollback needed (stateless service)
 
 ## Monitoring and Health Checks
 - Container Apps built-in health probes
