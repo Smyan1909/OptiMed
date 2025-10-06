@@ -1,0 +1,134 @@
+site_name: CLARA (OptiMed AI) Docs
+site_description: GDPR-compliant clinical AI assistant deployed on Azure Sweden Central with RAM-only processing
+site_url: https://docs.optimedai.com
+repo_url: https://github.com/your-org/optimed
+repo_name: OptiMed/CLARA
+
+theme:
+  name: material
+  palette:
+    primary: blue
+    accent: indigo
+  features:
+    - content.code.copy
+    - content.code.annotate
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - search.suggest
+    - search.highlight
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+
+plugins:
+  - search
+  - mermaid2
+  - with-pdf:
+      author: OptiMed AI
+      copyright: Copyright © 2025 OptiMed AI. All rights reserved.
+      cover_title: CLARA (OptiMed AI)
+      cover_subtitle: Technical Documentation - Version 2.0.0
+      output_path: pdf/optimed-documentation-complete.pdf
+      enabled_if_env: ENABLE_PDF_EXPORT
+      # Mermaid diagram rendering (CRITICAL for flowcharts)
+      render_js: true
+      headless_chrome_path: chromium  # Will auto-detect Chrome/Chromium/Playwright
+      # Cover page
+      cover: true
+      back_cover: true
+      cover_subtitle: "RAM-Only Architecture | Azure Sweden Central | GDPR Compliant"
+      # Table of contents
+      toc_title: Table of Contents
+      toc_level: 3
+      # Exclude patterns
+      exclude_pages:
+        - openapi/openapi.yaml
+      # PDF styling for professional output
+      two_columns_level: 0
+      ordered_chapter_level: 2
+      # Ensure diagrams render properly
+      verbose: true
+      debug_html: false
+
+extra:
+  version:
+    provider: mike
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/your-org/optimed
+    - icon: fontawesome/brands/linkedin
+      link: https://www.linkedin.com/company/optimed-ai
+
+nav:
+  - Overview:
+    - Introduction: docs/overview/introduction.md
+    - Glossary: docs/overview/glossary.md
+
+  - Architecture:
+    - System Architecture: docs/architecture/system_architecture.md
+    - Data Flows (RAM-Only): docs/architecture/data_flow.md
+    - Hexagonal Architecture: docs/architecture/hexagonal_architecture.md
+    - Deployment (Azure): docs/architecture/deployment.md
+    - GDPR Compliance: docs/architecture/gdpr_compliant_architecture.md
+
+  - Algorithms:
+    - Intelligent Retrieval Pipeline: docs/algorithms/intelligent_retrieve_chunks.md
+    - Information Flow (LangGraph): docs/algorithms/info_flow_langgraph.md
+    - Specialized Clinical Flows: docs/algorithms/specialized_flows.md
+    - Patient Flow (Legacy): docs/algorithms/patient_flow_langgraph.md
+    - Differential Diagnosis: docs/algorithms/differential_diagnosis_bayesian.md
+
+  - Azure Deployment:
+    - Azure AI Foundry Setup: docs/operations/azure_ai_foundry_setup.md
+    - Azure PostgreSQL Setup: docs/operations/azure_postgresql_setup.md
+    - Deployment Process: docs/operations/deployment_process.md
+    - Container Apps Configuration: docs/architecture/deployment.md
+
+  - Operations:
+    - Setup Guide: docs/operations/setup_guide.md
+    - Monitoring (Azure Monitor): docs/operations/monitoring.md
+    - GDPR Operations: docs/operations/gdpr_operational_guide.md
+    - Database Migrations: docs/operations/database_migrations.md
+
+  - Security & Compliance:
+    - Encryption Architecture: docs/security/encryption_architecture.md
+    - GDPR Architecture: docs/architecture/gdpr_compliant_architecture.md
+    - GDPR Operations: docs/operations/gdpr_operational_guide.md
+    - Data Traceability: docs/compliance/data_traceability_guide.md
+
+  - Specifications:
+    - API Specification: docs/specs/api_specification.md
+    - Database Schema: docs/specs/database_schema.md
+    - Component Details: docs/specs/component_details.md
+
+  - Maintenance:
+    - Troubleshooting: docs/maintenance/troubleshooting.md
+    - Known Issues: docs/maintenance/known_issues.md
+    - Changelog: docs/maintenance/changelog.md
+
+  - Reference:
+    - Export Instructions: docs/_export_instructions.md
+    - OpenAPI Spec: openapi/openapi.yaml
+
