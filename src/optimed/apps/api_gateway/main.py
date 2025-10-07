@@ -476,6 +476,99 @@ async def get_user_context(
         "session_id": x_session_id
     }
 
+
+@app.get("/transcribe/token", summary="Get Corti Transcription Token")
+async def get_transcription_token(
+    user_ctx: dict = Depends(get_user_context)
+):
+    """
+    Generate Corti OAuth access token for authenticated users.
+    Keeps credentials secure on server-side.
+    GDPR Compliance: No PHI in token, only authentication credentials.
+    Token expires after 5 minutes as per Corti OAuth standards.
+    """
+    user_id = user_ctx.get("user_id")
+    if not user_id:
+        logger.warning("[TRANSCRIBE TOKEN] Unauthenticated token request")
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    logger.info(f"[TRANSCRIBE TOKEN] Token requested by user: {sanitize_user_id(user_id)}")
+
+    # Get Corti OAuth credentials from environment
+    client_id = os.getenv("CORTI_CLIENT_ID")
+    client_secret = os.getenv("CORTI_CLIENT_SECRET")
+    tenant_name = os.getenv("CORTI_TENANT_NAME")
+    environment = os.getenv("CORTI_ENVIRONMENT", "eu")
+
+    if not client_id or not client_secret or not tenant_name:
+        logger.error("[TRANSCRIBE TOKEN] Corti credentials not configured in environment")
+        raise HTTPException(
+            status_code=500,
+            detail="Voice transcription service not configured"
+        )
+
+    # Generate OAuth access token using client credentials grant
+    try:
+        oauth_url = f"https://auth.{environment}.corti.app/realms/{tenant_name}/protocol/openid-connect/token"
+
+        logger.info(f"[TRANSCRIBE TOKEN] Requesting OAuth token from: {oauth_url}")
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                oauth_url,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded"
+                },
+                data={
+                    "grant_type": "client_credentials",
+                    "scope": "openid",
+                    "client_id": client_id,
+                    "client_secret": client_secret
+                },
+                timeout=10.0
+            )
+
+        if response.status_code != 200:
+            error_detail = response.text
+            logger.error(f"[TRANSCRIBE TOKEN] OAuth request failed: {response.status_code} - {error_detail}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to obtain transcription token: {response.status_code}"
+            )
+
+        token_data = response.json()
+        access_token = token_data.get("access_token")
+
+        if not access_token:
+            logger.error("[TRANSCRIBE TOKEN] No access_token in OAuth response")
+            raise HTTPException(
+                status_code=500,
+                detail="Invalid token response from transcription service"
+            )
+
+        logger.info(f"[TRANSCRIBE TOKEN] OAuth token generated successfully for user: {sanitize_user_id(user_id)}")
+
+        return {
+            "token": access_token,
+            "tenant_name": tenant_name,
+            "environment": environment,
+            "expires_in": token_data.get("expires_in", 300)  # Default 5 minutes
+        }
+
+    except httpx.HTTPError as e:
+        logger.error(f"[TRANSCRIBE TOKEN] HTTP error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to connect to transcription service"
+        )
+    except Exception as e:
+        logger.error(f"[TRANSCRIBE TOKEN] Unexpected error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate transcription token"
+        )
+
+
 async def get_user_fhir_repository(user_ctx: dict = Depends(get_user_context)) -> FHIRRepository:
     """Get the appropriate FHIR repository for the current user."""
     current_user = user_ctx.get("user")

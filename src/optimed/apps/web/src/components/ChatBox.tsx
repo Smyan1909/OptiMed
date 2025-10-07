@@ -13,6 +13,7 @@ import { SBARSummaryCards } from "./SBARSummaryCards";
 import { GeneralSummaryCards } from "./GeneralSummaryCards";
 import { TimelineView } from "./TimelineView";
 import { NoteGenerationDialog } from "./NoteGenerationDialog";
+import { VoiceRecorder } from "./VoiceRecorder";
 import { useLayoutEffect } from "react";
 import ModeSelector from "./ModeSelector";
 import { useTranslations, useLocale } from 'next-intl';
@@ -1949,6 +1950,25 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                 }}
               />
               <div className="flex items-center gap-1 pb-1">
+                {/* Voice Recorder */}
+                <VoiceRecorder
+                  onInterimTranscript={(text) => {
+                    // Show interim transcript in real-time
+                    setInput(text);
+                  }}
+                  onTranscriptComplete={(text) => {
+                    logInfo(`[ChatBox] Voice transcript received: ${text.substring(0, 100)}...`);
+                    setInput(text);
+                    // Auto-submit after brief delay for user to review
+                    setTimeout(() => {
+                      const formEvent = new Event('submit', { cancelable: true, bubbles: true }) as any;
+                      sendMessage(formEvent);
+                    }, 800);
+                  }}
+                  disabled={isStreaming}
+                  language={locale === 'sv' ? 'sv' : 'en'}
+                />
+
                 <button
                   type="submit"
                   disabled={!input.trim() || isStreaming}
