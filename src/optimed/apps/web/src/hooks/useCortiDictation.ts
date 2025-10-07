@@ -70,20 +70,40 @@ export const useCortiDictation = () => {
         // Listen for transcript events
         dictationEl.addEventListener('transcript', ((e: CustomEvent) => {
           console.log('[Corti SDK] Transcript received:', e.detail);
-          const text = e.detail.data?.text || e.detail.text || '';
-          const isFinal = e.detail.data?.isFinal ?? e.detail.isFinal ?? true;
+          console.log('[Corti SDK] Full event:', e);
 
-          if (isFinal) {
-            setState(prev => ({
-              ...prev,
-              transcript: prev.transcript + (prev.transcript ? ' ' : '') + text,
-              interimTranscript: '',
-            }));
+          // Try different paths to get the text
+          let text = '';
+          let isFinal = true;
+
+          if (e.detail) {
+            text = e.detail.data?.text || e.detail.text || '';
+            isFinal = e.detail.data?.isFinal ?? e.detail.isFinal ?? true;
+          }
+
+          console.log('[Corti SDK] Extracted - text:', text, 'isFinal:', isFinal);
+
+          if (text) {
+            if (isFinal) {
+              console.log('[Corti SDK] Adding final transcript to state');
+              setState(prev => {
+                const newTranscript = prev.transcript + (prev.transcript ? ' ' : '') + text;
+                console.log('[Corti SDK] New transcript state:', newTranscript);
+                return {
+                  ...prev,
+                  transcript: newTranscript,
+                  interimTranscript: '',
+                };
+              });
+            } else {
+              console.log('[Corti SDK] Setting interim transcript');
+              setState(prev => ({
+                ...prev,
+                interimTranscript: text,
+              }));
+            }
           } else {
-            setState(prev => ({
-              ...prev,
-              interimTranscript: text,
-            }));
+            console.warn('[Corti SDK] No text found in transcript event');
           }
         }) as EventListener);
 
@@ -136,18 +156,18 @@ export const useCortiDictation = () => {
         error: null
       }));
 
-      // Set access token
-      await dictationRef.current.setAccessToken(config.token);
+      // Set configuration FIRST for fastest interim results
+      dictationRef.current.dictationConfig = {
+        primaryLanguage: config.language || 'en',
+        interimResults: true,  // Enable interim results for real-time streaming
+        automaticPunctuation: true,
+        spokenPunctuation: false,
+      };
 
-      // Set language if provided
-      if (config.language) {
-        dictationRef.current.dictationConfig = {
-          ...dictationRef.current.dictationConfig,
-          primaryLanguage: config.language,
-          interimResults: true,
-          automaticPunctuation: true,
-        };
-      }
+      console.log('[Corti SDK] Configuration set:', dictationRef.current.dictationConfig);
+
+      // Set access token AFTER configuration
+      await dictationRef.current.setAccessToken(config.token);
 
       // Start recording
       await dictationRef.current.toggleRecording();

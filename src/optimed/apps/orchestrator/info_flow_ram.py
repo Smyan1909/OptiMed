@@ -2129,7 +2129,7 @@ Keep queries concise and focused on the temporal aspect.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                List current medications with BRIEF purpose/indication.
+                List ONLY current and PAST medications with BRIEF (max 1 sentence) purpose/indication.
 
                 USER QUERY: {state.user_prompt}
 
@@ -2143,8 +2143,6 @@ Keep queries concise and focused on the temporal aspect.
                 • Enalapril 10mg (blood pressure) - Enligt Läkemedelslista, sida 2
 
                 Add blank line between each bullet point for readability.
-
-                Include brief medication purpose in parentheses if indicated in the data. If purpose not clear from data, just state drug class (e.g., "beta-blocker", "SSRI", "ACE inhibitor").
 
                 If there are MORE medications (beyond 8-10), add at the end:
                 "_Fråga om fler läkemedel_" (Swedish) or "_Ask for more medications_" (English)

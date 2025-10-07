@@ -1378,6 +1378,21 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     }
   };
 
+  // Memoized callbacks for VoiceRecorder to prevent unnecessary re-renders
+  const handleInterimTranscript = useCallback((text: string) => {
+    setInput(text);
+  }, []);
+
+  const handleTranscriptComplete = useCallback((text: string) => {
+    logInfo(`[ChatBox] Voice transcript received: ${text.substring(0, 100)}...`);
+    setInput(text);
+    // Auto-submit after minimal delay (200ms gives user a chance to see/edit if needed)
+    setTimeout(() => {
+      const formEvent = new Event('submit', { cancelable: true, bubbles: true }) as any;
+      sendMessage(formEvent);
+    }, 200);
+  }, [sendMessage]);
+
   const getPlaceholderText = () => {
     if (mode === "chat") return t('placeholder.chat');
     if (mode === "diagnose" && patientId) {
@@ -1952,19 +1967,8 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
               <div className="flex items-center gap-1 pb-1">
                 {/* Voice Recorder */}
                 <VoiceRecorder
-                  onInterimTranscript={(text) => {
-                    // Show interim transcript in real-time
-                    setInput(text);
-                  }}
-                  onTranscriptComplete={(text) => {
-                    logInfo(`[ChatBox] Voice transcript received: ${text.substring(0, 100)}...`);
-                    setInput(text);
-                    // Auto-submit after brief delay for user to review
-                    setTimeout(() => {
-                      const formEvent = new Event('submit', { cancelable: true, bubbles: true }) as any;
-                      sendMessage(formEvent);
-                    }, 800);
-                  }}
+                  onInterimTranscript={handleInterimTranscript}
+                  onTranscriptComplete={handleTranscriptComplete}
                   disabled={isStreaming}
                   language={locale === 'sv' ? 'sv' : 'en'}
                 />

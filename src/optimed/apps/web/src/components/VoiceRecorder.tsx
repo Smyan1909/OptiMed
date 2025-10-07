@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Mic, MicOff, Loader2 } from 'lucide-react';
 import { useCortiDictation } from '@/hooks/useCortiDictation';
 import { logInfo, logError } from '@/lib/logger';
@@ -37,6 +37,32 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, disab
 
   const [isFetching, setIsFetching] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
+  const transcriptRef = useRef('');
+  const wasRecordingRef = useRef(false);
+  const justStoppedRef = useRef(false);
+  const finalTranscriptTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Keep ref updated with latest transcript
+  useEffect(() => {
+    transcriptRef.current = transcript;
+  }, [transcript]);
+
+  // When transcript updates after stopping, immediately call onTranscriptComplete
+  useEffect(() => {
+    if (justStoppedRef.current && transcript && !isRecording) {
+      // Clear any pending timeout
+      if (finalTranscriptTimeoutRef.current) {
+        clearTimeout(finalTranscriptTimeoutRef.current);
+        finalTranscriptTimeoutRef.current = null;
+      }
+
+      logInfo(`[VoiceRecorder] Final transcript received: ${transcript.substring(0, 100)}...`);
+      onTranscriptComplete(transcript.trim());
+      reset();
+      justStoppedRef.current = false;
+      wasRecordingRef.current = false;
+    }
+  }, [transcript, isRecording, onTranscriptComplete, reset]);
 
   // Log when SDK becomes ready
   useEffect(() => {
@@ -51,27 +77,41 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, disab
     }
   }, [error]);
 
-  // Pass interim transcript to parent in real-time
+  // Pass interim transcript to parent in real-time - including after stopping
   useEffect(() => {
-    if (isRecording && onInterimTranscript) {
+    if ((isRecording || wasRecordingRef.current) && onInterimTranscript) {
       const fullText = transcript + (interimTranscript ? ' ' + interimTranscript : '');
-      onInterimTranscript(fullText.trim());
+      if (fullText.trim()) {
+        onInterimTranscript(fullText.trim());
+      }
     }
-  }, [transcript, interimTranscript, isRecording, onInterimTranscript]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transcript, interimTranscript, isRecording]);
 
   const handleToggle = async () => {
     if (isRecording) {
       // Stop recording
       logInfo('[VoiceRecorder] Stopping recording...');
-      const finalTranscript = await stopRecording();
+      wasRecordingRef.current = true;
+      justStoppedRef.current = true;
+      await stopRecording();
 
-      if (finalTranscript) {
-        logInfo(`[VoiceRecorder] Final transcript: ${finalTranscript.substring(0, 100)}...`);
-        onTranscriptComplete(finalTranscript);
-        reset();
-      } else {
-        logInfo('[VoiceRecorder] No transcript received');
-      }
+      // Fallback timeout in case no transcript arrives (shouldn't normally happen)
+      finalTranscriptTimeoutRef.current = setTimeout(() => {
+        if (justStoppedRef.current) {
+          const fullTranscript = transcriptRef.current.trim();
+          logInfo(`[VoiceRecorder] Fallback timeout - transcript: "${fullTranscript}"`);
+
+          if (fullTranscript) {
+            onTranscriptComplete(fullTranscript);
+          } else {
+            logInfo('[VoiceRecorder] No transcript received after timeout');
+          }
+          reset();
+          justStoppedRef.current = false;
+          wasRecordingRef.current = false;
+        }
+      }, 500); // Fallback timeout - should be triggered by event before this
     } else {
       // Start recording - fetch token first
       try {
@@ -132,21 +172,6 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, disab
           <Mic className="w-5 h-5" />
         )}
       </button>
-
-      {/* Interim transcript preview */}
-      {(interimTranscript || transcript) && (
-        <div className="absolute bottom-full mb-2 right-0 bg-gray-100 border border-gray-300 p-3 rounded-lg shadow-lg text-sm text-gray-700 max-w-xs z-50">
-          <div className="font-semibold text-xs text-gray-500 mb-1">
-            {isRecording ? 'Listening...' : 'Transcript'}
-          </div>
-          <div className="max-h-32 overflow-y-auto">
-            {transcript && <span className="text-gray-900">{transcript} </span>}
-            {interimTranscript && (
-              <span className="text-gray-500 italic">{interimTranscript}</span>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Error display */}
       {(error || tokenError) && (
