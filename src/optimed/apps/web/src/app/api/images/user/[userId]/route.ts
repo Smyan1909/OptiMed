@@ -3,24 +3,25 @@ import { logError } from '@/lib/logger';
 
 export async function GET(
   request: Request,
-  context: any
+  { params }: { params: Promise<{ userId: string }> }
 ) {
   try {
+    const { userId } = await params;
     const { searchParams } = new URL(request.url);
     const limit = searchParams.get('limit') || '10';
-    
+
     // Get session ID from request headers
     const sessionId = request.headers.get('x-session-id');
-    
+
     const headers: Record<string, string> = {};
-    
+
     // Forward the session header to the backend
     if (sessionId) {
       headers['X-Session-ID'] = sessionId;
     }
-    
+
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
-    const response = await fetch(`${baseUrl}/images/user/${context.params.userId}?limit=${limit}`, {
+    const response = await fetch(`${baseUrl}/images/user/${userId}?limit=${limit}`, {
       headers
     });
     

@@ -131,9 +131,9 @@ export function logInfo(message: string, ...args: any[]): void {
  * Wrapper for console.error with environment check
  *
  * @param message - The error message to log
- * @param error - Optional Error object with stack trace
+ * @param error - Optional Error object or unknown error with stack trace
  */
-export function logError(message: string, error?: Error): void {
+export function logError(message: string, error?: Error | unknown): void {
   if (isLoggingEnabled()) {
     if (error) {
       console.error(`[ERROR] ${message}`, error);

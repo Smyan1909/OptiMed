@@ -4,10 +4,10 @@ import { sanitizePatientId, logInfo, logError } from '@/lib/logger';
 
 export async function GET(
   request: Request,
-  context: any
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const patientId = context.params.id;
+    const { id: patientId } = await params;
     
     // Get session ID from request headers or cookies (following your existing pattern)
     const cookieStore = await cookies();
@@ -42,10 +42,10 @@ export async function GET(
 
 export async function POST(
   request: Request,
-  context: any
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const patientId = context.params.id;
+    const { id: patientId } = await params;
     const body = await (request as any).json();
     
     const cookieStore = await cookies();

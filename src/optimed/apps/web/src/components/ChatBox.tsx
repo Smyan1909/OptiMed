@@ -1173,12 +1173,12 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           await loadXMLs();
         }
       } catch (err) {
-        logError('[ChatBox] Event parse error', err as Error);
+        logError('[ChatBox] Event parse error', err);
       }
     };
 
     eventSource.onerror = (error) => {
-      logError(`[ChatBox] SSE error - readyState: ${eventSource.readyState}, url: ${eventSource.url}`, error as Error);
+      logError(`[ChatBox] SSE error - readyState: ${eventSource.readyState}, url: ${eventSource.url}`, error);
       // EventSource auto-reconnects
     };
 

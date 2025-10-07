@@ -27,7 +27,7 @@ flowchart TB
     end
 
     subgraph Azure Services
-      llm[(Azure AI Foundry<br/>Data Zone Europe<br/>GPT-4o)]
+      llm[(Azure AI Foundry<br/>Data Zone Europe<br/>GPT-5-mini)]
       db[(Azure PostgreSQL<br/>Flexible Server<br/>metadata only)]
       mon[(Azure Monitor +<br/>Application Insights)]
     end
