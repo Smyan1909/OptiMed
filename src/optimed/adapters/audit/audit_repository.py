@@ -110,7 +110,7 @@ class PGAuditRepository:
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
                 """,
                     self._to_uuid(session_id),
-                    self._to_uuid(user_id),
+                    user_id,  # Keep as string - column type is VARCHAR(255), not UUID
                     request_category,
                     "api_endpoint",
                     1,  # resource_count (1 request = 1 resource accessed)
@@ -185,7 +185,7 @@ class PGAuditRepository:
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
                 """,
                     self._to_uuid(session_id),
-                    self._to_uuid(user_id),
+                    user_id,  # Keep as string - column type is VARCHAR(255), not UUID
                     access_type,
                     resource_type,
                     resource_count,
