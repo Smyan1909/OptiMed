@@ -43,29 +43,53 @@ export const useCortiDictation = () => {
 
   // Initialize Corti web component after SDK is loaded
   useEffect(() => {
-    if (!sdkLoaded || typeof window === 'undefined' || containerRef.current) {
+    if (!sdkLoaded || typeof window === 'undefined') {
       return;
     }
 
-    console.log('[Corti SDK] Initializing web component');
-    const container = document.createElement('div');
-    container.style.display = 'none';
-    container.innerHTML = '<corti-dictation id="corti-dictation-element"></corti-dictation>';
-    document.body.appendChild(container);
-    containerRef.current = container;
+    // Check if component already exists in DOM (from previous mount)
+    let container = containerRef.current;
+    let dictationEl = container?.querySelector('corti-dictation') ||
+                      document.querySelector('#corti-dictation-element');
+
+    if (!dictationEl) {
+      // Create new component
+      console.log('[Corti SDK] Initializing web component');
+      container = document.createElement('div');
+      container.style.display = 'none';
+      container.innerHTML = '<corti-dictation id="corti-dictation-element"></corti-dictation>';
+      document.body.appendChild(container);
+      containerRef.current = container;
+      dictationEl = container.querySelector('corti-dictation');
+    } else {
+      console.log('[Corti SDK] Reusing existing web component');
+      if (!containerRef.current) {
+        containerRef.current = dictationEl.parentElement as HTMLDivElement;
+      }
+    }
 
     // Wait a bit for custom element to be defined
     setTimeout(() => {
-      const dictationEl = container.querySelector('corti-dictation');
       if (dictationEl) {
         dictationRef.current = dictationEl;
         console.log('[Corti SDK] Component element found:', dictationEl);
 
         // Listen for ready event
         dictationEl.addEventListener('ready', () => {
-          console.log('[Corti SDK] Component ready');
+          console.log('[Corti SDK] Component ready event fired');
           setState(prev => ({ ...prev, isReady: true }));
         });
+
+        // Check if component is already ready (doesn't always fire 'ready' event)
+        // Trigger our own ready check after a short delay
+        setTimeout(() => {
+          console.log('[Corti SDK] Checking if component is already ready...');
+          // If we have the element and it has methods, it's ready
+          if (dictationEl && typeof (dictationEl as any).setAccessToken === 'function') {
+            console.log('[Corti SDK] Component is already ready');
+            setState(prev => ({ ...prev, isReady: true }));
+          }
+        }, 200);
 
         // Listen for transcript events
         dictationEl.addEventListener('transcript', ((e: CustomEvent) => {
@@ -130,12 +154,11 @@ export const useCortiDictation = () => {
       }
     }, 100);
 
-    // Cleanup
+    // Cleanup - DON'T remove the component on unmount since it can be reused
+    // Only clean up on full page unload
     return () => {
-      if (containerRef.current && document.body.contains(containerRef.current)) {
-        document.body.removeChild(containerRef.current);
-        containerRef.current = null;
-      }
+      // Keep the component in DOM for reuse across session changes
+      console.log('[Corti SDK] Hook unmounting - keeping component for reuse');
     };
   }, [sdkLoaded]);
 
