@@ -608,7 +608,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                                     role = ChatRole(decrypted_message.get("role", "user"))
                                     content = decrypted_message.get("content", "")
                                     chat_messages.append(ChatMessage(role=role, content=content))
-                                    logger.info(f"✅ Decrypted {role.value}: '{content[:50]}...'")
+                                    logger.info(f"✅ Decrypted {role.value} message (length={len(content)} chars)")
                                 except Exception as decrypt_error:
                                     logger.info(f"❌ Decryption failed for message {i+1}: {decrypt_error}")
                                     continue
@@ -617,7 +617,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                             role = ChatRole(item.get("role", "user"))
                             content = item.get("content", "")
                             chat_messages.append(ChatMessage(role=role, content=content))
-                            logger.info(f"✅ Loaded unencrypted {role.value}: '{content[:50]}...'")
+                            logger.info(f"✅ Loaded unencrypted {role.value} message (length={len(content)} chars)")
                     except Exception as e:
                         logger.info(f"❌ Error parsing message {i+1}: {e}")
                         continue
@@ -652,7 +652,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             """In-RAM retrieval: chunk, embed, paraphrase, bi-encoder, cross-encoder rerank, dynamic-N MMR, gate, retry."""
             try:
                 logger.info(f"Starting retrieval for patient_id: {sanitize_patient_id(str(state.patient_id))}")
-                logger.info(f"User prompt: '{state.user_prompt[:100]}...'")
+                logger.info(f"User prompt length: {len(state.user_prompt)} chars")
                 
                 # 1) Chunking via ChunkingOrchestrator (policy-driven)
                 patient_id_str = str(state.patient_id) if state.patient_id else ""
@@ -772,7 +772,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 refinements = getattr(state, 'refined_queries', []) or []
                 base_variants = [state.user_prompt] + paraphrases[:2]
                 query_variants = refinements + base_variants
-                logger.info(f"Using {len(query_variants)} query variants: {query_variants}")
+                logger.info(f"Using {len(query_variants)} query variants (content redacted for GDPR compliance)")
                 
                 query_vecs = await self._embed_many(query_variants, mode="query")
                 logger.info(f"Successfully embedded {len(query_vecs)} query variants")
@@ -997,7 +997,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         async def _generate_sbar_queries(state: FlowState, sbar_component: str, focus_instruction: str) -> List[str]:
             """Generate focused queries for each SBAR component based on the user's original query."""
             try:
-                logger.info(f"Generating {sbar_component} queries from: '{state.user_prompt[:100]}...'")
+                logger.info(f"Generating {sbar_component} queries (prompt_length={len(state.user_prompt)} chars)")
 
                 # Define SBAR component specific instructions
                 component_prompts = {
@@ -1059,7 +1059,7 @@ Keep queries concise and medical terminology appropriate.
         async def _generate_general_summary_queries(state: FlowState, component: str, focus_instruction: str) -> List[str]:
             """Generate focused queries for each general summary component based on the user's original query."""
             try:
-                logger.info(f"Generating {component} queries from: '{state.user_prompt[:100]}...'")
+                logger.info(f"Generating {component} queries (prompt_length={len(state.user_prompt)} chars)")
 
                 # Define component-specific instructions
                 component_prompts = {
@@ -1510,7 +1510,7 @@ Keep queries concise and focused on the temporal aspect.
 
             try:
                 logger.info(f"🔐 Storing user message for session_id={sanitize_session_id(state.session_id)}")
-                logger.info(f"📝 Message: '{state.user_prompt[:100]}...'")
+                logger.info(f"📝 Message length: {len(state.user_prompt)} chars")
 
                 # Generate session encryption key if not exists
                 session_manager = get_session_encryption_manager()
@@ -3367,7 +3367,7 @@ Generate the content for "{field_label}" section now:"""
         @streaming_step("provide_information")
         async def provide_information(state: FlowState) -> FlowState:
             logger.info("🎯 Starting information provision")
-            logger.info(f"🔍 Query: '{state.user_prompt[:100]}...'")
+            logger.info(f"🔍 Query length: {len(state.user_prompt)} chars")
             logger.info(f"🚀 Full processing: {getattr(state, 'requires_full_processing', True)}")
             logger.info(f"🆔 Session ID: {sanitize_session_id(state.session_id)}")
             logger.info(f"👤 User ID: {sanitize_user_id(state.user_id)}")
@@ -3754,8 +3754,8 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 requires_full_processing = "FULL_PROCESSING" in response_text
 
                 state.requires_full_processing = requires_full_processing
-                
-                logger.info(f"Query: '{state.user_prompt[:50]}...' -> {'FULL_PROCESSING' if requires_full_processing else 'DIRECT'}")
+
+                logger.info(f"Query complexity decision: {'FULL_PROCESSING' if requires_full_processing else 'DIRECT'} (query_length={len(state.user_prompt)} chars)")
                 
             except Exception as e:
                 log_error(logger, "query_complexity", e)
@@ -3809,8 +3809,8 @@ Return ONLY the reformulated query, nothing else."""
                 response = await self._llm.chat(messages)
                 state.classification_query = response.content.strip()
 
-                logger.info(f"Original: '{state.user_prompt}'")
-                logger.info(f"Contextualized: '{state.classification_query}'")
+                logger.info(f"Original query length: {len(state.user_prompt)} chars")
+                logger.info(f"Contextualized query length: {len(state.classification_query)} chars")
 
             except Exception as e:
                 logger.info(f"Error: {e}, using original query")
@@ -3822,7 +3822,7 @@ Return ONLY the reformulated query, nothing else."""
         async def classify_query_intent(state: FlowState) -> FlowState:
             """Classify the query to determine flow type including note generation."""
             try:
-                logger.info(f"Classifying query: '{state.user_prompt[:100]}...'")
+                logger.info(f"Classifying query (length={len(state.user_prompt)} chars)")
 
                 # Skip classification if already in note generation flow
                 if hasattr(state, 'is_note_generation_flow') and state.is_note_generation_flow:
@@ -3832,7 +3832,7 @@ Return ONLY the reformulated query, nothing else."""
                 # Use contextualized query if available (from contextualize_query_for_classification node)
                 query_to_classify = getattr(state, 'classification_query', state.user_prompt)
 
-                logger.info(f"Classifying: '{query_to_classify[:100]}...'")
+                logger.info(f"Classifying query (length={len(query_to_classify)} chars)")
 
                 # Use the existing classifier
                 classifier = self._zero_shot_classifier

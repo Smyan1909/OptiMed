@@ -468,8 +468,8 @@ class LangGraphInformationEngine(DiagnosticEngine):
                 
                 needs_cross_session_history = "YES" in response.content.upper()
                 state.needs_cross_session_search = needs_cross_session_history
-                
-                logger.info(f"Cross-session history needed: {needs_cross_session_history} for query: '{state.user_prompt[:50]}...'")
+
+                logger.info(f"Cross-session history needed: {needs_cross_session_history} (query_length={len(state.user_prompt)} chars)")
                 
             except Exception as e:
                 log_error(logger, "cross_session_eval", e)
@@ -1732,8 +1732,8 @@ Please reference this generated image in your response when relevant and explain
                 requires_full_processing = "FULL_PROCESSING" in response_text
 
                 state.requires_full_processing = requires_full_processing
-                
-                logger.info(f"Query: '{state.user_prompt[:50]}...' -> {'FULL_PROCESSING' if requires_full_processing else 'DIRECT'}")
+
+                logger.info(f"Query complexity decision: {'FULL_PROCESSING' if requires_full_processing else 'DIRECT'} (query_length={len(state.user_prompt)} chars)")
                 
             except Exception as e:
                 log_error(logger, "query_complexity", e)

@@ -93,8 +93,7 @@ export const useCortiDictation = () => {
 
         // Listen for transcript events
         dictationEl.addEventListener('transcript', ((e: CustomEvent) => {
-          console.log('[Corti SDK] Transcript received:', e.detail);
-          console.log('[Corti SDK] Full event:', e);
+          console.log('[Corti SDK] Transcript received, event type:', e.type);
 
           // Try different paths to get the text
           let text = '';
@@ -105,14 +104,14 @@ export const useCortiDictation = () => {
             isFinal = e.detail.data?.isFinal ?? e.detail.isFinal ?? true;
           }
 
-          console.log('[Corti SDK] Extracted - text:', text, 'isFinal:', isFinal);
+          console.log('[Corti SDK] Extracted - text_length:', text.length, 'isFinal:', isFinal);
 
           if (text) {
             if (isFinal) {
               console.log('[Corti SDK] Adding final transcript to state');
               setState(prev => {
                 const newTranscript = prev.transcript + (prev.transcript ? ' ' : '') + text;
-                console.log('[Corti SDK] New transcript state:', newTranscript);
+                console.log('[Corti SDK] New transcript length:', newTranscript.length);
                 return {
                   ...prev,
                   transcript: newTranscript,
@@ -120,7 +119,7 @@ export const useCortiDictation = () => {
                 };
               });
             } else {
-              console.log('[Corti SDK] Setting interim transcript');
+              console.log('[Corti SDK] Setting interim transcript, length:', text.length);
               setState(prev => ({
                 ...prev,
                 interimTranscript: text,

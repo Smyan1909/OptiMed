@@ -112,7 +112,7 @@ export const useVoiceTranscription = () => {
           } else if (message.type === 'transcript') {
             if (message.isFinal) {
               // Final transcript - append to full transcript
-              console.log('[Corti] Final transcript:', message.text);
+              console.log('[Corti] Final transcript received, length:', message.text?.length || 0);
               setState(prev => ({
                 ...prev,
                 transcript: prev.transcript + (prev.transcript ? ' ' : '') + message.text,
@@ -120,6 +120,7 @@ export const useVoiceTranscription = () => {
               }));
             } else {
               // Interim transcript - show as preview
+              console.log('[Corti] Interim transcript, length:', message.text?.length || 0);
               setState(prev => ({
                 ...prev,
                 interimTranscript: message.text,
