@@ -175,7 +175,7 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
             return int(result.split()[-1]) if result else 0
     
     async def create_connection(self, connection: UserEHRConnection) -> UserEHRConnection:
-        """Create a new EHR connection with encrypted tokens."""
+        """Create a new EHR connection with encrypted tokens and hashed user_id."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             # Encrypt sensitive fields
@@ -186,17 +186,20 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
                 json.dumps(connection.credentials) if connection.credentials else None
             )
 
+            # Hash user_id for GDPR compliance
+            user_id_hash = self._db_encryption.hash_value(connection.user_id)
+
             await conn.execute("""
                 INSERT INTO user_ehr_connections (
-                    connection_id, user_id, provider_type, fhir_server_url, client_id,
+                    connection_id, user_id, user_id_hash, provider_type, fhir_server_url, client_id,
                     credentials, credentials_encrypted,
                     access_token, access_token_encrypted,
                     refresh_token, refresh_token_encrypted,
                     token_expires_at, scope, is_active,
                     created_at, updated_at, expires_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             """,
-                connection.connection_id, connection.user_id, connection.provider_type,
+                connection.connection_id, connection.user_id, user_id_hash, connection.provider_type,
                 connection.fhir_server_url, connection.client_id,
                 '{}', creds_enc,  # Store empty object, encrypted in separate column
                 '[ENCRYPTED]', access_enc,  # Placeholder, encrypted in separate column
@@ -326,7 +329,7 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
             return connections
     
     async def update_connection(self, connection: UserEHRConnection) -> UserEHRConnection:
-        """Update an existing connection with encryption."""
+        """Update an existing connection with encryption and hashed user_id."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             # Encrypt sensitive fields
@@ -337,17 +340,20 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
                 json.dumps(connection.credentials) if connection.credentials else None
             )
 
+            # Hash user_id for GDPR compliance
+            user_id_hash = self._db_encryption.hash_value(connection.user_id)
+
             await conn.execute("""
                 UPDATE user_ehr_connections SET
-                    provider_type = $2, fhir_server_url = $3, client_id = $4,
-                    credentials = $5, credentials_encrypted = $6,
-                    access_token = $7, access_token_encrypted = $8,
-                    refresh_token = $9, refresh_token_encrypted = $10,
-                    token_expires_at = $11, scope = $12, patient_context = $13,
-                    is_active = $14, updated_at = $15, expires_at = $16
+                    user_id = $2, user_id_hash = $3, provider_type = $4, fhir_server_url = $5, client_id = $6,
+                    credentials = $7, credentials_encrypted = $8,
+                    access_token = $9, access_token_encrypted = $10,
+                    refresh_token = $11, refresh_token_encrypted = $12,
+                    token_expires_at = $13, scope = $14, patient_context = $15,
+                    is_active = $16, updated_at = $17, expires_at = $18
                 WHERE connection_id = $1
             """,
-                connection.connection_id, connection.provider_type, connection.fhir_server_url,
+                connection.connection_id, connection.user_id, user_id_hash, connection.provider_type, connection.fhir_server_url,
                 connection.client_id,
                 '{}', creds_enc,  # Store empty object, encrypted in separate column
                 '[ENCRYPTED]', access_enc,  # Placeholder, encrypted in separate column
