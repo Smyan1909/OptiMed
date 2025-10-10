@@ -8,6 +8,7 @@ from optimed.core.ports import UserRepository
 import hashlib
 import uuid
 from optimed.core.logging_utils import get_logger, log_error
+from optimed.adapters.security.database_encryption import get_database_encryption
 
 logger = get_logger(__name__)
 
@@ -18,6 +19,7 @@ class PGUserRepository(UserRepository):
         self.min_size = min_size
         self.max_size = max_size
         self._pool: Optional[asyncpg.Pool] = None
+        self._db_encryption = get_database_encryption()
 
     async def _get_pool(self) -> asyncpg.Pool:
         """Get or create the connection pool."""
@@ -211,34 +213,48 @@ class PGUserRepository(UserRepository):
             return self._row_to_user(row) if row else None
         
     async def create_user(self, user: User) -> User:
-        """Create a new user."""
+        """Create a new user with hashed PII."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
+            # Hash PII fields
+            email_hash, phone_hash, name_hash = self._db_encryption.hash_user_pii(
+                user.email, user.phone, user.first_name, user.last_name
+            )
+
             await conn.execute("""
                 INSERT INTO users (
                     user_id, username, email, first_name, last_name,
-                    role, status, department, license_number, phone
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            """, 
+                    email_hash, phone_hash, name_hash,
+                    role, status, department, license_number
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            """,
                 user.user_id, user.username, user.email, user.first_name,
-                user.last_name, user.role.value, user.status.value,
-                user.department, user.license_number, user.phone
+                user.last_name, email_hash, phone_hash, name_hash,
+                user.role.value, user.status.value,
+                user.department, user.license_number
             )
             return user
 
     async def update_user(self, user: User) -> User:
-        """Update an existing user."""
+        """Update an existing user with hashed PII."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
+            # Hash PII fields
+            email_hash, phone_hash, name_hash = self._db_encryption.hash_user_pii(
+                user.email, user.phone, user.first_name, user.last_name
+            )
+
             await conn.execute("""
                 UPDATE users SET
                     username = $2, email = $3, first_name = $4, last_name = $5,
-                    role = $6, status = $7, department = $8, license_number = $9,
-                    phone = $10, updated_at = NOW()
+                    email_hash = $6, phone_hash = $7, name_hash = $8,
+                    role = $9, status = $10, department = $11, license_number = $12,
+                    phone = $13, updated_at = NOW()
                 WHERE user_id = $1
             """,
                 user.user_id, user.username, user.email, user.first_name,
-                user.last_name, user.role.value, user.status.value,
+                user.last_name, email_hash, phone_hash, name_hash,
+                user.role.value, user.status.value,
                 user.department, user.license_number, user.phone
             )
             return user

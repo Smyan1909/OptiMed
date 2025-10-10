@@ -16,8 +16,9 @@ import asyncpg
 import asyncio
 import os
 import hashlib
-from typing import List, Dict, Any
-import base64
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class SecurityFixer:
