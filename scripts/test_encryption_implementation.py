@@ -123,7 +123,7 @@ class EncryptionTester:
                 WHERE email IS NOT NULL AND email_hash IS NOT NULL
             """)
             self.test_result(
-                f"Users with email_hash populated",
+                "Users with email_hash populated",
                 count > 0,
                 f"{count} users have email_hash"
             )
@@ -167,12 +167,12 @@ class EncryptionTester:
 
                 passed = decrypted == data
                 self.test_result(
-                    f"Encrypt/decrypt roundtrip",
+                    "Encrypt/decrypt roundtrip",
                     passed,
                     f"Original: {data[:20]}... -> Decrypted: {decrypted[:20] if decrypted else 'None'}..."
                 )
             except Exception as e:
-                self.test_result(f"Encrypt/decrypt roundtrip", False, str(e))
+                self.test_result("Encrypt/decrypt roundtrip", False, str(e))
 
         print()
 
@@ -200,7 +200,7 @@ class EncryptionTester:
                     f"Hash: {hash1[:16]}... (len={len(hash1)})"
                 )
             except Exception as e:
-                self.test_result(f"Hash consistency", False, str(e))
+                self.test_result("Hash consistency", False, str(e))
 
         print()
 
@@ -354,7 +354,7 @@ class EncryptionTester:
             if self.tests_failed > 0:
                 print(f"[FAIL] Tests failed: {self.tests_failed}")
             else:
-                print(f"[OK] Tests failed: 0")
+                print("[OK] Tests failed: 0")
 
             total = self.tests_passed + self.tests_failed
             if total > 0:

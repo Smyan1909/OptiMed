@@ -58,7 +58,7 @@ class SchemaReporter:
         # Get row count
         try:
             row_count = await self.conn.fetchval(f"SELECT COUNT(*) FROM {table_name}")
-        except:
+        except Exception:
             row_count = 0
 
         # Get primary key
@@ -152,7 +152,7 @@ class SchemaReporter:
         # Header
         report_lines.append("="*100)
         report_lines.append("COMPLETE DATABASE SCHEMA REPORT")
-        report_lines.append(f"Database: optimed-db-sweden")
+        report_lines.append("Database: optimed-db-sweden")
         report_lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         report_lines.append("="*100)
         report_lines.append(f"\nTotal Tables: {len(tables)}\n")
@@ -258,7 +258,7 @@ class SchemaReporter:
         report_lines.append(f"Total Rows (all tables): {total_rows:,}")
 
         if empty_tables:
-            report_lines.append(f"\nEmpty Tables:")
+            report_lines.append("\nEmpty Tables:")
             for table in empty_tables:
                 report_lines.append(f"  - {table}")
 
@@ -285,7 +285,7 @@ class SchemaReporter:
                     """)
                     if recent:
                         report_lines.append(f"      Last 24h: {recent:,} entries")
-                except:
+                except Exception:
                     pass
             else:
                 report_lines.append(f"[MISSING] {audit_table}")
@@ -373,12 +373,12 @@ async def main():
     print("="*100)
     print("DATABASE SCHEMA REPORT GENERATOR")
     print("="*100)
-    print(f"\nGenerating comprehensive schema report...")
+    print("\nGenerating comprehensive schema report...")
     print(f"Output file: {output_file}\n")
 
     await reporter.generate_report(output_file)
 
-    print(f"\n[OK] Report generation complete!")
+    print("\n[OK] Report generation complete!")
     print(f"[OK] Report saved to: {output_file}")
 
 

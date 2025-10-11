@@ -80,7 +80,7 @@ class DatabaseEncryption:
             )
             return encrypted
         except Exception as e:
-            log_error(logger, f"Error encrypting field", e)
+            log_error(logger, "Error encrypting field", e)
             raise
 
     async def decrypt_field(
@@ -109,7 +109,7 @@ class DatabaseEncryption:
             )
             return decrypted
         except Exception as e:
-            log_error(logger, f"Error decrypting field", e)
+            log_error(logger, "Error decrypting field", e)
             raise
 
     async def hash_field(
@@ -137,7 +137,7 @@ class DatabaseEncryption:
             )
             return hashed
         except Exception as e:
-            log_error(logger, f"Error hashing field", e)
+            log_error(logger, "Error hashing field", e)
             raise
 
     @staticmethod

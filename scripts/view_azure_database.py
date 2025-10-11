@@ -101,7 +101,7 @@ class DatabaseViewer:
             # Get time-based column for ordering
             time_col = None
             for col_name in ['accessed_at', 'created_at', 'recorded_at', 'occurred_at', 'started_at']:
-                has_col = await self.conn.fetchval(f"""
+                has_col = await self.conn.fetchval("""
                     SELECT EXISTS (
                         SELECT FROM information_schema.columns
                         WHERE table_name = $1 AND column_name = $2

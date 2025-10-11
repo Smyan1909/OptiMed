@@ -24,7 +24,7 @@ async def apply_migration():
         print("  export PGVECTOR_DSN='postgresql://user:password@optimed-db-sweden.postgres.database.azure.com:5432/optimed'")
         return False
 
-    print(f"[INFO] Connecting to Azure PostgreSQL...")
+    print("[INFO] Connecting to Azure PostgreSQL...")
 
     try:
         # Connect to database
@@ -60,7 +60,7 @@ async def apply_migration():
         with open(migration_path, 'r') as f:
             migration_sql = f.read()
 
-        print(f"\n[INFO] Applying migration 007...")
+        print("\n[INFO] Applying migration 007...")
         print("   SQL: ALTER TABLE data_access_logs ALTER COLUMN user_id DROP NOT NULL")
 
         # Apply migration

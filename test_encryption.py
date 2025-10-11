@@ -12,10 +12,8 @@ Run from project root: python test_encryption.py
 
 import sys
 import os
-import asyncio
 import json
 import base64
-from typing import Dict, Any
 
 # Add src to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -24,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 if sys.platform == 'win32':
     try:
         sys.stdout.reconfigure(encoding='utf-8')
-    except:
+    except Exception:
         pass
 
 # Test Backend Encryption
@@ -36,9 +34,7 @@ def test_backend_encryption():
 
     try:
         from optimed.adapters.security.encryption_service import (
-            get_encryption_service,
-            encrypt_patient_data,
-            decrypt_patient_data
+            get_encryption_service
         )
 
         # Test 1: Basic AES-GCM encryption
@@ -217,12 +213,9 @@ def test_encryption_flow_simulation():
 
     try:
         from optimed.adapters.security.e2e_encryption_middleware import create_session_with_encryption
-        from optimed.adapters.security.encryption_service import get_encryption_service
         from cryptography.hazmat.primitives.asymmetric import rsa, padding
         from cryptography.hazmat.primitives import serialization, hashes
         from cryptography.hazmat.backends import default_backend
-        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-        import secrets
 
         print("\n📱 STEP 1: Client generates RSA key pair")
         client_private_key = rsa.generate_private_key(
@@ -241,9 +234,8 @@ def test_encryption_flow_simulation():
         session_id = "flow-test-session"
         result = create_session_with_encryption(session_id, client_public_pem)
         encrypted_session_key_b64 = result['encrypted_session_key']
-        server_public_key_pem = result['server_public_key']
         print(f"  ✅ Session created: {session_id}")
-        print(f"  ✅ Server sent encrypted session key")
+        print("  ✅ Server sent encrypted session key")
 
         print("\n📱 STEP 3: Client decrypts session key")
         encrypted_session_key = base64.b64decode(encrypted_session_key_b64)
@@ -271,7 +263,6 @@ def test_encryption_flow_simulation():
         print(f"  ✅ Client encrypted data (first 100 chars): {encrypted_data_b64[:100]}...")
 
         print("\n🔓 STEP 5: Server decrypts data using session key")
-        from optimed.adapters.security.encryption_service import decrypt_patient_data
         from optimed.adapters.security.e2e_encryption_middleware import get_session_encryption_manager
 
         manager = get_session_encryption_manager()
