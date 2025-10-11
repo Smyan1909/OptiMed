@@ -11,13 +11,14 @@ import os
 import sys
 from pathlib import Path
 from dotenv import load_dotenv  
+import asyncpg
+from optimed.adapters.security.database_encryption import DatabaseEncryption
 
 load_dotenv()
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-import asyncpg
-from optimed.adapters.security.database_encryption import DatabaseEncryption
+
 
 
 class EncryptionTester:
