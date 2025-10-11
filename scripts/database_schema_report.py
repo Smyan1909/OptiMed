@@ -8,7 +8,7 @@ import asyncpg
 import asyncio
 import os
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -141,7 +141,7 @@ class SchemaReporter:
         else:
             return str(value)
 
-    async def generate_report(self, output_file: str = None):
+    async def generate_report(self, output_file: Optional[str] = None):
         """Generate complete schema report."""
         await self.connect()
 

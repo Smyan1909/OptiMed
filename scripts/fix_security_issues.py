@@ -26,7 +26,7 @@ class SecurityFixer:
         self.dsn = dsn
         self.conn: asyncpg.Connection = None
         self.encryption_key = encryption_key
-        self.fixes_applied = []
+        self.fixes_applied: list[str] = []
 
     async def connect(self):
         """Connect to Azure PostgreSQL."""
@@ -39,13 +39,13 @@ class SecurityFixer:
         if self.conn:
             await self.conn.close()
 
-    def hash_value(self, value: str) -> str:
+    def hash_value(self, value: str) -> str | None:
         """Create SHA256 hash of a value."""
         if not value:
             return None
         return hashlib.sha256(value.encode()).hexdigest()
 
-    def encrypt_value(self, value: str) -> bytes:
+    def encrypt_value(self, value: str) -> bytes | None:
         """
         Encrypt a value using pgcrypto.
         Note: This is a placeholder - actual encryption uses pgp_sym_encrypt

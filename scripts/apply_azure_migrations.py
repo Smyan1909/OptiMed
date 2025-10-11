@@ -23,7 +23,7 @@ class AzureMigrationRunner:
     def __init__(self, dsn: str):
         self.dsn = dsn
         self.conn: asyncpg.Connection = None
-        self.migrations_applied = []
+        self.migrations_applied: list[str] = []
 
     async def connect(self):
         """Connect to Azure PostgreSQL."""
