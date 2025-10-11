@@ -30,4 +30,6 @@ ENV PYTHONPATH=/app/src
 EXPOSE 8000
 
 # Start the API
-CMD ["python","-m","uvicorn","optimed.apps.api_gateway.main:app","--host","0.0.0.0","--port","8000","--workers","1","--proxy-headers","--log-level","info"]
+# --timeout-keep-alive: Keep alive timeout for connections (default: 5)
+# --timeout-graceful-shutdown: Graceful shutdown timeout (default: 0)
+CMD ["python","-m","uvicorn","optimed.apps.api_gateway.main:app","--host","0.0.0.0","--port","8000","--workers","1","--proxy-headers","--log-level","info","--timeout-keep-alive","120","--timeout-graceful-shutdown","30"]

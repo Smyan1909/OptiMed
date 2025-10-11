@@ -403,45 +403,59 @@ class LibXML2Processor(XMLProcessor):
             return False
 
     async def detect_document_type(self, file_content: bytes) -> str:
-        """Detect the type of XML document (HL7-CDA, FHIR, generic)."""
-        try:
-            content_str = file_content.decode('utf-8', errors='ignore')
+        """Detect the type of XML document (HL7-CDA, FHIR, generic).
 
-            # Check against known patterns - ordered by specificity
+        Optimized for large files by checking XML structure first before expensive regex.
+        """
+        try:
+            # OPTIMIZATION: Parse XML and check root element/namespace first (fast)
+            doc = etree.fromstring(file_content)
+            root_tag = doc.tag
+            namespace = doc.nsmap.get(None) if doc.nsmap else None
+
+            # Check by root element and namespace first
+            if 'ClinicalDocument' in root_tag and namespace and 'hl7' in namespace:
+                # Verify it's CDA by checking for CDA-specific elements
+                if doc.find('.//{urn:hl7-org:v3}templateId') is not None:
+                    return 'hl7-cda'
+                return 'hl7-generic'
+
+            # Check for FHIR Bundle or Patient resources
+            if 'Bundle' in root_tag or 'Patient' in root_tag:
+                if namespace and 'hl7.org/fhir' in namespace:
+                    return 'fhir'
+
+            # Check for generic HL7 namespace
+            if namespace and 'hl7' in namespace:
+                return 'hl7-generic'
+
+            # OPTIMIZATION: Only decode first 50KB for regex pattern matching (fast)
+            # Document type info is always at the beginning of medical XML files
+            max_check_size = 50 * 1024  # 50KB
+            content_to_check = file_content[:max_check_size].decode('utf-8', errors='ignore')
+
+            # Check against known patterns on first 50KB only
             for doc_type, pattern_list in self.document_type_patterns.items():
                 type_matched = False
                 for pattern, requires_strict in pattern_list:
-                    match = re.search(pattern, content_str, re.IGNORECASE | re.DOTALL)
+                    # Use re.MULTILINE instead of re.DOTALL for better performance
+                    match = re.search(pattern, content_to_check, re.IGNORECASE | re.MULTILINE)
                     if match:
                         if requires_strict:
-                            # For strict patterns, we need strong evidence of the document type
                             type_matched = True
                             break
                         else:
-                            # For loose patterns, continue checking but mark as potential match
                             type_matched = True
 
                 if type_matched:
                     # Additional validation for FHIR to avoid false positives
                     if doc_type == 'fhir':
-                        # Require either proper namespace OR resourceType attributes
-                        has_fhir_namespace = 'http://hl7.org/fhir' in content_str
-                        has_resource_type = re.search(r'resourceType.*value=', content_str, re.IGNORECASE)
+                        has_fhir_namespace = 'http://hl7.org/fhir' in content_to_check
+                        has_resource_type = re.search(r'resourceType.*value=', content_to_check, re.IGNORECASE)
                         if not (has_fhir_namespace or has_resource_type):
                             continue
 
                     return doc_type
-
-            # Parse to check root element and namespace as fallback
-            doc = etree.fromstring(file_content)
-            root_tag = doc.tag
-            namespace = doc.nsmap.get(None) if doc.nsmap else None
-
-            # Check by root element and namespace
-            if 'ClinicalDocument' in root_tag and 'hl7' in (namespace or ''):
-                return 'hl7-cda'
-            elif 'hl7' in (namespace or ''):
-                return 'hl7-generic'
 
             return 'generic-xml'
 

@@ -3195,17 +3195,15 @@ async def upload_pdf_document(
         if not file.filename or not file.filename.lower().endswith('.pdf'):
             raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
-        # Check file size (10MB limit)
-        if file.size and file.size > 10 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="File size must be less than 10MB")
-
         # Read file content
+        logger.info(f"[PDF Upload] Starting file read - filename: {file.filename}")
         file_content = await file.read()
+        file_size_mb = len(file_content) / (1024 * 1024)
 
         # Use chat_session_id if provided, otherwise fall back to auth session_id
         effective_session_id = chat_session_id or session_id
 
-        logger.info(f"[PDF Upload] Request - user: {sanitize_user_id(user.user_id)}, auth_session: {sanitize_session_id(session_id)}, chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, effective_session: {sanitize_session_id(effective_session_id)}, filename: {file.filename}, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
+        logger.info(f"[PDF Upload] Request - user: {sanitize_user_id(user.user_id)}, auth_session: {sanitize_session_id(session_id)}, chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, effective_session: {sanitize_session_id(effective_session_id)}, filename: {file.filename}, size: {file_size_mb:.2f}MB, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
         # Create upload request
         from optimed.core.domain.pdf_document import PDFUploadRequest
@@ -3268,9 +3266,14 @@ async def upload_pdf_document(
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except MemoryError as e:
+        log_error(logger, "PDF Upload - Memory Error", e)
+        raise HTTPException(status_code=413, detail="File too large to process in available memory")
     except Exception as e:
         log_error(logger, "PDF Upload", e)
-        raise HTTPException(status_code=500, detail="PDF upload failed")
+        # Provide more specific error messages
+        error_msg = str(e) if str(e) else "PDF upload failed"
+        raise HTTPException(status_code=500, detail=f"PDF upload failed: {error_msg}")
 
 
 # XML Document List and Get Endpoints (must come before generic /documents routes)
@@ -3772,9 +3775,11 @@ async def upload_xml_document(
 
     try:
         # Read file content
+        logger.info(f"[XML Upload] Starting file read - filename: {file.filename}")
         content = await file.read()
+        file_size_mb = len(content) / (1024 * 1024)
 
-        logger.info(f"[XML Upload] Request - user: {sanitize_user_id(user.user_id)}, auth_session: {sanitize_session_id(session_id)}, chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, effective_session: {sanitize_session_id(effective_session_id)}, filename: {file.filename}, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
+        logger.info(f"[XML Upload] Request - user: {sanitize_user_id(user.user_id)}, auth_session: {sanitize_session_id(session_id)}, chat_session: {sanitize_session_id(chat_session_id) if chat_session_id else "none"}, effective_session: {sanitize_session_id(effective_session_id)}, filename: {file.filename}, size: {file_size_mb:.2f}MB, patient: {sanitize_patient_id(patient_id) if patient_id else "none"}")
 
         # Process upload using memory service (XML service uses individual parameters)
         xml_document = await _xml_service.upload_document(
@@ -3813,9 +3818,14 @@ async def upload_xml_document(
 
         return response
 
+    except MemoryError as e:
+        log_error(logger, "XML Upload - Memory Error", e)
+        raise HTTPException(status_code=413, detail="File too large to process in available memory")
     except Exception as e:
         log_error(logger, "XML Upload", e)
-        raise HTTPException(status_code=500, detail="XML upload failed")
+        # Provide more specific error messages
+        error_msg = str(e) if str(e) else "XML upload failed"
+        raise HTTPException(status_code=500, detail=f"XML upload failed: {error_msg}")
 
 
 @app.delete("/documents/xml/{document_id}")
