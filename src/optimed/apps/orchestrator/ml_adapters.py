@@ -26,18 +26,26 @@ class MultilingualCrossEncoder:
         self._loaded = False
         self._model_name = model_name or "BAAI/bge-reranker-v2-m3"
         self._max_batch_size = max_batch_size
+        self._use_fp16 = os.getenv("CROSS_ENCODER_USE_FP16", "True").lower() == "true"
+        self._use_compile = os.getenv("CROSS_ENCODER_USE_COMPILE", "True").lower() == "true"
+        self._device = None
+        self._compiled = False
 
-        # Determine optimal batch size based on environment
-        if os.getenv("AZURE_CONTAINER_APP"):
-            self._optimal_batch_size = 8  # Conservative for Azure
+        # Determine optimal batch size based on environment and config
+        env_batch_size = os.getenv("CROSS_ENCODER_BATCH_SIZE")
+        if env_batch_size:
+            self._optimal_batch_size = int(env_batch_size)
+        elif os.getenv("AZURE_CONTAINER_APP"):
+            self._optimal_batch_size = 16  # Conservative for Azure but higher than before
         else:
-            self._optimal_batch_size = 8  # Smaller batches for better GPU memory usage
+            self._optimal_batch_size = 64  # Aggressive for local GPU
 
         logger.info(f"Initialized MultilingualCrossEncoder with model: {self._model_name}")
         logger.info(f"Optimal batch size: {self._optimal_batch_size}")
+        logger.info(f"FP16 enabled: {self._use_fp16}, Torch compile enabled: {self._use_compile}")
 
     def _ensure_loaded(self) -> bool:
-        """Ensure the model is loaded and ready."""
+        """Ensure the model is loaded and ready with GPU optimizations."""
         if self._loaded and self._model is not None:
             return True
 
@@ -49,14 +57,62 @@ class MultilingualCrossEncoder:
             # Detect GPU availability properly
             if torch.cuda.is_available():
                 device = "cuda"
+                self._device = device
                 logger.info(f"GPU detected: {torch.cuda.get_device_name(0)}")
+
+                # Get GPU memory info for dynamic batch sizing
+                gpu_mem = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # GB
+                gpu_mem_free = torch.cuda.memory_reserved(0) / (1024**3)
+                logger.info(f"GPU Memory: {gpu_mem:.2f} GB total")
+
+                # Adjust batch size based on available memory if not explicitly set
+                if not os.getenv("CROSS_ENCODER_BATCH_SIZE"):
+                    if gpu_mem < 6:
+                        self._optimal_batch_size = 16  # Conservative for small GPUs
+                    elif gpu_mem < 12:
+                        self._optimal_batch_size = 32  # Safer for 8GB (was 64, caused OOM)
+                    else:
+                        self._optimal_batch_size = 64  # For larger GPUs
+                    logger.info(f"Auto-adjusted batch size to {self._optimal_batch_size} based on {gpu_mem:.2f}GB VRAM")
+
+                # Enable cuDNN autotuner for optimal convolution algorithms
+                torch.backends.cudnn.benchmark = True
+                logger.info("Enabled cuDNN autotuner for GPU optimization")
             else:
                 device = "cpu"
+                self._device = device
+                self._optimal_batch_size = 8  # Conservative for CPU
                 logger.info("No GPU available, using CPU")
 
+            # Load model
             self._model = CrossEncoder(self._model_name, device=device, trust_remote_code=True)
-            self._loaded = True
 
+            # Apply GPU optimizations
+            if device == "cuda":
+                # Enable FP16 mixed precision for faster inference
+                if self._use_fp16:
+                    try:
+                        self._model.model.half()
+                        logger.info("Enabled FP16 mixed precision for 2-3x speedup")
+                    except Exception as e:
+                        logger.warning(f"Could not enable FP16: {e}")
+
+                # Apply torch.compile for PyTorch 2.x optimization (requires Triton on Linux)
+                if self._use_compile and hasattr(torch, 'compile') and not self._compiled:
+                    try:
+                        import platform
+                        # Triton is not easily available on Windows, skip compilation
+                        if platform.system() == "Windows":
+                            logger.info("Skipping torch.compile on Windows (Triton not available)")
+                        else:
+                            # Compile the underlying model for optimization
+                            self._model.model = torch.compile(self._model.model, mode='reduce-overhead')
+                            self._compiled = True
+                            logger.info("Applied torch.compile() optimization for PyTorch 2.x")
+                    except Exception as e:
+                        logger.warning(f"Could not compile model (this is OK): {e}")
+
+            self._loaded = True
             logger.info(f"MultilingualCrossEncoder model loaded successfully on {device}")
             return True
 
@@ -200,11 +256,12 @@ class MultilingualCrossEncoder:
                 logger.warning("No valid pairs for prediction")
                 return []
 
-            # Get raw scores with proper batch size
+            # Get raw scores with optimal batch size
             if self._model is None:
                 logger.warning("Model not loaded")
                 return []
-            actual_batch_size = min(len(batch_texts), 4)  # Conservative GPU batch size
+            # Use the optimized batch size determined during initialization
+            actual_batch_size = min(len(batch_texts), self._optimal_batch_size)
             raw_scores = self._model.predict(
                 batch_texts,
                 batch_size=actual_batch_size,
@@ -213,13 +270,18 @@ class MultilingualCrossEncoder:
                 convert_to_tensor=False
             )
 
-            # Clear GPU cache if using CUDA
+            # Optionally clear GPU cache (only if memory pressure detected)
+            # Note: empty_cache() is expensive, so we only do it periodically
             try:
                 import torch
-                if torch.cuda.is_available() and hasattr(torch.cuda, 'empty_cache'):
-                    torch.cuda.empty_cache()
-            except ImportError:
-                pass  # Ignore if torch not available
+                if self._device == "cuda" and torch.cuda.is_available():
+                    # Only clear cache if we're using more than 80% of memory
+                    mem_allocated = torch.cuda.memory_allocated(0)
+                    mem_total = torch.cuda.get_device_properties(0).total_memory
+                    if mem_allocated / mem_total > 0.8:
+                        torch.cuda.empty_cache()
+            except (ImportError, Exception):
+                pass  # Ignore errors
 
             # Apply sigmoid normalization
             normalized_scores = [self._sigmoid(float(score)) for score in raw_scores]

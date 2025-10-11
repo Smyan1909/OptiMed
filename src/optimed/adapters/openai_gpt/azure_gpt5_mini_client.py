@@ -19,6 +19,15 @@ class AzureOpenAIGPT5MiniClient(LLMClient):
     - The `model` parameter refers to the Azure deployment name.
     - Encourages minimal reasoning effort via a lightweight system directive.
     - Implements the LLMClient protocol used across the app.
+
+    Context Window:
+    - Total: 400,000 tokens
+    - Input: Up to 272,000 tokens
+    - Output: Up to 128,000 tokens
+    - Default output: 8,192 tokens (configurable via GPT5_DEFAULT_MAX_TOKENS)
+
+    Important: Setting high max_output_tokens reduces available input capacity.
+    Formula: Available_Input = 400k - max_output_tokens
     """
 
     def __init__(
@@ -30,6 +39,7 @@ class AzureOpenAIGPT5MiniClient(LLMClient):
         minimal_reasoning: bool = True,
         azure_endpoint: str | None = None,
         api_version: str | None = None,
+        default_max_tokens: int | None = None,  # Auto-detect from env or use 8192
     ) -> None:
         # Use Azure-specific async client to ensure proper auth headers (api-key) and API versioning
         self._client = openai.AsyncOpenAI(  # type: ignore[attr-defined]
@@ -37,9 +47,16 @@ class AzureOpenAIGPT5MiniClient(LLMClient):
             base_url=azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT"),
             timeout=timeout,
         )
-        
+
         self._model = model
         self._minimal_reasoning = minimal_reasoning
+
+        # Allow configuration via environment variable
+        if default_max_tokens is None:
+            env_max = os.getenv("GPT5_DEFAULT_MAX_TOKENS")
+            self._default_max_tokens = int(env_max) if env_max else 8192
+        else:
+            self._default_max_tokens = default_max_tokens
 
     @staticmethod
     def _to_responses_input(messages: Sequence[ChatMessage]) -> List[Dict[str, Any]]:
@@ -79,10 +96,8 @@ class AzureOpenAIGPT5MiniClient(LLMClient):
             "model": self._model,
             "input": input_payload,
         }
-        if max_tokens is not None:
-            kwargs["max_output_tokens"] = max_tokens
-        else:
-            kwargs["max_output_tokens"] = 32000
+        # Use provided max_tokens, or default to GPT-5 mini's max (128k)
+        kwargs["max_output_tokens"] = max_tokens if max_tokens is not None else self._default_max_tokens
 
         # Reasoning effort in Responses API
         if self._minimal_reasoning:
@@ -131,10 +146,8 @@ class AzureOpenAIGPT5MiniClient(LLMClient):
             "input": input_payload,
             "stream": True,
         }
-        if max_tokens is not None:
-            kwargs["max_output_tokens"] = max_tokens
-        else:
-            kwargs["max_output_tokens"] = 32000
+        # Use provided max_tokens, or default to GPT-5 mini's max (128k)
+        kwargs["max_output_tokens"] = max_tokens if max_tokens is not None else self._default_max_tokens
 
         if self._minimal_reasoning:
             kwargs["reasoning"] = {"effort": "minimal"}

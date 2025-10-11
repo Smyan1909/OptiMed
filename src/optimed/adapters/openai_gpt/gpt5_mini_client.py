@@ -17,6 +17,15 @@ class OpenAIGPT5MiniClient(LLMClient):
     - Defaults to model "gpt-5-mini" for speed.
     - Encourages minimal reasoning effort via a lightweight system directive.
     - Implements the LLMClient protocol used across the app.
+
+    Context Window:
+    - Total: 400,000 tokens
+    - Input: Up to 272,000 tokens
+    - Output: Up to 128,000 tokens
+    - Default output: 8,192 tokens (configurable via GPT5_DEFAULT_MAX_TOKENS)
+
+    Important: Setting high max_completion_tokens reduces available input capacity.
+    Formula: Available_Input = 400k - max_completion_tokens
     """
 
     def __init__(
@@ -26,6 +35,7 @@ class OpenAIGPT5MiniClient(LLMClient):
         api_key: str | None = None,
         timeout: float | None = None,
         minimal_reasoning: bool = True,
+        default_max_tokens: int | None = None,  # Auto-detect from env or use 8192
     ) -> None:
         self._client = openai.AsyncOpenAI(
             api_key=api_key or os.getenv("OPENAI_API_KEY"),
@@ -33,6 +43,13 @@ class OpenAIGPT5MiniClient(LLMClient):
         )
         self._model = model
         self._minimal_reasoning = minimal_reasoning
+
+        # Allow configuration via environment variable
+        if default_max_tokens is None:
+            env_max = os.getenv("GPT5_DEFAULT_MAX_TOKENS")
+            self._default_max_tokens = int(env_max) if env_max else 8192
+        else:
+            self._default_max_tokens = default_max_tokens
 
     async def chat(  # type: ignore
         self,
@@ -60,7 +77,7 @@ class OpenAIGPT5MiniClient(LLMClient):
         response = await self._client.chat.completions.create(  # type: ignore
             model=self._model,
             messages=openai_msgs,
-            max_completion_tokens=max_tokens or 32000,
+            max_completion_tokens=max_tokens or self._default_max_tokens,  # Up to 128k for GPT-5 mini
             response_format=response_format,
             reasoning_effort="minimal" if self._minimal_reasoning else "default",
         )
@@ -104,7 +121,7 @@ class OpenAIGPT5MiniClient(LLMClient):
         stream = await self._client.chat.completions.create(  # type: ignore
             model=self._model,
             messages=openai_msgs,
-            max_completion_tokens=max_tokens or 32000,
+            max_completion_tokens=max_tokens or self._default_max_tokens,  # Up to 128k for GPT-5 mini
             response_format=response_format,
             reasoning_effort="minimal" if self._minimal_reasoning else "default",
             stream=True,

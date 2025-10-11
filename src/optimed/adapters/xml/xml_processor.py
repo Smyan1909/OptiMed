@@ -363,9 +363,9 @@ class LibXML2Processor(XMLProcessor):
         """Convert XML element to dictionary."""
         result = {}
 
-        # Add attributes
+        # Add attributes - convert lxml._Attrib to plain dict for JSON serialization
         if element.attrib:
-            result['@attributes'] = element.attrib
+            result['@attributes'] = dict(element.attrib)
 
         # Add text content
         if element.text and element.text.strip():
