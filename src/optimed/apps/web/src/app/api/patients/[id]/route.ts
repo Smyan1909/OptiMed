@@ -4,23 +4,24 @@ import { logError } from '@/lib/logger';
 
 export async function GET(
   request: Request,
-  context: any
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     // Get session ID from request headers or cookies
     const cookieStore = await cookies();
     const sessionId = request.headers.get('x-session-id') || cookieStore.get('session_id')?.value;
-    
+
     const headers: Record<string, string> = {};
-    
+
     // Add session header if available
     if (sessionId) {
       headers['X-Session-ID'] = sessionId;
     }
-    
+
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
     // Correct: fetch patient detail, not journal list
-    const response = await fetch(`${baseUrl}/patients/${context.params.id}`, {
+    const response = await fetch(`${baseUrl}/patients/${id}`, {
       headers
     });
     
@@ -39,9 +40,10 @@ export async function GET(
 
 export async function POST(
   request: Request,
-  context: any
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const body = await (request as any).json();
 
     // Get session ID from request headers or cookies
@@ -58,7 +60,7 @@ export async function POST(
     }
 
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
-    const response = await fetch(`${baseUrl}/patients/${context.params.id}/journal`, {
+    const response = await fetch(`${baseUrl}/patients/${id}/journal`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body)

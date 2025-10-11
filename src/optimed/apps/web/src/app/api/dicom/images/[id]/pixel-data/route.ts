@@ -3,9 +3,9 @@ import { logError } from '@/lib/logger';
 
 export async function GET(
   req: Request,
-  context: any
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = context.params;
+  const { id } = await params;
   try {
     const sessionId = req.headers.get('x-session-id');
     const { searchParams } = new URL(req.url);

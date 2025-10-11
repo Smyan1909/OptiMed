@@ -3,23 +3,24 @@ import { logError } from '@/lib/logger';
 
 export async function POST(
   request: Request,
-  context: any
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id: sessionId } = await params;
     // Get session ID from incoming request headers
-    const sessionId = request.headers.get('x-session-id');
-    
+    const sessionIdHeader = request.headers.get('x-session-id');
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
     };
-    
+
     // Forward the session header to the backend
-    if (sessionId) {
-      headers['X-Session-ID'] = sessionId;
+    if (sessionIdHeader) {
+      headers['X-Session-ID'] = sessionIdHeader;
     }
-    
+
     const baseUrl = (process.env.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
-    const response = await fetch(`${baseUrl}/sessions/${context.params.sessionId}/join`, {
+    const response = await fetch(`${baseUrl}/sessions/${sessionId}/join`, {
       method: 'POST',
       headers
     });

@@ -3,10 +3,10 @@ import { logError } from '@/lib/logger';
 
 export async function GET(
   request: Request,
-  context: any
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = context.params;
+    const { id } = await params;
     const sessionId = request.headers.get('x-session-id');
     
     const headers: Record<string, string> = {
@@ -35,10 +35,10 @@ export async function GET(
 
 export async function DELETE(
   request: Request,
-  context: any
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = context.params;
+    const { id } = await params;
     const sessionId = request.headers.get('x-session-id');
     
     const headers: Record<string, string> = {

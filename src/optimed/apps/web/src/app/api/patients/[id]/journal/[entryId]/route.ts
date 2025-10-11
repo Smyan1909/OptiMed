@@ -4,10 +4,10 @@ import { logError } from '@/lib/logger';
 
 export async function GET(
   request: Request,
-  context: any
+  { params }: { params: Promise<{ id: string; entryId: string }> }
 ) {
   try {
-    const { id, entryId } = context.params;
+    const { id, entryId } = await params;
 
     const cookieStore = await cookies();
     const sessionId = request.headers.get('x-session-id') || cookieStore.get('session_id')?.value;

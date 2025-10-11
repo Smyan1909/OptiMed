@@ -12,6 +12,7 @@ import hashlib
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from optimed.adapters.security.encryption_service import get_phi_redactor
+from optimed.adapters.security.database_encryption import DatabaseEncryption
 from optimed.core.logging_utils import get_logger, log_error
 
 logger = get_logger(__name__)
@@ -101,16 +102,20 @@ class PGAuditRepository:
             safe_metadata = self._redact_phi(metadata) if metadata else {}
 
             async with pool.acquire() as conn:
+                # Hash user_id for GDPR right-to-erasure compliance
+                user_id_hash = DatabaseEncryption.hash_value(user_id) if user_id else None
+
                 await conn.execute("""
                     INSERT INTO data_access_logs (
-                        session_id, user_id, access_type, resource_type,
+                        session_id, user_id, user_id_hash, access_type, resource_type,
                         resource_count, data_source, access_method,
                         lawful_basis, purpose_of_use,
                         access_duration_ms, access_granted, accessed_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
                 """,
                     self._to_uuid(session_id),
-                    self._to_uuid(user_id),
+                    user_id,  # Keep as string - column type is VARCHAR(255), not UUID
+                    user_id_hash,  # SHA-256 hash for right-to-erasure
                     request_category,
                     "api_endpoint",
                     1,  # resource_count (1 request = 1 resource accessed)
@@ -185,7 +190,7 @@ class PGAuditRepository:
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
                 """,
                     self._to_uuid(session_id),
-                    self._to_uuid(user_id),
+                    user_id,  # Keep as string - column type is VARCHAR(255), not UUID
                     access_type,
                     resource_type,
                     resource_count,

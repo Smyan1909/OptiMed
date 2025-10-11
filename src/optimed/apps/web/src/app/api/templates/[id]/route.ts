@@ -3,15 +3,15 @@ import { sanitizeDocumentId, sanitizeSessionId, logInfo, logError } from '@/lib/
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const templateId = params.id;
+    const { id: templateId } = await params;
 
     // Get session ID from headers
     const sessionId = request.headers.get('x-session-id');
 
-    const headers: Record<string, string} = {};
+    const headers: Record<string, string> = {};
 
     // Forward the session header to the backend
     if (sessionId) {
@@ -46,10 +46,10 @@ export async function GET(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const templateId = params.id;
+    const { id: templateId } = await params;
 
     // Get session ID from headers
     const sessionId = request.headers.get('x-session-id');

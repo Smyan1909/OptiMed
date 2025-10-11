@@ -3,10 +3,10 @@ import { sanitizeSessionId, logInfo, logError } from '@/lib/logger';
 
 export async function GET(
   request: Request,
-  context: any
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = context.params;
+    const { id } = await params;
     // Get session ID from request headers
     const sessionId = request.headers.get('x-session-id');
     
