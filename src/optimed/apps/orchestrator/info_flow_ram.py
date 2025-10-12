@@ -3064,16 +3064,20 @@ Generate a CONCISE diagnoses section for a focused summary about: {state.focused
 
 USER QUERY: {state.user_prompt}
 
-Format exactly as:
+Format exactly as markdown bullet points:
+
 • [Diagnosis 1] ([Year diagnosed or duration])
+
 • [Diagnosis 2] ([Timeline or status])
+
 • [Diagnosis 3] ([Resolution status or ongoing])
 
 RULES:
 - List 2-4 diagnoses ONLY related to {state.focused_aspect}
 - Include ICD codes if available: "Type 2 Diabetes (E11.9, since 2018)"
 - Include temporal information (year, duration, or status)
-- Use bullet points (•)
+- Use markdown bullet points with • character
+- Add a blank line between each bullet point for readability
 - Be concise - one line per diagnosis
 - MANDATORY: Cite sources using format {citation_format}
 - If no diagnoses found, state "No formal diagnoses documented for {state.focused_aspect}"
@@ -3140,16 +3144,21 @@ Generate a CONCISE key events timeline for: {state.focused_aspect}
 
 USER QUERY: {state.user_prompt}
 
-Format exactly as:
-[2020] [Initial diagnosis - symptoms presented, diagnostic workup completed]
-[2021] [Hospitalization for acute exacerbation - intervention performed]
-[2023] [Follow-up showed improvement - treatment adjusted]
+Format exactly as markdown bullet points with bold dates:
+
+• **2020:** Initial diagnosis - symptoms presented, diagnostic workup completed
+
+• **2021:** Hospitalization for acute exacerbation - intervention performed
+
+• **2023:** Follow-up showed improvement - treatment adjusted
 
 RULES:
 - List 3-5 key events ONLY related to {state.focused_aspect}
-- Start each line with [Year] or [Month Year]
+- Use markdown bullet points with • character
+- Make the date bold using **Date:** format
+- Add a blank line between each event for readability
 - Include: interventions, hospitalizations, imaging, test results, treatment changes
-- Be specific but concise - one line per event
+- Be specific but concise - one line per event after the date
 - Chronological order (oldest to newest)
 - MANDATORY: Cite sources using format {citation_format}
 - If no events found, state "No significant clinical events documented for {state.focused_aspect}"
@@ -3376,16 +3385,20 @@ Generate a CONCISE clinical assessment for: {state.focused_aspect}
 
 USER QUERY: {state.user_prompt}
 
-Write 2-3 short sentences summarizing:
-- Current disease control/status
-- Progression or stability
-- Overall prognosis or outlook
+Format exactly as markdown bullet points:
+
+• **Current Status:** [Disease control/status summary]
+
+• **Trend:** [Progression, stability, or improvement]
+
+• **Prognosis:** [Overall outlook]
 
 RULES:
-- Maximum 3 sentences
+- Use 3 bullet points as shown above
 - Focus ONLY on {state.focused_aspect}
 - Be clinically precise but accessible
-- Include current status, trend, and outlook
+- Add a blank line between each bullet point for readability
+- Each bullet should be one concise line
 - MANDATORY: Cite sources using format {citation_format}
 - If insufficient data, state "Limited clinical assessment available for {state.focused_aspect}"
 """
@@ -3451,17 +3464,21 @@ Generate CONCISE next steps for: {state.focused_aspect}
 
 USER QUERY: {state.user_prompt}
 
-Format exactly as:
-🔸 [Follow-up test or appointment due]
-🔸 [Medication review or adjustment needed]
-🔸 [Specialist consult or referral pending]
+Format exactly as markdown bullet points:
+
+• Follow-up test or appointment due (include specific timing if available)
+
+• Medication review or adjustment needed
+
+• Specialist consult or referral pending
 
 RULES:
 - List 2-4 items ONLY related to {state.focused_aspect}
-- Use 🔸 bullet emoji
+- Use markdown bullet points with • character
+- Add a blank line between each bullet point for readability
 - One line per item
 - Include: pending tests, follow-ups, medication reviews, referrals, outstanding issues
-- Include timing if available: "Echo scheduled for March 2024"
+- Include timing if available: "Echocardiogram scheduled for March 2024"
 - MANDATORY: Cite sources using format {citation_format}
 - If no next steps found, state "No pending follow-up documented for {state.focused_aspect}"
 """
