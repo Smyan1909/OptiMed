@@ -72,7 +72,7 @@ class MultilingualCrossEncoder:
                     elif gpu_mem < 12:
                         self._optimal_batch_size = 32  # Safer for 8GB (was 64, caused OOM)
                     else:
-                        self._optimal_batch_size = 64  # For larger GPUs
+                        self._optimal_batch_size = 48  # For larger GPUs
                     logger.info(f"Auto-adjusted batch size to {self._optimal_batch_size} based on {gpu_mem:.2f}GB VRAM")
 
                 # Enable cuDNN autotuner for optimal convolution algorithms
