@@ -44,6 +44,10 @@ class MultilingualCrossEncoder:
         logger.info(f"Optimal batch size: {self._optimal_batch_size}")
         logger.info(f"FP16 enabled: {self._use_fp16}, Torch compile enabled: {self._use_compile}")
 
+        # Load model immediately at startup instead of lazy loading during inference
+        logger.info("Loading model at initialization...")
+        self._ensure_loaded()
+
     def _ensure_loaded(self) -> bool:
         """Ensure the model is loaded and ready with GPU optimizations."""
         if self._loaded and self._model is not None:
@@ -388,6 +392,10 @@ class MultilingualZeroShotClassifier:
         if self._model_name != default_model:
             logger.info(f"Using non-default model: {self._model_name}")
 
+        # Load model immediately at startup instead of lazy loading during inference
+        logger.info("Loading model at initialization...")
+        self._ensure_loaded()
+
     def _ensure_loaded(self) -> bool:
         """Ensure the embedding model is loaded and ready."""
         if self._loaded and self._model is not None:
@@ -495,30 +503,41 @@ class MultilingualZeroShotClassifier:
             try:
                 import numpy as np
 
-                # Map technical labels to VERY semantically distinct descriptions
-                # Use completely different vocabulary to maximize embedding separation
+                # Map technical labels to descriptions that match USER QUERY PATTERNS
+                # Describe what the query SOUNDS LIKE, not what the output is
                 label_mapping = {
-                    "general_summary": "broad comprehensive overview showing EVERYTHING about the ENTIRE patient without focusing on any particular body part or disease, displaying all medical information together: complete problem list, full medication list, all laboratory values, all vital signs, social history, family history, allergies, immunizations in one holistic whole-patient report covering every aspect equally",
+                    # User asks to "summarize [SPECIFIC CONDITION/ORGAN NAME]"
+                    "focused_summary": "user requests summary about patient's heart cardiac cardiovascular diabetes kidney renal liver hepatic lung pulmonary respiratory brain neurological stroke cancer oncology hypertension blood-pressure thyroid endocrine gastrointestinal arthritis dermatology condition disease organ-system - query explicitly names the specific medical aspect to summarize - asks for information about one particular named health issue",
 
-                    "focused_summary": "detailed examination of ONE PARTICULAR body part, organ system, or specific disease that the user names in their query (such as: heart, cardiac, cardiovascular, lung, pulmonary, kidney, renal, liver, hepatic, brain, neurological, diabetes, hypertension, COPD, cancer), analyzing only that single named aspect in depth with its specific diagnoses, treatments, test results, and disease progression while ignoring other unrelated medical conditions",
+                    # User asks to "summarize THE PATIENT" or "summarize THIS patient" (no specific aspect)
+                    "general_summary": "user requests overview or summary of THE patient or THIS patient without naming any particular condition or organ - asks for complete information about the patient as a whole - wants to see everything together - no specific medical aspect mentioned in the query",
 
-                    "sbar_handoff": "structured four-section SBAR handoff report format (Situation-Background-Assessment-Recommendation) for transferring patient care between healthcare providers during shift changes and care transitions",
+                    # User explicitly asks for "discharge summary"
+                    "discharge_summary": "user explicitly requests discharge summary or hospital discharge documentation - query contains the word discharge - asks about patient leaving hospital or discharge planning",
 
-                    "timeline": "chronological sequence displaying dates and times showing when medical events occurred in temporal order over a time period to visualize the progression and sequence of events",
+                    # User asks "when" or requests "timeline" or "chronological" or "history of events"
+                    "timeline": "user asks when events happened or requests timeline or chronological history or sequence of events - query contains words like: general timeline, when, timeline, chronological, sequence, history, events over time, what happened when",
 
-                    "note_generation": "create new formal clinical documentation from scratch such as writing progress notes, generating SOAP notes, drafting discharge summaries, or authoring other structured medical documents",
+                    # User explicitly asks for "SBAR" or "handoff"
+                    "sbar_handoff": "user explicitly requests SBAR report or handoff or shift-change communication - query contains the word SBAR or handoff or shift-change - asks for structured situation-background-assessment-recommendation format",
 
-                    "discharge_summary": "formal hospital discharge documentation summarizing the admission stay and providing instructions for patient leaving hospital care",
+                    # User asks "what is" or "what was" seeking a single specific value
+                    "lookup": "user asks what is or what was a specific value or measurement - query seeks one single data point like: what is blood pressure, what is latest creatinine, what is hemoglobin value, what was glucose - question asking for specific isolated fact",
 
-                    "lookup": "retrieve one single specific factual data value or measurement from records such as finding a particular lab result number, blood pressure value, medication dosage, or isolated piece of factual information without any synthesis",
+                    # User asks to "write" or "create" or "generate" or "draft" a note/documentation
+                    "note_generation": "user asks to write or create or generate or draft or compose new clinical note or documentation - query contains action verbs like: write, create, generate, draft, compose, produce followed by note or documentation - requests authoring new medical record",
 
-                    "temporal-trend": "analyze how numerical measurements and quantitative values have changed and trended up or down over multiple time points to identify increasing, decreasing, or fluctuating patterns in the data",
+                    # User asks "how has X changed" or "show trends" or "track over time"
+                    "temporal-trend": "user asks how values changed or evolved or trended over time - query asks to show trends or track changes or analyze progression of measurements - contains words like: trend, change over time, how has X changed, progression, evolution of values",
 
-                    "comparative": "direct side-by-side comparison explicitly contrasting two or more different treatment options, medication choices, diagnostic alternatives, or approaches to weigh their relative differences and similarities",
+                    # User asks to "compare X versus Y" or "compare X and Y" or "differences between"
+                    "comparative": "user asks to compare two or more options or choices or alternatives - query contains words like: compare, versus, vs, versus, difference between, versus, contrast, compare X with Y, compare X and Y, which is better",
 
-                    "reasoning": "diagnostic reasoning and differential diagnosis analysis to determine the most likely disease or condition causing symptoms based on clinical findings and patient presentation",
+                    # User asks "why" or "what caused" or "what's causing"
+                    "reasoning": "user asks why something happened or what caused symptoms or what is causing condition - query contains words like: why, what caused, what's causing, reason for, etiology, why does patient have, explain cause, differential diagnosis",
 
-                    "guideline": "evidence-based clinical practice guidelines and standardized treatment protocols recommending best practices for managing specific medical scenarios and conditions"
+                    # User asks "how should we treat" or "what do guidelines recommend"
+                    "guideline": "user asks how to treat or what guidelines recommend or best practices for management - query contains words like: how should we treat, what do guidelines say, treatment protocol, clinical guidelines, how to manage, recommended approach, best practice"
                 }
 
                 # Convert labels to natural language if mapping exists

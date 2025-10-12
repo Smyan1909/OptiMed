@@ -5769,7 +5769,16 @@ Content:
 
         if PERSISTENCE_ENABLED and session_id and user_id:
             await self._vec.update_session_activity(session_id=session_id, user_id=user_id)
-        
+
+        # Clear GPU memory after flow completes
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                logger.info("Cleared GPU cache after LangGraph flow completion")
+        except (ImportError, Exception) as e:
+            logger.warning(f"Could not clear GPU cache: {e}")
+
         # Always return the same completion-shaped output as run_stream's final chunk
         if hasattr(data, "model_dump"):
             return self._to_output(data.model_dump())
@@ -5986,6 +5995,15 @@ Content:
                         # Log the task exception but don't re-raise it since we're in finally
                         import logging
                         logging.error(f"Graph task failed with exception: {task_exception}")
+
+                # Clear GPU memory after streaming completes
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        logger.info("Cleared GPU cache after streaming flow completion")
+                except (ImportError, Exception) as cleanup_error:
+                    logger.warning(f"Could not clear GPU cache: {cleanup_error}")
 
         return _stream_generator()
 
