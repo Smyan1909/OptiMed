@@ -11,6 +11,7 @@ import { ReasoningViewer } from "./ReasoningViewer";
 import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCards";
 import { SBARSummaryCards } from "./SBARSummaryCards";
 import { GeneralSummaryCards } from "./GeneralSummaryCards";
+import { FocusedSummaryCards } from "./FocusedSummaryCards";
 import { TimelineView } from "./TimelineView";
 import { NoteGenerationDialog } from "./NoteGenerationDialog";
 import { VoiceRecorder } from "./VoiceRecorder";
@@ -1087,6 +1088,21 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                     // Clear the content so we don't display the raw JSON
                     formattedMessage.text = '';
                     logInfo(`✅ Successfully processed General Summary cards, cleared text`);
+                  } else if (parsedContent.type === 'focused_summary' && parsedContent.sections) {
+                    logInfo(`🎯 Processing JSON Focused Summary for message ${index}`);
+                    formattedMessage.focusedSummaryResults = {
+                      diagnoses: parsedContent.sections.diagnoses?.content || undefined,
+                      events: parsedContent.sections.events?.content || undefined,
+                      medications: parsedContent.sections.medications?.content || undefined,
+                      objective_data: parsedContent.sections.objective_data?.content || undefined,
+                      assessment: parsedContent.sections.assessment?.content || undefined,
+                      next_steps: parsedContent.sections.next_steps?.content || undefined
+                    };
+                    formattedMessage.focusedAspect = parsedContent.aspect || "Medical Condition";
+                    formattedMessage.focusedAspectIcon = parsedContent.aspect_icon || "file-text";
+                    // Clear the content so we don't display the raw JSON
+                    formattedMessage.text = '';
+                    logInfo(`✅ Successfully processed Focused Summary, cleared text`);
                   } else if (parsedContent.type === 'timeline_view' && parsedContent.events) {
                     logInfo(`📅 Processing JSON Timeline for message ${index}`);
                     formattedMessage.timelineResults = {
@@ -1228,6 +1244,9 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         let messageText = finalResponse;
         let sbarResults = undefined;
         let generalSummaryResults = undefined;
+        let focusedSummaryResults = undefined;
+        let focusedAspect = undefined;
+        let focusedAspectIcon = undefined;
         let timelineResults = undefined;
 
         try {
@@ -1271,6 +1290,21 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
               // Clear the text so we don't display the raw JSON
               messageText = '';
               logInfo(`✅ Successfully processed streaming General Summary cards, cleared text`);
+            } else if (parsedContent.type === 'focused_summary' && parsedContent.sections) {
+              logInfo(`🎯 Processing streaming Focused Summary`);
+              focusedSummaryResults = {
+                diagnoses: parsedContent.sections.diagnoses?.content || undefined,
+                events: parsedContent.sections.events?.content || undefined,
+                medications: parsedContent.sections.medications?.content || undefined,
+                objective_data: parsedContent.sections.objective_data?.content || undefined,
+                assessment: parsedContent.sections.assessment?.content || undefined,
+                next_steps: parsedContent.sections.next_steps?.content || undefined
+              };
+              focusedAspect = parsedContent.aspect || "Medical Condition";
+              focusedAspectIcon = parsedContent.aspect_icon || "file-text";
+              // Clear the text so we don't display the raw JSON
+              messageText = '';
+              logInfo(`✅ Successfully processed streaming Focused Summary, cleared text`);
             } else if (parsedContent.type === 'timeline_view' && parsedContent.events) {
               logInfo(`📅 Processing streaming Timeline`);
               timelineResults = {
@@ -1295,6 +1329,9 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           differentialDiagnoses: streamDifferentialDiagnoses,
           sbarResults: sbarResults,
           generalSummaryResults: generalSummaryResults,
+          focusedSummaryResults: focusedSummaryResults,
+          focusedAspect: focusedAspect,
+          focusedAspectIcon: focusedAspectIcon,
           timelineResults: timelineResults
         };
 
@@ -1826,6 +1863,19 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                       isLoading={msg.loading}
                       reasoning={msg.reasoning}
                       reasoningSteps={msg.reasoningSteps}
+                      patientId={patientId}
+                      sessionId={sessionId}
+                    />
+                  </div>
+                )}
+
+                {msg.sender === 'system' && msg.focusedSummaryResults && (
+                  <div className="mt-3">
+                    <FocusedSummaryCards
+                      summaryResults={msg.focusedSummaryResults}
+                      aspect={msg.focusedAspect || "Medical Condition"}
+                      aspectIcon={msg.focusedAspectIcon || "file-text"}
+                      isLoading={msg.loading}
                       patientId={patientId}
                       sessionId={sessionId}
                     />

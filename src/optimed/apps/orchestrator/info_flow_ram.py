@@ -221,6 +221,29 @@ class FlowState(BaseModel):
     # General summary retrieval cache for performance optimization
     general_retrieval_cache: Optional[Dict[str, Any]] = None
 
+    # Focused summary flow fields
+    is_focused_summary_flow: bool = False
+    focused_aspect: Optional[str] = None  # e.g., "heart disease", "lung history"
+    focused_aspect_icon: Optional[str] = None  # Icon for the aspect
+
+    # Separate fields for each focused summary component to avoid concurrent updates
+    focused_diagnoses_chunks: Optional[List[str]] = None
+    focused_events_chunks: Optional[List[str]] = None
+    focused_medications_chunks: Optional[List[str]] = None
+    focused_objective_data_chunks: Optional[List[str]] = None
+    focused_assessment_chunks: Optional[List[str]] = None
+    focused_next_steps_chunks: Optional[List[str]] = None
+
+    focused_diagnoses_result: Optional[str] = None
+    focused_events_result: Optional[str] = None
+    focused_medications_result: Optional[str] = None
+    focused_objective_data_result: Optional[str] = None
+    focused_assessment_result: Optional[str] = None
+    focused_next_steps_result: Optional[str] = None
+
+    # Focused summary retrieval cache for performance optimization
+    focused_retrieval_cache: Optional[Dict[str, Any]] = None
+
 
 class LangGraphRAMInformationEngine(DiagnosticEngine):
     """Concrete engine that streams or returns full result."""
@@ -1269,6 +1292,142 @@ Keep queries concise and focused on the temporal aspect.
                     f"{event_description} {time_period}",
                     f"medical events {time_period}",
                     f"clinical findings {time_period}"
+                ]
+
+        async def _extract_aspect_from_query(state: FlowState) -> tuple[str, str]:
+            """Extract the medical aspect from user query and determine appropriate icon.
+
+            Returns:
+                tuple[str, str]: (aspect name, icon name)
+            """
+            try:
+                logger.info(f"Extracting medical aspect from query: {state.user_prompt}")
+
+                prompt = f"""
+Based on this user query: "{state.user_prompt}"
+
+Extract the specific medical aspect or condition that the user wants a focused summary about.
+
+For example:
+- "Give me a summary of the patient's heart disease" → "Heart Disease"
+- "Explain the patient's lung history to me" → "Lung Conditions"
+- "Summarize the diabetes management" → "Diabetes"
+- "What's going on with the kidneys?" → "Kidney Health"
+
+Return ONLY the aspect name (2-4 words maximum), nothing else.
+Make it clear, concise, and clinically appropriate.
+"""
+
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist extracting specific medical aspects from queries."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                response = await self._llm.chat(messages)
+                aspect = response.content.strip().strip('"').strip("'")
+
+                # Determine icon based on aspect (simple keyword matching)
+                aspect_lower = aspect.lower()
+                if any(word in aspect_lower for word in ["heart", "cardiac", "cardio"]):
+                    icon = "heart"
+                elif any(word in aspect_lower for word in ["lung", "pulmonary", "respiratory"]):
+                    icon = "activity"
+                elif any(word in aspect_lower for word in ["kidney", "renal"]):
+                    icon = "droplet"
+                elif any(word in aspect_lower for word in ["liver", "hepatic"]):
+                    icon = "hexagon"
+                elif any(word in aspect_lower for word in ["brain", "neuro", "cognitive"]):
+                    icon = "brain"
+                elif any(word in aspect_lower for word in ["diabetes", "glucose", "insulin"]):
+                    icon = "trending-up"
+                elif any(word in aspect_lower for word in ["cancer", "oncology", "tumor"]):
+                    icon = "alert-circle"
+                else:
+                    icon = "file-text"  # Default icon
+
+                logger.info(f"Extracted aspect: '{aspect}' with icon: '{icon}'")
+                return (aspect, icon)
+
+            except Exception as e:
+                log_error(logger, "_extract_aspect_from_query", e)
+                # Fallback
+                return ("Medical Condition", "file-text")
+
+        async def _generate_focused_summary_queries(state: FlowState, section: str, focus_instruction: str) -> List[str]:
+            """Generate focused queries for each focused summary section based on the user's query and extracted aspect.
+
+            Args:
+                state: Flow state containing user prompt and focused aspect
+                section: Section name (diagnoses, events, medications, objective_data, assessment, next_steps)
+                focus_instruction: Instruction for what to focus on
+
+            Returns:
+                List[str]: List of 2-3 search queries
+            """
+            try:
+                logger.info(f"Generating {section} queries for aspect: {state.focused_aspect}")
+
+                # Define section-specific instructions
+                section_prompts = {
+                    "diagnoses": "Formal diagnoses, ICD codes, disease classifications related to the aspect",
+                    "events": "Key clinical events, hospitalizations, surgeries, major interventions, disease milestones",
+                    "medications": "Current and past medications, dosages, treatment regimens for the aspect",
+                    "objective_data": "Lab results, vital signs, imaging findings, test results, measurements",
+                    "assessment": "Clinical assessments, provider notes, current disease status, prognosis",
+                    "next_steps": "Follow-up plans, pending tests, medication reviews, specialist referrals, outstanding issues"
+                }
+
+                prompt = f"""
+Based on this user query: "{state.user_prompt}"
+
+The user wants a focused summary about: {state.focused_aspect}
+
+Generate 2-3 specific search queries to find information for the "{section}" section.
+
+Focus on: {section_prompts.get(section, focus_instruction)}
+
+IMPORTANT: All queries should be specific to "{state.focused_aspect}" - don't include unrelated conditions.
+
+Return only the queries, one per line, without numbers or bullets.
+Keep queries concise and medically precise.
+"""
+
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist generating focused search queries for aspect-specific summaries."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                response = await self._llm.chat(messages)
+
+                # Parse response into individual queries
+                queries = []
+                for line in response.content.strip().split('\n'):
+                    query = line.strip()
+                    if query and not query.startswith(('1.', '2.', '3.', '-', '•', '*')):
+                        queries.append(query)
+
+                if len(queries) < 2:
+                    # Fallback queries if LLM didn't generate enough
+                    fallback = {
+                        "diagnoses": [f"{state.focused_aspect} diagnosis", f"{state.focused_aspect} ICD code", "disease classification"],
+                        "events": [f"{state.focused_aspect} events", f"{state.focused_aspect} hospitalization", "clinical milestones"],
+                        "medications": [f"{state.focused_aspect} medications", f"{state.focused_aspect} treatment", "drug regimen"],
+                        "objective_data": [f"{state.focused_aspect} labs", f"{state.focused_aspect} imaging", "test results"],
+                        "assessment": [f"{state.focused_aspect} assessment", f"{state.focused_aspect} status", "clinical evaluation"],
+                        "next_steps": [f"{state.focused_aspect} follow-up", f"{state.focused_aspect} pending", "outstanding issues"]
+                    }
+                    queries.extend(fallback.get(section, [f"{state.focused_aspect} {section}"])[:3-len(queries)])
+
+                logger.info(f"Generated {len(queries)} {section} queries: {queries}")
+                return queries[:3]  # Limit to 3 queries
+
+            except Exception as e:
+                log_error(logger, "_generate_focused_summary_queries", e)
+                # Return fallback queries
+                return [
+                    f"{state.focused_aspect or 'condition'} {section}",
+                    f"medical {section}",
+                    f"clinical {section}"
                 ]
 
         @streaming_step("retrieve_situation_chunks")
@@ -2815,6 +2974,612 @@ Keep queries concise and focused on the temporal aspect.
 
             return state
 
+        # ==================== FOCUSED SUMMARY FLOW NODES ====================
+
+        @streaming_step("focused_summary_parallel_dispatcher")
+        async def focused_summary_parallel_dispatcher(state: FlowState) -> FlowState:
+            """Dispatcher node that triggers focused summary processing."""
+            try:
+                logger.info(f"Initiating focused summary processing for aspect: {state.focused_aspect}")
+
+                # Initialize focused summary cache if needed
+                if not state.focused_retrieval_cache:
+                    state.focused_retrieval_cache = {}
+
+                # Disable refinement for focused summary flows (they use their own retrieval)
+                state.needs_refinement = False
+
+                logger.info("Focused summary fields initialized for processing")
+                logger.info("Dispatcher ready for execution")
+
+            except Exception as e:
+                log_error(logger, "focused_summary_parallel_dispatcher", e)
+
+            return state
+
+        @streaming_step("identify_aspect_and_retrieve")
+        async def identify_aspect_and_retrieve(state: FlowState) -> FlowState:
+            """Extract the medical aspect from query and retrieve initial chunks."""
+            try:
+                logger.info("Extracting medical aspect from user query")
+
+                # Extract aspect and icon
+                aspect, icon = await _extract_aspect_from_query(state)
+                state.focused_aspect = aspect
+                state.focused_aspect_icon = icon
+
+                logger.info(f"Identified aspect: '{aspect}' with icon: '{icon}'")
+
+                # Get initial chunks for context (use existing retrieved_chunks if available)
+                if not state.retrieved_chunks or len(state.retrieved_chunks) == 0:
+                    logger.info("No pre-retrieved chunks available for focused summary")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_aspect = "Medical Condition"
+                state.focused_aspect_icon = "file-text"
+
+            return state
+
+        @streaming_step("retrieve_focused_diagnoses_chunks")
+        async def retrieve_focused_diagnoses_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on diagnoses related to the aspect."""
+            try:
+                logger.info(f"Retrieving diagnoses chunks for {state.focused_aspect}")
+
+                diagnoses_queries = await _generate_focused_summary_queries(state, "diagnoses",
+                    "Generate queries focused on formal diagnoses and disease classifications")
+
+                chunks = await _fast_sbar_retrieve(state, f"diagnoses_{state.focused_aspect}", diagnoses_queries)
+                state.focused_diagnoses_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.focused_diagnoses_chunks)} diagnoses chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_diagnoses_chunks = []
+
+            return state
+
+        @streaming_step("generate_diagnoses_section")
+        async def generate_diagnoses_section(state: FlowState) -> FlowState:
+            """Generate diagnoses section with format: • [Diagnosis] ([Year/duration])"""
+            try:
+                logger.info(f"Generating diagnoses section for {state.focused_aspect}")
+
+                chunks = state.focused_diagnoses_chunks or []
+
+                # Detect language
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
+
+                prompt = f"""
+Generate a CONCISE diagnoses section for a focused summary about: {state.focused_aspect}
+
+USER QUERY: {state.user_prompt}
+
+Format exactly as:
+• [Diagnosis 1] ([Year diagnosed or duration])
+• [Diagnosis 2] ([Timeline or status])
+• [Diagnosis 3] ([Resolution status or ongoing])
+
+RULES:
+- List 2-4 diagnoses ONLY related to {state.focused_aspect}
+- Include ICD codes if available: "Type 2 Diabetes (E11.9, since 2018)"
+- Include temporal information (year, duration, or status)
+- Use bullet points (•)
+- Be concise - one line per diagnosis
+- MANDATORY: Cite sources using format {citation_format}
+- If no diagnoses found, state "No formal diagnoses documented for {state.focused_aspect}"
+"""
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused diagnoses section. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
+                    chunk_content = f"Relevant information about {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.focused_diagnoses_result = response.content.strip()
+
+                logger.info(f"Generated diagnoses section: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_diagnoses_result = f"Error generating diagnoses: {str(e)}"
+
+            return state
+
+        @streaming_step("retrieve_focused_events_chunks")
+        async def retrieve_focused_events_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on key clinical events."""
+            try:
+                logger.info(f"Retrieving events chunks for {state.focused_aspect}")
+
+                events_queries = await _generate_focused_summary_queries(state, "events",
+                    "Generate queries focused on key clinical events and milestones")
+
+                chunks = await _fast_sbar_retrieve(state, f"events_{state.focused_aspect}", events_queries)
+                state.focused_events_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.focused_events_chunks)} events chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_events_chunks = []
+
+            return state
+
+        @streaming_step("generate_events_section")
+        async def generate_events_section(state: FlowState) -> FlowState:
+            """Generate key events section with format: [Year] [Event description]"""
+            try:
+                logger.info(f"Generating events section for {state.focused_aspect}")
+
+                chunks = state.focused_events_chunks or []
+
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
+
+                prompt = f"""
+Generate a CONCISE key events timeline for: {state.focused_aspect}
+
+USER QUERY: {state.user_prompt}
+
+Format exactly as:
+[2020] [Initial diagnosis - symptoms presented, diagnostic workup completed]
+[2021] [Hospitalization for acute exacerbation - intervention performed]
+[2023] [Follow-up showed improvement - treatment adjusted]
+
+RULES:
+- List 3-5 key events ONLY related to {state.focused_aspect}
+- Start each line with [Year] or [Month Year]
+- Include: interventions, hospitalizations, imaging, test results, treatment changes
+- Be specific but concise - one line per event
+- Chronological order (oldest to newest)
+- MANDATORY: Cite sources using format {citation_format}
+- If no events found, state "No significant clinical events documented for {state.focused_aspect}"
+"""
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused events timeline. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
+                    chunk_content = f"Relevant events for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.focused_events_result = response.content.strip()
+
+                logger.info(f"Generated events section: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_events_result = f"Error generating events: {str(e)}"
+
+            return state
+
+        @streaming_step("retrieve_focused_medications_chunks")
+        async def retrieve_focused_medications_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on medications related to the aspect."""
+            try:
+                logger.info(f"Retrieving medications chunks for {state.focused_aspect}")
+
+                medications_queries = await _generate_focused_summary_queries(state, "medications",
+                    "Generate queries focused on medications and treatment regimens")
+
+                chunks = await _fast_sbar_retrieve(state, f"medications_{state.focused_aspect}", medications_queries)
+                state.focused_medications_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.focused_medications_chunks)} medications chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_medications_chunks = []
+
+            return state
+
+        @streaming_step("generate_medications_section")
+        async def generate_medications_section(state: FlowState) -> FlowState:
+            """Generate medications section with format: [Med + dosage + frequency] | [Med 2] | [Med 3]"""
+            try:
+                logger.info(f"Generating medications section for {state.focused_aspect}")
+
+                chunks = state.focused_medications_chunks or []
+
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
+
+                prompt = f"""
+Generate a CONCISE medications list for: {state.focused_aspect}
+
+USER QUERY: {state.user_prompt}
+
+Format exactly as:
+[Medication 1 + dosage + frequency] | [Medication 2 + dosage + frequency] | [Medication 3 + dosage + frequency]
+
+Example:
+Metoprolol 50mg BID | Lisinopril 10mg daily | Aspirin 81mg daily
+
+RULES:
+- List ONLY medications relevant to {state.focused_aspect}
+- Include dosage and frequency
+- Separate with " | " (space-pipe-space)
+- Maximum 5 medications
+- Include duration if relevant: "Prednisone 20mg daily (started 2023)"
+- MANDATORY: Cite sources using format {citation_format}
+- If no medications found, state "No medications documented for {state.focused_aspect}"
+"""
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused medications list. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
+                    chunk_content = f"Relevant medications for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.focused_medications_result = response.content.strip()
+
+                logger.info(f"Generated medications section: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_medications_result = f"Error generating medications: {str(e)}"
+
+            return state
+
+        @streaming_step("retrieve_focused_objective_data_chunks")
+        async def retrieve_focused_objective_data_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on objective data (labs, vitals, imaging)."""
+            try:
+                logger.info(f"Retrieving objective data chunks for {state.focused_aspect}")
+
+                objective_queries = await _generate_focused_summary_queries(state, "objective_data",
+                    "Generate queries focused on lab results, vitals, imaging, and test results")
+
+                chunks = await _fast_sbar_retrieve(state, f"objective_{state.focused_aspect}", objective_queries)
+                state.focused_objective_data_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.focused_objective_data_chunks)} objective data chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_objective_data_chunks = []
+
+            return state
+
+        @streaming_step("generate_objective_data_section")
+        async def generate_objective_data_section(state: FlowState) -> FlowState:
+            """Generate objective data section with format: [Metric: value + unit + date] | [Metric 2]"""
+            try:
+                logger.info(f"Generating objective data section for {state.focused_aspect}")
+
+                chunks = state.focused_objective_data_chunks or []
+
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
+
+                prompt = f"""
+Generate CONCISE objective data for: {state.focused_aspect}
+
+USER QUERY: {state.user_prompt}
+
+Format exactly as:
+[Metric 1: value + unit + date] | [Metric 2: value + unit + date] | [Imaging/test summary]
+
+Example:
+HbA1c: 7.2% (2024-01-15) | Fasting glucose: 145 mg/dL (2024-01-15) | Echo showed EF 55% (2023-12)
+
+RULES:
+- List ONLY data relevant to {state.focused_aspect}
+- Include metric name, value, unit, and date
+- Separate with " | " (space-pipe-space)
+- Include latest imaging or test summaries
+- Maximum 5 items
+- MANDATORY: Cite sources using format {citation_format}
+- If no data found, state "No recent objective data documented for {state.focused_aspect}"
+"""
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating focused objective data. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
+                    chunk_content = f"Relevant objective data for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.focused_objective_data_result = response.content.strip()
+
+                logger.info(f"Generated objective data section: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_objective_data_result = f"Error generating objective data: {str(e)}"
+
+            return state
+
+        @streaming_step("retrieve_focused_assessment_chunks")
+        async def retrieve_focused_assessment_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on clinical assessment."""
+            try:
+                logger.info(f"Retrieving assessment chunks for {state.focused_aspect}")
+
+                assessment_queries = await _generate_focused_summary_queries(state, "assessment",
+                    "Generate queries focused on clinical assessments and current status")
+
+                chunks = await _fast_sbar_retrieve(state, f"assessment_{state.focused_aspect}", assessment_queries)
+                state.focused_assessment_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.focused_assessment_chunks)} assessment chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_assessment_chunks = []
+
+            return state
+
+        @streaming_step("generate_assessment_section")
+        async def generate_assessment_section(state: FlowState) -> FlowState:
+            """Generate assessment section: 2-3 sentences on current state/prognosis"""
+            try:
+                logger.info(f"Generating assessment section for {state.focused_aspect}")
+
+                chunks = state.focused_assessment_chunks or []
+
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
+
+                prompt = f"""
+Generate a CONCISE clinical assessment for: {state.focused_aspect}
+
+USER QUERY: {state.user_prompt}
+
+Write 2-3 short sentences summarizing:
+- Current disease control/status
+- Progression or stability
+- Overall prognosis or outlook
+
+RULES:
+- Maximum 3 sentences
+- Focus ONLY on {state.focused_aspect}
+- Be clinically precise but accessible
+- Include current status, trend, and outlook
+- MANDATORY: Cite sources using format {citation_format}
+- If insufficient data, state "Limited clinical assessment available for {state.focused_aspect}"
+"""
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused clinical assessment. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
+                    chunk_content = f"Relevant assessment data for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.focused_assessment_result = response.content.strip()
+
+                logger.info(f"Generated assessment section: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_assessment_result = f"Error generating assessment: {str(e)}"
+
+            return state
+
+        @streaming_step("retrieve_focused_next_steps_chunks")
+        async def retrieve_focused_next_steps_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on follow-up plans and outstanding issues."""
+            try:
+                logger.info(f"Retrieving next steps chunks for {state.focused_aspect}")
+
+                next_steps_queries = await _generate_focused_summary_queries(state, "next_steps",
+                    "Generate queries focused on follow-up plans and outstanding issues")
+
+                chunks = await _fast_sbar_retrieve(state, f"next_steps_{state.focused_aspect}", next_steps_queries)
+                state.focused_next_steps_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.focused_next_steps_chunks)} next steps chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_next_steps_chunks = []
+
+            return state
+
+        @streaming_step("generate_next_steps_section")
+        async def generate_next_steps_section(state: FlowState) -> FlowState:
+            """Generate next steps section with format: 🔸 [Item 1] | 🔸 [Item 2]"""
+            try:
+                logger.info(f"Generating next steps section for {state.focused_aspect}")
+
+                chunks = state.focused_next_steps_chunks or []
+
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
+
+                prompt = f"""
+Generate CONCISE next steps for: {state.focused_aspect}
+
+USER QUERY: {state.user_prompt}
+
+Format exactly as:
+🔸 [Follow-up test or appointment due]
+🔸 [Medication review or adjustment needed]
+🔸 [Specialist consult or referral pending]
+
+RULES:
+- List 2-4 items ONLY related to {state.focused_aspect}
+- Use 🔸 bullet emoji
+- One line per item
+- Include: pending tests, follow-ups, medication reviews, referrals, outstanding issues
+- Include timing if available: "Echo scheduled for March 2024"
+- MANDATORY: Cite sources using format {citation_format}
+- If no next steps found, state "No pending follow-up documented for {state.focused_aspect}"
+"""
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating focused next steps. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
+                    chunk_content = f"Relevant next steps for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.focused_next_steps_result = response.content.strip()
+
+                logger.info(f"Generated next steps section: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_next_steps_result = f"Error generating next steps: {str(e)}"
+
+            return state
+
+        @streaming_step("merge_focused_summary_results")
+        async def merge_focused_summary_results(state: FlowState) -> FlowState:
+            """Merge all focused summary sections and prepare final JSON response."""
+            try:
+                logger.info(f"Merging focused summary results for {state.focused_aspect}")
+
+                # Collect results from separate fields
+                focused_results = {
+                    "diagnoses": state.focused_diagnoses_result,
+                    "events": state.focused_events_result,
+                    "medications": state.focused_medications_result,
+                    "objective_data": state.focused_objective_data_result,
+                    "assessment": state.focused_assessment_result,
+                    "next_steps": state.focused_next_steps_result
+                }
+
+                completed_sections = [section for section, result in focused_results.items() if result]
+                logger.info(f"Available sections: {completed_sections}")
+
+                if not completed_sections:
+                    logger.info("No focused summary results available")
+                    state.llm_response = ChatMessage(
+                        role=ChatRole.ASSISTANT,
+                        content="Error: No focused summary results were generated"
+                    )
+                    return state
+
+                # Create structured focused summary response for frontend
+                import json
+
+                # Add conversation context metadata
+                conversation_context = {
+                    "session_id": state.session_id,
+                    "user_prompt": state.user_prompt,
+                    "timestamp": str(int(time.time() * 1000)),
+                    "has_history": bool(state.chat_history)
+                }
+
+                structured_summary = {
+                    "type": "focused_summary",
+                    "aspect": state.focused_aspect or "Medical Condition",
+                    "aspect_icon": state.focused_aspect_icon or "file-text",
+                    "context": conversation_context,
+                    "sections": {
+                        "diagnoses": {
+                            "content": (focused_results.get("diagnoses") or "No diagnoses documented").strip() or "No diagnoses documented"
+                        },
+                        "events": {
+                            "content": (focused_results.get("events") or "No events documented").strip() or "No events documented"
+                        },
+                        "medications": {
+                            "content": (focused_results.get("medications") or "No medications documented").strip() or "No medications documented"
+                        },
+                        "objective_data": {
+                            "content": (focused_results.get("objective_data") or "No objective data available").strip() or "No objective data available"
+                        },
+                        "assessment": {
+                            "content": (focused_results.get("assessment") or "No assessment available").strip() or "No assessment available"
+                        },
+                        "next_steps": {
+                            "content": (focused_results.get("next_steps") or "No next steps documented").strip() or "No next steps documented"
+                        }
+                    }
+                }
+
+                # Create JSON response for frontend
+                json_response = json.dumps(structured_summary, indent=2)
+
+                # Create response message with structured data
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content=json_response
+                )
+
+                logger.info(f"Created structured focused summary response: {len(json_response)} chars")
+
+            except Exception as e:
+                log_error(logger, "merge_focused_summary_results", e)
+                # Fallback response
+                import json
+                fallback_summary = {
+                    "type": "focused_summary",
+                    "aspect": state.focused_aspect or "Medical Condition",
+                    "aspect_icon": state.focused_aspect_icon or "file-text",
+                    "error": str(e),
+                    "sections": {
+                        "diagnoses": {"content": "Error generating content"},
+                        "events": {"content": "Error generating content"},
+                        "medications": {"content": "Error generating content"},
+                        "objective_data": {"content": "Error generating content"},
+                        "assessment": {"content": "Error generating content"},
+                        "next_steps": {"content": "Error generating content"}
+                    }
+                }
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content=json.dumps(fallback_summary, indent=2)
+                )
+
+            return state
+
         # ==================== TIMELINE FLOW NODES ====================
 
         @streaming_step("extract_timeline_events")
@@ -3889,7 +4654,7 @@ Return ONLY the reformulated query, nothing else."""
                 # Use the existing classifier
                 classifier = self._zero_shot_classifier
                 label = classifier.classify_query(query_to_classify, [
-                    "lookup", "temporal-trend", "comparative", "reasoning", "summary", "sbar_handoff", "guideline", "timeline", "note_generation", "discharge_summary"
+                    "lookup", "temporal-trend", "comparative", "reasoning", "general_summary", "focused_summary", "sbar_handoff", "guideline", "timeline", "note_generation", "discharge_summary"
                 ])
 
                 logger.info(f"Query classified as: {label}")
@@ -3935,9 +4700,13 @@ Return ONLY the reformulated query, nothing else."""
                 state.is_sbar_flow = (label == "sbar_handoff")
                 logger.info(f"SBAR flow (classifier): {state.is_sbar_flow}")
 
-                # General summary flow is triggered by "summary" classification
-                state.is_general_summary_flow = (label == "summary")
+                # General summary flow is triggered by "general_summary" classification
+                state.is_general_summary_flow = (label == "general_summary")
                 logger.info(f"General summary flow (classifier): {state.is_general_summary_flow}")
+
+                # Focused summary flow is triggered by "focused_summary" classification
+                state.is_focused_summary_flow = (label == "focused_summary")
+                logger.info(f"Focused summary flow (classifier): {state.is_focused_summary_flow}")
 
                 # Determine if this should use Timeline flow (temporal sequence queries)
                 timeline_query_types = ["timeline", "temporal-trend"]
@@ -3946,9 +4715,9 @@ Return ONLY the reformulated query, nothing else."""
                 logger.info(f"Timeline flow: {state.is_timeline_flow}")
 
                 # Override DIRECT routing if any specialized flow is detected
-                if state.is_sbar_flow or state.is_timeline_flow or state.is_general_summary_flow:
+                if state.is_sbar_flow or state.is_timeline_flow or state.is_general_summary_flow or state.is_focused_summary_flow:
                     state.requires_full_processing = True
-                    logger.info(f"⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, General Summary: {state.is_general_summary_flow}, Timeline: {state.is_timeline_flow})")
+                    logger.info(f"⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, General Summary: {state.is_general_summary_flow}, Focused Summary: {state.is_focused_summary_flow}, Timeline: {state.is_timeline_flow})")
 
                 # Initialize SBAR cache if using SBAR flow
                 if state.is_sbar_flow:
@@ -3957,6 +4726,10 @@ Return ONLY the reformulated query, nothing else."""
                 # Initialize general summary cache if using general summary flow
                 if state.is_general_summary_flow:
                     state.general_retrieval_cache = {}
+
+                # Initialize focused summary cache if using focused summary flow
+                if state.is_focused_summary_flow:
+                    state.focused_retrieval_cache = {}
 
                 # Initialize Timeline cache if using Timeline flow
                 if state.is_timeline_flow:
@@ -3969,6 +4742,7 @@ Return ONLY the reformulated query, nothing else."""
                 state.is_timeline_flow = False
                 state.is_note_generation_flow = False
                 state.is_general_summary_flow = False
+                state.is_focused_summary_flow = False
 
             return state
 
@@ -3980,16 +4754,18 @@ Return ONLY the reformulated query, nothing else."""
             - Query complexity evaluation marked it as needing full processing, OR
             - SBAR flow is detected (needs specialized retrieval), OR
             - General summary flow is detected (needs specialized retrieval), OR
+            - Focused summary flow is detected (needs specialized retrieval), OR
             - Timeline flow is detected (needs specialized retrieval)
             """
             base_requirement = getattr(state, 'requires_full_processing', True)
             is_sbar = getattr(state, 'is_sbar_flow', False)
             is_general_summary = getattr(state, 'is_general_summary_flow', False)
+            is_focused_summary = getattr(state, 'is_focused_summary_flow', False)
             is_timeline = getattr(state, 'is_timeline_flow', False)
 
             # Override DIRECT routing if any specialized flow is detected
-            if is_sbar or is_general_summary or is_timeline:
-                logger.info(f"Overriding DIRECT - SBAR: {is_sbar}, General Summary: {is_general_summary}, Timeline: {is_timeline}")
+            if is_sbar or is_general_summary or is_focused_summary or is_timeline:
+                logger.info(f"Overriding DIRECT - SBAR: {is_sbar}, General Summary: {is_general_summary}, Focused Summary: {is_focused_summary}, Timeline: {is_timeline}")
                 return True
 
             return base_requirement
@@ -4001,6 +4777,10 @@ Return ONLY the reformulated query, nothing else."""
         def is_general_summary_flow(state: FlowState) -> bool:
             """Conditional function to determine if general summary flow should be used."""
             return getattr(state, 'is_general_summary_flow', False)
+
+        def is_focused_summary_flow(state: FlowState) -> bool:
+            """Conditional function to determine if focused summary flow should be used."""
+            return getattr(state, 'is_focused_summary_flow', False)
 
         def check_patient_exists(state: FlowState) -> FlowState:
             """Check if patient_id is provided in the state."""
@@ -4058,6 +4838,22 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_node("generate_deepdive_summary", generate_deepdive_summary)
         _builder.add_node("merge_general_summary_results", merge_general_summary_results)
         _builder.add_node("general_summary_parallel_dispatcher", general_summary_parallel_dispatcher)
+        # Focused summary flow nodes
+        _builder.add_node("focused_summary_parallel_dispatcher", focused_summary_parallel_dispatcher)
+        _builder.add_node("identify_aspect_and_retrieve", identify_aspect_and_retrieve)
+        _builder.add_node("retrieve_focused_diagnoses_chunks", retrieve_focused_diagnoses_chunks)
+        _builder.add_node("generate_diagnoses_section", generate_diagnoses_section)
+        _builder.add_node("retrieve_focused_events_chunks", retrieve_focused_events_chunks)
+        _builder.add_node("generate_events_section", generate_events_section)
+        _builder.add_node("retrieve_focused_medications_chunks", retrieve_focused_medications_chunks)
+        _builder.add_node("generate_medications_section", generate_medications_section)
+        _builder.add_node("retrieve_focused_objective_data_chunks", retrieve_focused_objective_data_chunks)
+        _builder.add_node("generate_objective_data_section", generate_objective_data_section)
+        _builder.add_node("retrieve_focused_assessment_chunks", retrieve_focused_assessment_chunks)
+        _builder.add_node("generate_assessment_section", generate_assessment_section)
+        _builder.add_node("retrieve_focused_next_steps_chunks", retrieve_focused_next_steps_chunks)
+        _builder.add_node("generate_next_steps_section", generate_next_steps_section)
+        _builder.add_node("merge_focused_summary_results", merge_focused_summary_results)
         # Timeline flow nodes
         _builder.add_node("extract_timeline_events", extract_timeline_events)
         _builder.add_node("retrieve_timeline_chunks", retrieve_timeline_chunks)
@@ -4173,6 +4969,23 @@ Return ONLY the reformulated query, nothing else."""
         # General summary merge to store response
         _builder.add_edge("merge_general_summary_results", "store_assistant_response")
 
+        # Focused summary flow edges - sequential processing
+        _builder.add_edge("focused_summary_parallel_dispatcher", "identify_aspect_and_retrieve")
+        _builder.add_edge("identify_aspect_and_retrieve", "retrieve_focused_diagnoses_chunks")
+        _builder.add_edge("retrieve_focused_diagnoses_chunks", "generate_diagnoses_section")
+        _builder.add_edge("generate_diagnoses_section", "retrieve_focused_events_chunks")
+        _builder.add_edge("retrieve_focused_events_chunks", "generate_events_section")
+        _builder.add_edge("generate_events_section", "retrieve_focused_medications_chunks")
+        _builder.add_edge("retrieve_focused_medications_chunks", "generate_medications_section")
+        _builder.add_edge("generate_medications_section", "retrieve_focused_objective_data_chunks")
+        _builder.add_edge("retrieve_focused_objective_data_chunks", "generate_objective_data_section")
+        _builder.add_edge("generate_objective_data_section", "retrieve_focused_assessment_chunks")
+        _builder.add_edge("retrieve_focused_assessment_chunks", "generate_assessment_section")
+        _builder.add_edge("generate_assessment_section", "retrieve_focused_next_steps_chunks")
+        _builder.add_edge("retrieve_focused_next_steps_chunks", "generate_next_steps_section")
+        _builder.add_edge("generate_next_steps_section", "merge_focused_summary_results")
+        _builder.add_edge("merge_focused_summary_results", "store_assistant_response")
+
         # Timeline flow edges - sequential processing
         _builder.add_edge("extract_timeline_events", "retrieve_timeline_chunks")
         _builder.add_edge("retrieve_timeline_chunks", "generate_timeline_bubbles")
@@ -4187,7 +5000,7 @@ Return ONLY the reformulated query, nothing else."""
 
         # Route after chunk retrieval: check flow type
         def route_after_chunks(state):
-            logger.info(f"🔀 route_after_chunks called - is_general_summary_flow: {getattr(state, 'is_general_summary_flow', False)}, is_sbar_flow: {getattr(state, 'is_sbar_flow', False)}, is_timeline_flow: {getattr(state, 'is_timeline_flow', False)}, needs_refinement: {getattr(state, 'needs_refinement', False)}")
+            logger.info(f"🔀 route_after_chunks called - is_general_summary_flow: {getattr(state, 'is_general_summary_flow', False)}, is_focused_summary_flow: {getattr(state, 'is_focused_summary_flow', False)}, is_sbar_flow: {getattr(state, 'is_sbar_flow', False)}, is_timeline_flow: {getattr(state, 'is_timeline_flow', False)}, needs_refinement: {getattr(state, 'needs_refinement', False)}")
 
             # Check special flows FIRST (they have priority and don't need refinement)
             if hasattr(state, 'is_note_generation_flow') and state.is_note_generation_flow:
@@ -4202,6 +5015,9 @@ Return ONLY the reformulated query, nothing else."""
             elif hasattr(state, 'is_general_summary_flow') and state.is_general_summary_flow:
                 logger.info("📊 Routing to general summary flow")
                 return "general_summary_parallel_dispatcher"
+            elif hasattr(state, 'is_focused_summary_flow') and state.is_focused_summary_flow:
+                logger.info("🎯 Routing to focused summary flow")
+                return "focused_summary_parallel_dispatcher"
             # Only check refinement if NOT in a special flow
             elif hasattr(state, 'needs_refinement') and state.needs_refinement and state.retrieval_retry_attempts < RETRY_MAX:
                 # Increment retry attempts to prevent infinite loop
@@ -4222,6 +5038,7 @@ Return ONLY the reformulated query, nothing else."""
                 "extract_timeline_events": "extract_timeline_events",
                 "sbar_parallel_dispatcher": "sbar_parallel_dispatcher",
                 "general_summary_parallel_dispatcher": "general_summary_parallel_dispatcher",
+                "focused_summary_parallel_dispatcher": "focused_summary_parallel_dispatcher",
                 "intelligent_retrieve_chunks": "intelligent_retrieve_chunks",
                 "evaluate_web_search_need": "evaluate_web_search_need"
             }

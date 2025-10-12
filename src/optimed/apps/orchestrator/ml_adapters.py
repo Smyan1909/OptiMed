@@ -336,13 +336,28 @@ class MultilingualCrossEncoder:
 
 
 class MultilingualZeroShotClassifier:
-    """Simplified zero-shot classifier for query intent detection."""
+    """Pure semantic zero-shot classifier for medical query intent detection.
+
+    Uses Natural Language Inference (NLI) models to determine query intent without
+    keyword matching. Classification is based entirely on semantic understanding.
+
+    Supported models (in order of accuracy, slowest to fastest):
+    - MoritzLaurer/deberta-v3-large-zeroshot-v2.0 (best accuracy, ~1GB, recommended for production)
+    - MoritzLaurer/deberta-v3-base-zeroshot-v2.0 (good balance)
+    - MoritzLaurer/mDeBERTa-v3-base-mnli-xnli (default, multilingual, fast, ~600MB)
+
+    Set via environment variable: ZERO_SHOT_CLASSIFIER_MODEL
+    """
 
     def __init__(self, model_name: str | None = None) -> None:
         self._model: Any = None
         self._loaded = False
-        self._model_name = model_name or "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli"
+        # Check environment variable for model override
+        default_model = "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli"  # Multilingual, balanced
+        self._model_name = model_name or os.getenv("ZERO_SHOT_CLASSIFIER_MODEL", default_model)
         logger.info(f"Initialized MultilingualZeroShotClassifier with model: {self._model_name}")
+        if self._model_name != default_model:
+            logger.info(f"Using non-default model for potentially better accuracy")
 
     def _ensure_loaded(self) -> bool:
         """Ensure the model is loaded and ready."""
@@ -383,79 +398,83 @@ class MultilingualZeroShotClassifier:
             return False
 
     def classify(self, text: str, candidate_labels: List[str]) -> str:
-        """Classify text into one of the candidate labels."""
+        """Classify text into one of the candidate labels using pure semantic understanding."""
         if not candidate_labels:
             return "unknown"
 
-        # Simple keyword-based fallback
-        text_lower = text.lower()
-
-        # Check for summary keywords in multiple languages
-        summary_keywords = [
-            "sammanfattning", "summary", "översikt", "overview",
-            "resumé", "sammandrag", "summering"
-        ]
-
-        diagnostic_keywords = [
-            "diagnos", "diagnosis", "vad", "what", "orsak", "cause",
-            "fel", "wrong", "problem", "sjukdom", "disease"
-        ]
-
-        # Check for SBAR handoff keywords
-        sbar_handoff_keywords = [
-            "sbar", "handoff", "handover", "hand-off", "hand over",
-            "överlämning", "overlamning", "overlämnin",
-            "transfer", "shift change", "new doctor", "change of doctor",
-            "transition of care", "patient transfer", "vaktskifte"
-        ]
-
-        if any(keyword in text_lower for keyword in sbar_handoff_keywords):
-            return "sbar_handoff"
-        elif any(keyword in text_lower for keyword in summary_keywords):
-            return "summary"
-        elif any(keyword in text_lower for keyword in diagnostic_keywords):
-            return "diagnostic"
-
-        # Try to use the actual model if available
+        # Use pure semantic classification with the NLI model
         if self._ensure_loaded() and self._model is not None:
             try:
-                # Map technical labels to natural language for better zero-shot understanding
+                # Map technical labels to semantically rich descriptions that capture user intent
+                # These descriptions help the NLI model understand what the user actually wants
                 label_mapping = {
-                    "sbar_handoff": "patient handoff communication for shift change or care transition",
-                    "summary": "patient summary or overview",
-                    "timeline": "temporal sequence or timeline of events",
-                    "note_generation": "clinical note or documentation generation",
-                    "discharge_summary": "discharge summary or exit documentation",
-                    "lookup": "information lookup or fact finding",
-                    "temporal-trend": "trend analysis over time",
-                    "comparative": "comparison between conditions or treatments",
-                    "reasoning": "clinical reasoning or differential diagnosis",
-                    "guideline": "clinical guidelines or protocols"
+                    "sbar_handoff": "structured patient handoff communication for care transition between healthcare providers during shift changes or transfers",
+                    "general_summary": "comprehensive overview covering all of the patient's medical conditions, medications, history, problems, and overall health status across all body systems",
+                    "focused_summary": "in-depth detailed information specifically about one particular medical condition, disease, organ system, or specific health aspect mentioned in the query",
+                    "timeline": "chronological sequence showing when medical events occurred over time with dates and temporal ordering",
+                    "note_generation": "creating or generating formal clinical documentation such as progress notes, SOAP notes, or discharge summaries",
+                    "discharge_summary": "comprehensive discharge documentation summarizing hospital stay and follow-up care instructions",
+                    "lookup": "finding a specific fact, data point, lab value, or piece of information from patient records",
+                    "temporal-trend": "analyzing how specific measurements, values, or conditions have changed or trended over a period of time",
+                    "comparative": "comparing and contrasting two or more different conditions, treatments, medications, or test results",
+                    "reasoning": "clinical reasoning to determine differential diagnoses, most likely diagnosis, or diagnostic possibilities",
+                    "guideline": "retrieving clinical practice guidelines, protocols, or evidence-based recommendations for treatment"
                 }
 
                 # Convert labels to natural language if mapping exists
                 natural_labels = [label_mapping.get(label, label) for label in candidate_labels]
 
-                result = self._model(text, natural_labels)
+                # Use hypothesis template optimized for query intent classification
+                # Research shows that framing it as "The user wants X" works best for intent detection
+                # This frames the classification as determining what the user is requesting
+                result = self._model(
+                    text,
+                    natural_labels,
+                    hypothesis_template="The user wants {}",
+                    multi_label=False
+                )
+
+                # Log classification results for debugging
+                top_3_labels = result['labels'][:3] if len(result['labels']) >= 3 else result['labels']
+                top_3_scores = result['scores'][:3] if len(result['scores']) >= 3 else result['scores']
+                logger.info(f"Model classification - Top 3: {list(zip(top_3_labels, top_3_scores))}")
 
                 # Map back to original label
                 top_natural_label = result['labels'][0]
                 for original_label, natural_label in label_mapping.items():
                     if natural_label == top_natural_label:
+                        logger.info(f"Final classification: {original_label} (via mapping from '{top_natural_label}')")
                         return original_label
 
                 # If no mapping found, try direct match
                 if top_natural_label in candidate_labels:
+                    logger.info(f"Final classification: {top_natural_label} (direct match)")
                     return top_natural_label
 
                 # Fallback to first candidate
+                logger.info(f"Final classification: {candidate_labels[0]} (fallback)")
                 return candidate_labels[0]
 
             except Exception as e:
-                logger.warning(f"Classification failed: {e}")
+                logger.warning(f"Model classification failed: {e}, falling back to heuristic")
+                # Fallback: Try to infer from length and structure
+                # This is not ideal but better than random selection
+                pass
 
-        # Default fallback
-        return candidate_labels[0] if candidate_labels else "unknown"
+        # If model is not available, use simple heuristic based on query structure
+        # This is a last resort and should rarely be used
+        logger.warning(f"Semantic classification unavailable - using basic fallback for query: {text[:50]}...")
+
+        # Very simple heuristic: prefer general_summary over others as safe default
+        if "general_summary" in candidate_labels:
+            logger.info("Fallback: selecting general_summary as safe default")
+            return "general_summary"
+        elif "lookup" in candidate_labels:
+            logger.info("Fallback: selecting lookup as safe default")
+            return "lookup"
+        else:
+            logger.info(f"Fallback: selecting first candidate: {candidate_labels[0]}")
+            return candidate_labels[0] if candidate_labels else "unknown"
 
     def classify_query(self, text: str, candidate_labels: List[str]) -> str:
         """Classify query intent for SBAR flow routing."""
