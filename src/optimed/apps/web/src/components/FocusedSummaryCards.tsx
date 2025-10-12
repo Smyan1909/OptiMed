@@ -48,9 +48,9 @@ const FocusedSummaryMarkdownComponents = {
   h2: ({ children }: any) => <h2 className="text-sm font-semibold text-gray-900 mt-2 mb-1">{children}</h2>,
   h3: ({ children }: any) => <h3 className="text-sm font-medium text-gray-900 mt-2 mb-1">{children}</h3>,
   p: ({ children }: any) => <p className="text-sm text-gray-700 leading-relaxed mb-2">{children}</p>,
-  ul: ({ children }: any) => <ul className="list-disc list-outside ml-4 space-y-1 mb-3">{children}</ul>,
-  ol: ({ children }: any) => <ol className="list-decimal list-outside ml-4 space-y-1 mb-3">{children}</ol>,
-  li: ({ children }: any) => <li className="text-sm text-gray-700 leading-relaxed">{children}</li>,
+  ul: ({ children }: any) => <ul className="list-disc list-outside ml-4 space-y-3 mb-3">{children}</ul>,
+  ol: ({ children }: any) => <ol className="list-decimal list-outside ml-4 space-y-3 mb-3">{children}</ol>,
+  li: ({ children }: any) => <li className="text-sm text-gray-700 leading-relaxed mb-2">{children}</li>,
   code: ({ inline, children }: any) => {
     if (inline) {
       return <code className="bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded text-xs font-mono">{children}</code>;
@@ -79,17 +79,26 @@ const FocusedSummaryMarkdownComponents = {
     </a>
   ),
   table: ({ children }: any) => (
-    <div className="overflow-x-auto mb-2">
-      <table className="min-w-full border-collapse border border-gray-200">{children}</table>
+    <div className="overflow-x-auto mb-4 mt-2">
+      <table className="min-w-full border-collapse border-2 border-gray-300 bg-white shadow-sm">{children}</table>
     </div>
   ),
+  thead: ({ children }: any) => (
+    <thead className="bg-gray-100">{children}</thead>
+  ),
+  tbody: ({ children }: any) => (
+    <tbody>{children}</tbody>
+  ),
   th: ({ children }: any) => (
-    <th className="border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-900 text-left">
+    <th className="border border-gray-300 bg-gray-100 px-4 py-3 text-sm font-bold text-gray-900 text-left">
       {children}
     </th>
   ),
   td: ({ children }: any) => (
-    <td className="border border-gray-200 px-3 py-2 text-sm text-gray-600">{children}</td>
+    <td className="border border-gray-300 px-4 py-3 text-sm text-gray-700">{children}</td>
+  ),
+  tr: ({ children }: any) => (
+    <tr className="hover:bg-gray-50">{children}</tr>
   ),
   hr: () => <hr className="my-4 border-t border-gray-300" />,
 };

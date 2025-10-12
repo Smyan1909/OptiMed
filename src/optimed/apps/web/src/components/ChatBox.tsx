@@ -5,6 +5,7 @@ import { useUser } from '@/contexts/UserContext';
 import { Download, Image as ImageIcon, ExternalLink, Paperclip, FileText, X, FileEdit } from 'lucide-react';
 import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse, uploadPDFDocument, listPDFDocuments, deletePDFDocument, PDFDocument, uploadXMLDocument, listXMLDocuments, deleteXMLDocument, XMLDocument, cleanupSessionDocuments } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
 import { ReasoningViewer } from "./ReasoningViewer";
@@ -162,6 +163,7 @@ function LookupPanel({ term, onClose, patientId, sessionId }: { term: string; on
           <div className="space-y-3">
             <div className="prose prose-sm max-w-none">
               <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
                 components={{
                   a: ({ href, children }: any) => (
                     <a
@@ -357,17 +359,17 @@ const MessageContent = ({ text, isUser, patientId, sessionId }: MessageContentPr
     },
     // Lists
     ul: ({ children }: any) => (
-      <ul className={`list-disc list-inside my-2 space-y-1 text-gray-900`}>
+      <ul className={`list-disc list-inside my-2 space-y-3 text-gray-900`}>
         {children}
       </ul>
     ),
     ol: ({ children }: any) => (
-      <ol className={`list-decimal list-inside my-2 space-y-1 text-gray-900`}>
+      <ol className={`list-decimal list-inside my-2 space-y-3 text-gray-900`}>
         {children}
       </ol>
     ),
     li: ({ children }: any) => (
-      <li className={`text-gray-900`}>
+      <li className={`text-gray-900 mb-2`}>
         {children}
       </li>
     ),
@@ -392,6 +394,29 @@ const MessageContent = ({ text, isUser, patientId, sessionId }: MessageContentPr
       <hr className={`my-3 border-t ${
         isUser ? 'border-blue-300' : 'border-gray-300'
       }`} />
+    ),
+    // Tables
+    table: ({ children }: any) => (
+      <div className="overflow-x-auto mb-4 mt-2">
+        <table className="min-w-full border-collapse border-2 border-gray-300 bg-white shadow-sm">{children}</table>
+      </div>
+    ),
+    thead: ({ children }: any) => (
+      <thead className="bg-gray-100">{children}</thead>
+    ),
+    tbody: ({ children }: any) => (
+      <tbody>{children}</tbody>
+    ),
+    th: ({ children }: any) => (
+      <th className="border border-gray-300 bg-gray-100 px-4 py-3 text-sm font-bold text-gray-900 text-left">
+        {children}
+      </th>
+    ),
+    td: ({ children }: any) => (
+      <td className="border border-gray-300 px-4 py-3 text-sm text-gray-700">{children}</td>
+    ),
+    tr: ({ children }: any) => (
+      <tr className="hover:bg-gray-50">{children}</tr>
     ),
   };
   
@@ -501,7 +526,7 @@ const MessageContent = ({ text, isUser, patientId, sessionId }: MessageContentPr
       onMouseUp={handleMouseUp}
       onKeyUp={updateSelection}
     >
-      <ReactMarkdown components={markdownComponents}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
         {text}
       </ReactMarkdown>
       {selection && selection.length >= 2 && !isUser && (
@@ -1784,17 +1809,17 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     },
     // Lists
     ul: ({ children }: any) => (
-      <ul className="list-disc list-inside my-2 space-y-1 text-gray-900">
+      <ul className="list-disc list-inside my-2 space-y-3 text-gray-900">
         {children}
       </ul>
     ),
     ol: ({ children }: any) => (
-      <ol className="list-decimal list-inside my-2 space-y-1 text-gray-900">
+      <ol className="list-decimal list-inside my-2 space-y-3 text-gray-900">
         {children}
       </ol>
     ),
     li: ({ children }: any) => (
-      <li className="text-gray-900">
+      <li className="text-gray-900 mb-2">
         {children}
       </li>
     ),
@@ -1803,6 +1828,29 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
       <p className="mb-2 last:mb-0 text-gray-900">
         {children}
       </p>
+    ),
+    // Tables
+    table: ({ children }: any) => (
+      <div className="overflow-x-auto mb-4 mt-2">
+        <table className="min-w-full border-collapse border-2 border-gray-300 bg-white shadow-sm">{children}</table>
+      </div>
+    ),
+    thead: ({ children }: any) => (
+      <thead className="bg-gray-100">{children}</thead>
+    ),
+    tbody: ({ children }: any) => (
+      <tbody>{children}</tbody>
+    ),
+    th: ({ children }: any) => (
+      <th className="border border-gray-300 bg-gray-100 px-4 py-3 text-sm font-bold text-gray-900 text-left">
+        {children}
+      </th>
+    ),
+    td: ({ children }: any) => (
+      <td className="border border-gray-300 px-4 py-3 text-sm text-gray-700">{children}</td>
+    ),
+    tr: ({ children }: any) => (
+      <tr className="hover:bg-gray-50">{children}</tr>
     ),
   };
 
@@ -1931,7 +1979,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                     <div className="text-sm text-gray-900 mb-1">
                       <div className="rounded-2xl px-4 py-3 bg-white border border-gray-200 shadow-sm">
                         <div className="text-sm leading-relaxed text-gray-900">
-                          <ReactMarkdown components={markdownComponents}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                             {streamingResponse}
                           </ReactMarkdown>
                           <span className="inline-block w-2 h-5 bg-blue-600 animate-pulse ml-1" />

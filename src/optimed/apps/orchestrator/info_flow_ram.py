@@ -3217,15 +3217,19 @@ Generate a CONCISE medications list for: {state.focused_aspect}
 USER QUERY: {state.user_prompt}
 
 Format exactly as:
-[Medication 1 + dosage + frequency] | [Medication 2 + dosage + frequency] | [Medication 3 + dosage + frequency]
+• [Medication 1 + dosage + frequency]
+• [Medication 2 + dosage + frequency]
+• [Medication 3 + dosage + frequency]
 
 Example:
-Metoprolol 50mg BID | Lisinopril 10mg daily | Aspirin 81mg daily
+• Metoprolol 50mg BID
+• Lisinopril 10mg daily
+• Aspirin 81mg daily
 
 RULES:
 - List ONLY medications relevant to {state.focused_aspect}
 - Include dosage and frequency
-- Separate with " | " (space-pipe-space)
+- Use bullet points (•), one medication per line
 - Maximum 5 medications
 - Include duration if relevant: "Prednisone 20mg daily (started 2023)"
 - MANDATORY: Cite sources using format {citation_format}
@@ -3293,19 +3297,21 @@ Generate CONCISE objective data for: {state.focused_aspect}
 
 USER QUERY: {state.user_prompt}
 
-Format exactly as:
-[Metric 1: value + unit + date] | [Metric 2: value + unit + date] | [Imaging/test summary]
+Format as a proper Markdown table:
 
-Example:
-HbA1c: 7.2% (2024-01-15) | Fasting glucose: 145 mg/dL (2024-01-15) | Echo showed EF 55% (2023-12)
+| Metric | Value | Unit | Date |
+|--------|-------|------|------|
+| HbA1c | 7.2 | % | 2024-01-15 |
+| Fasting Glucose | 145 | mg/dL | 2024-01-15 |
+| LVEF (Echo) | 55 | % | 2023-12-20 |
 
 RULES:
 - List ONLY data relevant to {state.focused_aspect}
-- Include metric name, value, unit, and date
-- Separate with " | " (space-pipe-space)
-- Include latest imaging or test summaries
-- Maximum 5 items
-- MANDATORY: Cite sources using format {citation_format}
+- Use proper Markdown table format with header row and alignment row
+- Include columns: Metric, Value, Unit, Date
+- Maximum 5 rows of data
+- For imaging/test summaries, use Metric column for test name, Value column for result
+- MANDATORY: Cite sources after the table using format {citation_format}
 - If no data found, state "No recent objective data documented for {state.focused_aspect}"
 """
 
