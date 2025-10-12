@@ -14,35 +14,67 @@ logger = logging.getLogger(__name__)
 #   - intfloat/multilingual-e5-base: 768-dim, faster, good quality
 #   - BAAI/bge-m3: 1024-dim, slower, highest quality
 _model_name = os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-large")
-_model = SentenceTransformer(_model_name)
+_model = None  # Will be loaded on first use or explicit initialization
+_model_loaded = False
 
-# Apply GPU optimizations for 2-3x speedup
+# GPU optimization settings
 _use_fp16 = os.getenv("EMBEDDING_USE_FP16", "True").lower() == "true"
 _use_compile = os.getenv("EMBEDDING_USE_COMPILE", "True").lower() == "true"
 
-if torch.cuda.is_available():
-    # Enable FP16 for 2x inference speedup
-    if _use_fp16:
-        try:
-            _model = _model.half()
-            logger.info("Enabled FP16 precision for 2x embedding speedup")
-        except Exception as e:
-            logger.warning(f"Could not enable FP16: {e}")
+# Embedding dimension (will be set after model loads)
+_embedding_dim = None
 
-    # Apply torch.compile for additional speedup
-    if _use_compile and hasattr(torch, 'compile'):
-        try:
-            import platform
-            if platform.system() != "Windows":  # Skip on Windows (Triton not available)
-                _model = torch.compile(_model, mode='reduce-overhead')
-                logger.info("Applied torch.compile() for additional speedup")
-            else:
-                logger.info("Skipping torch.compile on Windows")
-        except Exception as e:
-            logger.warning(f"Could not compile model: {e}")
 
-# Determine embedding dimension based on model
-_embedding_dim = _model.get_sentence_embedding_dimension()
+def _ensure_model_loaded() -> None:
+    """Ensure the embedding model is loaded and optimized.
+
+    This function is called automatically on first use, but can also be
+    called explicitly at startup to warm up the model.
+    """
+    global _model, _model_loaded, _embedding_dim
+
+    if _model_loaded and _model is not None:
+        return
+
+    logger.info(f"Loading embedding model: {_model_name}")
+    _model = SentenceTransformer(_model_name)
+
+    # Apply GPU optimizations for 2-3x speedup
+    if torch.cuda.is_available():
+        # Enable FP16 for 2x inference speedup
+        if _use_fp16:
+            try:
+                _model = _model.half()
+                logger.info("Enabled FP16 precision for 2x embedding speedup")
+            except Exception as e:
+                logger.warning(f"Could not enable FP16: {e}")
+
+        # Apply torch.compile for additional speedup
+        if _use_compile and hasattr(torch, 'compile'):
+            try:
+                import platform
+                if platform.system() != "Windows":  # Skip on Windows (Triton not available)
+                    _model = torch.compile(_model, mode='reduce-overhead')
+                    logger.info("Applied torch.compile() for additional speedup")
+                else:
+                    logger.info("Skipping torch.compile on Windows")
+            except Exception as e:
+                logger.warning(f"Could not compile model: {e}")
+
+    # Determine embedding dimension based on model
+    _embedding_dim = _model.get_sentence_embedding_dimension()
+    _model_loaded = True
+
+    logger.info(f"Embedding model loaded successfully (dim={_embedding_dim})")
+
+
+def initialize_model() -> None:
+    """Explicitly initialize the embedding model at startup.
+
+    This should be called during application startup to ensure the model
+    is loaded and ready before the first request.
+    """
+    _ensure_model_loaded()
 
 # Batch size for embedding (configurable via environment)
 # e5-large is more memory efficient, so we can use larger batches
@@ -62,6 +94,8 @@ async def embed(text: str, kind: Literal["query", "passage"] = "query") -> list[
 
     Note: E5 models require "query: " or "passage: " prefixes for optimal performance.
     """
+    _ensure_model_loaded()
+
     prefix = "query: " if kind == "query" else "passage: "
     vec = await asyncio.to_thread(
         _model.encode,
@@ -95,6 +129,8 @@ async def embed_batch(texts: List[str], kind: Literal["query", "passage"] = "que
         EMBEDDING_MAX_PARALLEL: Number of concurrent workers (default: 4)
         EMBEDDING_CHUNK_SIZE: Texts per worker (default: 200)
     """
+    _ensure_model_loaded()
+
     if not texts:
         return []
 

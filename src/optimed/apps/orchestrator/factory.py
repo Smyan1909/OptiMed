@@ -6,7 +6,8 @@ from optimed.apps.orchestrator.patient_flow import LangGraphDiagnosticEngine
 from optimed.apps.orchestrator.info_flow_ram import LangGraphRAMInformationEngine
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
 from optimed.apps.orchestrator.image_flow import LangGraphImageAnalysisEngine
-from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder, MultilingualZeroShotClassifier
+from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder
+from optimed.apps.orchestrator.llm_classifier import LLMZeroShotClassifier
 from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
 from optimed.adapters.smart_fhir.repository import SMARTFHIRRepository
 from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
@@ -155,9 +156,15 @@ async def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
 
     # Initialize ML models for intelligent retrieval
     logger.info("Initializing ML models for intelligent retrieval...")
+
+    # Initialize embedding model
+    from optimed.embeddings.minilm import initialize_model as initialize_embedding_model
+    initialize_embedding_model()
+
+    # Initialize cross-encoder and classifier
     cross_encoder = MultilingualCrossEncoder()
-    zero_shot_classifier = MultilingualZeroShotClassifier()
-    logger.info("ML models initialized successfully")
+    zero_shot_classifier = LLMZeroShotClassifier(llm_client=llm_client)
+    logger.info("ML models initialized successfully (embeddings, cross-encoder, LLM classifier)")
 
     # Initialize GDPR compliance services
     logger.info("Initializing GDPR compliance services...")

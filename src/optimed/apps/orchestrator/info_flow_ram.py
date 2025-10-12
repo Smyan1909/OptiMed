@@ -22,9 +22,10 @@ from optimed.core.lang import detect_language_code
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, PDFService, XMLService, AuditRepository
 
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
-from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder, MultilingualZeroShotClassifier
+from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder
+from optimed.apps.orchestrator.llm_classifier import LLMZeroShotClassifier
 
-from optimed.embeddings.minilm import embed, embed_batch
+from optimed.embeddings.minilm import embed_batch
 from optimed.adapters.security.e2e_encryption_middleware import get_session_encryption_manager
 from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator
 from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY as CHUNK_STRATEGY_REGISTRY, POLICY_PRESETS as CHUNK_POLICY_PRESETS
@@ -255,7 +256,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                  connection_service: UserEHRConnectionService,
                  web_search_service: WebSearchService,
                  cross_encoder: MultilingualCrossEncoder,
-                 zero_shot_classifier: MultilingualZeroShotClassifier,
+                 zero_shot_classifier: LLMZeroShotClassifier,
                  pdf_service: Optional[PDFService] = None,
                  xml_service: Optional[XMLService] = None,
                  audit_repo: Optional[AuditRepository] = None,
@@ -421,7 +422,9 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
         # Compute dynamic n and MMR selection
         rerank_only_scores = [s for _, s in reranked]
-        n_dynamic = self._compute_dynamic_n(state.user_prompt, rerank_only_scores)
+        # Pass pre-classification from state to avoid redundant classification
+        pre_classification = getattr(state, 'query_classification', None)
+        n_dynamic = self._compute_dynamic_n(state.user_prompt, rerank_only_scores, pre_classification)
         logger.info(f"Dynamic n: {n_dynamic}")
 
         # MMR selection for diversity
@@ -4651,11 +4654,11 @@ Return ONLY the reformulated query, nothing else."""
 
                 logger.info(f"Classifying query (length={len(query_to_classify)} chars)")
 
-                # Use the existing classifier
+                # Use the LLM-based classifier (async)
                 classifier = self._zero_shot_classifier
-                label = classifier.classify_query(query_to_classify, [
+                label = await classifier.classify(query_to_classify, [
                     "lookup", "temporal-trend", "comparative", "reasoning", "general_summary", "focused_summary", "sbar_handoff", "guideline", "timeline", "note_generation", "discharge_summary"
-                ])
+                ], llm_client=self._llm)
 
                 logger.info(f"Query classified as: {label}")
 
@@ -5610,18 +5613,19 @@ Content:
         if n_thresh == 0:
             n_thresh = 10**9
 
-        # Use pre-stored classification if available, otherwise classify
+        # Use pre-stored classification if available, otherwise use heuristic fallback
         try:
             if pre_classification:
                 label = pre_classification
                 logger.info(f"Using pre-stored classification: {label}")
             else:
-                classifier = self._zero_shot_classifier
-                label = classifier.classify_query(query, [
-                    "lookup", "temporal-trend", "comparative", "reasoning", "summary", "guideline"
-                ])
-                logger.info(f"Query classified as: {label}")
+                # Fallback to heuristic if classification not available
+                # (This should rarely happen as classification is done earlier in the flow)
+                logger.warning("No pre-classification available, using heuristic fallback")
+                n_class = self._classify_query(query)
+                return max(N_MIN, min(N_MAX, n_class))
 
+            # Map classification to dynamic n based on query complexity
             if label == "lookup":
                 n_class = min(8, N_MAX)        # ~5–8
             elif label == "temporal-trend":
@@ -5630,14 +5634,14 @@ Content:
                 n_class = min(28, N_MAX)       # ~18–28
             elif label == "reasoning":
                 n_class = min(30, N_MAX)       # ~25–40, capped at 30
-            elif label == "summary":
+            elif label in ("summary", "general_summary", "focused_summary"):
                 n_class = min(30, N_MAX)       # ~40–80, capped at 30
             elif label == "guideline":
                 n_class = min(12, N_MAX)       # ~6–12
             else:
                 n_class = 8  # Default fallback
         except Exception as e:
-            logger.info(f"Classification failed: {e}, using heuristic fallback")
+            logger.info(f"Classification mapping failed: {e}, using heuristic fallback")
             n_class = self._classify_query(query)
         
         n = max(min(n_elbow, n_thresh), n_class)
