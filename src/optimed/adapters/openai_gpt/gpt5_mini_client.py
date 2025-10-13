@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Sequence, AsyncGenerator
+from typing import Sequence, AsyncGenerator, List, Dict, Any
 
 import openai
 
@@ -24,8 +24,8 @@ class OpenAIGPT5MiniClient(LLMClient):
     - Output: Up to 128,000 tokens
     - Default output: 8,192 tokens (configurable via GPT5_DEFAULT_MAX_TOKENS)
 
-    Important: Setting high max_completion_tokens reduces available input capacity.
-    Formula: Available_Input = 400k - max_completion_tokens
+    Important: Setting high max_output_tokens reduces available input capacity.
+    Formula: Available_Input = 400k - max_output_tokens
     """
 
     def __init__(
@@ -51,38 +51,60 @@ class OpenAIGPT5MiniClient(LLMClient):
         else:
             self._default_max_tokens = default_max_tokens
 
+    @staticmethod
+    def _to_responses_input(messages: Sequence[ChatMessage]) -> List[Dict[str, Any]]:
+        """
+        Map your app's ChatMessage list to the Responses API 'input' format.
+        We use explicit content parts for forward-compat with multimodal.
+        """
+        inputs: List[Dict[str, Any]] = []
+        for msg in messages:
+            inputs.append({
+                "role": msg.role.value,
+                "content": [
+                    {"type": "input_text", "text": msg.content}
+                ],
+            })
+        return inputs
+
     async def chat(  # type: ignore
         self,
         messages: Sequence[ChatMessage],
         json_mode: bool = False,
         max_tokens: int | None = None,
     ) -> ChatMessage:
-        openai_msgs: list[dict[str, str]] = [
-            {"role": msg.role.value, "content": msg.content} for msg in messages
-        ]
+        # Build input payload
+        input_payload = self._to_responses_input(messages)
 
-        # Configure response format for JSON mode
-        response_format = {"type": "json_object"} if json_mode else {"type": "text"}
 
-        if json_mode:
-            json_instruction = (
-                "Please respond with valid JSON only. Do not include any text outside of the JSON structure."
-            )
-            if openai_msgs and openai_msgs[-1]["role"] == "user":
-                openai_msgs[-1]["content"] = f"{openai_msgs[-1]['content']}\n\n{json_instruction}"
-            else:
-                openai_msgs.append({"role": "system", "content": json_instruction})
+        # If you prefer an extra safety belt, you can still append a JSON instruction:
+        if json_mode and input_payload and input_payload[-1]["role"] == "user":
+            input_payload[-1]["content"].append({
+                "type": "input_text",
+                "text": "Please return ONLY strict, valid JSON with no extra text."
+            })
 
-        # Use Chat Completions for compatibility with existing flow
-        response = await self._client.chat.completions.create(  # type: ignore
-            model=self._model,
-            messages=openai_msgs,
-            max_completion_tokens=max_tokens or self._default_max_tokens,  # Up to 128k for GPT-5 mini
-            response_format=response_format,
-            reasoning_effort="minimal" if self._minimal_reasoning else "default",
-        )
+        # Build request kwargs
+        kwargs: Dict[str, Any] = {
+            "model": self._model,
+            "input": input_payload,
+        }
+        # Use provided max_tokens, or default to GPT-5 mini's max (128k)
+        kwargs["max_output_tokens"] = max_tokens if max_tokens is not None else self._default_max_tokens
 
-        assistant_text = response.choices[0].message.content or ""
+        # Reasoning effort in Responses API
+        if self._minimal_reasoning:
+            kwargs["reasoning"] = {"effort": "minimal"}
+
+        # Call Responses API
+        response = await self._client.responses.create(**kwargs)
+
+        assistant_text = getattr(response, "output_text", "") or ""
+
+        usage = getattr(response, "usage", None)
+        input_tokens = str(getattr(usage, "input_tokens", 0)) if usage else "0"
+        output_tokens = str(getattr(usage, "output_tokens", 0)) if usage else "0"
+        total_tokens = str(getattr(usage, "total_tokens", 0)) if usage else "0"
 
         return ChatMessage(
             role=ChatRole.ASSISTANT,
@@ -90,9 +112,9 @@ class OpenAIGPT5MiniClient(LLMClient):
             metadata={
                 "model": self._model,
                 "response_id": response.id,
-                "input_tokens": str(response.usage.prompt_tokens) if response.usage else "0",
-                "output_tokens": str(response.usage.completion_tokens) if response.usage else "0",
-                "total_tokens": str(response.usage.total_tokens) if response.usage else "0",
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
                 "reasoning_effort": "minimal" if self._minimal_reasoning else "default",
             },
         )
@@ -103,32 +125,41 @@ class OpenAIGPT5MiniClient(LLMClient):
         json_mode: bool = False,
         max_tokens: int | None = None,
     ) -> AsyncGenerator[str, None]:
-        openai_msgs: list[dict[str, str]] = [
-            {"role": msg.role.value, "content": msg.content} for msg in messages
-        ]
+        # Build input payload
+        input_payload = self._to_responses_input(messages)
 
-        response_format = {"type": "json_object"} if json_mode else {"type": "text"}
+        if json_mode and input_payload and input_payload[-1]["role"] == "user":
+            input_payload[-1]["content"].append({
+                "type": "input_text",
+                "text": "Please return ONLY strict, valid JSON with no extra text."
+            })
 
-        if json_mode:
-            json_instruction = (
-                "Please respond with valid JSON only. Do not include any text outside of the JSON structure."
-            )
-            if openai_msgs and openai_msgs[-1]["role"] == "user":
-                openai_msgs[-1]["content"] = f"{openai_msgs[-1]['content']}\n\n{json_instruction}"
-            else:
-                openai_msgs.append({"role": "system", "content": json_instruction})
+        kwargs: Dict[str, Any] = {
+            "model": self._model,
+            "input": input_payload,
+            "stream": True,
+        }
+        # Use provided max_tokens, or default to GPT-5 mini's max (128k)
+        kwargs["max_output_tokens"] = max_tokens if max_tokens is not None else self._default_max_tokens
 
-        stream = await self._client.chat.completions.create(  # type: ignore
-            model=self._model,
-            messages=openai_msgs,
-            max_completion_tokens=max_tokens or self._default_max_tokens,  # Up to 128k for GPT-5 mini
-            response_format=response_format,
-            reasoning_effort="minimal" if self._minimal_reasoning else "default",
-            stream=True,
-        )
+        if self._minimal_reasoning:
+            kwargs["reasoning"] = {"effort": "minimal"}
 
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+        try:
+            stream = await self._client.responses.create(**kwargs)
+
+            # The stream yields typed events; we only forward text deltas.
+            async for event in stream:
+                # Text delta events:
+                if getattr(event, "type", "") == "response.output_text.delta":
+                    delta = getattr(event, "delta", None)
+                    if delta:
+                        yield delta
+        except Exception as e:
+            # Handle network errors gracefully
+            import logging
+            logging.error(f"OpenAI GPT streaming error: {e}")
+            # Re-raise with more context
+            raise Exception(f"Failed to stream from OpenAI GPT: {e}") from e
 
 
