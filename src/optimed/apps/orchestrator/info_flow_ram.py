@@ -334,7 +334,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         Returns:
             Limited and truncated chunks that fit within constraints
         """
-        limited_chunks = []
+        limited_chunks: list[str] = []
         total_tokens = 0
 
         for chunk in chunks:
@@ -5631,7 +5631,7 @@ Content:
 
         pieces = []
         lines = text.split('\n')
-        current_piece = []
+        current_piece: list[str] = []
         current_length = 0
 
         for line in lines:

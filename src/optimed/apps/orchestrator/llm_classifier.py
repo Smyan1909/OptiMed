@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from typing import List, Optional
 from optimed.core.logging_utils import get_logger
-from optimed.core.domain import ChatMessage
+from optimed.core.domain import ChatMessage, ChatRole
 from optimed.core.ports import LLMClient
 
 logger = get_logger(__name__)
@@ -128,7 +128,7 @@ Respond with ONLY the intent label (e.g., "focused_summary"), nothing else. Do n
             prompt = self._create_classification_prompt(text, candidate_labels)
 
             # Call LLM
-            messages = [ChatMessage(role="user", content=prompt)]
+            messages = [ChatMessage(role=ChatRole.USER, content=prompt)]
             response = await client.chat(
                 messages=messages,
                 max_tokens=50  # Only need one label

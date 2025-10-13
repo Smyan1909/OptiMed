@@ -29,7 +29,7 @@ class MultilingualCrossEncoder:
         self._max_batch_size = max_batch_size
         self._use_fp16 = os.getenv("CROSS_ENCODER_USE_FP16", "True").lower() == "true"
         self._use_compile = os.getenv("CROSS_ENCODER_USE_COMPILE", "True").lower() == "true"
-        self._device = None
+        self._device: str | None = None
         self._compiled = False
 
         # Determine optimal batch size based on environment and config

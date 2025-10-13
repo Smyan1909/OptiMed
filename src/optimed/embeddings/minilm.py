@@ -54,7 +54,7 @@ def _ensure_model_loaded() -> None:
             try:
                 import platform
                 if platform.system() != "Windows":  # Skip on Windows (Triton not available)
-                    _model = torch.compile(_model, mode='reduce-overhead')
+                    _model = torch.compile(_model, mode='reduce-overhead')  # type: ignore[assignment]
                     logger.info("Applied torch.compile() for additional speedup")
                 else:
                     logger.info("Skipping torch.compile on Windows")
@@ -95,6 +95,7 @@ async def embed(text: str, kind: Literal["query", "passage"] = "query") -> list[
     Note: E5 models require "query: " or "passage: " prefixes for optimal performance.
     """
     _ensure_model_loaded()
+    assert _model is not None, "Model should be loaded after _ensure_model_loaded()"
 
     prefix = "query: " if kind == "query" else "passage: "
     vec = await asyncio.to_thread(
@@ -211,6 +212,7 @@ def _encode_with_cleanup(texts: List[str], batch_size: int) -> np.ndarray:
     This function runs in a thread pool to avoid blocking the event loop.
     Clears GPU cache only when memory usage is high (for speed).
     """
+    assert _model is not None, "Model should be loaded before calling _encode_with_cleanup"
     try:
         # Encode with batching
         vectors = _model.encode(
