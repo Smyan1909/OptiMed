@@ -449,7 +449,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         # No need for second GPU call - just lookup the scores we already computed
         gate_scores = [score_map[idx] for idx in selected_indices]
 
-        logger.info(f"✓ Optimized pipeline: 1 GPU pass instead of 2 (saved ~50% GPU time)")
+        logger.info("✓ Optimized pipeline: 1 GPU pass instead of 2 (saved ~50% GPU time)")
 
         return reranked, selected_indices, gate_scores
 

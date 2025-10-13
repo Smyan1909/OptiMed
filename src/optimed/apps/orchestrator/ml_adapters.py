@@ -67,7 +67,6 @@ class MultilingualCrossEncoder:
 
                 # Get GPU memory info for dynamic batch sizing
                 gpu_mem = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # GB
-                gpu_mem_free = torch.cuda.memory_reserved(0) / (1024**3)
                 logger.info(f"GPU Memory: {gpu_mem:.2f} GB total")
 
                 # Adjust batch size based on available memory if not explicitly set
