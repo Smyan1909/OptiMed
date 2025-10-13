@@ -22,9 +22,10 @@ from optimed.core.lang import detect_language_code
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, PDFService, XMLService, AuditRepository
 
 from optimed.apps.orchestrator.connection_service import UserEHRConnectionService
-from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder, MultilingualZeroShotClassifier
+from optimed.apps.orchestrator.ml_adapters import MultilingualCrossEncoder
+from optimed.apps.orchestrator.llm_classifier import LLMZeroShotClassifier
 
-from optimed.embeddings.minilm import embed
+from optimed.embeddings.minilm import embed_batch
 from optimed.adapters.security.e2e_encryption_middleware import get_session_encryption_manager
 from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator
 from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY as CHUNK_STRATEGY_REGISTRY, POLICY_PRESETS as CHUNK_POLICY_PRESETS
@@ -56,7 +57,7 @@ RETRY_MAX: int = 2
 
 
 # Single system message for information relay only
-SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM, 
+SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                          content="""You are CLARA, a clinical information assistant.
 
                                     You are not a doctor or a medical device, so always state that the user should make their decisions independently and review the sources for further information.
@@ -69,15 +70,24 @@ SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                                     - Provide a thorough, well-developed answer while remaining concise (aim for 3–5 short sections).
                                     - Use previous conversation history (between === lines) when relevant.
                                     - **Always output in valid GitHub-flavored Markdown** to ensure clean rendering in the application.
+                                    - **CRITICAL - DATE/TIME STAMPS**: Always include date and time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for ALL clinical information showing when data was recorded/measured/documented. This is essential for clinical decision-making.
+                                    - **CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms throughout your response:
+                                        - **Diagnoses** and disease names (e.g., **Type 2 Diabetes**, **Hypertension**)
+                                        - **Medications** and doses (e.g., **Metformin 1000mg**, **Enalapril 20mg**)
+                                        - **Vital signs** and lab values (e.g., **BP 145/85**, **HbA1c 68 mmol/mol**, **eGFR 52**)
+                                        - **Symptoms** and clinical findings (e.g., **chest pain**, **dyspnea**, **wheezing**)
+                                        - **Risk levels** and severity descriptors (e.g., **moderate risk**, **stable**, **worsening**)
+                                        - **Key clinical terms** that are important for decision-making
+                                        - **Dates** and temporal markers when clinically relevant (e.g., **2024-01-15**, **3 months ago**)
                                     - Organize responses using appropriate Markdown structure:
                                         - Use `#` for the main title, `##` for section titles, and `###` for subsections when needed.
                                         - Use bullet points (`-`) or numbered lists (`1.`, `2.`) where appropriate.
                                         - Use proper Markdown tables for structured data.
                                         - Format all URLs as **clickable Markdown links** instead of showing raw URLs.
-                                    - If web search results are used, cite with inline Markdown links like:  
-                                        `[Source Title](URL)`  
+                                    - If web search results are used, cite with inline Markdown links like:
+                                        `[Source Title](URL)`
                                         Otherwise, omit citations.
-                                    - Link policy (**STRICT for EHR**):  
+                                    - Link policy (**STRICT for EHR**):
                                         When referencing specific patient data from the clinical information chunks, you MUST include the source links that are embedded in the chunk content.
                                         - For atomic data (vitals, labs, medications, etc.): The chunks contain data in the format "value [EHR Source](URL)" - preserve this exact format when referencing the data
                                         - For narrative data (reports, impressions, etc.): The chunks contain source information at the end as "**Source:** [EHR Record](URL)" - preserve this when referencing the content
@@ -221,6 +231,29 @@ class FlowState(BaseModel):
     # General summary retrieval cache for performance optimization
     general_retrieval_cache: Optional[Dict[str, Any]] = None
 
+    # Focused summary flow fields
+    is_focused_summary_flow: bool = False
+    focused_aspect: Optional[str] = None  # e.g., "heart disease", "lung history"
+    focused_aspect_icon: Optional[str] = None  # Icon for the aspect
+
+    # Separate fields for each focused summary component to avoid concurrent updates
+    focused_diagnoses_chunks: Optional[List[str]] = None
+    focused_events_chunks: Optional[List[str]] = None
+    focused_medications_chunks: Optional[List[str]] = None
+    focused_objective_data_chunks: Optional[List[str]] = None
+    focused_assessment_chunks: Optional[List[str]] = None
+    focused_next_steps_chunks: Optional[List[str]] = None
+
+    focused_diagnoses_result: Optional[str] = None
+    focused_events_result: Optional[str] = None
+    focused_medications_result: Optional[str] = None
+    focused_objective_data_result: Optional[str] = None
+    focused_assessment_result: Optional[str] = None
+    focused_next_steps_result: Optional[str] = None
+
+    # Focused summary retrieval cache for performance optimization
+    focused_retrieval_cache: Optional[Dict[str, Any]] = None
+
 
 class LangGraphRAMInformationEngine(DiagnosticEngine):
     """Concrete engine that streams or returns full result."""
@@ -232,7 +265,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                  connection_service: UserEHRConnectionService,
                  web_search_service: WebSearchService,
                  cross_encoder: MultilingualCrossEncoder,
-                 zero_shot_classifier: MultilingualZeroShotClassifier,
+                 zero_shot_classifier: LLMZeroShotClassifier,
                  pdf_service: Optional[PDFService] = None,
                  xml_service: Optional[XMLService] = None,
                  audit_repo: Optional[AuditRepository] = None,
@@ -285,6 +318,46 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             )
         )
 
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate token count (rough: 1 token ≈ 4 characters)."""
+        return len(text) // 4
+
+    def _limit_chunks_for_context(self, chunks: list[str], max_tokens: int = 200000, max_chunk_chars: int = 50000) -> list[str]:
+        """
+        Limit chunks to prevent context window overflow.
+
+        Args:
+            chunks: List of chunk content strings
+            max_tokens: Maximum total tokens for all chunks
+            max_chunk_chars: Maximum characters per individual chunk
+
+        Returns:
+            Limited and truncated chunks that fit within constraints
+        """
+        limited_chunks: list[str] = []
+        total_tokens = 0
+
+        for chunk in chunks:
+            # Truncate individual chunks that are too large
+            if len(chunk) > max_chunk_chars:
+                truncated = chunk[:max_chunk_chars] + "\n... [truncated for length]"
+                logger.warning(f"Truncated chunk from {len(chunk)} to {max_chunk_chars} chars")
+                chunk = truncated
+
+            # Estimate tokens
+            chunk_tokens = self._estimate_tokens(chunk)
+
+            # Stop adding chunks if we'd exceed the limit
+            if total_tokens + chunk_tokens > max_tokens:
+                logger.warning(f"Stopping at {len(limited_chunks)} chunks to avoid context overflow (would exceed {max_tokens} tokens)")
+                break
+
+            limited_chunks.append(chunk)
+            total_tokens += chunk_tokens
+
+        logger.info(f"Limited chunks: {len(chunks)} → {len(limited_chunks)}, estimated tokens: ~{total_tokens}")
+        return limited_chunks
+
     async def _log_data_lineage(
         self,
         session_id: Optional[str],
@@ -320,75 +393,65 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             log_error(logger, "DATA_LINEAGE", e)
 
     async def _run_parallel_cross_encoder_operations(self, state: FlowState, chunks: list[dict[str, Any]], initial_indices: list[int], query_vecs: list[list[float]]) -> tuple[list[tuple[int, float]], list[int], list[float]]:
-        """Run all cross-encoder operations in parallel for maximum efficiency.
-        
-        This method combines reranking, MMR selection, and gating into a single parallel execution.
-        
+        """Optimized cross-encoder operations with single GPU pass.
+
+        This method performs cross-encoder scoring once and reuses scores for both
+        reranking and gating, eliminating redundant GPU calls.
+
         Returns:
             Tuple of (reranked_chunks, selected_indices, gate_scores)
         """
         cross = self._cross_encoder
         rerank_passages = [chunks[i]["content"] for i in initial_indices]
-        
-        # Prepare all operations for parallel execution
-        operations = []
-        
-        # Operation 1: Reranking
-        operations.append({
-            'passages': rerank_passages,
-            'operation_type': 'reranking',
-            'metadata': {'indices': initial_indices}
-        })
-        
-        logger.info(f"Starting parallel execution of {len(operations)} operations")
+
+        logger.info(f"Starting optimized cross-encoder scoring for {len(initial_indices)} chunks")
         start_time = time.time()
-        
-        # Run reranking operation
-        if operations and 'passages' in operations[0]:
-            # Create pairs from user prompt and passages
-            pairs = [(state.user_prompt, passage) for passage in operations[0]['passages']]
-            rerank_scores = await cross.predict_async(pairs)
-            all_results = [rerank_scores]
-        else:
-            all_results = [[]]
-        
+
+        # OPTIMIZATION: Single cross-encoder pass for all initial chunks
+        # This batches all operations together for maximum GPU utilization
+        all_pairs = [(state.user_prompt, passage) for passage in rerank_passages]
+        all_scores = await cross.predict_async(all_pairs)
+
         end_time = time.time()
-        logger.info(f"Parallel execution completed in {end_time - start_time:.3f}s")
-        
-        # Process reranking results
-        rerank_scores = all_results[0] if all_results else []
-        reranked = list(zip(initial_indices, rerank_scores))
+        logger.info(f"Cross-encoder scoring completed in {end_time - start_time:.3f}s for {len(all_pairs)} pairs")
+
+        # Create index-to-score mapping for efficient lookup
+        score_map = {initial_indices[i]: all_scores[i] for i in range(len(initial_indices))}
+
+        # Process reranking results (top-K from scored chunks)
+        reranked = list(zip(initial_indices, all_scores))
         reranked.sort(key=lambda x: x[1], reverse=True)
         reranked = reranked[:TOPK_RERANK]
-        
+
         # Log reranking results
-        logger.info(f"Reranked {len(reranked)} chunks")
+        logger.info(f"Reranked top {len(reranked)} chunks")
         for i, (idx, score) in enumerate(reranked[:5]):
             chunk_type = chunks[idx]["data_type"]
             logger.info(f"  {i+1}. Chunk {idx} ({chunk_type}): {score:.4f}")
-        
+
         # Compute dynamic n and MMR selection
         rerank_only_scores = [s for _, s in reranked]
-        n_dynamic = self._compute_dynamic_n(state.user_prompt, rerank_only_scores)
+        # Pass pre-classification from state to avoid redundant classification
+        pre_classification = getattr(state, 'query_classification', None)
+        n_dynamic = self._compute_dynamic_n(state.user_prompt, rerank_only_scores, pre_classification)
         logger.info(f"Dynamic n: {n_dynamic}")
-        
-        # MMR selection
+
+        # MMR selection for diversity
         candidate_vecs = [chunks[i]["embedding"] for i, _ in reranked]
         best_q_idx = max(range(len(query_vecs)), key=lambda qi: sum(self._cosine(query_vecs[qi], v) for v in candidate_vecs) / max(len(candidate_vecs), 1))
         best_q_vec = query_vecs[best_q_idx]
         mmr_local_indices = self._mmr(candidate_vecs, best_q_vec, n_dynamic, lambda_=MMR_LAMBDA)
         selected_indices = [reranked[j][0] for j in mmr_local_indices]
-        
-        logger.info(f"MMR selected {len(selected_indices)} chunks")
-        
-        # Prepare gating operation
-        gate_passages = [chunks[i]["content"] for i in selected_indices]
-        
-        # Run gating
-        gate_pairs = [(state.user_prompt, passage) for passage in gate_passages]
-        gate_scores = await cross.predict_async(gate_pairs)
-        
-        return reranked, selected_indices, list(gate_scores)
+
+        logger.info(f"MMR selected {len(selected_indices)} diverse chunks")
+
+        # OPTIMIZATION: Reuse cross-encoder scores from the initial pass for gating
+        # No need for second GPU call - just lookup the scores we already computed
+        gate_scores = [score_map[idx] for idx in selected_indices]
+
+        logger.info("✓ Optimized pipeline: 1 GPU pass instead of 2 (saved ~50% GPU time)")
+
+        return reranked, selected_indices, gate_scores
 
     def _build_graph(self) -> Any:
         """Build the LangGraph state graph for diagnosis."""
@@ -1243,6 +1306,142 @@ Keep queries concise and focused on the temporal aspect.
                     f"clinical findings {time_period}"
                 ]
 
+        async def _extract_aspect_from_query(state: FlowState) -> tuple[str, str]:
+            """Extract the medical aspect from user query and determine appropriate icon.
+
+            Returns:
+                tuple[str, str]: (aspect name, icon name)
+            """
+            try:
+                logger.info(f"Extracting medical aspect from query: {state.user_prompt}")
+
+                prompt = f"""
+Based on this user query: "{state.user_prompt}"
+
+Extract the specific medical aspect or condition that the user wants a focused summary about.
+
+For example:
+- "Give me a summary of the patient's heart disease" → "Heart Disease"
+- "Explain the patient's lung history to me" → "Lung Conditions"
+- "Summarize the diabetes management" → "Diabetes"
+- "What's going on with the kidneys?" → "Kidney Health"
+
+Return ONLY the aspect name (2-4 words maximum), nothing else.
+Make it clear, concise, and clinically appropriate.
+"""
+
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist extracting specific medical aspects from queries."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                response = await self._llm.chat(messages)
+                aspect = response.content.strip().strip('"').strip("'")
+
+                # Determine icon based on aspect (simple keyword matching)
+                aspect_lower = aspect.lower()
+                if any(word in aspect_lower for word in ["heart", "cardiac", "cardio"]):
+                    icon = "heart"
+                elif any(word in aspect_lower for word in ["lung", "pulmonary", "respiratory"]):
+                    icon = "activity"
+                elif any(word in aspect_lower for word in ["kidney", "renal"]):
+                    icon = "droplet"
+                elif any(word in aspect_lower for word in ["liver", "hepatic"]):
+                    icon = "hexagon"
+                elif any(word in aspect_lower for word in ["brain", "neuro", "cognitive"]):
+                    icon = "brain"
+                elif any(word in aspect_lower for word in ["diabetes", "glucose", "insulin"]):
+                    icon = "trending-up"
+                elif any(word in aspect_lower for word in ["cancer", "oncology", "tumor"]):
+                    icon = "alert-circle"
+                else:
+                    icon = "file-text"  # Default icon
+
+                logger.info(f"Extracted aspect: '{aspect}' with icon: '{icon}'")
+                return (aspect, icon)
+
+            except Exception as e:
+                log_error(logger, "_extract_aspect_from_query", e)
+                # Fallback
+                return ("Medical Condition", "file-text")
+
+        async def _generate_focused_summary_queries(state: FlowState, section: str, focus_instruction: str) -> List[str]:
+            """Generate focused queries for each focused summary section based on the user's query and extracted aspect.
+
+            Args:
+                state: Flow state containing user prompt and focused aspect
+                section: Section name (diagnoses, events, medications, objective_data, assessment, next_steps)
+                focus_instruction: Instruction for what to focus on
+
+            Returns:
+                List[str]: List of 2-3 search queries
+            """
+            try:
+                logger.info(f"Generating {section} queries for aspect: {state.focused_aspect}")
+
+                # Define section-specific instructions
+                section_prompts = {
+                    "diagnoses": "Formal diagnoses, ICD codes, disease classifications related to the aspect",
+                    "events": "Key clinical events, hospitalizations, surgeries, major interventions, disease milestones",
+                    "medications": "Current and past medications, dosages, treatment regimens for the aspect",
+                    "objective_data": "Lab results, vital signs, imaging findings, test results, measurements",
+                    "assessment": "Clinical assessments, provider notes, current disease status, prognosis",
+                    "next_steps": "Follow-up plans, pending tests, medication reviews, specialist referrals, outstanding issues"
+                }
+
+                prompt = f"""
+Based on this user query: "{state.user_prompt}"
+
+The user wants a focused summary about: {state.focused_aspect}
+
+Generate 2-3 specific search queries to find information for the "{section}" section.
+
+Focus on: {section_prompts.get(section, focus_instruction)}
+
+IMPORTANT: All queries should be specific to "{state.focused_aspect}" - don't include unrelated conditions.
+
+Return only the queries, one per line, without numbers or bullets.
+Keep queries concise and medically precise.
+"""
+
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist generating focused search queries for aspect-specific summaries."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                response = await self._llm.chat(messages)
+
+                # Parse response into individual queries
+                queries = []
+                for line in response.content.strip().split('\n'):
+                    query = line.strip()
+                    if query and not query.startswith(('1.', '2.', '3.', '-', '•', '*')):
+                        queries.append(query)
+
+                if len(queries) < 2:
+                    # Fallback queries if LLM didn't generate enough
+                    fallback = {
+                        "diagnoses": [f"{state.focused_aspect} diagnosis", f"{state.focused_aspect} ICD code", "disease classification"],
+                        "events": [f"{state.focused_aspect} events", f"{state.focused_aspect} hospitalization", "clinical milestones"],
+                        "medications": [f"{state.focused_aspect} medications", f"{state.focused_aspect} treatment", "drug regimen"],
+                        "objective_data": [f"{state.focused_aspect} labs", f"{state.focused_aspect} imaging", "test results"],
+                        "assessment": [f"{state.focused_aspect} assessment", f"{state.focused_aspect} status", "clinical evaluation"],
+                        "next_steps": [f"{state.focused_aspect} follow-up", f"{state.focused_aspect} pending", "outstanding issues"]
+                    }
+                    queries.extend(fallback.get(section, [f"{state.focused_aspect} {section}"])[:3-len(queries)])
+
+                logger.info(f"Generated {len(queries)} {section} queries: {queries}")
+                return queries[:3]  # Limit to 3 queries
+
+            except Exception as e:
+                log_error(logger, "_generate_focused_summary_queries", e)
+                # Return fallback queries
+                return [
+                    f"{state.focused_aspect or 'condition'} {section}",
+                    f"medical {section}",
+                    f"clinical {section}"
+                ]
+
         @streaming_step("retrieve_situation_chunks")
         async def retrieve_situation_chunks(state: FlowState) -> FlowState:
             """Retrieve chunks focused on current patient situation (fast SBAR version)."""
@@ -1656,22 +1855,37 @@ Keep queries concise and focused on the temporal aspect.
 
                 # Build prompt for situation
                 situation_prompt = f"""
-                Generate a VERY CONCISE SBAR Situation summary (maximum 2-3 short bullet points).
+                Generate a concise SBAR Situation summary with 5-7 bullet points.
 
                 USER QUERY: {state.user_prompt}
 
-                Include ONLY the most critical:
-                • Chief complaint
-                • Current symptoms
-                • Immediate concerns
+                Format as 5-7 bullet points covering:
+                • **Chief complaint**: [concise description with key symptoms]
+                • **Current presentation**: [current status and vital signs]
+                • **Acute symptoms**: [most pressing symptoms/concerns]
+                • **Pain/distress level**: [if applicable]
+                • **Recent changes**: [any deterioration or improvement]
+                • **Immediate concerns**: [urgent issues requiring attention]
+                • **Patient awareness**: [patient's understanding/concern level]
 
-                MANDATORY: Cite page numbers for any document references: {citation_format}
-                Format: Very short bullet points. No headers or explanations.
+                Example:
+                • **Chief complaint**: Patient presenting with **chest pain** radiating to left arm, started 2 hours ago - Enligt Triageanteckning, sida 1
+                • **Current presentation**: **BP 145/90**, HR 92, **diaphoretic**, appears anxious - Enligt Vitalparametrar, sida 2
+                • **Acute symptoms**: **Crushing substernal pain** 7/10, worse with exertion, not relieved by rest - Enligt Anamnes, sida 1
+                • **Recent changes**: Pain intensity **increased** from 5/10 to 7/10 in last hour - Enligt Uppföljning, sida 3
+                • **Immediate concerns**: **Possible ACS**, needs urgent ECG and troponin - Enligt Bedömning, sida 2
+
+                Add blank line between each bullet point for readability.
+
+                MANDATORY:
+                - Use **bold** markdown for symptoms, vital signs, and key clinical terms
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 concise bullet points. Keep focused on current situation only.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR situation summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR situation summaries with 5-7 bullet points. Use **bold** for symptoms, vital signs, and key clinical terms.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise and focused.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1699,7 +1913,9 @@ Keep queries concise and focused on the temporal aspect.
 
                 # Add chunks if available
                 if situation_chunks:
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(situation_chunks)
+                    # Limit chunks to prevent context overflow
+                    limited_chunks = self._limit_chunks_for_context(situation_chunks, max_tokens=200000, max_chunk_chars=50000)
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
@@ -1739,22 +1955,39 @@ Keep queries concise and focused on the temporal aspect.
 
                 # Build prompt for background
                 background_prompt = f"""
-                Generate a VERY CONCISE SBAR Background summary (maximum 2-3 short bullet points).
+                Generate a concise SBAR Background summary with 5-7 bullet points.
 
                 USER QUERY: {state.user_prompt}
 
-                Include ONLY the most relevant:
-                • Key medical history
-                • Critical medications
-                • Important allergies
+                Format as 5-7 bullet points covering:
+                • **Patient demographics**: [age, sex, living situation]
+                • **Major diagnoses**: [key chronic conditions with dates]
+                • **Critical medications**: [important meds especially high-risk ones]
+                • **Important allergies**: [drug allergies and reactions]
+                • **Past procedures/surgeries**: [relevant surgical history]
+                • **Recent admissions**: [hospitalizations in last 6-12 months]
+                • **Baseline function**: [usual activity level and independence]
 
-                MANDATORY: Cite page numbers for any document references: {citation_format}
-                Format: Very short bullet points. No headers or explanations.
+                Example:
+                • **Patient demographics**: **73M**, lives alone, retired, has home care 2x/week - Enligt Sociala anteckningar, sida 2
+                • **Major diagnoses**: **T2DM** (2010), **HTN** (2005), **CKD Stage 3a** (2018), **COPD GOLD II** (2015) - Enligt Diagnoslista, sida 1
+                • **Critical medications**: **Warfarin 5mg** (INR target 2-3), **Metformin 1000mg 2x/day**, **Enalapril 20mg** - Enligt Läkemedelslista, sida 1
+                • **Important allergies**: **Penicillin** (rash and angioedema 2008) - Enligt Allergier, sida 1
+                • **Past procedures**: **Hip replacement** (2015), **Cholecystectomy** (2001) - Enligt Operationsprotokoll, sida 3
+                • **Recent admissions**: **COPD exacerbation** (3 months ago), treated with antibiotics and steroids - Enligt Epikris, sida 8
+                • **Baseline function**: **Independent** with ADLs, uses walker for mobility, cognitively intact - Enligt Funktionsstatus, sida 4
+
+                Add blank line between each bullet point for readability.
+
+                MANDATORY:
+                - Use **bold** markdown for key diagnoses, medications, allergies, and functional descriptors
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 concise bullet points. Focus on context relevant to current situation.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR background summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR background summaries with 5-7 bullet points. Use **bold** for diagnoses, medications, allergies, and key descriptors.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise and contextually relevant.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1782,7 +2015,9 @@ Keep queries concise and focused on the temporal aspect.
 
                 # Add chunks if available
                 if background_chunks:
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(background_chunks)
+                    # Limit chunks to prevent context overflow
+                    limited_chunks = self._limit_chunks_for_context(background_chunks, max_tokens=200000, max_chunk_chars=50000)
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
@@ -1822,22 +2057,38 @@ Keep queries concise and focused on the temporal aspect.
 
                 # Build prompt for assessment
                 assessment_prompt = f"""
-                Generate a VERY CONCISE SBAR Assessment summary (maximum 2-3 short bullet points).
+                Generate a concise SBAR Assessment summary with 5-7 bullet points in narrative style.
 
                 USER QUERY: {state.user_prompt}
 
-                Include ONLY the most important:
-                • Clinical impression
-                • Key findings
-                • Risk level
+                Format as 5-7 bullet points with free-text narrative descriptions:
+                • **Clinical impression**: [narrative description with key observations]
+                • **Current status**: [narrative summary of patient's condition]
+                • **Key findings**: [narrative of significant clinical findings]
+                • **Trend analysis**: [narrative of improvement/deterioration]
+                • **Risk assessment**: [narrative of current risk level and factors]
+                • **Stability**: [narrative of patient stability and prognosis]
+                • **Critical concerns**: [narrative of urgent issues if any]
 
-                MANDATORY: Cite page numbers for any document references: {citation_format}
-                Format: Very short bullet points. No headers or explanations.
+                Example:
+                • **Clinical impression**: Patient with **multimorbidity** showing signs of **worsening diabetic control** with HbA1c rising from 62 to 68 mmol/mol over 6 months - Enligt Provresultat, sida 5
+                • **Current status**: Generally **stable** but requires medication adjustment and closer monitoring of renal function given declining eGFR - Enligt Journalanteckning, sida 15
+                • **Key findings**: **Declining kidney function** (eGFR 64→52), **elevated blood pressure** (145/85), and **worsening glycemic control** suggest need for therapeutic review - Enligt Provresultat, sida 5
+                • **Risk assessment**: **Moderate-to-high risk** for cardiovascular events given uncontrolled HTN, T2DM, and CKD Stage 3a - Enligt Riskbedömning, sida 8
+                • **Critical concerns**: Patient on **warfarin** with recent **INR fluctuations**, requires close monitoring to prevent bleeding complications - Enligt Läkemedelslista, sida 2
+
+                Add blank line between each bullet point for readability.
+
+                MANDATORY:
+                - Use **bold** markdown for important clinical terms, values, and risk levels
+                - Cite page numbers: {citation_format}
+                - Write in narrative free-text style within each bullet point
+                CRITICAL: 5-7 bullet points with narrative descriptions. Each bullet contains a flowing sentence, not just keywords. Keep concise but informative.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR assessment summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR assessment summaries with 5-7 bullet points in narrative style. Use **bold** for important clinical terms and values. Write flowing sentences within each bullet point.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise but informative.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1865,7 +2116,9 @@ Keep queries concise and focused on the temporal aspect.
 
                 # Add chunks if available
                 if assessment_chunks:
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(assessment_chunks)
+                    # Limit chunks to prevent context overflow
+                    limited_chunks = self._limit_chunks_for_context(assessment_chunks, max_tokens=200000, max_chunk_chars=50000)
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
@@ -1905,23 +2158,39 @@ Keep queries concise and focused on the temporal aspect.
 
                 # Build prompt for recommendation
                 recommendation_prompt = f"""
-                Generate a VERY CONCISE SBAR Recommendation summary (maximum 2-3 short bullet points).
+                Generate a concise SBAR Recommendation summary with 5-7 bullet points.
 
                 USER QUERY: {state.user_prompt}
 
-                Include ONLY the most essential:
-                • Urgent interventions
-                • Key monitoring
-                • Follow-up needs
+                Format as 5-7 bullet points covering:
+                • **Urgent interventions**: [immediate actions needed]
+                • **Diagnostic workup**: [tests/imaging required]
+                • **Treatment adjustments**: [medication/therapy changes]
+                • **Monitoring plan**: [what to watch and frequency]
+                • **Consultation needs**: [specialists to involve]
+                • **Follow-up timing**: [when to reassess]
+                • **Safety measures**: [precautions and risk mitigation]
 
-                MANDATORY: Cite page numbers for any document references: {citation_format}
-                Format: Very short bullet points. No headers or explanations.
-                IMPORTANT: Educational information only - refer complex decisions to healthcare providers.
+                Example:
+                • **Urgent interventions**: Obtain **12-lead ECG** immediately, establish **IV access**, give **aspirin 300mg** if not contraindicated - Enligt Akutrutin, sida 1
+                • **Diagnostic workup**: **Troponin** at 0 and 3 hours, **chest X-ray**, continuous **cardiac monitoring** - Enligt Utredningsprotokoll, sida 3
+                • **Treatment adjustments**: Consider **nitroglycerin SL** for chest pain, hold **metformin** if contrast study needed - Enligt Behandlingsriktlinjer, sida 5
+                • **Monitoring plan**: **Vital signs q15min**, monitor for **arrhythmias**, assess **pain response** to treatment - Enligt Övervakningsrutin, sida 2
+                • **Consultation needs**: **Cardiology** consult for possible ACS, consider **interventional** if STEMI criteria met - Enligt Konsultationsriktlinjer, sida 4
+                • **Follow-up timing**: Reassess after **troponin results**, plan disposition based on findings - Enligt Uppföljningsplan, sida 6
+                • **Safety measures**: Keep patient **NPO**, ensure **resuscitation equipment** at bedside, discuss **code status** if not documented - Enligt Säkerhetsrutiner, sida 7
+
+                Add blank line between each bullet point for readability.
+
+                MANDATORY:
+                - Use **bold** markdown for interventions, tests, medications, and key actions
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 concise bullet points. Educational information only - refer complex decisions to healthcare providers. Keep actionable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR recommendation summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR recommendation summaries with 5-7 bullet points. Use **bold** for interventions, tests, medications, and key actions.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise and actionable.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1949,7 +2218,9 @@ Keep queries concise and focused on the temporal aspect.
 
                 # Add chunks if available
                 if recommendation_chunks:
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(recommendation_chunks)
+                    # Limit chunks to prevent context overflow
+                    limited_chunks = self._limit_chunks_for_context(recommendation_chunks, max_tokens=200000, max_chunk_chars=50000)
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
@@ -1987,24 +2258,40 @@ Keep queries concise and focused on the temporal aspect.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                Create an ULTRA-BRIEF Patient Snapshot (scan in 5 seconds):
+                Create a concise Patient Snapshot with 5-7 bullet points with headers:
 
                 USER QUERY: {state.user_prompt}
 
-                Format as 3-4 SHORT lines ONLY:
-                1. Age, sex (e.g., "67M")
-                2. Living situation (e.g., "Lives alone, retired teacher")
-                3. Top 3 conditions (e.g., "T2DM, HTN, COPD")
-                4. ONE-LINE summary (e.g., "Multimorbid with good compliance")
+                Format as 5-7 bullet points with bold headers:
+                • **Demographics:** [Age, sex] - {citation_format}
+                • **Living Situation:** [Living arrangement, occupation/status] - {citation_format}
+                • **Active Conditions:** [Top 3-4 diagnoses] - {citation_format}
+                • **Key Medications:** [Most important 2-3 medications] - {citation_format}
+                • **Recent Labs/Vitals:** [Most relevant values] - {citation_format}
+                • **Functional Status:** [Mobility and independence level] - {citation_format}
+                • **Social Support:** [Care situation] - {citation_format}
 
-                MANDATORY: Cite page numbers for any document references: {citation_format}
-                Add blank line between each numbered item for readability.
-                CRITICAL: Maximum 4 short lines. No elaboration. No paragraphs.
+                Example:
+                • **Demographics:** **73M** (recorded 2024-01-15) - Enligt Journalanteckning, sida 1
+                • **Living Situation:** Lives alone, **retired teacher** (recorded 2023-12-10) - Enligt Sociala anteckningar, sida 2
+                • **Active Conditions:** **T2DM**, **HTN**, **COPD GOLD II**, **CKD Stage 3a** (updated 2024-01-10) - Enligt Diagnoslista, sida 1
+                • **Key Medications:** **Metformin 1000mg 2x/day**, **Enalapril 20mg**, **Warfarin 5mg** (as of 2024-01-15) - Enligt Läkemedelslista, sida 1
+                • **Recent Labs/Vitals:** **HbA1c 68 mmol/mol**, **BP 145/85**, **eGFR 52** (2024-01-15 08:30) - Enligt Provresultat, sida 5
+                • **Functional Status:** **Independent** with ADLs, uses walker (assessed 2023-11-20) - Enligt Funktionsstatus, sida 4
+                • **Social Support:** **Home care** 2x/week (started 2023-10-01) - Enligt Vårdplan, sida 3
+
+                MANDATORY:
+                - Each bullet must have a bold header followed by colon
+                - Use **bold** markdown for important clinical terms, values, and key phrases
+                - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when the information was recorded
+                - Cite page numbers: {citation_format}
+                - Add blank line between each bullet point for readability
+                CRITICAL: 5-7 bullet points with headers. 6-12 words each. Each bullet point one line. Include dates. Keep very concise and scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create ULTRA-BRIEF snapshots. Max 4 short lines total. No explanations. Just facts.\n\nMANDATORY: Always cite page numbers: {citation_format}. Add blank lines between items.\n\nInformation system only - NOT a medical device.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create concise snapshots with 5-7 bullet points, each with a bold header. Use **bold** for important clinical terms and values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for when each piece of information was recorded. One line per bullet point. No explanations.\n\nMANDATORY: Always cite page numbers: {citation_format}. Add blank lines between bullets. Always include dates.\n\nInformation system only - NOT a medical device.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2031,7 +2318,9 @@ Keep queries concise and focused on the temporal aspect.
 
                 # Add chunks if available
                 if chunks:
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2066,35 +2355,43 @@ Keep queries concise and focused on the temporal aspect.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                List ONLY the top 4-5 active problems. MAXIMUM 5 bullet points.
+                List the top 5-7 active problems - EXACTLY 6-12 words per bullet.
 
                 USER QUERY: {state.user_prompt}
 
-                Format (ONE line per problem):
-                • Disease name (year if known) - {citation_format}
+                Format (ONE line per problem, 6-12 words ONLY):
+                • **Disease name** (year) - status - {citation_format}
 
-                Example:
-                • T2DM (2012) - Enligt Journalanteckning, sida 3
-                • HTN (2005) - Enligt Läkemedel, sida 1
-                • COPD GOLD II (2018) - Enligt Diagnoslista, sida 2
+                Example (count the words - each is 6-12 words):
+                • **T2DM** (diagnosed 2012) **HbA1c 68** moderate control (2024-01-15) - Enligt Journalanteckning, sida 3 (11 words)
+                • **HTN** (since 2005) **BP 145/85** on treatment (2024-01-15 09:00) - Enligt Läkemedel, sida 1 (12 words)
+                • **COPD GOLD II** (2018) stable uses inhaler (reviewed 2024-01-10) - Enligt Diagnoslista, sida 2 (11 words)
+                • **CKD Stage 3a** (2020) **eGFR 52** monitored (2024-01-15 08:30) - Enligt Provresultat, sida 5 (11 words)
+                • **Osteoarthritis** bilateral knees uses walker (assessed 2023-12-20) - Enligt Anteckning, sida 8 (10 words)
 
                 Add blank line between each bullet point for readability.
 
-                If there are MORE problems in the data (beyond top 5), add at the end:
+                If there are MORE problems in the data (beyond 5-7), add at the end:
                 "_Fråga om fler diagnoser_" (Swedish) or "_Ask for more diagnoses_" (English)
 
-                MANDATORY: Cite page numbers: {citation_format}
-                CRITICAL: Max 5 problems. ONE line each. Blank lines between bullets. No extra descriptions.
+                MANDATORY:
+                - Use **bold** markdown for disease names and key values
+                - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when the information was recorded/updated
+                - Each bullet MUST be between 6-12 words (excluding date and citation) - COUNT THEM
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 problems. 6-12 words each. Include dates. Blank lines between bullets. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List top 4-5 active problems ONLY. One line per problem with blank lines between. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List top 5-7 active problems. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2129,36 +2426,44 @@ Keep queries concise and focused on the temporal aspect.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                List ONLY current and PAST medications with BRIEF (max 1 sentence) purpose/indication.
+                List 5-7 most important medications - EXACTLY 6-12 words per bullet.
 
                 USER QUERY: {state.user_prompt}
 
-                Format (ONE line per medication):
-                • Drug name dose (brief purpose) - {citation_format}
-                • ⚠️ High-risk drug dose (brief purpose) - {citation_format}  ← Mark anticoagulants, opioids, insulin with ⚠️
+                Format (ONE line per medication, 6-12 words ONLY):
+                • **Drug name dose** - purpose - {citation_format}
+                • ⚠️ **High-risk drug dose** - purpose - {citation_format}  ← Mark anticoagulants, opioids, insulin with ⚠️
 
-                Example:
-                • Metformin 1000mg (diabetes) - Enligt Läkemedelslista, sida 2
-                • ⚠️ Warfarin 5mg (anticoagulation) - Enligt Läkemedelslista, sida 2
-                • Enalapril 10mg (blood pressure) - Enligt Läkemedelslista, sida 2
+                Example (count the words - each is 6-12 words):
+                • **Metformin 1000mg 2x/day** - diabetes **HbA1c 68** (prescribed 2024-01-10) - Enligt Läkemedelslista, sida 2 (10 words)
+                • ⚠️ **Warfarin 5mg** - anticoagulation **INR 2.5** (checked 2024-01-15 09:00) - Enligt Läkemedelslista, sida 2 (10 words)
+                • **Enalapril 10mg** - blood pressure **BP 145/85** (started 2023-11-01) - Enligt Läkemedelslista, sida 2 (10 words)
+                • **Salbutamol inhaler** - COPD relief PRN (refilled 2024-01-05) - Enligt Läkemedelslista, sida 3 (9 words)
+                • **Simvastatin 20mg** - cholesterol **LDL 3.2** (checked 2024-01-15) - Enligt Läkemedelslista, sida 2 (9 words)
 
                 Add blank line between each bullet point for readability.
 
-                If there are MORE medications (beyond 8-10), add at the end:
+                If there are MORE medications (beyond 5-7), add at the end:
                 "_Fråga om fler läkemedel_" (Swedish) or "_Ask for more medications_" (English)
 
-                MANDATORY: Cite page numbers: {citation_format}
-                CRITICAL: ONE line per drug. Blank lines between bullets. Brief purpose in parentheses. List max 8-10 meds. Prioritize high-risk.
+                MANDATORY:
+                - Use **bold** markdown for drug names, doses, and key values
+                - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when medication was prescribed/checked/refilled
+                - Each bullet MUST be between 6-12 words (excluding date and citation) - COUNT THEM
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 most important meds. 6-12 words each. Include dates. Blank lines between bullets. Prioritize high-risk. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List medications with brief purpose. One line per drug with blank lines between. Max 8-10 drugs. Mark high-risk with ⚠️. Add purpose in parentheses.\n\nMANDATORY: Always cite page numbers: {citation_format}"),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most important medications. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Prioritize medications by clinical importance.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2193,35 +2498,43 @@ Keep queries concise and focused on the temporal aspect.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                Show ONLY key trends (max 5-6 values). Use arrows: ↑ ↓ →
+                Show 5-7 key lab/vital trends - EXACTLY 6-12 words per bullet. Use arrows: ↑ ↓ →
 
                 USER QUERY: {state.user_prompt}
 
-                Format (ONE line per value):
-                • Lab/Vital: old → new (arrow) - {citation_format}
+                Format (ONE line per value, 6-12 words ONLY):
+                • **Lab/Vital**: old → **new** (arrow) note - {citation_format}
 
-                Example:
-                • HbA1c: 62 → 68 mmol/mol (↑) - Enligt Provresultat, sida 5
-                • eGFR: 64 → 52 (↓) - Enligt Provresultat, sida 5
-                • Weight: 98 → 96 kg (↓) - Enligt Vitalparametrar, sida 2
+                Example (count the words - each is 6-12 words):
+                • **HbA1c**: 62 (2023-07-10) → **68 mmol/mol** (2024-01-15) (↑) worsening control - Enligt Provresultat, sida 5 (12 words)
+                • **eGFR**: 64 (2023-06-15) → **52** (2024-01-15 08:30) (↓) declining kidney function - Enligt Provresultat, sida 5 (12 words)
+                • **Weight**: 98 (2023-12-01) → **96 kg** (2024-01-15 09:00) (↓) intentional loss - Enligt Vitalparametrar, sida 2 (12 words)
+                • **BP**: 135/80 (2023-11-10) → **145/85** (2024-01-15 09:00) (↑) target 140/90 - Enligt Vitalparametrar, sida 3 (12 words)
+                • **INR**: 2.8 (2024-01-08) → **2.5** (2024-01-15 09:00) (↓) now in range - Enligt Provresultat, sida 6 (12 words)
 
                 Add blank line between each bullet point for readability.
 
                 If there are MORE lab values/trends available, add at the end:
                 "_Fråga om fler trender_" (Swedish) or "_Ask for more trends_" (English)
 
-                MANDATORY: Cite page numbers: {citation_format}
-                CRITICAL: Max 5-6 values. ONE line each. Blank lines between bullets. Values + trend only, no interpretation.
+                MANDATORY:
+                - Use **bold** markdown for parameter names and current values
+                - CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values
+                - Each bullet MUST be between 6-12 words (excluding dates and citation) - COUNT THEM
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 most important trends. 6-12 words each. Include dates for both values. Blank lines between bullets. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Show 5-6 key trends. One line each with blank lines between. Values + arrows only. Add 'ask for more' if additional trends exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Show 5-7 key trends. Use **bold** for parameter names and current values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Add 'ask for more' if additional trends exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2256,35 +2569,42 @@ Keep queries concise and focused on the temporal aspect.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                List ONLY major past events (max 4-5). BRIEF format.
+                List 5-7 major past medical/surgical events - EXACTLY 6-12 words per bullet.
 
                 USER QUERY: {state.user_prompt}
 
-                Format (ONE line per event):
-                • Event name year - {citation_format}
+                Format (ONE line per event, 6-12 words ONLY):
+                • **Event name** (year) - outcome - {citation_format}
 
-                Example:
-                • Cholecystectomy 2001 - Enligt Operationsprotokoll, sida 1
-                • Hip replacement 2015 - Enligt Operationsprotokoll, sida 3
-                • Stroke 2020 - Enligt Journalanteckning, sida 12
+                Example (count the words - each is 6-12 words):
+                • **Cholecystectomy** (2001) uncomplicated recovery - Enligt Operationsprotokoll, sida 1 (7 words)
+                • **Hip replacement** (2015) left hip good function - Enligt Operationsprotokoll, sida 3 (9 words)
+                • **Stroke** (2020) left hemisphere mild residual weakness - Enligt Journalanteckning, sida 12 (10 words)
+                • **MI** (2018) anterior wall stent placed - Enligt Epikris, sida 5 (9 words)
+                • **Appendectomy** (1995) no complications - Enligt Anamnes, sida 2 (6 words)
 
                 Add blank line between each bullet point for readability.
 
                 If there are MORE past events, add at the end:
                 "_Fråga om fler händelser_" (Swedish) or "_Ask for more history_" (English)
 
-                MANDATORY: Cite page numbers: {citation_format}
-                CRITICAL: Max 4-5 events. ONE line each. Blank lines between bullets. Event + year only, no details.
+                MANDATORY:
+                - Use **bold** markdown for event names
+                - Each bullet MUST be between 6-12 words (excluding citation) - COUNT THEM
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 most significant events. 6-12 words each. Blank lines between bullets. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List max 4-5 major past events. One line each with blank lines between. Event + year only. Add 'ask for more' if additional events exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 major past events. Use **bold** for event names. CRITICAL: Always include the year/date in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding year and citation). Count words carefully. Add 'ask for more' if additional events exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2319,36 +2639,44 @@ Keep queries concise and focused on the temporal aspect.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                List critical alerts/risks ONLY. Maximum 5-6 items.
+                List 5-7 critical alerts/risks - EXACTLY 6-12 words per bullet.
 
                 USER QUERY: {state.user_prompt}
 
-                Format (SHORT phrases):
-                • ⚠️ Risk/Alert - {citation_format}
+                Format (SHORT phrases, 6-12 words ONLY):
+                • ⚠️ **Risk/Alert** - implication - {citation_format}
 
-                Example:
-                • ⚠️ Allergic to penicillin - Enligt Journalanteckning, sida 1
-                • ⚠️ On warfarin - bleeding risk - Enligt Läkemedelslista, sida 2
-                • ⚠️ Fall risk (previous falls) - Enligt Anteckning, sida 8
-                • ⚠️ DNR documented - Enligt Vårdplan, sida 1
+                Example (count the words - each is 6-12 words):
+                • ⚠️ **Penicillin allergy** - rash and angioedema (documented 2015-03-20) - Enligt Journalanteckning, sida 1 (9 words)
+                • ⚠️ **Warfarin therapy** - **INR 2.5** bleeding risk (checked 2024-01-15 09:00) - Enligt Läkemedelslista, sida 2 (10 words)
+                • ⚠️ **Fall risk** - 3 falls last year uses walker (assessed 2024-01-10) - Enligt Anteckning, sida 8 (12 words)
+                • ⚠️ **DNR documented** - patient wishes respected (signed 2023-11-15) - Enligt Vårdplan, sida 1 (8 words)
+                • ⚠️ **Renal impairment** - **eGFR 52** adjust meds (tested 2024-01-15 08:30) - Enligt Provresultat, sida 5 (9 words)
+                • ⚠️ **Lives alone** - no regular support (noted 2024-01-05) - Enligt Sociala anteckningar, sida 3 (9 words)
 
                 Add blank line between each bullet point for readability.
 
                 If there are MORE risks/alerts, add at the end:
                 "_Fråga om fler risker_" (Swedish) or "_Ask for more risks_" (English)
 
-                MANDATORY: Cite page numbers: {citation_format}
-                CRITICAL: Max 5-6 alerts. SHORT phrases. Blank lines between bullets. Use ⚠️ for visibility.
+                MANDATORY:
+                - Use **bold** markdown for risk/alert names and key values
+                - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when information was documented
+                - Each bullet MUST be between 6-12 words (excluding date and citation) - COUNT THEM
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 most important alerts. 6-12 words each. Include dates. Blank lines between bullets. Use ⚠️ for visibility. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List max 5-6 critical alerts. Short phrases with blank lines between. Use ⚠️ marker. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 critical alerts. Use **bold** for risk/alert names and key values. Use ⚠️ marker. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2383,33 +2711,42 @@ Keep queries concise and focused on the temporal aspect.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                Summarize recent encounters in 2-4 SHORT sentences. Like a quick handoff note.
+                List 5-7 most recent encounters with key actions/outcomes.
 
                 USER QUERY: {state.user_prompt}
 
-                Format (2-4 sentences total):
-                Encounter Description (date): Action taken ({citation_format}). Specialist consult (date): Outcome ({citation_format}).
+                Format (ONE line per encounter):
+                • **Encounter type** (date) - key action/outcome - {citation_format}
 
                 Example:
-                "Last GP visit (Apr 2025): Adjusted enalapril to 20mg, ordered HbA1c (Enligt Journalanteckning, sida 15). Cardiology consult (Feb 2025): Echo stable, continue meds (Enligt Specialistbrev, sida 2)."
+                • **GP visit** (2025-04-15 10:30) - adjusted enalapril to 20mg, ordered HbA1c - Enligt Journalanteckning, sida 15
+                • **Cardiology consult** (2025-02-20 14:00) - echo stable, continue current meds - Enligt Specialistbrev, sida 2
+                • **Lab draw** (2025-03-10 08:15) - routine monitoring, awaiting results - Enligt Provremiss, sida 8
+                • **Phone consult** (2025-01-25) - discussed weight loss, advised diet - Enligt Telefonanteckning, sida 4
+                • **ER visit** (2024-12-28 22:45) - chest pain, ruled out MI, discharged - Enligt Epikris, sida 12
 
-                Add blank line between sentences for readability.
+                Add blank line between each bullet point for readability.
 
                 If there are MORE encounters in the history, add at the end:
                 "_Fråga om fler besök_" (Swedish) or "_Ask for more encounters_" (English)
 
-                MANDATORY: Cite page numbers for each encounter: {citation_format}
-                CRITICAL: Max 2-4 sentences. Blank lines between sentences. Very condensed. Date + action + outcome only.
+                MANDATORY:
+                - Use **bold** markdown for encounter types
+                - CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 most recent encounters. ONE line each. Blank lines between bullets. Full datetime + action + outcome. Keep concise.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Write 2-4 sentence encounter summary with blank lines between. Like a quick handoff. Add 'ask for more' if additional encounters exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most recent encounters with key actions/outcomes. Use **bold** for encounter types. CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses. One line each with blank lines between. Add 'ask for more' if additional encounters exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include exact datetime.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2477,7 +2814,9 @@ Keep queries concise and focused on the temporal aspect.
                 ]
 
                 if chunks:
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(chunks)
+                    # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
+                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2763,6 +3102,657 @@ Keep queries concise and focused on the temporal aspect.
 
             return state
 
+        # ==================== FOCUSED SUMMARY FLOW NODES ====================
+
+        @streaming_step("focused_summary_parallel_dispatcher")
+        async def focused_summary_parallel_dispatcher(state: FlowState) -> FlowState:
+            """Dispatcher node that triggers focused summary processing."""
+            try:
+                logger.info(f"Initiating focused summary processing for aspect: {state.focused_aspect}")
+
+                # Initialize focused summary cache if needed
+                if not state.focused_retrieval_cache:
+                    state.focused_retrieval_cache = {}
+
+                # Disable refinement for focused summary flows (they use their own retrieval)
+                state.needs_refinement = False
+
+                logger.info("Focused summary fields initialized for processing")
+                logger.info("Dispatcher ready for execution")
+
+            except Exception as e:
+                log_error(logger, "focused_summary_parallel_dispatcher", e)
+
+            return state
+
+        @streaming_step("identify_aspect_and_retrieve")
+        async def identify_aspect_and_retrieve(state: FlowState) -> FlowState:
+            """Extract the medical aspect from query and retrieve initial chunks."""
+            try:
+                logger.info("Extracting medical aspect from user query")
+
+                # Extract aspect and icon
+                aspect, icon = await _extract_aspect_from_query(state)
+                state.focused_aspect = aspect
+                state.focused_aspect_icon = icon
+
+                logger.info(f"Identified aspect: '{aspect}' with icon: '{icon}'")
+
+                # Get initial chunks for context (use existing retrieved_chunks if available)
+                if not state.retrieved_chunks or len(state.retrieved_chunks) == 0:
+                    logger.info("No pre-retrieved chunks available for focused summary")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_aspect = "Medical Condition"
+                state.focused_aspect_icon = "file-text"
+
+            return state
+
+        @streaming_step("retrieve_focused_diagnoses_chunks")
+        async def retrieve_focused_diagnoses_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on diagnoses related to the aspect."""
+            try:
+                logger.info(f"Retrieving diagnoses chunks for {state.focused_aspect}")
+
+                diagnoses_queries = await _generate_focused_summary_queries(state, "diagnoses",
+                    "Generate queries focused on formal diagnoses and disease classifications")
+
+                chunks = await _fast_sbar_retrieve(state, f"diagnoses_{state.focused_aspect}", diagnoses_queries)
+                state.focused_diagnoses_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.focused_diagnoses_chunks)} diagnoses chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_diagnoses_chunks = []
+
+            return state
+
+        @streaming_step("generate_diagnoses_section")
+        async def generate_diagnoses_section(state: FlowState) -> FlowState:
+            """Generate diagnoses section with format: • [Diagnosis] ([Year/duration])"""
+            try:
+                logger.info(f"Generating diagnoses section for {state.focused_aspect}")
+
+                chunks = state.focused_diagnoses_chunks or []
+
+                # Detect language
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
+
+                prompt = f"""
+Generate a CONCISE diagnoses section for a focused summary about: {state.focused_aspect}
+
+USER QUERY: {state.user_prompt}
+
+Format exactly as markdown bullet points with **bold** highlighting:
+
+• **[Diagnosis 1]** ([Year diagnosed or duration]) - {citation_format}
+
+• **[Diagnosis 2]** ([Timeline or status]) - {citation_format}
+
+• **[Diagnosis 3]** ([Resolution status or ongoing]) - {citation_format}
+
+Example:
+• **Type 2 Diabetes Mellitus** (E11.9, since **2018**) - {citation_format}
+• **Hypertension** (**2005**, well-controlled on meds) - {citation_format}
+• **COPD GOLD II** (J44.1, **2015**, stable) - {citation_format}
+
+RULES:
+- List 2-4 diagnoses ONLY related to {state.focused_aspect}
+- Use **bold** markdown for diagnosis names and key temporal markers
+- Include ICD codes if available
+- Include temporal information (year, duration, or status)
+- Use markdown bullet points with • character
+- Add a blank line between each bullet point for readability
+- Be concise - one line per diagnosis
+- MANDATORY: Cite sources using format {citation_format}
+- If no diagnoses found, state "No formal diagnoses documented for {state.focused_aspect}"
+"""
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused diagnoses section. Use **bold** for diagnosis names and key terms. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
+                    chunk_content = f"Relevant information about {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.focused_diagnoses_result = response.content.strip()
+
+                logger.info(f"Generated diagnoses section: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_diagnoses_result = f"Error generating diagnoses: {str(e)}"
+
+            return state
+
+        @streaming_step("retrieve_focused_events_chunks")
+        async def retrieve_focused_events_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on key clinical events."""
+            try:
+                logger.info(f"Retrieving events chunks for {state.focused_aspect}")
+
+                events_queries = await _generate_focused_summary_queries(state, "events",
+                    "Generate queries focused on key clinical events and milestones")
+
+                chunks = await _fast_sbar_retrieve(state, f"events_{state.focused_aspect}", events_queries)
+                state.focused_events_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.focused_events_chunks)} events chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_events_chunks = []
+
+            return state
+
+        @streaming_step("generate_events_section")
+        async def generate_events_section(state: FlowState) -> FlowState:
+            """Generate key events section with format: [Year] [Event description]"""
+            try:
+                logger.info(f"Generating events section for {state.focused_aspect}")
+
+                chunks = state.focused_events_chunks or []
+
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
+
+                prompt = f"""
+Generate a CONCISE key events timeline for: {state.focused_aspect}
+
+USER QUERY: {state.user_prompt}
+
+Format exactly as markdown bullet points with bold dates:
+
+• **2020:** Initial diagnosis - symptoms presented, diagnostic workup completed
+
+• **2021:** Hospitalization for acute exacerbation - intervention performed
+
+• **2023:** Follow-up showed improvement - treatment adjusted
+
+RULES:
+- List 3-5 key events ONLY related to {state.focused_aspect}
+- Use markdown bullet points with • character
+- Make the date bold using **Date:** format
+- Add a blank line between each event for readability
+- Include: interventions, hospitalizations, imaging, test results, treatment changes
+- Be specific but concise - one line per event after the date
+- Chronological order (oldest to newest)
+- MANDATORY: Cite sources using format {citation_format}
+- If no events found, state "No significant clinical events documented for {state.focused_aspect}"
+"""
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused events timeline. Use **bold** for dates and key clinical terms. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
+                    chunk_content = f"Relevant events for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.focused_events_result = response.content.strip()
+
+                logger.info(f"Generated events section: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_events_result = f"Error generating events: {str(e)}"
+
+            return state
+
+        @streaming_step("retrieve_focused_medications_chunks")
+        async def retrieve_focused_medications_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on medications related to the aspect."""
+            try:
+                logger.info(f"Retrieving medications chunks for {state.focused_aspect}")
+
+                medications_queries = await _generate_focused_summary_queries(state, "medications",
+                    "Generate queries focused on medications and treatment regimens")
+
+                chunks = await _fast_sbar_retrieve(state, f"medications_{state.focused_aspect}", medications_queries)
+                state.focused_medications_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.focused_medications_chunks)} medications chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_medications_chunks = []
+
+            return state
+
+        @streaming_step("generate_medications_section")
+        async def generate_medications_section(state: FlowState) -> FlowState:
+            """Generate medications section with format: [Med + dosage + frequency] | [Med 2] | [Med 3]"""
+            try:
+                logger.info(f"Generating medications section for {state.focused_aspect}")
+
+                chunks = state.focused_medications_chunks or []
+
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
+
+                prompt = f"""
+Generate a CONCISE medications list for: {state.focused_aspect}
+
+USER QUERY: {state.user_prompt}
+
+Format exactly as markdown bullet points with **bold** highlighting:
+
+• **[Medication 1]** [dosage] [frequency]
+
+• **[Medication 2]** [dosage] [frequency]
+
+• **[Medication 3]** [dosage] [frequency]
+
+Example:
+• **Metoprolol** 50mg BID - {citation_format}
+• **Lisinopril** 10mg daily - {citation_format}
+• **Aspirin** 81mg daily - {citation_format}
+• **Prednisone** 20mg daily (started **2023**) - {citation_format}
+
+RULES:
+- List ONLY medications relevant to {state.focused_aspect}
+- Use **bold** markdown for medication names and key terms
+- Include dosage and frequency
+- Use bullet points (•), one medication per line
+- Add blank line between each bullet point for readability
+- Maximum 5 medications
+- Include duration if relevant
+- MANDATORY: Cite sources using format {citation_format}
+- If no medications found, state "No medications documented for {state.focused_aspect}"
+"""
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused medications list. Use **bold** for medication names and key terms. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
+                    chunk_content = f"Relevant medications for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.focused_medications_result = response.content.strip()
+
+                logger.info(f"Generated medications section: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_medications_result = f"Error generating medications: {str(e)}"
+
+            return state
+
+        @streaming_step("retrieve_focused_objective_data_chunks")
+        async def retrieve_focused_objective_data_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on objective data (labs, vitals, imaging)."""
+            try:
+                logger.info(f"Retrieving objective data chunks for {state.focused_aspect}")
+
+                objective_queries = await _generate_focused_summary_queries(state, "objective_data",
+                    "Generate queries focused on lab results, vitals, imaging, and test results")
+
+                chunks = await _fast_sbar_retrieve(state, f"objective_{state.focused_aspect}", objective_queries)
+                state.focused_objective_data_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.focused_objective_data_chunks)} objective data chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_objective_data_chunks = []
+
+            return state
+
+        @streaming_step("generate_objective_data_section")
+        async def generate_objective_data_section(state: FlowState) -> FlowState:
+            """Generate objective data section with format: [Metric: value + unit + date] | [Metric 2]"""
+            try:
+                logger.info(f"Generating objective data section for {state.focused_aspect}")
+
+                chunks = state.focused_objective_data_chunks or []
+
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
+
+                prompt = f"""
+Generate CONCISE objective data for: {state.focused_aspect}
+
+USER QUERY: {state.user_prompt}
+
+Format as a proper Markdown table with **bold** highlighting for abnormal values:
+
+| Metric | Value | Unit | Date |
+|--------|-------|------|------|
+| **HbA1c** | **7.2** | % | 2024-01-15 |
+| Fasting Glucose | 145 | mg/dL | 2024-01-15 |
+| **LVEF (Echo)** | **55** | % | 2023-12-20 |
+
+RULES:
+- List ONLY data relevant to {state.focused_aspect}
+- Use **bold** markdown for abnormal/critical values and important metrics
+- Use proper Markdown table format with header row and alignment row
+- Include columns: Metric, Value, Unit, Date
+- Maximum 5 rows of data
+- For imaging/test summaries, use Metric column for test name, Value column for result
+- MANDATORY: Cite sources after the table using format {citation_format}
+- If no data found, state "No recent objective data documented for {state.focused_aspect}"
+"""
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating focused objective data. Use **bold** for abnormal/critical values and important metrics. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
+                    chunk_content = f"Relevant objective data for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.focused_objective_data_result = response.content.strip()
+
+                logger.info(f"Generated objective data section: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_objective_data_result = f"Error generating objective data: {str(e)}"
+
+            return state
+
+        @streaming_step("retrieve_focused_assessment_chunks")
+        async def retrieve_focused_assessment_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on clinical assessment."""
+            try:
+                logger.info(f"Retrieving assessment chunks for {state.focused_aspect}")
+
+                assessment_queries = await _generate_focused_summary_queries(state, "assessment",
+                    "Generate queries focused on clinical assessments and current status")
+
+                chunks = await _fast_sbar_retrieve(state, f"assessment_{state.focused_aspect}", assessment_queries)
+                state.focused_assessment_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.focused_assessment_chunks)} assessment chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_assessment_chunks = []
+
+            return state
+
+        @streaming_step("generate_assessment_section")
+        async def generate_assessment_section(state: FlowState) -> FlowState:
+            """Generate assessment section: 2-3 sentences on current state/prognosis"""
+            try:
+                logger.info(f"Generating assessment section for {state.focused_aspect}")
+
+                chunks = state.focused_assessment_chunks or []
+
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
+
+                prompt = f"""
+Generate a CONCISE clinical assessment for: {state.focused_aspect}
+
+USER QUERY: {state.user_prompt}
+
+Format exactly as markdown bullet points with **bold** highlighting:
+
+• **Current Status:** [Disease control/status summary with key clinical terms in **bold**] - {citation_format}
+
+• **Trend:** [Progression, stability, or improvement with key findings in **bold**] - {citation_format}
+
+• **Prognosis:** [Overall outlook with risk factors in **bold**] - {citation_format}
+
+Example:
+• **Current Status:** Diabetes **moderately controlled** with HbA1c **68 mmol/mol**, above target - Enligt Provresultat, sida 5
+• **Trend:** **Worsening glycemic control** over past 6 months (HbA1c 62→68), suggests **treatment intensification** needed - Enligt Trendanalys, sida 8
+• **Prognosis:** **Moderate risk** of complications given current control, requires **medication adjustment** and closer monitoring - Enligt Bedömning, sida 10
+
+RULES:
+- Use 3 bullet points as shown above
+- Use **bold** markdown for key clinical terms, status descriptors, and risk levels
+- Focus ONLY on {state.focused_aspect}
+- Be clinically precise but accessible
+- Add a blank line between each bullet point for readability
+- Each bullet should be one concise line
+- MANDATORY: Cite sources using format {citation_format}
+- If insufficient data, state "Limited clinical assessment available for {state.focused_aspect}"
+"""
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused clinical assessment. Use **bold** for key clinical terms, status descriptors, and risk levels. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
+                    chunk_content = f"Relevant assessment data for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.focused_assessment_result = response.content.strip()
+
+                logger.info(f"Generated assessment section: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_assessment_result = f"Error generating assessment: {str(e)}"
+
+            return state
+
+        @streaming_step("retrieve_focused_next_steps_chunks")
+        async def retrieve_focused_next_steps_chunks(state: FlowState) -> FlowState:
+            """Retrieve chunks focused on follow-up plans and outstanding issues."""
+            try:
+                logger.info(f"Retrieving next steps chunks for {state.focused_aspect}")
+
+                next_steps_queries = await _generate_focused_summary_queries(state, "next_steps",
+                    "Generate queries focused on follow-up plans and outstanding issues")
+
+                chunks = await _fast_sbar_retrieve(state, f"next_steps_{state.focused_aspect}", next_steps_queries)
+                state.focused_next_steps_chunks = chunks[:10]
+                logger.info(f"Retrieved {len(state.focused_next_steps_chunks)} next steps chunks")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_next_steps_chunks = []
+
+            return state
+
+        @streaming_step("generate_next_steps_section")
+        async def generate_next_steps_section(state: FlowState) -> FlowState:
+            """Generate next steps section with format: 🔸 [Item 1] | 🔸 [Item 2]"""
+            try:
+                logger.info(f"Generating next steps section for {state.focused_aspect}")
+
+                chunks = state.focused_next_steps_chunks or []
+
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
+
+                prompt = f"""
+Generate CONCISE next steps for: {state.focused_aspect}
+
+USER QUERY: {state.user_prompt}
+
+Format exactly as markdown bullet points with **bold** highlighting:
+
+• **[Action type]**: [Details with timing if available] - {citation_format}
+
+Example:
+• **Follow-up HbA1c**: Test due in **3 months** (April 2024) - Enligt Uppföljningsplan, sida 5
+• **Medication review**: Consider **metformin dose increase** to 1000mg BID - Enligt Behandlingsrekommendation, sida 8
+• **Endocrinology referral**: Pending consult for **insulin initiation** if HbA1c not improved - Enligt Remiss, sida 3
+• **Retinal screening**: **Annual** diabetic eye exam overdue, schedule ASAP - Enligt Screeningprogram, sida 10
+
+RULES:
+- List 2-4 items ONLY related to {state.focused_aspect}
+- Use **bold** markdown for action types, key interventions, and timing
+- Use markdown bullet points with • character
+- Add a blank line between each bullet point for readability
+- One line per item
+- Include: pending tests, follow-ups, medication reviews, referrals, outstanding issues
+- Include specific timing if available
+- MANDATORY: Cite sources using format {citation_format}
+- If no next steps found, state "No pending follow-up documented for {state.focused_aspect}"
+"""
+
+                messages = [
+                    self._get_language_policy_message(state),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating focused next steps. Use **bold** for action types, key interventions, and timing. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                if chunks:
+                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
+                    chunk_content = f"Relevant next steps for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
+
+                response = await self._llm.chat(messages)
+                state.focused_next_steps_result = response.content.strip()
+
+                logger.info(f"Generated next steps section: {len(response.content)} chars")
+
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                state.focused_next_steps_result = f"Error generating next steps: {str(e)}"
+
+            return state
+
+        @streaming_step("merge_focused_summary_results")
+        async def merge_focused_summary_results(state: FlowState) -> FlowState:
+            """Merge all focused summary sections and prepare final JSON response."""
+            try:
+                logger.info(f"Merging focused summary results for {state.focused_aspect}")
+
+                # Collect results from separate fields
+                focused_results = {
+                    "diagnoses": state.focused_diagnoses_result,
+                    "events": state.focused_events_result,
+                    "medications": state.focused_medications_result,
+                    "objective_data": state.focused_objective_data_result,
+                    "assessment": state.focused_assessment_result,
+                    "next_steps": state.focused_next_steps_result
+                }
+
+                completed_sections = [section for section, result in focused_results.items() if result]
+                logger.info(f"Available sections: {completed_sections}")
+
+                if not completed_sections:
+                    logger.info("No focused summary results available")
+                    state.llm_response = ChatMessage(
+                        role=ChatRole.ASSISTANT,
+                        content="Error: No focused summary results were generated"
+                    )
+                    return state
+
+                # Create structured focused summary response for frontend
+                import json
+
+                # Add conversation context metadata
+                conversation_context = {
+                    "session_id": state.session_id,
+                    "user_prompt": state.user_prompt,
+                    "timestamp": str(int(time.time() * 1000)),
+                    "has_history": bool(state.chat_history)
+                }
+
+                structured_summary = {
+                    "type": "focused_summary",
+                    "aspect": state.focused_aspect or "Medical Condition",
+                    "aspect_icon": state.focused_aspect_icon or "file-text",
+                    "context": conversation_context,
+                    "sections": {
+                        "diagnoses": {
+                            "content": (focused_results.get("diagnoses") or "No diagnoses documented").strip() or "No diagnoses documented"
+                        },
+                        "events": {
+                            "content": (focused_results.get("events") or "No events documented").strip() or "No events documented"
+                        },
+                        "medications": {
+                            "content": (focused_results.get("medications") or "No medications documented").strip() or "No medications documented"
+                        },
+                        "objective_data": {
+                            "content": (focused_results.get("objective_data") or "No objective data available").strip() or "No objective data available"
+                        },
+                        "assessment": {
+                            "content": (focused_results.get("assessment") or "No assessment available").strip() or "No assessment available"
+                        },
+                        "next_steps": {
+                            "content": (focused_results.get("next_steps") or "No next steps documented").strip() or "No next steps documented"
+                        }
+                    }
+                }
+
+                # Create JSON response for frontend
+                json_response = json.dumps(structured_summary, indent=2)
+
+                # Create response message with structured data
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content=json_response
+                )
+
+                logger.info(f"Created structured focused summary response: {len(json_response)} chars")
+
+            except Exception as e:
+                log_error(logger, "merge_focused_summary_results", e)
+                # Fallback response
+                import json
+                fallback_summary = {
+                    "type": "focused_summary",
+                    "aspect": state.focused_aspect or "Medical Condition",
+                    "aspect_icon": state.focused_aspect_icon or "file-text",
+                    "error": str(e),
+                    "sections": {
+                        "diagnoses": {"content": "Error generating content"},
+                        "events": {"content": "Error generating content"},
+                        "medications": {"content": "Error generating content"},
+                        "objective_data": {"content": "Error generating content"},
+                        "assessment": {"content": "Error generating content"},
+                        "next_steps": {"content": "Error generating content"}
+                    }
+                }
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content=json.dumps(fallback_summary, indent=2)
+                )
+
+            return state
+
         # ==================== TIMELINE FLOW NODES ====================
 
         @streaming_step("extract_timeline_events")
@@ -2929,7 +3919,7 @@ Return ONLY the JSON array, no additional text.
                     history_text = "\n".join([f"{msg.role.value}: {msg.content[:200]}" for msg in recent_history]) if recent_history else ""
 
                     prompt = f"""
-Generate a VERY CONCISE explanation (2-3 short bullet points) for this timeline event.
+Generate a concise explanation (5-7 bullet points) for this timeline event.
 
 Event: {title}
 Time Period: {time_period}
@@ -2941,23 +3931,35 @@ Clinical Information:
 Previous conversation (for context):
 {history_text}
 
-Focus on:
-- What happened during this time period
-- Key clinical findings or observations
-- Relevant treatments or interventions
+Format as 5-7 bullet points covering:
+• **What happened**: [brief description of the event]
+• **Clinical findings**: [key observations, test results, symptoms]
+• **Treatments/interventions**: [medications, procedures performed]
+• **Outcome**: [immediate results or response]
+• **Significance**: [why this event matters in patient's timeline]
+• **Follow-up**: [any subsequent actions or plans]
+• **Provider notes**: [relevant clinician observations]
+
+Example:
+• **What happened**: Patient admitted to **ER** with **chest pain** and **shortness of breath** - {citation_format}
+• **Clinical findings**: **ECG** showed ST elevations in leads II, III, aVF, **troponin** elevated at 450 ng/L - {citation_format}
+• **Treatments**: Given **aspirin 300mg**, **heparin** infusion started, **morphine** 5mg for pain - {citation_format}
+• **Outcome**: Pain reduced to **3/10**, hemodynamically **stable**, monitored in CCU - {citation_format}
+• **Significance**: First **acute MI** event, indicates need for aggressive cardiovascular risk management - {citation_format}
 
 IMPORTANT:
-- Keep it VERY brief (2-3 bullet points max)
+- Use **bold** markdown for key clinical terms, findings, medications, and important descriptors
 - Include citations using {citation_format}
 - Preserve any EHR source links from the clinical information
-- Use professional medical language
+- Keep each bullet point concise (one line)
+- Focus on clinically significant information
 
 Return only the content in markdown format, no preamble.
 """
 
                     messages = [
                         self._get_language_policy_message(state),
-                        ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE timeline explanations (2-3 bullet points max).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief."),
+                        ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create timeline explanations with 5-7 concise bullet points. Use **bold** for key clinical terms, findings, and medications.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise but informative."),
                         ChatMessage(role=ChatRole.USER, content=prompt)
                     ]
 
@@ -3195,6 +4197,7 @@ Your task is to fill in the template sections based on the provided clinical inf
 
 CRITICAL GUIDELINES:
 - Be CONCISE and FOCUSED - include only essential clinical information
+- Use **bold** markdown to highlight important clinical terms, diagnoses, medications, vital signs, and key findings
 - Do NOT include source references, citations, or document names (write directly from the information)
 - Use medical terminology appropriate for {lang_name}
 - If information is not available for a section, write "Information not available" in {lang_name}
@@ -3203,8 +4206,16 @@ CRITICAL GUIDELINES:
 - Avoid unnecessary elaboration or repetition between sections
 - Write in clear, direct clinical language without filler words
 - Do NOT interpret or assume - only document what is explicitly provided
+- Format lists as bullet points when appropriate
 
-Generate content for each section separately with only the necessary clinical facts."""
+MARKDOWN FORMATTING EXAMPLES:
+- **Diagnoses**: **Type 2 Diabetes Mellitus**, **Hypertension**, **COPD GOLD II**
+- **Medications**: **Metformin 1000mg 2x/day**, **Enalapril 20mg daily**
+- **Vital Signs**: **BP 145/85**, **HR 92**, **SpO2 94%**
+- **Lab Values**: **HbA1c 68 mmol/mol**, **eGFR 52**
+- **Key Findings**: **Bilateral wheezing**, **mild pedal edema**
+
+Generate content for each section separately with only the necessary clinical facts, using bold formatting for important terms."""
 
                 # Generate each section
                 sections = {}
@@ -3382,8 +4393,18 @@ Generate the content for "{field_label}" section now:"""
             # For direct path (simple queries), use a simplified system message
             if not getattr(state, 'requires_full_processing', True):
                 simple_system_msg = ChatMessage(
-                    role=ChatRole.SYSTEM, 
+                    role=ChatRole.SYSTEM,
                     content="""You are CLARA, a helpful medical information assistant. Provide clear, accurate medical information. For general medical questions, draw on your medical knowledge. Keep responses concise and helpful.
+
+**CRITICAL - DATE/TIME STAMPS**: Always include date and time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for ALL clinical information. This is essential for doctors.
+
+**CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms throughout your response:
+- **Diagnoses** and disease names (e.g., **Type 2 Diabetes**, **Hypertension**)
+- **Medications** and doses (e.g., **Metformin 1000mg**, **Enalapril 20mg**)
+- **Vital signs** and lab values (e.g., **BP 145/85**, **HbA1c 68 mmol/mol**)
+- **Symptoms** and clinical findings (e.g., **chest pain**, **dyspnea**)
+- **Risk levels** and severity descriptors (e.g., **moderate risk**, **stable**)
+- **Key clinical terms** that are important for decision-making
 
 Link policy (STRICT for EHR): When referencing patient data from clinical information chunks, preserve the source links that are embedded in the chunk content:
 - For atomic data: Use the format "value [EHR Source](URL)" as it appears in the chunks
@@ -3834,11 +4855,11 @@ Return ONLY the reformulated query, nothing else."""
 
                 logger.info(f"Classifying query (length={len(query_to_classify)} chars)")
 
-                # Use the existing classifier
+                # Use the LLM-based classifier (async)
                 classifier = self._zero_shot_classifier
-                label = classifier.classify_query(query_to_classify, [
-                    "lookup", "temporal-trend", "comparative", "reasoning", "summary", "sbar_handoff", "guideline", "timeline", "note_generation", "discharge_summary"
-                ])
+                label = await classifier.classify(query_to_classify, [
+                    "lookup", "temporal-trend", "comparative", "reasoning", "general_summary", "focused_summary", "sbar_handoff", "guideline", "timeline", "note_generation", "discharge_summary"
+                ], llm_client=self._llm)
 
                 logger.info(f"Query classified as: {label}")
 
@@ -3883,9 +4904,13 @@ Return ONLY the reformulated query, nothing else."""
                 state.is_sbar_flow = (label == "sbar_handoff")
                 logger.info(f"SBAR flow (classifier): {state.is_sbar_flow}")
 
-                # General summary flow is triggered by "summary" classification
-                state.is_general_summary_flow = (label == "summary")
+                # General summary flow is triggered by "general_summary" classification
+                state.is_general_summary_flow = (label == "general_summary")
                 logger.info(f"General summary flow (classifier): {state.is_general_summary_flow}")
+
+                # Focused summary flow is triggered by "focused_summary" classification
+                state.is_focused_summary_flow = (label == "focused_summary")
+                logger.info(f"Focused summary flow (classifier): {state.is_focused_summary_flow}")
 
                 # Determine if this should use Timeline flow (temporal sequence queries)
                 timeline_query_types = ["timeline", "temporal-trend"]
@@ -3894,9 +4919,9 @@ Return ONLY the reformulated query, nothing else."""
                 logger.info(f"Timeline flow: {state.is_timeline_flow}")
 
                 # Override DIRECT routing if any specialized flow is detected
-                if state.is_sbar_flow or state.is_timeline_flow or state.is_general_summary_flow:
+                if state.is_sbar_flow or state.is_timeline_flow or state.is_general_summary_flow or state.is_focused_summary_flow:
                     state.requires_full_processing = True
-                    logger.info(f"⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, General Summary: {state.is_general_summary_flow}, Timeline: {state.is_timeline_flow})")
+                    logger.info(f"⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, General Summary: {state.is_general_summary_flow}, Focused Summary: {state.is_focused_summary_flow}, Timeline: {state.is_timeline_flow})")
 
                 # Initialize SBAR cache if using SBAR flow
                 if state.is_sbar_flow:
@@ -3905,6 +4930,10 @@ Return ONLY the reformulated query, nothing else."""
                 # Initialize general summary cache if using general summary flow
                 if state.is_general_summary_flow:
                     state.general_retrieval_cache = {}
+
+                # Initialize focused summary cache if using focused summary flow
+                if state.is_focused_summary_flow:
+                    state.focused_retrieval_cache = {}
 
                 # Initialize Timeline cache if using Timeline flow
                 if state.is_timeline_flow:
@@ -3917,6 +4946,7 @@ Return ONLY the reformulated query, nothing else."""
                 state.is_timeline_flow = False
                 state.is_note_generation_flow = False
                 state.is_general_summary_flow = False
+                state.is_focused_summary_flow = False
 
             return state
 
@@ -3928,16 +4958,18 @@ Return ONLY the reformulated query, nothing else."""
             - Query complexity evaluation marked it as needing full processing, OR
             - SBAR flow is detected (needs specialized retrieval), OR
             - General summary flow is detected (needs specialized retrieval), OR
+            - Focused summary flow is detected (needs specialized retrieval), OR
             - Timeline flow is detected (needs specialized retrieval)
             """
             base_requirement = getattr(state, 'requires_full_processing', True)
             is_sbar = getattr(state, 'is_sbar_flow', False)
             is_general_summary = getattr(state, 'is_general_summary_flow', False)
+            is_focused_summary = getattr(state, 'is_focused_summary_flow', False)
             is_timeline = getattr(state, 'is_timeline_flow', False)
 
             # Override DIRECT routing if any specialized flow is detected
-            if is_sbar or is_general_summary or is_timeline:
-                logger.info(f"Overriding DIRECT - SBAR: {is_sbar}, General Summary: {is_general_summary}, Timeline: {is_timeline}")
+            if is_sbar or is_general_summary or is_focused_summary or is_timeline:
+                logger.info(f"Overriding DIRECT - SBAR: {is_sbar}, General Summary: {is_general_summary}, Focused Summary: {is_focused_summary}, Timeline: {is_timeline}")
                 return True
 
             return base_requirement
@@ -3949,6 +4981,10 @@ Return ONLY the reformulated query, nothing else."""
         def is_general_summary_flow(state: FlowState) -> bool:
             """Conditional function to determine if general summary flow should be used."""
             return getattr(state, 'is_general_summary_flow', False)
+
+        def is_focused_summary_flow(state: FlowState) -> bool:
+            """Conditional function to determine if focused summary flow should be used."""
+            return getattr(state, 'is_focused_summary_flow', False)
 
         def check_patient_exists(state: FlowState) -> FlowState:
             """Check if patient_id is provided in the state."""
@@ -4006,6 +5042,22 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_node("generate_deepdive_summary", generate_deepdive_summary)
         _builder.add_node("merge_general_summary_results", merge_general_summary_results)
         _builder.add_node("general_summary_parallel_dispatcher", general_summary_parallel_dispatcher)
+        # Focused summary flow nodes
+        _builder.add_node("focused_summary_parallel_dispatcher", focused_summary_parallel_dispatcher)
+        _builder.add_node("identify_aspect_and_retrieve", identify_aspect_and_retrieve)
+        _builder.add_node("retrieve_focused_diagnoses_chunks", retrieve_focused_diagnoses_chunks)
+        _builder.add_node("generate_diagnoses_section", generate_diagnoses_section)
+        _builder.add_node("retrieve_focused_events_chunks", retrieve_focused_events_chunks)
+        _builder.add_node("generate_events_section", generate_events_section)
+        _builder.add_node("retrieve_focused_medications_chunks", retrieve_focused_medications_chunks)
+        _builder.add_node("generate_medications_section", generate_medications_section)
+        _builder.add_node("retrieve_focused_objective_data_chunks", retrieve_focused_objective_data_chunks)
+        _builder.add_node("generate_objective_data_section", generate_objective_data_section)
+        _builder.add_node("retrieve_focused_assessment_chunks", retrieve_focused_assessment_chunks)
+        _builder.add_node("generate_assessment_section", generate_assessment_section)
+        _builder.add_node("retrieve_focused_next_steps_chunks", retrieve_focused_next_steps_chunks)
+        _builder.add_node("generate_next_steps_section", generate_next_steps_section)
+        _builder.add_node("merge_focused_summary_results", merge_focused_summary_results)
         # Timeline flow nodes
         _builder.add_node("extract_timeline_events", extract_timeline_events)
         _builder.add_node("retrieve_timeline_chunks", retrieve_timeline_chunks)
@@ -4121,6 +5173,23 @@ Return ONLY the reformulated query, nothing else."""
         # General summary merge to store response
         _builder.add_edge("merge_general_summary_results", "store_assistant_response")
 
+        # Focused summary flow edges - sequential processing
+        _builder.add_edge("focused_summary_parallel_dispatcher", "identify_aspect_and_retrieve")
+        _builder.add_edge("identify_aspect_and_retrieve", "retrieve_focused_diagnoses_chunks")
+        _builder.add_edge("retrieve_focused_diagnoses_chunks", "generate_diagnoses_section")
+        _builder.add_edge("generate_diagnoses_section", "retrieve_focused_events_chunks")
+        _builder.add_edge("retrieve_focused_events_chunks", "generate_events_section")
+        _builder.add_edge("generate_events_section", "retrieve_focused_medications_chunks")
+        _builder.add_edge("retrieve_focused_medications_chunks", "generate_medications_section")
+        _builder.add_edge("generate_medications_section", "retrieve_focused_objective_data_chunks")
+        _builder.add_edge("retrieve_focused_objective_data_chunks", "generate_objective_data_section")
+        _builder.add_edge("generate_objective_data_section", "retrieve_focused_assessment_chunks")
+        _builder.add_edge("retrieve_focused_assessment_chunks", "generate_assessment_section")
+        _builder.add_edge("generate_assessment_section", "retrieve_focused_next_steps_chunks")
+        _builder.add_edge("retrieve_focused_next_steps_chunks", "generate_next_steps_section")
+        _builder.add_edge("generate_next_steps_section", "merge_focused_summary_results")
+        _builder.add_edge("merge_focused_summary_results", "store_assistant_response")
+
         # Timeline flow edges - sequential processing
         _builder.add_edge("extract_timeline_events", "retrieve_timeline_chunks")
         _builder.add_edge("retrieve_timeline_chunks", "generate_timeline_bubbles")
@@ -4135,7 +5204,7 @@ Return ONLY the reformulated query, nothing else."""
 
         # Route after chunk retrieval: check flow type
         def route_after_chunks(state):
-            logger.info(f"🔀 route_after_chunks called - is_general_summary_flow: {getattr(state, 'is_general_summary_flow', False)}, is_sbar_flow: {getattr(state, 'is_sbar_flow', False)}, is_timeline_flow: {getattr(state, 'is_timeline_flow', False)}, needs_refinement: {getattr(state, 'needs_refinement', False)}")
+            logger.info(f"🔀 route_after_chunks called - is_general_summary_flow: {getattr(state, 'is_general_summary_flow', False)}, is_focused_summary_flow: {getattr(state, 'is_focused_summary_flow', False)}, is_sbar_flow: {getattr(state, 'is_sbar_flow', False)}, is_timeline_flow: {getattr(state, 'is_timeline_flow', False)}, needs_refinement: {getattr(state, 'needs_refinement', False)}")
 
             # Check special flows FIRST (they have priority and don't need refinement)
             if hasattr(state, 'is_note_generation_flow') and state.is_note_generation_flow:
@@ -4150,6 +5219,9 @@ Return ONLY the reformulated query, nothing else."""
             elif hasattr(state, 'is_general_summary_flow') and state.is_general_summary_flow:
                 logger.info("📊 Routing to general summary flow")
                 return "general_summary_parallel_dispatcher"
+            elif hasattr(state, 'is_focused_summary_flow') and state.is_focused_summary_flow:
+                logger.info("🎯 Routing to focused summary flow")
+                return "focused_summary_parallel_dispatcher"
             # Only check refinement if NOT in a special flow
             elif hasattr(state, 'needs_refinement') and state.needs_refinement and state.retrieval_retry_attempts < RETRY_MAX:
                 # Increment retry attempts to prevent infinite loop
@@ -4170,6 +5242,7 @@ Return ONLY the reformulated query, nothing else."""
                 "extract_timeline_events": "extract_timeline_events",
                 "sbar_parallel_dispatcher": "sbar_parallel_dispatcher",
                 "general_summary_parallel_dispatcher": "general_summary_parallel_dispatcher",
+                "focused_summary_parallel_dispatcher": "focused_summary_parallel_dispatcher",
                 "intelligent_retrieve_chunks": "intelligent_retrieve_chunks",
                 "evaluate_web_search_need": "evaluate_web_search_need"
             }
@@ -4451,8 +5524,10 @@ Content:
         return chunks
 
     async def _chunk_xml_documents(self, xml_documents: List[XMLDocument], orchestrator: ChunkingOrchestrator, patient_id_str: Optional[str]) -> List[Chunk]:
-        """Chunk XML documents using structure-aware semantic chunking."""
+        """Chunk XML documents using simple text-based chunking with NarrativeV1 strategy."""
         from optimed.core.domain import Record
+        from optimed.adapters.chunking.strategies.narrative_v1 import NarrativeV1
+        from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
         from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
         from optimed.core.services.hash_utils import stable_hash
 
@@ -4473,60 +5548,121 @@ Content:
             else:
                 pseudo_patient = stable_hash({"uid": xml.user_id}, namespace="user")
 
-            # Split the extracted text into logical sections for better chunking
+            # Split the extracted text into logical sections
             sections = self._split_xml_text_into_sections(xml.extracted_text)
-            logger.info(f"XML {xml.filename} -> {len(sections)} sections")
+            logger.info(f"XML {xml.filename} -> {len(sections)} logical sections")
 
-            # Create a record for each section
-            for i, section in enumerate(sections):
+            # Further split large sections into smaller pieces (target ~3k chars)
+            all_pieces = []
+            for section in sections:
+                if len(section) > 5000:  # If section is larger than 5k chars
+                    # Split into smaller pieces
+                    pieces = self._split_large_section(section, target_size=3000)
+                    all_pieces.extend(pieces)
+                else:
+                    all_pieces.append(section)
+
+            logger.info(f"XML {xml.filename} -> {len(all_pieces)} text pieces (from {len(sections)} sections)")
+
+            # Create a record for each piece
+            for piece_idx, piece in enumerate(all_pieces):
+                if not piece or not piece.strip():
+                    continue
+
                 # Create document header for context
                 doc_header = f"XML Document: {xml.filename}\n"
                 if xml.metadata and xml.metadata.document_type:
                     doc_header += f"Document Type: {xml.metadata.document_type}\n"
-                doc_header += f"Section: {i + 1} of {len(sections)}\n"
+                doc_header += f"Part: {piece_idx + 1} of {len(all_pieces)}\n"
                 doc_header += "---\n\n"
 
-                # Combine header with section content
-                full_text = doc_header + section.strip()
+                # Combine header with piece content
+                full_text = doc_header + piece.strip()
 
-                # Create a record for this section
+                # Create a record for this piece
                 record = Record(
                     patient_ref=pseudo_patient,
                     encounter_ref=None,
                     resource_type="xml_document",
-                    key=f"xml_{xml.document_id}_section_{i}",
+                    key=f"xml_{xml.document_id}_piece_{piece_idx}",
                     text=full_text,
                     timestamp=xml.updated_at
                 )
                 records.append(record)
 
+        if not records:
+            return []
+
         logger.info(f"Created {len(records)} records from {len(xml_documents)} XML documents")
 
-        # Simple conversion to chunks without complex chunking strategy to avoid breaking PDF flow
-        chunks: List[Chunk] = []
-        for record in records:
-            # Apply basic PHI redaction
-            redactor = SimplePhiRedactor()
-            redacted_text = redactor.redact(record.text or "")
+        # Apply redaction and NarrativeV1 strategy for final chunking
+        tokenizer = WhitespaceTokenizer()
+        redactor = SimplePhiRedactor()
+        strategy = NarrativeV1()
+        policy = CHUNK_POLICY_PRESETS.get("narrative_default")
 
-            # Create a simple chunk directly from the record
-            chunk = Chunk(
-                id=record.key or f"xml_chunk_{len(chunks)}",
-                patient_ref=record.patient_ref,
-                text=redacted_text,
-                resource_type=record.resource_type,
-                key=record.key,
-                timestamp=record.timestamp,
-                encounter_ref=record.encounter_ref,
-                strategy_id="simple_xml",
-                strategy_version="1.0",
-                has_phi=False
+        if not policy:
+            # Fallback policy if narrative_default is not available
+            from optimed.core.domain import ChunkPolicy
+            policy = ChunkPolicy(
+                name="xml_fallback",
+                max_tokens=800,
+                overlap=0.12,
+                boundary_rules={"sentence": True}
             )
-            chunks.append(chunk)
 
-        logger.info(f"Created {len(chunks)} chunks from {len(xml_documents)} XML documents")
+        redacted_records = []
+        for record in records:
+            redacted_text = redactor.redact(record.text or "")
+            redacted_record = record.model_copy(update={"text": redacted_text})
+            redacted_records.append(redacted_record)
+
+        # Apply chunking strategy
+        chunks = strategy.apply(redacted_records, policy, tokenizer)
+
+        logger.info(f"Created {len(chunks)} final chunks from {len(xml_documents)} XML documents")
 
         return chunks
+
+    def _split_large_section(self, text: str, target_size: int = 3000) -> list[str]:
+        """Split a large section into smaller pieces around target_size characters."""
+        if len(text) <= target_size:
+            return [text]
+
+        pieces = []
+        lines = text.split('\n')
+        current_piece: list[str] = []
+        current_length = 0
+
+        for line in lines:
+            line_length = len(line) + 1  # +1 for newline
+
+            # If adding this line would exceed target and we have content, save current piece
+            if current_length + line_length > target_size and current_piece:
+                pieces.append('\n'.join(current_piece))
+                current_piece = []
+                current_length = 0
+
+            # If single line is longer than target, split it further
+            if line_length > target_size * 2:
+                # Split by sentences
+                sentences = line.split('. ')
+                for sent in sentences:
+                    if current_length + len(sent) > target_size and current_piece:
+                        pieces.append('\n'.join(current_piece))
+                        current_piece = []
+                        current_length = 0
+                    current_piece.append(sent)
+                    current_length += len(sent)
+            else:
+                current_piece.append(line)
+                current_length += line_length
+
+        # Add remaining content
+        if current_piece:
+            pieces.append('\n'.join(current_piece))
+
+        return pieces
 
     def _split_xml_text_into_sections(self, text: str) -> list[str]:
         """Split XML extracted text into logical sections for better chunking."""
@@ -4604,10 +5740,17 @@ Content:
         return dot / (na * nb)
 
     async def _embed_many(self, texts: list[str], mode: str = "passage") -> list[list[float]]:
+        """Embed multiple texts using efficient batch encoding.
+
+        Uses embed_batch for 10-100x speedup compared to individual encoding.
+        Critical for performance when embedding 100-800 chunks.
+        """
         from typing import cast, Literal
         mode_literal = cast(Literal["query", "passage"], mode)
-        tasks = [embed(t or "", mode_literal) for t in texts]
-        return await asyncio.gather(*tasks)
+
+        # Use batch encoding for massive speedup
+        # For 800 chunks: batch encoding ~5 seconds vs individual encoding ~5 minutes!
+        return await embed_batch(texts, mode_literal)
 
     def _mmr(self, doc_vecs: list[list[float]], query_vec: list[float], top_n: int, lambda_: float = 0.5) -> list[int]:
         selected: list[int] = []
@@ -4671,18 +5814,19 @@ Content:
         if n_thresh == 0:
             n_thresh = 10**9
 
-        # Use pre-stored classification if available, otherwise classify
+        # Use pre-stored classification if available, otherwise use heuristic fallback
         try:
             if pre_classification:
                 label = pre_classification
                 logger.info(f"Using pre-stored classification: {label}")
             else:
-                classifier = self._zero_shot_classifier
-                label = classifier.classify_query(query, [
-                    "lookup", "temporal-trend", "comparative", "reasoning", "summary", "guideline"
-                ])
-                logger.info(f"Query classified as: {label}")
+                # Fallback to heuristic if classification not available
+                # (This should rarely happen as classification is done earlier in the flow)
+                logger.warning("No pre-classification available, using heuristic fallback")
+                n_class = self._classify_query(query)
+                return max(N_MIN, min(N_MAX, n_class))
 
+            # Map classification to dynamic n based on query complexity
             if label == "lookup":
                 n_class = min(8, N_MAX)        # ~5–8
             elif label == "temporal-trend":
@@ -4691,14 +5835,14 @@ Content:
                 n_class = min(28, N_MAX)       # ~18–28
             elif label == "reasoning":
                 n_class = min(30, N_MAX)       # ~25–40, capped at 30
-            elif label == "summary":
+            elif label in ("summary", "general_summary", "focused_summary"):
                 n_class = min(30, N_MAX)       # ~40–80, capped at 30
             elif label == "guideline":
                 n_class = min(12, N_MAX)       # ~6–12
             else:
                 n_class = 8  # Default fallback
         except Exception as e:
-            logger.info(f"Classification failed: {e}, using heuristic fallback")
+            logger.info(f"Classification mapping failed: {e}, using heuristic fallback")
             n_class = self._classify_query(query)
         
         n = max(min(n_elbow, n_thresh), n_class)
@@ -4830,7 +5974,16 @@ Content:
 
         if PERSISTENCE_ENABLED and session_id and user_id:
             await self._vec.update_session_activity(session_id=session_id, user_id=user_id)
-        
+
+        # Clear GPU memory after flow completes
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                logger.info("Cleared GPU cache after LangGraph flow completion")
+        except (ImportError, Exception) as e:
+            logger.warning(f"Could not clear GPU cache: {e}")
+
         # Always return the same completion-shaped output as run_stream's final chunk
         if hasattr(data, "model_dump"):
             return self._to_output(data.model_dump())
@@ -5047,6 +6200,15 @@ Content:
                         # Log the task exception but don't re-raise it since we're in finally
                         import logging
                         logging.error(f"Graph task failed with exception: {task_exception}")
+
+                # Clear GPU memory after streaming completes
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        logger.info("Cleared GPU cache after streaming flow completion")
+                except (ImportError, Exception) as cleanup_error:
+                    logger.warning(f"Could not clear GPU cache: {cleanup_error}")
 
         return _stream_generator()
 

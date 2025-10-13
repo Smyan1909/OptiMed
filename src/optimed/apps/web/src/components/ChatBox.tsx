@@ -5,12 +5,14 @@ import { useUser } from '@/contexts/UserContext';
 import { Download, Image as ImageIcon, ExternalLink, Paperclip, FileText, X, FileEdit } from 'lucide-react';
 import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse, uploadPDFDocument, listPDFDocuments, deletePDFDocument, PDFDocument, uploadXMLDocument, listXMLDocuments, deleteXMLDocument, XMLDocument, cleanupSessionDocuments } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
 import { ReasoningViewer } from "./ReasoningViewer";
 import { DifferentialDiagnosisCards } from "./DifferentialDiagnosisCards";
 import { SBARSummaryCards } from "./SBARSummaryCards";
 import { GeneralSummaryCards } from "./GeneralSummaryCards";
+import { FocusedSummaryCards } from "./FocusedSummaryCards";
 import { TimelineView } from "./TimelineView";
 import { NoteGenerationDialog } from "./NoteGenerationDialog";
 import { VoiceRecorder } from "./VoiceRecorder";
@@ -161,6 +163,7 @@ function LookupPanel({ term, onClose, patientId, sessionId }: { term: string; on
           <div className="space-y-3">
             <div className="prose prose-sm max-w-none">
               <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
                 components={{
                   a: ({ href, children }: any) => (
                     <a
@@ -356,17 +359,17 @@ const MessageContent = ({ text, isUser, patientId, sessionId }: MessageContentPr
     },
     // Lists
     ul: ({ children }: any) => (
-      <ul className={`list-disc list-inside my-2 space-y-1 text-gray-900`}>
+      <ul className={`list-disc list-inside my-2 space-y-3 text-gray-900`}>
         {children}
       </ul>
     ),
     ol: ({ children }: any) => (
-      <ol className={`list-decimal list-inside my-2 space-y-1 text-gray-900`}>
+      <ol className={`list-decimal list-inside my-2 space-y-3 text-gray-900`}>
         {children}
       </ol>
     ),
     li: ({ children }: any) => (
-      <li className={`text-gray-900`}>
+      <li className={`text-gray-900 mb-2`}>
         {children}
       </li>
     ),
@@ -391,6 +394,29 @@ const MessageContent = ({ text, isUser, patientId, sessionId }: MessageContentPr
       <hr className={`my-3 border-t ${
         isUser ? 'border-blue-300' : 'border-gray-300'
       }`} />
+    ),
+    // Tables
+    table: ({ children }: any) => (
+      <div className="overflow-x-auto mb-4 mt-2">
+        <table className="min-w-full border-collapse border-2 border-gray-300 bg-white shadow-sm">{children}</table>
+      </div>
+    ),
+    thead: ({ children }: any) => (
+      <thead className="bg-gray-100">{children}</thead>
+    ),
+    tbody: ({ children }: any) => (
+      <tbody>{children}</tbody>
+    ),
+    th: ({ children }: any) => (
+      <th className="border border-gray-300 bg-gray-100 px-4 py-3 text-sm font-bold text-gray-900 text-left">
+        {children}
+      </th>
+    ),
+    td: ({ children }: any) => (
+      <td className="border border-gray-300 px-4 py-3 text-sm text-gray-700">{children}</td>
+    ),
+    tr: ({ children }: any) => (
+      <tr className="hover:bg-gray-50">{children}</tr>
     ),
   };
   
@@ -500,7 +526,7 @@ const MessageContent = ({ text, isUser, patientId, sessionId }: MessageContentPr
       onMouseUp={handleMouseUp}
       onKeyUp={updateSelection}
     >
-      <ReactMarkdown components={markdownComponents}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
         {text}
       </ReactMarkdown>
       {selection && selection.length >= 2 && !isUser && (
@@ -1087,6 +1113,21 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                     // Clear the content so we don't display the raw JSON
                     formattedMessage.text = '';
                     logInfo(`✅ Successfully processed General Summary cards, cleared text`);
+                  } else if (parsedContent.type === 'focused_summary' && parsedContent.sections) {
+                    logInfo(`🎯 Processing JSON Focused Summary for message ${index}`);
+                    formattedMessage.focusedSummaryResults = {
+                      diagnoses: parsedContent.sections.diagnoses?.content || undefined,
+                      events: parsedContent.sections.events?.content || undefined,
+                      medications: parsedContent.sections.medications?.content || undefined,
+                      objective_data: parsedContent.sections.objective_data?.content || undefined,
+                      assessment: parsedContent.sections.assessment?.content || undefined,
+                      next_steps: parsedContent.sections.next_steps?.content || undefined
+                    };
+                    formattedMessage.focusedAspect = parsedContent.aspect || "Medical Condition";
+                    formattedMessage.focusedAspectIcon = parsedContent.aspect_icon || "file-text";
+                    // Clear the content so we don't display the raw JSON
+                    formattedMessage.text = '';
+                    logInfo(`✅ Successfully processed Focused Summary, cleared text`);
                   } else if (parsedContent.type === 'timeline_view' && parsedContent.events) {
                     logInfo(`📅 Processing JSON Timeline for message ${index}`);
                     formattedMessage.timelineResults = {
@@ -1228,6 +1269,9 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         let messageText = finalResponse;
         let sbarResults = undefined;
         let generalSummaryResults = undefined;
+        let focusedSummaryResults = undefined;
+        let focusedAspect = undefined;
+        let focusedAspectIcon = undefined;
         let timelineResults = undefined;
 
         try {
@@ -1271,6 +1315,21 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
               // Clear the text so we don't display the raw JSON
               messageText = '';
               logInfo(`✅ Successfully processed streaming General Summary cards, cleared text`);
+            } else if (parsedContent.type === 'focused_summary' && parsedContent.sections) {
+              logInfo(`🎯 Processing streaming Focused Summary`);
+              focusedSummaryResults = {
+                diagnoses: parsedContent.sections.diagnoses?.content || undefined,
+                events: parsedContent.sections.events?.content || undefined,
+                medications: parsedContent.sections.medications?.content || undefined,
+                objective_data: parsedContent.sections.objective_data?.content || undefined,
+                assessment: parsedContent.sections.assessment?.content || undefined,
+                next_steps: parsedContent.sections.next_steps?.content || undefined
+              };
+              focusedAspect = parsedContent.aspect || "Medical Condition";
+              focusedAspectIcon = parsedContent.aspect_icon || "file-text";
+              // Clear the text so we don't display the raw JSON
+              messageText = '';
+              logInfo(`✅ Successfully processed streaming Focused Summary, cleared text`);
             } else if (parsedContent.type === 'timeline_view' && parsedContent.events) {
               logInfo(`📅 Processing streaming Timeline`);
               timelineResults = {
@@ -1295,6 +1354,9 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           differentialDiagnoses: streamDifferentialDiagnoses,
           sbarResults: sbarResults,
           generalSummaryResults: generalSummaryResults,
+          focusedSummaryResults: focusedSummaryResults,
+          focusedAspect: focusedAspect,
+          focusedAspectIcon: focusedAspectIcon,
           timelineResults: timelineResults
         };
 
@@ -1747,17 +1809,17 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     },
     // Lists
     ul: ({ children }: any) => (
-      <ul className="list-disc list-inside my-2 space-y-1 text-gray-900">
+      <ul className="list-disc list-inside my-2 space-y-3 text-gray-900">
         {children}
       </ul>
     ),
     ol: ({ children }: any) => (
-      <ol className="list-decimal list-inside my-2 space-y-1 text-gray-900">
+      <ol className="list-decimal list-inside my-2 space-y-3 text-gray-900">
         {children}
       </ol>
     ),
     li: ({ children }: any) => (
-      <li className="text-gray-900">
+      <li className="text-gray-900 mb-2">
         {children}
       </li>
     ),
@@ -1766,6 +1828,29 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
       <p className="mb-2 last:mb-0 text-gray-900">
         {children}
       </p>
+    ),
+    // Tables
+    table: ({ children }: any) => (
+      <div className="overflow-x-auto mb-4 mt-2">
+        <table className="min-w-full border-collapse border-2 border-gray-300 bg-white shadow-sm">{children}</table>
+      </div>
+    ),
+    thead: ({ children }: any) => (
+      <thead className="bg-gray-100">{children}</thead>
+    ),
+    tbody: ({ children }: any) => (
+      <tbody>{children}</tbody>
+    ),
+    th: ({ children }: any) => (
+      <th className="border border-gray-300 bg-gray-100 px-4 py-3 text-sm font-bold text-gray-900 text-left">
+        {children}
+      </th>
+    ),
+    td: ({ children }: any) => (
+      <td className="border border-gray-300 px-4 py-3 text-sm text-gray-700">{children}</td>
+    ),
+    tr: ({ children }: any) => (
+      <tr className="hover:bg-gray-50">{children}</tr>
     ),
   };
 
@@ -1832,6 +1917,19 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                   </div>
                 )}
 
+                {msg.sender === 'system' && msg.focusedSummaryResults && (
+                  <div className="mt-3">
+                    <FocusedSummaryCards
+                      summaryResults={msg.focusedSummaryResults}
+                      aspect={msg.focusedAspect || "Medical Condition"}
+                      aspectIcon={msg.focusedAspectIcon || "file-text"}
+                      isLoading={msg.loading}
+                      patientId={patientId}
+                      sessionId={sessionId}
+                    />
+                  </div>
+                )}
+
                 {msg.sender === 'system' && msg.timelineResults && (
                   <div className="mt-3">
                     <TimelineView
@@ -1881,7 +1979,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                     <div className="text-sm text-gray-900 mb-1">
                       <div className="rounded-2xl px-4 py-3 bg-white border border-gray-200 shadow-sm">
                         <div className="text-sm leading-relaxed text-gray-900">
-                          <ReactMarkdown components={markdownComponents}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                             {streamingResponse}
                           </ReactMarkdown>
                           <span className="inline-block w-2 h-5 bg-blue-600 animate-pulse ml-1" />
