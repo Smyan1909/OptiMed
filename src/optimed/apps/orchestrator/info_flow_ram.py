@@ -57,7 +57,7 @@ RETRY_MAX: int = 2
 
 
 # Single system message for information relay only
-SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM, 
+SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                          content="""You are CLARA, a clinical information assistant.
 
                                     You are not a doctor or a medical device, so always state that the user should make their decisions independently and review the sources for further information.
@@ -70,15 +70,24 @@ SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                                     - Provide a thorough, well-developed answer while remaining concise (aim for 3–5 short sections).
                                     - Use previous conversation history (between === lines) when relevant.
                                     - **Always output in valid GitHub-flavored Markdown** to ensure clean rendering in the application.
+                                    - **CRITICAL - DATE/TIME STAMPS**: Always include date and time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for ALL clinical information showing when data was recorded/measured/documented. This is essential for clinical decision-making.
+                                    - **CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms throughout your response:
+                                        - **Diagnoses** and disease names (e.g., **Type 2 Diabetes**, **Hypertension**)
+                                        - **Medications** and doses (e.g., **Metformin 1000mg**, **Enalapril 20mg**)
+                                        - **Vital signs** and lab values (e.g., **BP 145/85**, **HbA1c 68 mmol/mol**, **eGFR 52**)
+                                        - **Symptoms** and clinical findings (e.g., **chest pain**, **dyspnea**, **wheezing**)
+                                        - **Risk levels** and severity descriptors (e.g., **moderate risk**, **stable**, **worsening**)
+                                        - **Key clinical terms** that are important for decision-making
+                                        - **Dates** and temporal markers when clinically relevant (e.g., **2024-01-15**, **3 months ago**)
                                     - Organize responses using appropriate Markdown structure:
                                         - Use `#` for the main title, `##` for section titles, and `###` for subsections when needed.
                                         - Use bullet points (`-`) or numbered lists (`1.`, `2.`) where appropriate.
                                         - Use proper Markdown tables for structured data.
                                         - Format all URLs as **clickable Markdown links** instead of showing raw URLs.
-                                    - If web search results are used, cite with inline Markdown links like:  
-                                        `[Source Title](URL)`  
+                                    - If web search results are used, cite with inline Markdown links like:
+                                        `[Source Title](URL)`
                                         Otherwise, omit citations.
-                                    - Link policy (**STRICT for EHR**):  
+                                    - Link policy (**STRICT for EHR**):
                                         When referencing specific patient data from the clinical information chunks, you MUST include the source links that are embedded in the chunk content.
                                         - For atomic data (vitals, labs, medications, etc.): The chunks contain data in the format "value [EHR Source](URL)" - preserve this exact format when referencing the data
                                         - For narrative data (reports, impressions, etc.): The chunks contain source information at the end as "**Source:** [EHR Record](URL)" - preserve this when referencing the content
@@ -1846,22 +1855,37 @@ Keep queries concise and medically precise.
 
                 # Build prompt for situation
                 situation_prompt = f"""
-                Generate a VERY CONCISE SBAR Situation summary (maximum 2-3 short bullet points).
+                Generate a concise SBAR Situation summary with 5-7 bullet points.
 
                 USER QUERY: {state.user_prompt}
 
-                Include ONLY the most critical:
-                • Chief complaint
-                • Current symptoms
-                • Immediate concerns
+                Format as 5-7 bullet points covering:
+                • **Chief complaint**: [concise description with key symptoms]
+                • **Current presentation**: [current status and vital signs]
+                • **Acute symptoms**: [most pressing symptoms/concerns]
+                • **Pain/distress level**: [if applicable]
+                • **Recent changes**: [any deterioration or improvement]
+                • **Immediate concerns**: [urgent issues requiring attention]
+                • **Patient awareness**: [patient's understanding/concern level]
 
-                MANDATORY: Cite page numbers for any document references: {citation_format}
-                Format: Very short bullet points. No headers or explanations.
+                Example:
+                • **Chief complaint**: Patient presenting with **chest pain** radiating to left arm, started 2 hours ago - Enligt Triageanteckning, sida 1
+                • **Current presentation**: **BP 145/90**, HR 92, **diaphoretic**, appears anxious - Enligt Vitalparametrar, sida 2
+                • **Acute symptoms**: **Crushing substernal pain** 7/10, worse with exertion, not relieved by rest - Enligt Anamnes, sida 1
+                • **Recent changes**: Pain intensity **increased** from 5/10 to 7/10 in last hour - Enligt Uppföljning, sida 3
+                • **Immediate concerns**: **Possible ACS**, needs urgent ECG and troponin - Enligt Bedömning, sida 2
+
+                Add blank line between each bullet point for readability.
+
+                MANDATORY:
+                - Use **bold** markdown for symptoms, vital signs, and key clinical terms
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 concise bullet points. Keep focused on current situation only.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR situation summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR situation summaries with 5-7 bullet points. Use **bold** for symptoms, vital signs, and key clinical terms.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise and focused.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1931,22 +1955,39 @@ Keep queries concise and medically precise.
 
                 # Build prompt for background
                 background_prompt = f"""
-                Generate a VERY CONCISE SBAR Background summary (maximum 2-3 short bullet points).
+                Generate a concise SBAR Background summary with 5-7 bullet points.
 
                 USER QUERY: {state.user_prompt}
 
-                Include ONLY the most relevant:
-                • Key medical history
-                • Critical medications
-                • Important allergies
+                Format as 5-7 bullet points covering:
+                • **Patient demographics**: [age, sex, living situation]
+                • **Major diagnoses**: [key chronic conditions with dates]
+                • **Critical medications**: [important meds especially high-risk ones]
+                • **Important allergies**: [drug allergies and reactions]
+                • **Past procedures/surgeries**: [relevant surgical history]
+                • **Recent admissions**: [hospitalizations in last 6-12 months]
+                • **Baseline function**: [usual activity level and independence]
 
-                MANDATORY: Cite page numbers for any document references: {citation_format}
-                Format: Very short bullet points. No headers or explanations.
+                Example:
+                • **Patient demographics**: **73M**, lives alone, retired, has home care 2x/week - Enligt Sociala anteckningar, sida 2
+                • **Major diagnoses**: **T2DM** (2010), **HTN** (2005), **CKD Stage 3a** (2018), **COPD GOLD II** (2015) - Enligt Diagnoslista, sida 1
+                • **Critical medications**: **Warfarin 5mg** (INR target 2-3), **Metformin 1000mg 2x/day**, **Enalapril 20mg** - Enligt Läkemedelslista, sida 1
+                • **Important allergies**: **Penicillin** (rash and angioedema 2008) - Enligt Allergier, sida 1
+                • **Past procedures**: **Hip replacement** (2015), **Cholecystectomy** (2001) - Enligt Operationsprotokoll, sida 3
+                • **Recent admissions**: **COPD exacerbation** (3 months ago), treated with antibiotics and steroids - Enligt Epikris, sida 8
+                • **Baseline function**: **Independent** with ADLs, uses walker for mobility, cognitively intact - Enligt Funktionsstatus, sida 4
+
+                Add blank line between each bullet point for readability.
+
+                MANDATORY:
+                - Use **bold** markdown for key diagnoses, medications, allergies, and functional descriptors
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 concise bullet points. Focus on context relevant to current situation.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR background summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR background summaries with 5-7 bullet points. Use **bold** for diagnoses, medications, allergies, and key descriptors.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise and contextually relevant.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2016,22 +2057,38 @@ Keep queries concise and medically precise.
 
                 # Build prompt for assessment
                 assessment_prompt = f"""
-                Generate a VERY CONCISE SBAR Assessment summary (maximum 2-3 short bullet points).
+                Generate a concise SBAR Assessment summary with 5-7 bullet points in narrative style.
 
                 USER QUERY: {state.user_prompt}
 
-                Include ONLY the most important:
-                • Clinical impression
-                • Key findings
-                • Risk level
+                Format as 5-7 bullet points with free-text narrative descriptions:
+                • **Clinical impression**: [narrative description with key observations]
+                • **Current status**: [narrative summary of patient's condition]
+                • **Key findings**: [narrative of significant clinical findings]
+                • **Trend analysis**: [narrative of improvement/deterioration]
+                • **Risk assessment**: [narrative of current risk level and factors]
+                • **Stability**: [narrative of patient stability and prognosis]
+                • **Critical concerns**: [narrative of urgent issues if any]
 
-                MANDATORY: Cite page numbers for any document references: {citation_format}
-                Format: Very short bullet points. No headers or explanations.
+                Example:
+                • **Clinical impression**: Patient with **multimorbidity** showing signs of **worsening diabetic control** with HbA1c rising from 62 to 68 mmol/mol over 6 months - Enligt Provresultat, sida 5
+                • **Current status**: Generally **stable** but requires medication adjustment and closer monitoring of renal function given declining eGFR - Enligt Journalanteckning, sida 15
+                • **Key findings**: **Declining kidney function** (eGFR 64→52), **elevated blood pressure** (145/85), and **worsening glycemic control** suggest need for therapeutic review - Enligt Provresultat, sida 5
+                • **Risk assessment**: **Moderate-to-high risk** for cardiovascular events given uncontrolled HTN, T2DM, and CKD Stage 3a - Enligt Riskbedömning, sida 8
+                • **Critical concerns**: Patient on **warfarin** with recent **INR fluctuations**, requires close monitoring to prevent bleeding complications - Enligt Läkemedelslista, sida 2
+
+                Add blank line between each bullet point for readability.
+
+                MANDATORY:
+                - Use **bold** markdown for important clinical terms, values, and risk levels
+                - Cite page numbers: {citation_format}
+                - Write in narrative free-text style within each bullet point
+                CRITICAL: 5-7 bullet points with narrative descriptions. Each bullet contains a flowing sentence, not just keywords. Keep concise but informative.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR assessment summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR assessment summaries with 5-7 bullet points in narrative style. Use **bold** for important clinical terms and values. Write flowing sentences within each bullet point.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise but informative.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2101,23 +2158,39 @@ Keep queries concise and medically precise.
 
                 # Build prompt for recommendation
                 recommendation_prompt = f"""
-                Generate a VERY CONCISE SBAR Recommendation summary (maximum 2-3 short bullet points).
+                Generate a concise SBAR Recommendation summary with 5-7 bullet points.
 
                 USER QUERY: {state.user_prompt}
 
-                Include ONLY the most essential:
-                • Urgent interventions
-                • Key monitoring
-                • Follow-up needs
+                Format as 5-7 bullet points covering:
+                • **Urgent interventions**: [immediate actions needed]
+                • **Diagnostic workup**: [tests/imaging required]
+                • **Treatment adjustments**: [medication/therapy changes]
+                • **Monitoring plan**: [what to watch and frequency]
+                • **Consultation needs**: [specialists to involve]
+                • **Follow-up timing**: [when to reassess]
+                • **Safety measures**: [precautions and risk mitigation]
 
-                MANDATORY: Cite page numbers for any document references: {citation_format}
-                Format: Very short bullet points. No headers or explanations.
-                IMPORTANT: Educational information only - refer complex decisions to healthcare providers.
+                Example:
+                • **Urgent interventions**: Obtain **12-lead ECG** immediately, establish **IV access**, give **aspirin 300mg** if not contraindicated - Enligt Akutrutin, sida 1
+                • **Diagnostic workup**: **Troponin** at 0 and 3 hours, **chest X-ray**, continuous **cardiac monitoring** - Enligt Utredningsprotokoll, sida 3
+                • **Treatment adjustments**: Consider **nitroglycerin SL** for chest pain, hold **metformin** if contrast study needed - Enligt Behandlingsriktlinjer, sida 5
+                • **Monitoring plan**: **Vital signs q15min**, monitor for **arrhythmias**, assess **pain response** to treatment - Enligt Övervakningsrutin, sida 2
+                • **Consultation needs**: **Cardiology** consult for possible ACS, consider **interventional** if STEMI criteria met - Enligt Konsultationsriktlinjer, sida 4
+                • **Follow-up timing**: Reassess after **troponin results**, plan disposition based on findings - Enligt Uppföljningsplan, sida 6
+                • **Safety measures**: Keep patient **NPO**, ensure **resuscitation equipment** at bedside, discuss **code status** if not documented - Enligt Säkerhetsrutiner, sida 7
+
+                Add blank line between each bullet point for readability.
+
+                MANDATORY:
+                - Use **bold** markdown for interventions, tests, medications, and key actions
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 concise bullet points. Educational information only - refer complex decisions to healthcare providers. Keep actionable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE SBAR recommendation summaries (max 2-3 short bullet points).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief - no explanations or elaboration.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR recommendation summaries with 5-7 bullet points. Use **bold** for interventions, tests, medications, and key actions.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise and actionable.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2185,24 +2258,40 @@ Keep queries concise and medically precise.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                Create an ULTRA-BRIEF Patient Snapshot (scan in 5 seconds):
+                Create a concise Patient Snapshot with 5-7 bullet points with headers:
 
                 USER QUERY: {state.user_prompt}
 
-                Format as 3-4 SHORT lines ONLY:
-                1. Age, sex (e.g., "67M")
-                2. Living situation (e.g., "Lives alone, retired teacher")
-                3. Top 3 conditions (e.g., "T2DM, HTN, COPD")
-                4. ONE-LINE summary (e.g., "Multimorbid with good compliance")
+                Format as 5-7 bullet points with bold headers:
+                • **Demographics:** [Age, sex] - {citation_format}
+                • **Living Situation:** [Living arrangement, occupation/status] - {citation_format}
+                • **Active Conditions:** [Top 3-4 diagnoses] - {citation_format}
+                • **Key Medications:** [Most important 2-3 medications] - {citation_format}
+                • **Recent Labs/Vitals:** [Most relevant values] - {citation_format}
+                • **Functional Status:** [Mobility and independence level] - {citation_format}
+                • **Social Support:** [Care situation] - {citation_format}
 
-                MANDATORY: Cite page numbers for any document references: {citation_format}
-                Add blank line between each numbered item for readability.
-                CRITICAL: Maximum 4 short lines. No elaboration. No paragraphs.
+                Example:
+                • **Demographics:** **73M** (recorded 2024-01-15) - Enligt Journalanteckning, sida 1
+                • **Living Situation:** Lives alone, **retired teacher** (recorded 2023-12-10) - Enligt Sociala anteckningar, sida 2
+                • **Active Conditions:** **T2DM**, **HTN**, **COPD GOLD II**, **CKD Stage 3a** (updated 2024-01-10) - Enligt Diagnoslista, sida 1
+                • **Key Medications:** **Metformin 1000mg 2x/day**, **Enalapril 20mg**, **Warfarin 5mg** (as of 2024-01-15) - Enligt Läkemedelslista, sida 1
+                • **Recent Labs/Vitals:** **HbA1c 68 mmol/mol**, **BP 145/85**, **eGFR 52** (2024-01-15 08:30) - Enligt Provresultat, sida 5
+                • **Functional Status:** **Independent** with ADLs, uses walker (assessed 2023-11-20) - Enligt Funktionsstatus, sida 4
+                • **Social Support:** **Home care** 2x/week (started 2023-10-01) - Enligt Vårdplan, sida 3
+
+                MANDATORY:
+                - Each bullet must have a bold header followed by colon
+                - Use **bold** markdown for important clinical terms, values, and key phrases
+                - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when the information was recorded
+                - Cite page numbers: {citation_format}
+                - Add blank line between each bullet point for readability
+                CRITICAL: 5-7 bullet points with headers. 6-12 words each. Each bullet point one line. Include dates. Keep very concise and scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create ULTRA-BRIEF snapshots. Max 4 short lines total. No explanations. Just facts.\n\nMANDATORY: Always cite page numbers: {citation_format}. Add blank lines between items.\n\nInformation system only - NOT a medical device.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create concise snapshots with 5-7 bullet points, each with a bold header. Use **bold** for important clinical terms and values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for when each piece of information was recorded. One line per bullet point. No explanations.\n\nMANDATORY: Always cite page numbers: {citation_format}. Add blank lines between bullets. Always include dates.\n\nInformation system only - NOT a medical device.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2266,30 +2355,36 @@ Keep queries concise and medically precise.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                List ONLY the top 4-5 active problems. MAXIMUM 5 bullet points.
+                List the top 5-7 active problems - EXACTLY 6-12 words per bullet.
 
                 USER QUERY: {state.user_prompt}
 
-                Format (ONE line per problem):
-                • Disease name (year if known) - {citation_format}
+                Format (ONE line per problem, 6-12 words ONLY):
+                • **Disease name** (year) - status - {citation_format}
 
-                Example:
-                • T2DM (2012) - Enligt Journalanteckning, sida 3
-                • HTN (2005) - Enligt Läkemedel, sida 1
-                • COPD GOLD II (2018) - Enligt Diagnoslista, sida 2
+                Example (count the words - each is 6-12 words):
+                • **T2DM** (diagnosed 2012) **HbA1c 68** moderate control (2024-01-15) - Enligt Journalanteckning, sida 3 (11 words)
+                • **HTN** (since 2005) **BP 145/85** on treatment (2024-01-15 09:00) - Enligt Läkemedel, sida 1 (12 words)
+                • **COPD GOLD II** (2018) stable uses inhaler (reviewed 2024-01-10) - Enligt Diagnoslista, sida 2 (11 words)
+                • **CKD Stage 3a** (2020) **eGFR 52** monitored (2024-01-15 08:30) - Enligt Provresultat, sida 5 (11 words)
+                • **Osteoarthritis** bilateral knees uses walker (assessed 2023-12-20) - Enligt Anteckning, sida 8 (10 words)
 
                 Add blank line between each bullet point for readability.
 
-                If there are MORE problems in the data (beyond top 5), add at the end:
+                If there are MORE problems in the data (beyond 5-7), add at the end:
                 "_Fråga om fler diagnoser_" (Swedish) or "_Ask for more diagnoses_" (English)
 
-                MANDATORY: Cite page numbers: {citation_format}
-                CRITICAL: Max 5 problems. ONE line each. Blank lines between bullets. No extra descriptions.
+                MANDATORY:
+                - Use **bold** markdown for disease names and key values
+                - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when the information was recorded/updated
+                - Each bullet MUST be between 6-12 words (excluding date and citation) - COUNT THEM
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 problems. 6-12 words each. Include dates. Blank lines between bullets. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List top 4-5 active problems ONLY. One line per problem with blank lines between. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List top 5-7 active problems. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2331,31 +2426,37 @@ Keep queries concise and medically precise.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                List ONLY current and PAST medications with BRIEF (max 1 sentence) purpose/indication.
+                List 5-7 most important medications - EXACTLY 6-12 words per bullet.
 
                 USER QUERY: {state.user_prompt}
 
-                Format (ONE line per medication):
-                • Drug name dose (brief purpose) - {citation_format}
-                • ⚠️ High-risk drug dose (brief purpose) - {citation_format}  ← Mark anticoagulants, opioids, insulin with ⚠️
+                Format (ONE line per medication, 6-12 words ONLY):
+                • **Drug name dose** - purpose - {citation_format}
+                • ⚠️ **High-risk drug dose** - purpose - {citation_format}  ← Mark anticoagulants, opioids, insulin with ⚠️
 
-                Example:
-                • Metformin 1000mg (diabetes) - Enligt Läkemedelslista, sida 2
-                • ⚠️ Warfarin 5mg (anticoagulation) - Enligt Läkemedelslista, sida 2
-                • Enalapril 10mg (blood pressure) - Enligt Läkemedelslista, sida 2
+                Example (count the words - each is 6-12 words):
+                • **Metformin 1000mg 2x/day** - diabetes **HbA1c 68** (prescribed 2024-01-10) - Enligt Läkemedelslista, sida 2 (10 words)
+                • ⚠️ **Warfarin 5mg** - anticoagulation **INR 2.5** (checked 2024-01-15 09:00) - Enligt Läkemedelslista, sida 2 (10 words)
+                • **Enalapril 10mg** - blood pressure **BP 145/85** (started 2023-11-01) - Enligt Läkemedelslista, sida 2 (10 words)
+                • **Salbutamol inhaler** - COPD relief PRN (refilled 2024-01-05) - Enligt Läkemedelslista, sida 3 (9 words)
+                • **Simvastatin 20mg** - cholesterol **LDL 3.2** (checked 2024-01-15) - Enligt Läkemedelslista, sida 2 (9 words)
 
                 Add blank line between each bullet point for readability.
 
-                If there are MORE medications (beyond 8-10), add at the end:
+                If there are MORE medications (beyond 5-7), add at the end:
                 "_Fråga om fler läkemedel_" (Swedish) or "_Ask for more medications_" (English)
 
-                MANDATORY: Cite page numbers: {citation_format}
-                CRITICAL: ONE line per drug. Blank lines between bullets. Brief purpose in parentheses. List max 8-10 meds. Prioritize high-risk.
+                MANDATORY:
+                - Use **bold** markdown for drug names, doses, and key values
+                - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when medication was prescribed/checked/refilled
+                - Each bullet MUST be between 6-12 words (excluding date and citation) - COUNT THEM
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 most important meds. 6-12 words each. Include dates. Blank lines between bullets. Prioritize high-risk. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List medications with brief purpose. One line per drug with blank lines between. Max 8-10 drugs. Mark high-risk with ⚠️. Add purpose in parentheses.\n\nMANDATORY: Always cite page numbers: {citation_format}"),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most important medications. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Prioritize medications by clinical importance.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2397,30 +2498,36 @@ Keep queries concise and medically precise.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                Show ONLY key trends (max 5-6 values). Use arrows: ↑ ↓ →
+                Show 5-7 key lab/vital trends - EXACTLY 6-12 words per bullet. Use arrows: ↑ ↓ →
 
                 USER QUERY: {state.user_prompt}
 
-                Format (ONE line per value):
-                • Lab/Vital: old → new (arrow) - {citation_format}
+                Format (ONE line per value, 6-12 words ONLY):
+                • **Lab/Vital**: old → **new** (arrow) note - {citation_format}
 
-                Example:
-                • HbA1c: 62 → 68 mmol/mol (↑) - Enligt Provresultat, sida 5
-                • eGFR: 64 → 52 (↓) - Enligt Provresultat, sida 5
-                • Weight: 98 → 96 kg (↓) - Enligt Vitalparametrar, sida 2
+                Example (count the words - each is 6-12 words):
+                • **HbA1c**: 62 (2023-07-10) → **68 mmol/mol** (2024-01-15) (↑) worsening control - Enligt Provresultat, sida 5 (12 words)
+                • **eGFR**: 64 (2023-06-15) → **52** (2024-01-15 08:30) (↓) declining kidney function - Enligt Provresultat, sida 5 (12 words)
+                • **Weight**: 98 (2023-12-01) → **96 kg** (2024-01-15 09:00) (↓) intentional loss - Enligt Vitalparametrar, sida 2 (12 words)
+                • **BP**: 135/80 (2023-11-10) → **145/85** (2024-01-15 09:00) (↑) target 140/90 - Enligt Vitalparametrar, sida 3 (12 words)
+                • **INR**: 2.8 (2024-01-08) → **2.5** (2024-01-15 09:00) (↓) now in range - Enligt Provresultat, sida 6 (12 words)
 
                 Add blank line between each bullet point for readability.
 
                 If there are MORE lab values/trends available, add at the end:
                 "_Fråga om fler trender_" (Swedish) or "_Ask for more trends_" (English)
 
-                MANDATORY: Cite page numbers: {citation_format}
-                CRITICAL: Max 5-6 values. ONE line each. Blank lines between bullets. Values + trend only, no interpretation.
+                MANDATORY:
+                - Use **bold** markdown for parameter names and current values
+                - CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values
+                - Each bullet MUST be between 6-12 words (excluding dates and citation) - COUNT THEM
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 most important trends. 6-12 words each. Include dates for both values. Blank lines between bullets. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Show 5-6 key trends. One line each with blank lines between. Values + arrows only. Add 'ask for more' if additional trends exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Show 5-7 key trends. Use **bold** for parameter names and current values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Add 'ask for more' if additional trends exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2462,30 +2569,35 @@ Keep queries concise and medically precise.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                List ONLY major past events (max 4-5). BRIEF format.
+                List 5-7 major past medical/surgical events - EXACTLY 6-12 words per bullet.
 
                 USER QUERY: {state.user_prompt}
 
-                Format (ONE line per event):
-                • Event name year - {citation_format}
+                Format (ONE line per event, 6-12 words ONLY):
+                • **Event name** (year) - outcome - {citation_format}
 
-                Example:
-                • Cholecystectomy 2001 - Enligt Operationsprotokoll, sida 1
-                • Hip replacement 2015 - Enligt Operationsprotokoll, sida 3
-                • Stroke 2020 - Enligt Journalanteckning, sida 12
+                Example (count the words - each is 6-12 words):
+                • **Cholecystectomy** (2001) uncomplicated recovery - Enligt Operationsprotokoll, sida 1 (7 words)
+                • **Hip replacement** (2015) left hip good function - Enligt Operationsprotokoll, sida 3 (9 words)
+                • **Stroke** (2020) left hemisphere mild residual weakness - Enligt Journalanteckning, sida 12 (10 words)
+                • **MI** (2018) anterior wall stent placed - Enligt Epikris, sida 5 (9 words)
+                • **Appendectomy** (1995) no complications - Enligt Anamnes, sida 2 (6 words)
 
                 Add blank line between each bullet point for readability.
 
                 If there are MORE past events, add at the end:
                 "_Fråga om fler händelser_" (Swedish) or "_Ask for more history_" (English)
 
-                MANDATORY: Cite page numbers: {citation_format}
-                CRITICAL: Max 4-5 events. ONE line each. Blank lines between bullets. Event + year only, no details.
+                MANDATORY:
+                - Use **bold** markdown for event names
+                - Each bullet MUST be between 6-12 words (excluding citation) - COUNT THEM
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 most significant events. 6-12 words each. Blank lines between bullets. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List max 4-5 major past events. One line each with blank lines between. Event + year only. Add 'ask for more' if additional events exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 major past events. Use **bold** for event names. CRITICAL: Always include the year/date in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding year and citation). Count words carefully. Add 'ask for more' if additional events exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2527,31 +2639,37 @@ Keep queries concise and medically precise.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                List critical alerts/risks ONLY. Maximum 5-6 items.
+                List 5-7 critical alerts/risks - EXACTLY 6-12 words per bullet.
 
                 USER QUERY: {state.user_prompt}
 
-                Format (SHORT phrases):
-                • ⚠️ Risk/Alert - {citation_format}
+                Format (SHORT phrases, 6-12 words ONLY):
+                • ⚠️ **Risk/Alert** - implication - {citation_format}
 
-                Example:
-                • ⚠️ Allergic to penicillin - Enligt Journalanteckning, sida 1
-                • ⚠️ On warfarin - bleeding risk - Enligt Läkemedelslista, sida 2
-                • ⚠️ Fall risk (previous falls) - Enligt Anteckning, sida 8
-                • ⚠️ DNR documented - Enligt Vårdplan, sida 1
+                Example (count the words - each is 6-12 words):
+                • ⚠️ **Penicillin allergy** - rash and angioedema (documented 2015-03-20) - Enligt Journalanteckning, sida 1 (9 words)
+                • ⚠️ **Warfarin therapy** - **INR 2.5** bleeding risk (checked 2024-01-15 09:00) - Enligt Läkemedelslista, sida 2 (10 words)
+                • ⚠️ **Fall risk** - 3 falls last year uses walker (assessed 2024-01-10) - Enligt Anteckning, sida 8 (12 words)
+                • ⚠️ **DNR documented** - patient wishes respected (signed 2023-11-15) - Enligt Vårdplan, sida 1 (8 words)
+                • ⚠️ **Renal impairment** - **eGFR 52** adjust meds (tested 2024-01-15 08:30) - Enligt Provresultat, sida 5 (9 words)
+                • ⚠️ **Lives alone** - no regular support (noted 2024-01-05) - Enligt Sociala anteckningar, sida 3 (9 words)
 
                 Add blank line between each bullet point for readability.
 
                 If there are MORE risks/alerts, add at the end:
                 "_Fråga om fler risker_" (Swedish) or "_Ask for more risks_" (English)
 
-                MANDATORY: Cite page numbers: {citation_format}
-                CRITICAL: Max 5-6 alerts. SHORT phrases. Blank lines between bullets. Use ⚠️ for visibility.
+                MANDATORY:
+                - Use **bold** markdown for risk/alert names and key values
+                - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when information was documented
+                - Each bullet MUST be between 6-12 words (excluding date and citation) - COUNT THEM
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 most important alerts. 6-12 words each. Include dates. Blank lines between bullets. Use ⚠️ for visibility. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List max 5-6 critical alerts. Short phrases with blank lines between. Use ⚠️ marker. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 critical alerts. Use **bold** for risk/alert names and key values. Use ⚠️ marker. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2593,28 +2711,35 @@ Keep queries concise and medically precise.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                Summarize recent encounters in 2-4 SHORT sentences. Like a quick handoff note.
+                List 5-7 most recent encounters with key actions/outcomes.
 
                 USER QUERY: {state.user_prompt}
 
-                Format (2-4 sentences total):
-                Encounter Description (date): Action taken ({citation_format}). Specialist consult (date): Outcome ({citation_format}).
+                Format (ONE line per encounter):
+                • **Encounter type** (date) - key action/outcome - {citation_format}
 
                 Example:
-                "Last GP visit (Apr 2025): Adjusted enalapril to 20mg, ordered HbA1c (Enligt Journalanteckning, sida 15). Cardiology consult (Feb 2025): Echo stable, continue meds (Enligt Specialistbrev, sida 2)."
+                • **GP visit** (2025-04-15 10:30) - adjusted enalapril to 20mg, ordered HbA1c - Enligt Journalanteckning, sida 15
+                • **Cardiology consult** (2025-02-20 14:00) - echo stable, continue current meds - Enligt Specialistbrev, sida 2
+                • **Lab draw** (2025-03-10 08:15) - routine monitoring, awaiting results - Enligt Provremiss, sida 8
+                • **Phone consult** (2025-01-25) - discussed weight loss, advised diet - Enligt Telefonanteckning, sida 4
+                • **ER visit** (2024-12-28 22:45) - chest pain, ruled out MI, discharged - Enligt Epikris, sida 12
 
-                Add blank line between sentences for readability.
+                Add blank line between each bullet point for readability.
 
                 If there are MORE encounters in the history, add at the end:
                 "_Fråga om fler besök_" (Swedish) or "_Ask for more encounters_" (English)
 
-                MANDATORY: Cite page numbers for each encounter: {citation_format}
-                CRITICAL: Max 2-4 sentences. Blank lines between sentences. Very condensed. Date + action + outcome only.
+                MANDATORY:
+                - Use **bold** markdown for encounter types
+                - CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses
+                - Cite page numbers: {citation_format}
+                CRITICAL: 5-7 most recent encounters. ONE line each. Blank lines between bullets. Full datetime + action + outcome. Keep concise.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Write 2-4 sentence encounter summary with blank lines between. Like a quick handoff. Add 'ask for more' if additional encounters exist.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most recent encounters with key actions/outcomes. Use **bold** for encounter types. CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses. One line each with blank lines between. Add 'ask for more' if additional encounters exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include exact datetime.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3064,17 +3189,23 @@ Generate a CONCISE diagnoses section for a focused summary about: {state.focused
 
 USER QUERY: {state.user_prompt}
 
-Format exactly as markdown bullet points:
+Format exactly as markdown bullet points with **bold** highlighting:
 
-• [Diagnosis 1] ([Year diagnosed or duration])
+• **[Diagnosis 1]** ([Year diagnosed or duration]) - {citation_format}
 
-• [Diagnosis 2] ([Timeline or status])
+• **[Diagnosis 2]** ([Timeline or status]) - {citation_format}
 
-• [Diagnosis 3] ([Resolution status or ongoing])
+• **[Diagnosis 3]** ([Resolution status or ongoing]) - {citation_format}
+
+Example:
+• **Type 2 Diabetes Mellitus** (E11.9, since **2018**) - {citation_format}
+• **Hypertension** (**2005**, well-controlled on meds) - {citation_format}
+• **COPD GOLD II** (J44.1, **2015**, stable) - {citation_format}
 
 RULES:
 - List 2-4 diagnoses ONLY related to {state.focused_aspect}
-- Include ICD codes if available: "Type 2 Diabetes (E11.9, since 2018)"
+- Use **bold** markdown for diagnosis names and key temporal markers
+- Include ICD codes if available
 - Include temporal information (year, duration, or status)
 - Use markdown bullet points with • character
 - Add a blank line between each bullet point for readability
@@ -3085,7 +3216,7 @@ RULES:
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused diagnoses section. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused diagnoses section. Use **bold** for diagnosis names and key terms. Cite sources: {citation_format}. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3166,7 +3297,7 @@ RULES:
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused events timeline. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused events timeline. Use **bold** for dates and key clinical terms. Cite sources: {citation_format}. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3225,29 +3356,35 @@ Generate a CONCISE medications list for: {state.focused_aspect}
 
 USER QUERY: {state.user_prompt}
 
-Format exactly as:
-• [Medication 1 + dosage + frequency]
-• [Medication 2 + dosage + frequency]
-• [Medication 3 + dosage + frequency]
+Format exactly as markdown bullet points with **bold** highlighting:
+
+• **[Medication 1]** [dosage] [frequency]
+
+• **[Medication 2]** [dosage] [frequency]
+
+• **[Medication 3]** [dosage] [frequency]
 
 Example:
-• Metoprolol 50mg BID
-• Lisinopril 10mg daily
-• Aspirin 81mg daily
+• **Metoprolol** 50mg BID - {citation_format}
+• **Lisinopril** 10mg daily - {citation_format}
+• **Aspirin** 81mg daily - {citation_format}
+• **Prednisone** 20mg daily (started **2023**) - {citation_format}
 
 RULES:
 - List ONLY medications relevant to {state.focused_aspect}
+- Use **bold** markdown for medication names and key terms
 - Include dosage and frequency
 - Use bullet points (•), one medication per line
+- Add blank line between each bullet point for readability
 - Maximum 5 medications
-- Include duration if relevant: "Prednisone 20mg daily (started 2023)"
+- Include duration if relevant
 - MANDATORY: Cite sources using format {citation_format}
 - If no medications found, state "No medications documented for {state.focused_aspect}"
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused medications list. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused medications list. Use **bold** for medication names and key terms. Cite sources: {citation_format}. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3306,16 +3443,17 @@ Generate CONCISE objective data for: {state.focused_aspect}
 
 USER QUERY: {state.user_prompt}
 
-Format as a proper Markdown table:
+Format as a proper Markdown table with **bold** highlighting for abnormal values:
 
 | Metric | Value | Unit | Date |
 |--------|-------|------|------|
-| HbA1c | 7.2 | % | 2024-01-15 |
+| **HbA1c** | **7.2** | % | 2024-01-15 |
 | Fasting Glucose | 145 | mg/dL | 2024-01-15 |
-| LVEF (Echo) | 55 | % | 2023-12-20 |
+| **LVEF (Echo)** | **55** | % | 2023-12-20 |
 
 RULES:
 - List ONLY data relevant to {state.focused_aspect}
+- Use **bold** markdown for abnormal/critical values and important metrics
 - Use proper Markdown table format with header row and alignment row
 - Include columns: Metric, Value, Unit, Date
 - Maximum 5 rows of data
@@ -3326,7 +3464,7 @@ RULES:
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating focused objective data. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating focused objective data. Use **bold** for abnormal/critical values and important metrics. Cite sources: {citation_format}. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3385,16 +3523,22 @@ Generate a CONCISE clinical assessment for: {state.focused_aspect}
 
 USER QUERY: {state.user_prompt}
 
-Format exactly as markdown bullet points:
+Format exactly as markdown bullet points with **bold** highlighting:
 
-• **Current Status:** [Disease control/status summary]
+• **Current Status:** [Disease control/status summary with key clinical terms in **bold**] - {citation_format}
 
-• **Trend:** [Progression, stability, or improvement]
+• **Trend:** [Progression, stability, or improvement with key findings in **bold**] - {citation_format}
 
-• **Prognosis:** [Overall outlook]
+• **Prognosis:** [Overall outlook with risk factors in **bold**] - {citation_format}
+
+Example:
+• **Current Status:** Diabetes **moderately controlled** with HbA1c **68 mmol/mol**, above target - Enligt Provresultat, sida 5
+• **Trend:** **Worsening glycemic control** over past 6 months (HbA1c 62→68), suggests **treatment intensification** needed - Enligt Trendanalys, sida 8
+• **Prognosis:** **Moderate risk** of complications given current control, requires **medication adjustment** and closer monitoring - Enligt Bedömning, sida 10
 
 RULES:
 - Use 3 bullet points as shown above
+- Use **bold** markdown for key clinical terms, status descriptors, and risk levels
 - Focus ONLY on {state.focused_aspect}
 - Be clinically precise but accessible
 - Add a blank line between each bullet point for readability
@@ -3405,7 +3549,7 @@ RULES:
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused clinical assessment. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused clinical assessment. Use **bold** for key clinical terms, status descriptors, and risk levels. Cite sources: {citation_format}. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3464,28 +3608,31 @@ Generate CONCISE next steps for: {state.focused_aspect}
 
 USER QUERY: {state.user_prompt}
 
-Format exactly as markdown bullet points:
+Format exactly as markdown bullet points with **bold** highlighting:
 
-• Follow-up test or appointment due (include specific timing if available)
+• **[Action type]**: [Details with timing if available] - {citation_format}
 
-• Medication review or adjustment needed
-
-• Specialist consult or referral pending
+Example:
+• **Follow-up HbA1c**: Test due in **3 months** (April 2024) - Enligt Uppföljningsplan, sida 5
+• **Medication review**: Consider **metformin dose increase** to 1000mg BID - Enligt Behandlingsrekommendation, sida 8
+• **Endocrinology referral**: Pending consult for **insulin initiation** if HbA1c not improved - Enligt Remiss, sida 3
+• **Retinal screening**: **Annual** diabetic eye exam overdue, schedule ASAP - Enligt Screeningprogram, sida 10
 
 RULES:
 - List 2-4 items ONLY related to {state.focused_aspect}
+- Use **bold** markdown for action types, key interventions, and timing
 - Use markdown bullet points with • character
 - Add a blank line between each bullet point for readability
 - One line per item
 - Include: pending tests, follow-ups, medication reviews, referrals, outstanding issues
-- Include timing if available: "Echocardiogram scheduled for March 2024"
+- Include specific timing if available
 - MANDATORY: Cite sources using format {citation_format}
 - If no next steps found, state "No pending follow-up documented for {state.focused_aspect}"
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating focused next steps. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating focused next steps. Use **bold** for action types, key interventions, and timing. Cite sources: {citation_format}. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3772,7 +3919,7 @@ Return ONLY the JSON array, no additional text.
                     history_text = "\n".join([f"{msg.role.value}: {msg.content[:200]}" for msg in recent_history]) if recent_history else ""
 
                     prompt = f"""
-Generate a VERY CONCISE explanation (2-3 short bullet points) for this timeline event.
+Generate a concise explanation (5-7 bullet points) for this timeline event.
 
 Event: {title}
 Time Period: {time_period}
@@ -3784,23 +3931,35 @@ Clinical Information:
 Previous conversation (for context):
 {history_text}
 
-Focus on:
-- What happened during this time period
-- Key clinical findings or observations
-- Relevant treatments or interventions
+Format as 5-7 bullet points covering:
+• **What happened**: [brief description of the event]
+• **Clinical findings**: [key observations, test results, symptoms]
+• **Treatments/interventions**: [medications, procedures performed]
+• **Outcome**: [immediate results or response]
+• **Significance**: [why this event matters in patient's timeline]
+• **Follow-up**: [any subsequent actions or plans]
+• **Provider notes**: [relevant clinician observations]
+
+Example:
+• **What happened**: Patient admitted to **ER** with **chest pain** and **shortness of breath** - {citation_format}
+• **Clinical findings**: **ECG** showed ST elevations in leads II, III, aVF, **troponin** elevated at 450 ng/L - {citation_format}
+• **Treatments**: Given **aspirin 300mg**, **heparin** infusion started, **morphine** 5mg for pain - {citation_format}
+• **Outcome**: Pain reduced to **3/10**, hemodynamically **stable**, monitored in CCU - {citation_format}
+• **Significance**: First **acute MI** event, indicates need for aggressive cardiovascular risk management - {citation_format}
 
 IMPORTANT:
-- Keep it VERY brief (2-3 bullet points max)
+- Use **bold** markdown for key clinical terms, findings, medications, and important descriptors
 - Include citations using {citation_format}
 - Preserve any EHR source links from the clinical information
-- Use professional medical language
+- Keep each bullet point concise (one line)
+- Focus on clinically significant information
 
 Return only the content in markdown format, no preamble.
 """
 
                     messages = [
                         self._get_language_policy_message(state),
-                        ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create VERY CONCISE timeline explanations (2-3 bullet points max).\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Always cite page numbers: {citation_format}. Be extremely brief."),
+                        ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create timeline explanations with 5-7 concise bullet points. Use **bold** for key clinical terms, findings, and medications.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise but informative."),
                         ChatMessage(role=ChatRole.USER, content=prompt)
                     ]
 
@@ -4038,6 +4197,7 @@ Your task is to fill in the template sections based on the provided clinical inf
 
 CRITICAL GUIDELINES:
 - Be CONCISE and FOCUSED - include only essential clinical information
+- Use **bold** markdown to highlight important clinical terms, diagnoses, medications, vital signs, and key findings
 - Do NOT include source references, citations, or document names (write directly from the information)
 - Use medical terminology appropriate for {lang_name}
 - If information is not available for a section, write "Information not available" in {lang_name}
@@ -4046,8 +4206,16 @@ CRITICAL GUIDELINES:
 - Avoid unnecessary elaboration or repetition between sections
 - Write in clear, direct clinical language without filler words
 - Do NOT interpret or assume - only document what is explicitly provided
+- Format lists as bullet points when appropriate
 
-Generate content for each section separately with only the necessary clinical facts."""
+MARKDOWN FORMATTING EXAMPLES:
+- **Diagnoses**: **Type 2 Diabetes Mellitus**, **Hypertension**, **COPD GOLD II**
+- **Medications**: **Metformin 1000mg 2x/day**, **Enalapril 20mg daily**
+- **Vital Signs**: **BP 145/85**, **HR 92**, **SpO2 94%**
+- **Lab Values**: **HbA1c 68 mmol/mol**, **eGFR 52**
+- **Key Findings**: **Bilateral wheezing**, **mild pedal edema**
+
+Generate content for each section separately with only the necessary clinical facts, using bold formatting for important terms."""
 
                 # Generate each section
                 sections = {}
@@ -4225,8 +4393,18 @@ Generate the content for "{field_label}" section now:"""
             # For direct path (simple queries), use a simplified system message
             if not getattr(state, 'requires_full_processing', True):
                 simple_system_msg = ChatMessage(
-                    role=ChatRole.SYSTEM, 
+                    role=ChatRole.SYSTEM,
                     content="""You are CLARA, a helpful medical information assistant. Provide clear, accurate medical information. For general medical questions, draw on your medical knowledge. Keep responses concise and helpful.
+
+**CRITICAL - DATE/TIME STAMPS**: Always include date and time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for ALL clinical information. This is essential for doctors.
+
+**CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms throughout your response:
+- **Diagnoses** and disease names (e.g., **Type 2 Diabetes**, **Hypertension**)
+- **Medications** and doses (e.g., **Metformin 1000mg**, **Enalapril 20mg**)
+- **Vital signs** and lab values (e.g., **BP 145/85**, **HbA1c 68 mmol/mol**)
+- **Symptoms** and clinical findings (e.g., **chest pain**, **dyspnea**)
+- **Risk levels** and severity descriptors (e.g., **moderate risk**, **stable**)
+- **Key clinical terms** that are important for decision-making
 
 Link policy (STRICT for EHR): When referencing patient data from clinical information chunks, preserve the source links that are embedded in the chunk content:
 - For atomic data: Use the format "value [EHR Source](URL)" as it appears in the chunks
