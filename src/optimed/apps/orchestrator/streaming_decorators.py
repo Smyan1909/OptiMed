@@ -230,11 +230,11 @@ class StreamingStatus:
 
         # PDF/XML documents
         elif step_lower in ["fetch_pdfs", "fetch_xmls"] and status == "completed":
-            # Assuming document counts are stored
+            # Get document counts from the correct state fields
             if step_lower == "fetch_pdfs":
-                count = len(getattr(self.state, 'pdf_documents', []))
+                count = len(getattr(self.state, 'uploaded_pdfs', []))
             else:
-                count = len(getattr(self.state, 'xml_documents', []))
+                count = len(getattr(self.state, 'uploaded_xmls', []))
             kwargs['count'] = count
             if count > 0:
                 return get_message(step_lower, "completed", language, **kwargs)
