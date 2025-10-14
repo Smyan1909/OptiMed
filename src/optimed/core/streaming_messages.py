@@ -12,7 +12,7 @@ GDPR-compliant: No PHI included in raw messages. Use sanitization functions
 for any patient/user identifiers included via formatting.
 """
 
-from typing import Dict, Any
+from typing import Any
 
 
 STREAMING_MESSAGES = {
