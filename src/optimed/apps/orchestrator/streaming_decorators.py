@@ -1,55 +1,75 @@
 from functools import wraps
-from typing import Callable
-from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, log_error
+from typing import Callable, Any
+from optimed.core.logging_utils import get_logger, log_error
+from optimed.core.streaming_messages import get_message
 
 logger = get_logger(__name__)
 
 class StreamingStatus:
-    """Context manager for streaming status updates."""
-    
-    def __init__(self, state, step_name: str, description: str, is_long_running: bool = False, estimated_time: str = ""):
+    """
+    Context manager for streaming status updates with language-aware messages.
+
+    Uses the streaming_messages module to provide localized status updates
+    in English or Swedish based on the user's language preference.
+    """
+
+    def __init__(self, state, step_name: str, description: str = "", is_long_running: bool = False, estimated_time: str = ""):
         self.state = state
         self.step_name = step_name
-        self.description = description
+        self.description = description  # Legacy parameter, kept for compatibility
         self.is_long_running = is_long_running
         self.estimated_time = estimated_time
-    
+
     async def __aenter__(self):
+        # Get language from state, default to English
+        language = getattr(self.state, 'user_language', 'en')
+
         self.state.current_step = self.step_name
         self.state.step_status = "starting"
-        # Use the dynamic description generator
-        self.state.step_details = self._generate_detailed_description("starting")
+
+        # Use the new localized message system
+        self.state.step_details = self._get_localized_message("starting", language)
+
+        # Increment step counter (no percentage-based progress bar)
         self.state.completed_steps += 1
-        self.state.progress_percentage = (self.state.completed_steps / self.state.total_steps) * 100
+
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
+        # Get language from state, default to English
+        language = getattr(self.state, 'user_language', 'en')
+
         if exc_type is None:
             self.state.step_status = "completed"
-            self.state.step_details = self._generate_detailed_description("completed")
+            self.state.step_details = self._get_localized_message("completed", language)
         else:
             self.state.step_status = "error"
-            self.state.step_details = f"Error in {self.step_name}: {str(exc_val)}"
-    
+            # Error messages in the appropriate language
+            error_prefix = "Fel i" if language == "sv" else "Error in"
+            self.state.step_details = f"{error_prefix} {self.step_name}: {str(exc_val)}"
+
     def update(self, details: str, status: str = "in_progress"):
-        """Update status mid-operation."""
+        """Update status mid-operation with custom details."""
         self.state.step_status = status
         self.state.step_details = details
     
     def update_diagnosis_progress(self, diagnosis_name: str, step: str, progress_detail: str = ""):
         """Special update method for differential diagnosis computation."""
+        language = getattr(self.state, 'user_language', 'en')
+
         self.state.step_status = "computing_differential"
         self.state.prelim_diagnosis_name = diagnosis_name
         self.state.diff_diag_compute_step = step
-        
-        # Create detailed status message
+
+        # Create localized status message
+        analyzing_text = "Analyserar" if language == "sv" else "Analyzing"
         if progress_detail:
-            status_message = f"Analyzing {diagnosis_name}: {step} - {progress_detail}"
+            status_message = f"{analyzing_text} {diagnosis_name}: {step} - {progress_detail}"
         else:
-            status_message = f"Analyzing {diagnosis_name}: {step}"
-        
+            status_message = f"{analyzing_text} {diagnosis_name}: {step}"
+
         self.state.step_details = status_message
-        
+
         # Emit streaming update if callback exists
         if hasattr(self.state, 'stream_callback') and self.state.stream_callback:
             import asyncio
@@ -67,213 +87,199 @@ class StreamingStatus:
             except Exception as e:
                 log_error(logger, "emit_differential_diagnosis_update", e)
     
-    def _generate_detailed_description(self, status: str) -> str:
-        """Generate detailed descriptions based on step name and current state."""
-        step_lower = self.step_name.lower()
-        
-        if status == "starting":
-            return self._get_starting_description(step_lower)
-        elif status == "completed":
-            return self._get_completed_description(step_lower)
-        else:
-            return f"{self.step_name}: {status}"
-    
-    def _get_starting_description(self, step_lower: str) -> str:
-        """Get detailed starting descriptions."""
-        descriptions = {
-            "load_user_context": f"Loading user profile and permissions for user ID: {sanitize_user_id(getattr(self.state, 'user_id', 'unknown'))}",
-            "fetch_patient": f"Retrieving patient data from medical records for patient ID: {sanitize_patient_id(getattr(self.state, 'patient_id', 'unknown'))}",
-            "store_patient_chunks": f"Breaking down patient context into searchable chunks for patient {sanitize_patient_id(getattr(self.state, 'patient_id', 'unknown'))}",
-            "intelligent_retrieve_chunks": f"Analyzing clinical records using AI to find information relevant to: '{getattr(self.state, 'user_prompt', '')[:50]}...'",
-            "evaluate_web_search_need": f"Evaluating if current medical literature search is needed for query: '{getattr(self.state, 'user_prompt', '')[:50]}...'",
-            "perform_web_search": f"Searching latest medical literature and clinical guidelines for: '{getattr(self.state, 'user_prompt', '')[:50]}...'",
-            "evaluate_image_generation_need": f"Analyzing if visual medical illustrations would help explain concepts for: '{getattr(self.state, 'user_prompt', '')[:50]}...'",
-            "generate_image": f"Creating educational medical illustration: '{getattr(self.state, 'image_generation_prompt', '')[:100]}...'",
-            "load_current_session_history": "Loading conversation history for current session",
-            "evaluate_cross_session_history_need": "Evaluating if previous conversations from other sessions are relevant",
-            "search_cross_session_history": "Searching previous conversations across all sessions for relevant context",
-            "diagnose": "AI model analyzing all available information to provide comprehensive response...",
-            "store_user_message": "Storing user message in chat history for current session",
-            "store_assistant_response": "Saving AI response and reasoning to chat history",
-            "evaluate_query_complexity": "Determining if the user query requires full processing or can be answered directly",
-            "evaluate_icd_parsing_need": "Analyzing if differential diagnoses should be generated for this patient case",
-            "parse_icd": "Computing differential diagnoses with confidence scores using Bayesian analysis...",
-            # Timeline flow descriptions
-            "extract_timeline_events": "Analyzing medical history to identify key temporal events and time periods...",
-            "retrieve_timeline_chunks": "Retrieving medical records for each timeline event from patient history...",
-            "generate_timeline_bubbles": "Generating timeline explanations with clinical findings and citations...",
-            "merge_timeline_results": "Formatting timeline for display with temporal sequence...",
-            # Note generation flow descriptions
-            "load_note_template": f"Loading clinical note template ({getattr(self.state, 'note_template_type_preference', 'journal entry')})...",
-            "generate_note_section": f"Generating clinical note sections using template: {getattr(getattr(self.state, 'note_template', None), 'name', 'Unknown') if getattr(self.state, 'note_template', None) else 'Unknown'}...",
-            "format_note_response": "Formatting generated note for final review and export...",
-            "store_note_metadata": "Recording note generation metadata (GDPR-compliant, no content stored)...",
-        }
+    def _get_localized_message(self, status: str, language: str) -> str:
+        """
+        Get a localized message for the current step and status.
 
-        return descriptions.get(step_lower, f"Starting {self.step_name}...")
-    
-    def _get_completed_description(self, step_lower: str) -> str:
-        """Get detailed completion descriptions with actual results."""
-        if step_lower == "load_user_context":
+        Args:
+            status: The status ("starting", "completed", etc.)
+            language: Language code ("en" or "sv")
+
+        Returns:
+            Localized message with context from state
+        """
+        step_lower = self.step_name.lower()
+
+        # Gather context data from state for message formatting
+        kwargs: dict[str, Any] = {}
+
+        # Common context
+        if hasattr(self.state, 'user_prompt') and self.state.user_prompt:
+            kwargs['query'] = self.state.user_prompt[:50]
+
+        # User context
+        if step_lower == "load_user_context" and status == "completed":
             user_context = getattr(self.state, 'user_context', None)
             if user_context:
-                return f"Loaded user context: {user_context.display_name} ({user_context.role.value})"
+                kwargs['user_name'] = user_context.display_name
+                kwargs['user_role'] = user_context.role.value
+                return get_message(step_lower, "completed", language, **kwargs)
             else:
-                return "No user context found - continuing as anonymous user"
-        
-        elif step_lower == "evaluate_query_complexity":
-            requires_full_processing = getattr(self.state, 'requires_full_processing', False)
-            return f"Query complexity evaluated - {'requires full processing' if requires_full_processing else 'can be answered directly'}"
-        elif step_lower == "evaluate_icd_parsing_need":
-            icd_parsing_needed = getattr(self.state, 'should_parse_icd_codes', False)
-            return f"{'Will generate differential diagnoses' if icd_parsing_needed else 'No differential diagnoses needed'} for this query"
-        elif step_lower == "parse_icd":
-            # Show the final count of differential diagnoses generated
+                return get_message(step_lower, "completed_anonymous", language)
+
+        # Patient context
+        elif step_lower == "fetch_patient" and status == "completed":
+            patient_ctx = getattr(self.state, 'patient_ctx', None)
+            if patient_ctx:
+                kwargs['patient_name'] = patient_ctx.name
+                kwargs['patient_age'] = patient_ctx.age
+                kwargs['patient_sex'] = patient_ctx.sex
+                return get_message(step_lower, "completed", language, **kwargs)
+            else:
+                return get_message(step_lower, "failed", language)
+
+        # Retrieval context
+        elif step_lower == "intelligent_retrieve_chunks":
+            if status == "completed":
+                chunks = getattr(self.state, 'retrieved_chunks', [])
+                chunk_analysis = getattr(self.state, 'chunk_analysis', {})
+                kwargs['chunk_count'] = len(chunks)
+
+                if chunk_analysis:
+                    kwargs['total_processed'] = chunk_analysis.get("total_chunks_processed", 0)
+                    reasoning = getattr(self.state, 'retrieval_reasoning', "")
+                    if reasoning:
+                        kwargs['reasoning'] = reasoning[:100]
+                        return get_message(step_lower, "completed_with_reasoning", language, **kwargs)
+
+                return get_message(step_lower, "completed", language, **kwargs)
+
+        # Web search
+        elif step_lower == "perform_web_search" and status == "completed":
+            web_response = getattr(self.state, 'web_search_response', None)
+            if web_response and web_response.results:
+                kwargs['count'] = len(web_response.results)
+                return get_message(step_lower, "completed", language, **kwargs)
+            else:
+                return get_message(step_lower, "failed", language)
+
+        # Evaluation steps with conditional completions
+        elif step_lower in ["evaluate_web_search_need", "evaluate_image_generation_need",
+                           "evaluate_query_complexity", "evaluate_icd_parsing_need"]:
+            if status == "completed":
+                # Determine which completion message to use
+                if step_lower == "evaluate_web_search_need":
+                    needed = getattr(self.state, 'web_search_performed', False)
+                elif step_lower == "evaluate_image_generation_need":
+                    needed = getattr(self.state, 'image_generation_needed', False)
+                elif step_lower == "evaluate_query_complexity":
+                    needed = getattr(self.state, 'requires_full_processing', False)
+                else:  # evaluate_icd_parsing_need
+                    needed = getattr(self.state, 'should_parse_icd_codes', False)
+
+                completion_status = "completed_needed" if needed else "completed_not_needed"
+                if step_lower == "evaluate_query_complexity":
+                    completion_status = "completed_full" if needed else "completed_simple"
+
+                return get_message(step_lower, completion_status, language, **kwargs)
+
+        # Differential diagnoses
+        elif step_lower == "parse_icd" and status == "completed":
             parsed_response = getattr(self.state, 'parsed_response', None)
             if parsed_response and hasattr(parsed_response, 'differential') and parsed_response.differential:
                 diag_count = len(parsed_response.differential)
-                diag_names = [d.diagnosis_name for d in parsed_response.differential[:3]]  # Show first 3
+                diag_names = [d.diagnosis_name for d in parsed_response.differential[:3]]
                 names_display = ", ".join(diag_names)
                 if diag_count > 3:
-                    names_display += f" and {diag_count - 3} more"
-                return f"Generated {diag_count} differential diagnoses: {names_display}"
+                    and_more = "och" if language == "sv" else "and"
+                    names_display += f" {and_more} {diag_count - 3} " + ("fler" if language == "sv" else "more")
+                kwargs['count'] = diag_count
+                kwargs['diagnoses'] = names_display
+                return get_message(step_lower, "completed", language, **kwargs)
             else:
-                return "No differential diagnoses generated"
-        elif step_lower == "fetch_patient":
-            patient_ctx = getattr(self.state, 'patient_ctx', None)
-            if patient_ctx:
-                return f"Successfully loaded patient: {patient_ctx.name}, Age: {patient_ctx.age}, Sex: {patient_ctx.sex}"
-            else:
-                return "Patient data retrieval failed"
-        
-        elif step_lower == "store_patient_chunks":
-            return "Successfully stored patient data chunks (demographics, vitals, labs, journal entries)"
-        
-        elif step_lower == "intelligent_retrieve_chunks":
-            chunks = getattr(self.state, 'retrieved_chunks', [])
-            reasoning = getattr(self.state, 'retrieval_reasoning', "")
-            chunk_analysis = getattr(self.state, 'chunk_analysis', {})
-            
-            # Build detailed completion message
-            if chunk_analysis and chunk_analysis.get("method") != "error":
-                total_processed = chunk_analysis.get("total_chunks_processed", 0)
-                final_selected = len(chunks)
-                method = chunk_analysis.get("method", "unknown")
-                
-                # Handle refinement case
-                if method == "bi_cross_mmr_gate_refining":
-                    refinement_attempt = chunk_analysis.get("refinement_attempt", 1)
-                    refined_queries = chunk_analysis.get("refined_queries", [])
-                    details = f"Processed {total_processed} chunks, selected {final_selected} relevant ones. Refining search (attempt {refinement_attempt}) with {len(refined_queries)} new queries"
+                return get_message(step_lower, "completed_none", language)
+
+        # Session history
+        elif step_lower in ["load_current_session_history", "search_cross_session_history"]:
+            if status == "completed":
+                if step_lower == "load_current_session_history":
+                    history = getattr(self.state, 'chat_history', [])
                 else:
-                    details = f"Processed {total_processed} chunks, selected {final_selected} relevant ones using {method}"
-                
-                # Add reasoning if available
-                if reasoning:
-                    details += f". {reasoning[:100]}..."
-                
-                return details
-            else:
-                # Fallback for error cases or missing analysis
-                return f"Selected {len(chunks)} relevant clinical data chunks. {reasoning[:100]}..." if reasoning else f"Selected {len(chunks)} relevant clinical data chunks"
-        
-        elif step_lower == "evaluate_web_search_need":
-            needs_search = getattr(self.state, 'web_search_performed', False)
-            return f"Web search {'required' if needs_search else 'not needed'} - {'will search latest medical literature' if needs_search else 'sufficient information available locally'}"
-        
-        elif step_lower == "perform_web_search":
-            web_response = getattr(self.state, 'web_search_response', None)
-            if web_response and web_response.results:
-                return f"Found {len(web_response.results)} relevant medical sources: {web_response.summary[:100]}..."
-            else:
-                return "Web search completed but no relevant sources found"
-        
-        elif step_lower == "evaluate_image_generation_need":
-            needs_image = getattr(self.state, 'image_generation_needed', False)
-            prompt = getattr(self.state, 'image_generation_prompt', "")
-            return f"Image generation {'recommended' if needs_image else 'not needed'}{f': {prompt[:100]}...' if prompt else ''}"
-        
-        elif step_lower == "generate_image":
-            generated_image = getattr(self.state, 'generated_image', None)
-            if generated_image:
-                return f"Successfully generated medical illustration (ID: {generated_image.generation_id})"
-            else:
-                return "Image generation failed - continuing without illustration"
-        
-        elif step_lower == "load_current_session_history":
-            history = getattr(self.state, 'chat_history', [])
-            return f"Loaded {len(history)} previous messages from current session"
-        
-        elif step_lower == "evaluate_cross_session_history_need":
-            needs_search = getattr(self.state, 'needs_cross_session_search', False)
-            return f"Cross-session history {'needed' if needs_search else 'not required'} - {'will search previous conversations' if needs_search else 'current context sufficient'}"
-        
-        elif step_lower == "search_cross_session_history":
-            history = getattr(self.state, 'relevant_cross_session_history', [])
-            return f"Found {len(history)} relevant messages from previous sessions"
-        
-        elif step_lower == "diagnose":
-            response = getattr(self.state, 'llm_response', None)
-            if response:
-                return f"AI analysis complete - generated {len(response.content)} character response"
-            else:
-                return "AI analysis completed"
-        
-        elif step_lower == "store_user_message":
-            return "User message stored in chat history"
-        
-        elif step_lower == "store_assistant_response":
-            reasoning_stored = hasattr(self.state, 'llm_reasoning') and getattr(self.state, 'llm_reasoning', '') # type: ignore
-            image_stored = hasattr(self.state, 'generated_image') and getattr(self.state, 'generated_image', None)
-            return f"AI response saved to chat history{' with reasoning' if reasoning_stored else ''}{' and image' if image_stored else ''}"
+                    history = getattr(self.state, 'relevant_cross_session_history', [])
+                kwargs['count'] = len(history)
+                return get_message(step_lower, "completed", language, **kwargs)
 
-        # Note generation flow completions
+        # Note generation
         elif step_lower == "load_note_template":
-            note_template = getattr(self.state, 'note_template', None)
-            if note_template and hasattr(note_template, 'name'):
-                return f"Loaded template: {note_template.name} ({note_template.template_type.value})"
-            else:
-                return "Template loaded successfully"
+            if status == "starting":
+                template_type = getattr(self.state, 'note_template_type_preference', 'journal entry')
+                kwargs['template_type'] = template_type
+            elif status == "completed":
+                note_template = getattr(self.state, 'note_template', None)
+                if note_template and hasattr(note_template, 'name'):
+                    kwargs['template_name'] = note_template.name
+                    return get_message(step_lower, "completed", language, **kwargs)
 
-        elif step_lower == "generate_note_section":
+        elif step_lower == "generate_note_section" and status == "completed":
             note_sections = getattr(self.state, 'note_sections', {})
             note_content = getattr(self.state, 'note_final_content', '')
-            if note_content:
-                return f"Generated {len(note_sections)} note sections - Total: {len(note_content)} characters"
-            else:
-                return "Note section generation completed"
+            kwargs['section_count'] = len(note_sections)
+            kwargs['char_count'] = len(note_content)
+            return get_message(step_lower, "completed", language, **kwargs)
 
-        elif step_lower == "format_note_response":
-            note_content = getattr(self.state, 'note_final_content', '')
+        elif step_lower == "format_note_response" and status == "completed":
             note_sources = getattr(self.state, 'note_sources', [])
-            if note_content:
-                return f"Note formatted for review - {len(note_content)} characters with {len(note_sources)} citations"
-            else:
-                return "Note formatting completed"
+            kwargs['citation_count'] = len(note_sources)
+            return get_message(step_lower, "completed", language, **kwargs)
 
-        elif step_lower == "store_note_metadata":
-            generation_id = getattr(self.state, 'note_generation_id', None)
-            if generation_id:
-                return f"Metadata stored for generation ID: {generation_id[:8]}..."
-            else:
-                return "Note metadata stored successfully"
+        # Timeline
+        elif step_lower == "extract_timeline_events" and status == "completed":
+            # Assuming timeline events are stored somewhere
+            kwargs['count'] = getattr(self.state, 'timeline_event_count', 0)
+            return get_message(step_lower, "completed", language, **kwargs)
 
-        # Fallback
-        return f"Completed {self.step_name}"
+        # PDF/XML documents
+        elif step_lower in ["fetch_pdfs", "fetch_xmls"] and status == "completed":
+            # Get document counts from the correct state fields
+            if step_lower == "fetch_pdfs":
+                count = len(getattr(self.state, 'uploaded_pdfs', []))
+            else:
+                count = len(getattr(self.state, 'uploaded_xmls', []))
+            kwargs['count'] = count
+            if count > 0:
+                return get_message(step_lower, "completed", language, **kwargs)
+            else:
+                return get_message(step_lower, "failed", language)
+
+        # Query classification
+        elif step_lower == "classify_query_intent" and status == "completed":
+            intent = getattr(self.state, 'query_intent', 'general')
+            kwargs['intent'] = intent
+            return get_message(step_lower, "completed", language, **kwargs)
+
+        # Default: Use the basic message from the translation system
+        return get_message(step_lower, status, language, **kwargs)
 
 def streaming_step(step_name: str, description: str = "", is_long_running: bool = False, estimated_time: str = ""):
     """
     Decorator to automatically handle streaming status for graph nodes.
-    Now generates detailed descriptions automatically based on step name and state.
+
+    Generates localized descriptions automatically based on step name and state.
+    The description parameter is kept for backward compatibility but is no longer required.
+
+    Args:
+        step_name: Identifier for this step (e.g., "fetch_patient", "diagnose")
+        description: Legacy parameter, kept for compatibility (not used)
+        is_long_running: Whether this is a long-running operation
+        estimated_time: Estimated time for long-running operations
+
+    Example:
+        @streaming_step("fetch_patient")
+        async def fetch_patient_data(state):
+            # ... implementation
+            return state
     """
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def wrapper(state, *args, **kwargs):
             async with StreamingStatus(state, step_name, description, is_long_running, estimated_time) as status:
-                # For long-running operations, update status periodically
-                if is_long_running:
-                    status.update(f"Processing {step_name} (this may take {estimated_time})", "in_progress")
-                
+                # For long-running operations, optionally update status with time estimate
+                if is_long_running and estimated_time:
+                    language = getattr(state, 'user_language', 'en')
+                    processing_text = "Bearbetar" if language == "sv" else "Processing"
+                    may_take_text = "detta kan ta" if language == "sv" else "this may take"
+                    status.update(f"{processing_text} {step_name} ({may_take_text} {estimated_time})", "in_progress")
+
                 result = await func(state, *args, **kwargs)
                 return result
         return wrapper

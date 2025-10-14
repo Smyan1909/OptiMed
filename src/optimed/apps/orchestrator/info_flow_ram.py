@@ -144,6 +144,7 @@ class FlowState(BaseModel):
     user_id: str | None = None
     user_context: User | None = None
     session_id: str | None = None
+    user_language: str = "en"  # Detected language from user prompt (en, sv, etc.)
 
 
     # Reasoning fields
@@ -295,6 +296,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         """
         Create language policy system message based on detected language.
         Detects language from current query + recent chat history for better accuracy.
+        Also sets state.user_language for use by streaming decorators and other components.
         """
         try:
             from optimed.core.lang import detect_language_code
@@ -309,6 +311,9 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             active_lang = detect_language_code(detection_text or "")
         except Exception:
             active_lang = "en"
+
+        # Set the language in state for streaming decorators and other components
+        state.user_language = active_lang
 
         return ChatMessage(
             role=ChatRole.SYSTEM,
@@ -5953,6 +5958,14 @@ Content:
             )
 
         prompt = user_prompt or self._default_prompt
+
+        # Detect language from user prompt for localized streaming messages
+        try:
+            from optimed.core.lang import detect_language_code
+            detected_language = detect_language_code(prompt or "")
+        except Exception:
+            detected_language = "en"
+
         # Increase recursion limit for long flows (general summary has ~35 steps)
         config = {"recursion_limit": 50}
 
@@ -5962,14 +5975,16 @@ Content:
                 "user_prompt": prompt,
                 "chat_mode": chat_mode,
                 "user_id": user_id,
-                "session_id": session_id
+                "session_id": session_id,
+                "user_language": detected_language
             }, config=config)
         else:
             data = await self._compiled_graph.ainvoke({
                 "user_prompt": prompt,
                 "chat_mode": chat_mode,
                 "user_id": user_id,
-                "session_id": session_id
+                "session_id": session_id,
+                "user_language": detected_language
             }, config=config)
 
         if PERSISTENCE_ENABLED and session_id and user_id:
@@ -6008,14 +6023,21 @@ Content:
                 session_id_final = session_id
 
             prompt = user_prompt or self._default_prompt
-            
+
+            # Detect language from user prompt for localized streaming messages
+            try:
+                from optimed.core.lang import detect_language_code
+                detected_language = detect_language_code(prompt or "")
+            except Exception:
+                detected_language = "en"
+
             # Create a queue for real-time streaming chunks
             chunk_queue = asyncio.Queue()
-            
+
             # Define the streaming callback to emit chunks immediately
             async def stream_callback(chunk_update):
                 await chunk_queue.put(chunk_update)
-            
+
             # Create initial input
             if patient is not None:
                 initial_input = {
@@ -6025,6 +6047,7 @@ Content:
                     "info_retrieval_mode": diagnostic_mode if not chat_mode else "chat",
                     "user_id": user_id,
                     "session_id": session_id_final,
+                    "user_language": detected_language,
                     "should_stream_response": True,  # Indicate we want streaming
                     "stream_callback": stream_callback,  # Pass the callback
                     "is_note_generation_flow": is_note_generation_flow,
@@ -6039,6 +6062,7 @@ Content:
                     "info_retrieval_mode": diagnostic_mode if not chat_mode else "chat",
                     "user_id": user_id,
                     "session_id": session_id_final,
+                    "user_language": detected_language,
                     "should_stream_response": True,  # Indicate we want streaming
                     "stream_callback": stream_callback,  # Pass the callback
                     "is_note_generation_flow": is_note_generation_flow,

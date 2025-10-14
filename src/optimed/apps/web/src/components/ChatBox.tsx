@@ -90,6 +90,15 @@ interface GeneralSummaryResults {
   deepdive?: string;
 }
 
+interface FocusedSummaryResults {
+  diagnoses?: string;
+  events?: string;
+  medications?: string;
+  objective_data?: string;
+  assessment?: string;
+  next_steps?: string;
+}
+
 interface Message {
   sender: "user" | "system";
   text: string;
@@ -101,6 +110,9 @@ interface Message {
   differentialDiagnoses?: DifferentialDiagnosis[];
   sbarResults?: SBARResults;
   generalSummaryResults?: GeneralSummaryResults;
+  focusedSummaryResults?: FocusedSummaryResults;
+  focusedAspect?: string;
+  focusedAspectIcon?: string;
   timelineResults?: TimelineResults;
 }
 
@@ -2266,21 +2278,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         </div>
       )}
 
-      {/* Generate Note Button - Show when there's conversation history */}
-      {messages.length > 0 && !isStreaming && (
-        <div className="absolute left-4 bottom-24 z-20 pointer-events-auto">
-          <button
-            onClick={() => setNoteGenerationDialogOpen(true)}
-            className="flex items-center gap-2 px-4 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-all shadow-lg hover:shadow-xl"
-            title="Generate clinical note from conversation"
-          >
-            <FileEdit className="h-5 w-5" />
-            <span>Generate Note</span>
-          </button>
-        </div>
-      )}
-
-      {/* Note Generation Dialog */}
+      {/* Note Generation Dialog - Used for auto-generated notes from chat interface */}
       <NoteGenerationDialog
         open={noteGenerationDialogOpen}
         onOpenChange={(open) => {
