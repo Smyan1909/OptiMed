@@ -90,6 +90,15 @@ interface GeneralSummaryResults {
   deepdive?: string;
 }
 
+interface FocusedSummaryResults {
+  diagnoses?: string;
+  events?: string;
+  medications?: string;
+  objective_data?: string;
+  assessment?: string;
+  next_steps?: string;
+}
+
 interface Message {
   sender: "user" | "system";
   text: string;
@@ -101,6 +110,9 @@ interface Message {
   differentialDiagnoses?: DifferentialDiagnosis[];
   sbarResults?: SBARResults;
   generalSummaryResults?: GeneralSummaryResults;
+  focusedSummaryResults?: FocusedSummaryResults;
+  focusedAspect?: string;
+  focusedAspectIcon?: string;
   timelineResults?: TimelineResults;
 }
 
