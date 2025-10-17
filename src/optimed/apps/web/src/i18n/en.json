@@ -441,13 +441,59 @@
     "supportingEvidence": "Supporting Evidence:",
     "disclaimer": "These differential diagnoses are AI-generated suggestions based on available clinical data. Always correlate with clinical judgment and additional testing as appropriate."
   },
-  "sbar": {
-    "title": "SBAR Summary",
-    "situation": "Situation",
-    "background": "Background",
+  "profile": {
+    "title": "My Profile",
+    "subtitle": "Manage your personal information and account details.",
+    "loading": "Loading profile...",
+    "information": "Profile Information",
+    "edit": "Edit Profile",
+    "cancel": "Cancel",
+    "save": "Save Changes",
+    "firstName": "First Name",
+    "lastName": "Last Name",
+    "displayName": "Display Name",
+    "email": "Email",
+    "department": "Department",
+    "role": "Role",
+    "userId": "User ID",
+    "username": "Username",
+    "notSet": "Not set"
+  },
+  "dicomViewer": {
+    "basicInformation": "Basic Information",
+    "pixelStatistics": "Pixel Statistics",
+    "dicomMetadata": "DICOM Metadata",
+    "noImageSelected": "No DICOM Image Selected"
+  },
+  "ehrCallback": {
+    "completing": "Completing EHR Authentication",
+    "successful": "EHR Authentication Successful!",
+    "failed": "Authentication Failed"
+  },
+  "focusedSummary": {
+    "summary": "Summary",
+    "diagnoses": "Diagnoses",
+    "keyEvents": "Key Events",
+    "currentMedications": "Current Medications",
+    "latestObjectiveData": "Latest Objective Data",
     "assessment": "Assessment",
-    "recommendation": "Recommendation",
-    "disclaimer": "SBAR (Situation, Background, Assessment, Recommendation) is a structured communication framework used in healthcare to ensure clear and comprehensive information exchange. This summary provides educational information and should not replace professional medical judgment."
+    "nextSteps": "Next Steps / Outstanding Issues"
+  },
+  "generalSummary": {
+    "patientSummary": "Patient Summary",
+    "reasoningSteps": "Reasoning Steps:",
+    "detailedReasoning": "Detailed Reasoning:"
+  },
+  "templateManagement": {
+    "noteTemplates": "Note Templates",
+    "templateFields": "Template Fields"
+  },
+  "debugEnv": {
+    "title": "Environment Variables Debug",
+    "apiBaseUrl": "NEXT_PUBLIC_API_BASE_URL:",
+    "fhirServer": "NEXT_PUBLIC_DEFAULT_FHIR_SERVER:",
+    "infoMode": "NEXT_PUBLIC_INFO_MODE:",
+    "allKeys": "All process.env keys starting with NEXT_PUBLIC:"
   },
   "sessions": {
     "headers": {
@@ -734,6 +780,7 @@
     "Diphtheria vaccination": "Diphtheria vaccination",
     "Polio vaccination": "Polio vaccination",
     "MMR vaccination": "MMR vaccination",
+    "Zoster vaccination": "Zoster vaccination",
 
     "Patient encounter procedure": "Patient encounter procedure",
     "Encounter for check up": "Encounter for check up",

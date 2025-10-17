@@ -2354,18 +2354,29 @@ Keep queries concise and medically precise.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                List the top 5-7 active problems - EXACTLY 6-12 words per bullet.
+                List the top 5-7 problems divided into two subsections - EXACTLY 6-12 words per bullet.
 
                 USER QUERY: {state.user_prompt}
 
-                Format (ONE line per problem, 6-12 words ONLY):
+                Format with TWO subsections (most relevant and frequently mentioned at the top of each list):
+
+                ### Current Conditions
+                • **Disease name** (year) - status - {citation_format}
+
+                ### Previous Conditions
                 • **Disease name** (year) - status - {citation_format}
 
                 Example (count the words - each is 6-12 words):
+                ### Current Conditions
                 • **T2DM** (diagnosed 2012) **HbA1c 68** moderate control (2024-01-15) - According to Clinical Notes, page 3 (11 words)
+
                 • **HTN** (since 2005) **BP 145/85** on treatment (2024-01-15 09:00) - According to Medications, page 1 (12 words)
-                • **COPD GOLD II** (2018) stable uses inhaler (reviewed 2024-01-10) - According to Diagnosis List, page 2 (11 words)
+
                 • **CKD Stage 3a** (2020) **eGFR 52** monitored (2024-01-15 08:30) - According to Lab Results, page 5 (11 words)
+
+                ### Previous Conditions
+                • **COPD GOLD II** (2018) stable uses inhaler (reviewed 2024-01-10) - According to Diagnosis List, page 2 (11 words)
+
                 • **Osteoarthritis** bilateral knees uses walker (assessed 2023-12-20) - According to Notes, page 8 (10 words)
 
                 Add blank line between each bullet point for readability.
@@ -2374,16 +2385,18 @@ Keep queries concise and medically precise.
                 "_Fråga om fler diagnoser_" (Swedish) or "_Ask for more diagnoses_" (English)
 
                 MANDATORY:
+                - Divide into **Current Conditions** (active/ongoing) and **Previous Conditions** (resolved/historical)
+                - Sort by relevance and frequency - most mentioned/relevant at the top of each subsection
                 - Use **bold** markdown for disease names and key values
                 - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when the information was recorded/updated
                 - Each bullet MUST be between 6-12 words (excluding date and citation) - COUNT THEM
                 - Cite page numbers: {citation_format}
-                CRITICAL: 5-7 problems. 6-12 words each. Include dates. Blank lines between bullets. Very scannable.
+                CRITICAL: 5-7 problems total across both subsections. 6-12 words each. Include dates. Blank lines between bullets. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List top 5-7 active problems. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List top 5-7 problems divided into two subsections: **Current Conditions** and **Previous Conditions**. Sort by relevance and frequency within each subsection. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 

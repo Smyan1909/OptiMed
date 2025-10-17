@@ -227,6 +227,7 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
   patientId,
   sessionId
 }) => {
+  const t = useTranslations('generalSummary');
   // Create separate lookup hooks for each card to avoid conflicts
   const snapshotLookup = useLookup({ patientId, sessionId });
   const problemsLookup = useLookup({ patientId, sessionId });
@@ -261,7 +262,7 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
     <div className="mt-6 space-y-4">
       <div className="flex items-center gap-3 mb-4">
         <User className="h-6 w-6 text-blue-600" />
-        <h3 className="text-xl font-semibold text-gray-900">Patient Summary</h3>
+        <h3 className="text-xl font-semibold text-gray-900">{t('patientSummary')}</h3>
         <Badge variant="secondary" className="text-sm px-3 py-1">
           Comprehensive View
         </Badge>
@@ -394,7 +395,7 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
 
             {reasoningSteps && reasoningSteps.length > 0 && (
               <div className="mb-4">
-                <h5 className="text-sm font-medium text-gray-700 mb-2">Reasoning Steps:</h5>
+                <h5 className="text-sm font-medium text-gray-700 mb-2">{t('reasoningSteps')}</h5>
                 <ul className="space-y-2">
                   {reasoningSteps.map((step, index) => (
                     <li key={index} className="text-sm text-gray-600 bg-white p-2 rounded border-l-4 border-blue-200">
@@ -407,7 +408,7 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
 
             {reasoning && (
               <div>
-                <h5 className="text-sm font-medium text-gray-700 mb-2">Detailed Reasoning:</h5>
+                <h5 className="text-sm font-medium text-gray-700 mb-2">{t('detailedReasoning')}</h5>
                 <div className="text-sm text-gray-600 bg-white p-3 rounded border">
                   {reasoning}
                 </div>

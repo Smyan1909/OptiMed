@@ -441,6 +441,60 @@
     "supportingEvidence": "Stödjande evidens:",
     "disclaimer": "Dessa differentialdiagnoser är AI-genererade förslag baserade på tillgängliga kliniska data. Korrelera alltid med kliniskt omdöme och kompletterande undersökningar vid behov."
   },
+  "profile": {
+    "title": "Min profil",
+    "subtitle": "Hantera din personliga information och kontoinställningar.",
+    "loading": "Laddar profil...",
+    "information": "Profilinformation",
+    "edit": "Redigera profil",
+    "cancel": "Avbryt",
+    "save": "Spara ändringar",
+    "firstName": "Förnamn",
+    "lastName": "Efternamn",
+    "displayName": "Visningsnamn",
+    "email": "E-post",
+    "department": "Avdelning",
+    "role": "Roll",
+    "userId": "Användar-ID",
+    "username": "Användarnamn",
+    "notSet": "Inte angett"
+  },
+  "dicomViewer": {
+    "basicInformation": "Grundläggande information",
+    "pixelStatistics": "Pixelstatistik",
+    "dicomMetadata": "DICOM-metadata",
+    "noImageSelected": "Ingen DICOM-bild vald"
+  },
+  "ehrCallback": {
+    "completing": "Slutför EHR-autentisering",
+    "successful": "EHR-autentisering lyckades!",
+    "failed": "Autentisering misslyckades"
+  },
+  "focusedSummary": {
+    "summary": "Sammanfattning",
+    "diagnoses": "Diagnoser",
+    "keyEvents": "Viktiga händelser",
+    "currentMedications": "Aktuella läkemedel",
+    "latestObjectiveData": "Senaste objektiva data",
+    "assessment": "Bedömning",
+    "nextSteps": "Nästa steg / Öppna frågor"
+  },
+  "generalSummary": {
+    "patientSummary": "Patientsammanfattning",
+    "reasoningSteps": "Resonemangssteg:",
+    "detailedReasoning": "Detaljerat resonemang:"
+  },
+  "templateManagement": {
+    "noteTemplates": "Anteckningsmallar",
+    "templateFields": "Mallfält"
+  },
+  "debugEnv": {
+    "title": "Miljövariabler (debug)",
+    "apiBaseUrl": "NEXT_PUBLIC_API_BASE_URL:",
+    "fhirServer": "NEXT_PUBLIC_DEFAULT_FHIR_SERVER:",
+    "infoMode": "NEXT_PUBLIC_INFO_MODE:",
+    "allKeys": "Alla process.env-nycklar som börjar med NEXT_PUBLIC:"
+  },
   "sessions": {
     "headers": {
       "chatSessions": "Chatsessioner",
@@ -726,6 +780,7 @@
     "Diphtheria vaccination": "Difteri-vaccination",
     "Polio vaccination": "Poliovaccination",
     "MMR vaccination": "MPR-vaccination",
+    "Zoster vaccination": "Zostervaccination",
 
     "Patient encounter procedure": "Vårdkontakt",
     "Encounter for check up": "Kontrollbesök",
