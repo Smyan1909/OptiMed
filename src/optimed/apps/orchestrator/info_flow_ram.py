@@ -2360,21 +2360,21 @@ Keep queries concise and medically precise.
 
                 Format with TWO subsections (most relevant and frequently mentioned at the top of each list):
 
-                ### Current Conditions
+                ## Current Conditions
                 • **Disease name** (year) - status - {citation_format}
 
-                ### Previous Conditions
+                ## Previous Conditions
                 • **Disease name** (year) - status - {citation_format}
 
                 Example (count the words - each is 6-12 words):
-                ### Current Conditions
+                ## Current Conditions
                 • **T2DM** (diagnosed 2012) **HbA1c 68** moderate control (2024-01-15) - According to Clinical Notes, page 3 (11 words)
 
                 • **HTN** (since 2005) **BP 145/85** on treatment (2024-01-15 09:00) - According to Medications, page 1 (12 words)
 
                 • **CKD Stage 3a** (2020) **eGFR 52** monitored (2024-01-15 08:30) - According to Lab Results, page 5 (11 words)
 
-                ### Previous Conditions
+                ## Previous Conditions
                 • **COPD GOLD II** (2018) stable uses inhaler (reviewed 2024-01-10) - According to Diagnosis List, page 2 (11 words)
 
                 • **Osteoarthritis** bilateral knees uses walker (assessed 2023-12-20) - According to Notes, page 8 (10 words)
@@ -2438,20 +2438,33 @@ Keep queries concise and medically precise.
                     citation_format = '"According to [Document], page X"'
 
                 prompt = f"""
-                List 5-7 most important medications - EXACTLY 6-12 words per bullet.
+                List 5-7 most important/recent medications divided into two subsections - EXACTLY 6-12 words per bullet.
 
                 USER QUERY: {state.user_prompt}
 
-                Format (ONE line per medication, 6-12 words ONLY):
-                • **Drug name dose** - purpose - {citation_format}
-                • ⚠️ **High-risk drug dose** - purpose - {citation_format}  ← Mark anticoagulants, opioids, insulin with ⚠️
+                Format with TWO subsections (most relevant at the top of each list):
+
+                ## Current Medications
+                • **Drug name dose** (started YYYY-MM-DD) - purpose - {citation_format}
+                • **Drug 250mg→500mg** ↑ (increased YYYY-MM-DD) - purpose/reason for change - {citation_format}
+                • 🔺 **Drug dose** (dates) - purpose ALLERGY NOTED - {citation_format}  ← Add 🔺 if patient has documented allergy
+                • ⚠️ **High-risk drug dose** (dates) - purpose - {citation_format}  ← Mark anticoagulants, opioids, insulin with ⚠️
+
+                ### Prior Medications
+                • **Drug dose** (started YYYY-MM-DD, stopped YYYY-MM-DD) - reason for discontinuation - {citation_format}
 
                 Example (count the words - each is 6-12 words):
-                • **Metformin 1000mg 2x/day** - diabetes **HbA1c 68** (prescribed 2024-01-10) - According to Medication List, page 2 (10 words)
-                • ⚠️ **Warfarin 5mg** - anticoagulation **INR 2.5** (checked 2024-01-15 09:00) - According to Medication List, page 2 (10 words)
-                • **Enalapril 10mg** - blood pressure **BP 145/85** (started 2023-11-01) - According to Medication List, page 2 (10 words)
-                • **Salbutamol inhaler** - COPD relief PRN (refilled 2024-01-05) - According to Medication List, page 3 (9 words)
-                • **Simvastatin 20mg** - cholesterol **LDL 3.2** (checked 2024-01-15) - According to Medication List, page 2 (9 words)
+                ### Current Medications
+                • **Metformin 1000mg 2x/day** (started 2024-01-10) - diabetes control **HbA1c 68** - According to Medication List, page 2 (10 words)
+
+                • **Enalapril 5mg→10mg** ↑ (increased 2024-01-15) - BP control dose adjustment - According to Medication List, page 2 (10 words)
+
+                • 🔺 **Penicillin 250mg→500mg** ↑ (increased 2024-01-05) - infection worsened ALLERGY NOTED - According to Medication List, page 3 (11 words)
+
+                • ⚠️ **Warfarin 5mg** (started 2023-11-01) - anticoagulation **INR 2.5** - According to Medication List, page 2 (9 words)
+
+                ## Prior Medications
+                • **Simvastatin 20mg** (2020-05-15 to 2023-12-20) - switched to atorvastatin - According to Medication List, page 5 (10 words)
 
                 Add blank line between each bullet point for readability.
 
@@ -2459,16 +2472,21 @@ Keep queries concise and medically precise.
                 "_Fråga om fler läkemedel_" (Swedish) or "_Ask for more medications_" (English)
 
                 MANDATORY:
+                - Divide into **Current Medications** (active) and **Prior Medications** (discontinued, only if relevant to user query)
+                - Sort by relevance - most relevant at the top of each subsection
                 - Use **bold** markdown for drug names, doses, and key values
-                - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when medication was prescribed/checked/refilled
-                - Each bullet MUST be between 6-12 words (excluding date and citation) - COUNT THEM
+                - Show dose changes as **OldDose→NewDose** with ↑ (increase) or ↓ (decrease) arrows
+                - Add 🔺 if patient has documented allergy to that medication (check allergy mentions in data)
+                - CRITICAL: Include start date for all medications; include end date for discontinued medications
+                - For dose changes, include the date of change and brief explanation
+                - Each bullet MUST be between 6-12 words (excluding dates and citation) - COUNT THEM
                 - Cite page numbers: {citation_format}
-                CRITICAL: 5-7 most important meds. 6-12 words each. Include dates. Blank lines between bullets. Prioritize high-risk. Very scannable.
+                CRITICAL: 5-7 most important meds total. 6-12 words each. Include dates. Blank lines between bullets. Prior medications only if relevant. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most important medications. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Prioritize medications by clinical importance.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most important medications divided into two subsections: **Current Medications** (active) and **Prior Medications** (discontinued, only if relevant to user query). Sort by relevance within each subsection. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. Add 🔺 if patient has documented allergy to the medication (check allergy mentions in data). Show dose changes as **OldDose→NewDose** with ↑/↓ arrows. CRITICAL: Include start dates for all medications, end dates for discontinued ones, and change dates for dose adjustments. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Explain why doses or medications were changed.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates. Prior medications only if relevant to query.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
