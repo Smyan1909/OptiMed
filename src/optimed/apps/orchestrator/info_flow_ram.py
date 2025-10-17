@@ -1874,11 +1874,11 @@ Keep queries concise and medically precise.
                 • **Patient awareness**: [patient's understanding/concern level]
 
                 Example:
-                • **Chief complaint**: Patient presenting with **chest pain** radiating to left arm, started 2 hours ago - Enligt Triageanteckning, sida 1
-                • **Current presentation**: **BP 145/90**, HR 92, **diaphoretic**, appears anxious - Enligt Vitalparametrar, sida 2
-                • **Acute symptoms**: **Crushing substernal pain** 7/10, worse with exertion, not relieved by rest - Enligt Anamnes, sida 1
-                • **Recent changes**: Pain intensity **increased** from 5/10 to 7/10 in last hour - Enligt Uppföljning, sida 3
-                • **Immediate concerns**: **Possible ACS**, needs urgent ECG and troponin - Enligt Bedömning, sida 2
+                • **Chief complaint**: Patient presenting with **chest pain** radiating to left arm, started 2 hours ago - According to Triage Notes, page 1
+                • **Current presentation**: **BP 145/90**, HR 92, **diaphoretic**, appears anxious - According to Vital Signs, page 2
+                • **Acute symptoms**: **Crushing substernal pain** 7/10, worse with exertion, not relieved by rest - According to History, page 1
+                • **Recent changes**: Pain intensity **increased** from 5/10 to 7/10 in last hour - According to Follow-up, page 3
+                • **Immediate concerns**: **Possible ACS**, needs urgent ECG and troponin - According to Assessment, page 2
 
                 Add blank line between each bullet point for readability.
 
@@ -1974,13 +1974,13 @@ Keep queries concise and medically precise.
                 • **Baseline function**: [usual activity level and independence]
 
                 Example:
-                • **Patient demographics**: **73M**, lives alone, retired, has home care 2x/week - Enligt Sociala anteckningar, sida 2
-                • **Major diagnoses**: **T2DM** (2010), **HTN** (2005), **CKD Stage 3a** (2018), **COPD GOLD II** (2015) - Enligt Diagnoslista, sida 1
-                • **Critical medications**: **Warfarin 5mg** (INR target 2-3), **Metformin 1000mg 2x/day**, **Enalapril 20mg** - Enligt Läkemedelslista, sida 1
-                • **Important allergies**: **Penicillin** (rash and angioedema 2008) - Enligt Allergier, sida 1
-                • **Past procedures**: **Hip replacement** (2015), **Cholecystectomy** (2001) - Enligt Operationsprotokoll, sida 3
-                • **Recent admissions**: **COPD exacerbation** (3 months ago), treated with antibiotics and steroids - Enligt Epikris, sida 8
-                • **Baseline function**: **Independent** with ADLs, uses walker for mobility, cognitively intact - Enligt Funktionsstatus, sida 4
+                • **Patient demographics**: **73M**, lives alone, retired, has home care 2x/week - According to Social Notes, page 2
+                • **Major diagnoses**: **T2DM** (2010), **HTN** (2005), **CKD Stage 3a** (2018), **COPD GOLD II** (2015) - According to Diagnosis List, page 1
+                • **Critical medications**: **Warfarin 5mg** (INR target 2-3), **Metformin 1000mg 2x/day**, **Enalapril 20mg** - According to Medication List, page 1
+                • **Important allergies**: **Penicillin** (rash and angioedema 2008) - According to Allergies, page 1
+                • **Past procedures**: **Hip replacement** (2015), **Cholecystectomy** (2001) - According to Surgical Records, page 3
+                • **Recent admissions**: **COPD exacerbation** (3 months ago), treated with antibiotics and steroids - According to Discharge Summary, page 8
+                • **Baseline function**: **Independent** with ADLs, uses walker for mobility, cognitively intact - According to Functional Status, page 4
 
                 Add blank line between each bullet point for readability.
 
@@ -2076,11 +2076,11 @@ Keep queries concise and medically precise.
                 • **Critical concerns**: [narrative of urgent issues if any]
 
                 Example:
-                • **Clinical impression**: Patient with **multimorbidity** showing signs of **worsening diabetic control** with HbA1c rising from 62 to 68 mmol/mol over 6 months - Enligt Provresultat, sida 5
-                • **Current status**: Generally **stable** but requires medication adjustment and closer monitoring of renal function given declining eGFR - Enligt Journalanteckning, sida 15
-                • **Key findings**: **Declining kidney function** (eGFR 64→52), **elevated blood pressure** (145/85), and **worsening glycemic control** suggest need for therapeutic review - Enligt Provresultat, sida 5
-                • **Risk assessment**: **Moderate-to-high risk** for cardiovascular events given uncontrolled HTN, T2DM, and CKD Stage 3a - Enligt Riskbedömning, sida 8
-                • **Critical concerns**: Patient on **warfarin** with recent **INR fluctuations**, requires close monitoring to prevent bleeding complications - Enligt Läkemedelslista, sida 2
+                • **Clinical impression**: Patient with **multimorbidity** showing signs of **worsening diabetic control** with HbA1c rising from 62 to 68 mmol/mol over 6 months - According to Lab Results, page 5
+                • **Current status**: Generally **stable** but requires medication adjustment and closer monitoring of renal function given declining eGFR - According to Clinical Notes, page 15
+                • **Key findings**: **Declining kidney function** (eGFR 64→52), **elevated blood pressure** (145/85), and **worsening glycemic control** suggest need for therapeutic review - According to Lab Results, page 5
+                • **Risk assessment**: **Moderate-to-high risk** for cardiovascular events given uncontrolled HTN, T2DM, and CKD Stage 3a - According to Risk Assessment, page 8
+                • **Critical concerns**: Patient on **warfarin** with recent **INR fluctuations**, requires close monitoring to prevent bleeding complications - According to Medication List, page 2
 
                 Add blank line between each bullet point for readability.
 
@@ -2177,13 +2177,13 @@ Keep queries concise and medically precise.
                 • **Safety measures**: [precautions and risk mitigation]
 
                 Example:
-                • **Urgent interventions**: Obtain **12-lead ECG** immediately, establish **IV access**, give **aspirin 300mg** if not contraindicated - Enligt Akutrutin, sida 1
-                • **Diagnostic workup**: **Troponin** at 0 and 3 hours, **chest X-ray**, continuous **cardiac monitoring** - Enligt Utredningsprotokoll, sida 3
-                • **Treatment adjustments**: Consider **nitroglycerin SL** for chest pain, hold **metformin** if contrast study needed - Enligt Behandlingsriktlinjer, sida 5
-                • **Monitoring plan**: **Vital signs q15min**, monitor for **arrhythmias**, assess **pain response** to treatment - Enligt Övervakningsrutin, sida 2
-                • **Consultation needs**: **Cardiology** consult for possible ACS, consider **interventional** if STEMI criteria met - Enligt Konsultationsriktlinjer, sida 4
-                • **Follow-up timing**: Reassess after **troponin results**, plan disposition based on findings - Enligt Uppföljningsplan, sida 6
-                • **Safety measures**: Keep patient **NPO**, ensure **resuscitation equipment** at bedside, discuss **code status** if not documented - Enligt Säkerhetsrutiner, sida 7
+                • **Urgent interventions**: Obtain **12-lead ECG** immediately, establish **IV access**, give **aspirin 300mg** if not contraindicated - According to Emergency Protocol, page 1
+                • **Diagnostic workup**: **Troponin** at 0 and 3 hours, **chest X-ray**, continuous **cardiac monitoring** - According to Diagnostic Protocol, page 3
+                • **Treatment adjustments**: Consider **nitroglycerin SL** for chest pain, hold **metformin** if contrast study needed - According to Treatment Guidelines, page 5
+                • **Monitoring plan**: **Vital signs q15min**, monitor for **arrhythmias**, assess **pain response** to treatment - According to Monitoring Protocol, page 2
+                • **Consultation needs**: **Cardiology** consult for possible ACS, consider **interventional** if STEMI criteria met - According to Consultation Guidelines, page 4
+                • **Follow-up timing**: Reassess after **troponin results**, plan disposition based on findings - According to Follow-up Plan, page 6
+                • **Safety measures**: Keep patient **NPO**, ensure **resuscitation equipment** at bedside, discuss **code status** if not documented - According to Safety Procedures, page 7
 
                 Add blank line between each bullet point for readability.
 
@@ -2270,20 +2270,14 @@ Keep queries concise and medically precise.
                 Format as 5-7 bullet points with bold headers:
                 • **Demographics:** [Age, sex] - {citation_format}
                 • **Living Situation:** [Living arrangement, occupation/status] - {citation_format}
-                • **Active Conditions:** [Top 3-4 diagnoses] - {citation_format}
-                • **Key Medications:** [Most important 2-3 medications] - {citation_format}
-                • **Recent Labs/Vitals:** [Most relevant values] - {citation_format}
                 • **Functional Status:** [Mobility and independence level] - {citation_format}
                 • **Social Support:** [Care situation] - {citation_format}
 
                 Example:
-                • **Demographics:** **73M** (recorded 2024-01-15) - Enligt Journalanteckning, sida 1
-                • **Living Situation:** Lives alone, **retired teacher** (recorded 2023-12-10) - Enligt Sociala anteckningar, sida 2
-                • **Active Conditions:** **T2DM**, **HTN**, **COPD GOLD II**, **CKD Stage 3a** (updated 2024-01-10) - Enligt Diagnoslista, sida 1
-                • **Key Medications:** **Metformin 1000mg 2x/day**, **Enalapril 20mg**, **Warfarin 5mg** (as of 2024-01-15) - Enligt Läkemedelslista, sida 1
-                • **Recent Labs/Vitals:** **HbA1c 68 mmol/mol**, **BP 145/85**, **eGFR 52** (2024-01-15 08:30) - Enligt Provresultat, sida 5
-                • **Functional Status:** **Independent** with ADLs, uses walker (assessed 2023-11-20) - Enligt Funktionsstatus, sida 4
-                • **Social Support:** **Home care** 2x/week (started 2023-10-01) - Enligt Vårdplan, sida 3
+                • **Demographics:** **73M** (recorded 2024-01-15) - According to Clinical Notes, page 1
+                • **Living Situation:** Lives alone, **retired teacher** (recorded 2023-12-10) - According to Social Notes, page 2
+                • **Functional Status:** **Independent** with ADLs, uses walker (assessed 2023-11-20) - According to Functional Status, page 4
+                • **Social Support:** **Home care** 2x/week (started 2023-10-01) - According to Care Plan, page 3
 
                 MANDATORY:
                 - Each bullet must have a bold header followed by colon
@@ -2368,11 +2362,11 @@ Keep queries concise and medically precise.
                 • **Disease name** (year) - status - {citation_format}
 
                 Example (count the words - each is 6-12 words):
-                • **T2DM** (diagnosed 2012) **HbA1c 68** moderate control (2024-01-15) - Enligt Journalanteckning, sida 3 (11 words)
-                • **HTN** (since 2005) **BP 145/85** on treatment (2024-01-15 09:00) - Enligt Läkemedel, sida 1 (12 words)
-                • **COPD GOLD II** (2018) stable uses inhaler (reviewed 2024-01-10) - Enligt Diagnoslista, sida 2 (11 words)
-                • **CKD Stage 3a** (2020) **eGFR 52** monitored (2024-01-15 08:30) - Enligt Provresultat, sida 5 (11 words)
-                • **Osteoarthritis** bilateral knees uses walker (assessed 2023-12-20) - Enligt Anteckning, sida 8 (10 words)
+                • **T2DM** (diagnosed 2012) **HbA1c 68** moderate control (2024-01-15) - According to Clinical Notes, page 3 (11 words)
+                • **HTN** (since 2005) **BP 145/85** on treatment (2024-01-15 09:00) - According to Medications, page 1 (12 words)
+                • **COPD GOLD II** (2018) stable uses inhaler (reviewed 2024-01-10) - According to Diagnosis List, page 2 (11 words)
+                • **CKD Stage 3a** (2020) **eGFR 52** monitored (2024-01-15 08:30) - According to Lab Results, page 5 (11 words)
+                • **Osteoarthritis** bilateral knees uses walker (assessed 2023-12-20) - According to Notes, page 8 (10 words)
 
                 Add blank line between each bullet point for readability.
 
@@ -2440,11 +2434,11 @@ Keep queries concise and medically precise.
                 • ⚠️ **High-risk drug dose** - purpose - {citation_format}  ← Mark anticoagulants, opioids, insulin with ⚠️
 
                 Example (count the words - each is 6-12 words):
-                • **Metformin 1000mg 2x/day** - diabetes **HbA1c 68** (prescribed 2024-01-10) - Enligt Läkemedelslista, sida 2 (10 words)
-                • ⚠️ **Warfarin 5mg** - anticoagulation **INR 2.5** (checked 2024-01-15 09:00) - Enligt Läkemedelslista, sida 2 (10 words)
-                • **Enalapril 10mg** - blood pressure **BP 145/85** (started 2023-11-01) - Enligt Läkemedelslista, sida 2 (10 words)
-                • **Salbutamol inhaler** - COPD relief PRN (refilled 2024-01-05) - Enligt Läkemedelslista, sida 3 (9 words)
-                • **Simvastatin 20mg** - cholesterol **LDL 3.2** (checked 2024-01-15) - Enligt Läkemedelslista, sida 2 (9 words)
+                • **Metformin 1000mg 2x/day** - diabetes **HbA1c 68** (prescribed 2024-01-10) - According to Medication List, page 2 (10 words)
+                • ⚠️ **Warfarin 5mg** - anticoagulation **INR 2.5** (checked 2024-01-15 09:00) - According to Medication List, page 2 (10 words)
+                • **Enalapril 10mg** - blood pressure **BP 145/85** (started 2023-11-01) - According to Medication List, page 2 (10 words)
+                • **Salbutamol inhaler** - COPD relief PRN (refilled 2024-01-05) - According to Medication List, page 3 (9 words)
+                • **Simvastatin 20mg** - cholesterol **LDL 3.2** (checked 2024-01-15) - According to Medication List, page 2 (9 words)
 
                 Add blank line between each bullet point for readability.
 
@@ -2511,11 +2505,11 @@ Keep queries concise and medically precise.
                 • **Lab/Vital**: old → **new** (arrow) note - {citation_format}
 
                 Example (count the words - each is 6-12 words):
-                • **HbA1c**: 62 (2023-07-10) → **68 mmol/mol** (2024-01-15) (↑) worsening control - Enligt Provresultat, sida 5 (12 words)
-                • **eGFR**: 64 (2023-06-15) → **52** (2024-01-15 08:30) (↓) declining kidney function - Enligt Provresultat, sida 5 (12 words)
-                • **Weight**: 98 (2023-12-01) → **96 kg** (2024-01-15 09:00) (↓) intentional loss - Enligt Vitalparametrar, sida 2 (12 words)
-                • **BP**: 135/80 (2023-11-10) → **145/85** (2024-01-15 09:00) (↑) target 140/90 - Enligt Vitalparametrar, sida 3 (12 words)
-                • **INR**: 2.8 (2024-01-08) → **2.5** (2024-01-15 09:00) (↓) now in range - Enligt Provresultat, sida 6 (12 words)
+                • **HbA1c**: 62 (2023-07-10) → **68 mmol/mol** (2024-01-15) (↑) worsening control - According to Lab Results, page 5 (12 words)
+                • **eGFR**: 64 (2023-06-15) → **52** (2024-01-15 08:30) (↓) declining kidney function - According to Lab Results, page 5 (12 words)
+                • **Weight**: 98 (2023-12-01) → **96 kg** (2024-01-15 09:00) (↓) intentional loss - According to Vital Signs, page 2 (12 words)
+                • **BP**: 135/80 (2023-11-10) → **145/85** (2024-01-15 09:00) (↑) target 140/90 - According to Vital Signs, page 3 (12 words)
+                • **INR**: 2.8 (2024-01-08) → **2.5** (2024-01-15 09:00) (↓) now in range - According to Lab Results, page 6 (12 words)
 
                 Add blank line between each bullet point for readability.
 
@@ -2582,11 +2576,11 @@ Keep queries concise and medically precise.
                 • **Event name** (year) - outcome - {citation_format}
 
                 Example (count the words - each is 6-12 words):
-                • **Cholecystectomy** (2001) uncomplicated recovery - Enligt Operationsprotokoll, sida 1 (7 words)
-                • **Hip replacement** (2015) left hip good function - Enligt Operationsprotokoll, sida 3 (9 words)
-                • **Stroke** (2020) left hemisphere mild residual weakness - Enligt Journalanteckning, sida 12 (10 words)
-                • **MI** (2018) anterior wall stent placed - Enligt Epikris, sida 5 (9 words)
-                • **Appendectomy** (1995) no complications - Enligt Anamnes, sida 2 (6 words)
+                • **Cholecystectomy** (2001) uncomplicated recovery - According to Surgical Records, page 1 (7 words)
+                • **Hip replacement** (2015) left hip good function - According to Surgical Records, page 3 (9 words)
+                • **Stroke** (2020) left hemisphere mild residual weakness - According to Clinical Notes, page 12 (10 words)
+                • **MI** (2018) anterior wall stent placed - According to Discharge Summary, page 5 (9 words)
+                • **Appendectomy** (1995) no complications - According to History, page 2 (6 words)
 
                 Add blank line between each bullet point for readability.
 
@@ -2652,12 +2646,12 @@ Keep queries concise and medically precise.
                 • ⚠️ **Risk/Alert** - implication - {citation_format}
 
                 Example (count the words - each is 6-12 words):
-                • ⚠️ **Penicillin allergy** - rash and angioedema (documented 2015-03-20) - Enligt Journalanteckning, sida 1 (9 words)
-                • ⚠️ **Warfarin therapy** - **INR 2.5** bleeding risk (checked 2024-01-15 09:00) - Enligt Läkemedelslista, sida 2 (10 words)
-                • ⚠️ **Fall risk** - 3 falls last year uses walker (assessed 2024-01-10) - Enligt Anteckning, sida 8 (12 words)
-                • ⚠️ **DNR documented** - patient wishes respected (signed 2023-11-15) - Enligt Vårdplan, sida 1 (8 words)
-                • ⚠️ **Renal impairment** - **eGFR 52** adjust meds (tested 2024-01-15 08:30) - Enligt Provresultat, sida 5 (9 words)
-                • ⚠️ **Lives alone** - no regular support (noted 2024-01-05) - Enligt Sociala anteckningar, sida 3 (9 words)
+                • ⚠️ **Penicillin allergy** - rash and angioedema (documented 2015-03-20) - According to Clinical Notes, page 1 (9 words)
+                • ⚠️ **Warfarin therapy** - **INR 2.5** bleeding risk (checked 2024-01-15 09:00) - According to Medication List, page 2 (10 words)
+                • ⚠️ **Fall risk** - 3 falls last year uses walker (assessed 2024-01-10) - According to Notes, page 8 (12 words)
+                • ⚠️ **DNR documented** - patient wishes respected (signed 2023-11-15) - According to Care Plan, page 1 (8 words)
+                • ⚠️ **Renal impairment** - **eGFR 52** adjust meds (tested 2024-01-15 08:30) - According to Lab Results, page 5 (9 words)
+                • ⚠️ **Lives alone** - no regular support (noted 2024-01-05) - According to Social Notes, page 3 (9 words)
 
                 Add blank line between each bullet point for readability.
 
@@ -2724,11 +2718,11 @@ Keep queries concise and medically precise.
                 • **Encounter type** (date) - key action/outcome - {citation_format}
 
                 Example:
-                • **GP visit** (2025-04-15 10:30) - adjusted enalapril to 20mg, ordered HbA1c - Enligt Journalanteckning, sida 15
-                • **Cardiology consult** (2025-02-20 14:00) - echo stable, continue current meds - Enligt Specialistbrev, sida 2
-                • **Lab draw** (2025-03-10 08:15) - routine monitoring, awaiting results - Enligt Provremiss, sida 8
-                • **Phone consult** (2025-01-25) - discussed weight loss, advised diet - Enligt Telefonanteckning, sida 4
-                • **ER visit** (2024-12-28 22:45) - chest pain, ruled out MI, discharged - Enligt Epikris, sida 12
+                • **GP visit** (2025-04-15 10:30) - adjusted enalapril to 20mg, ordered HbA1c - According to Clinical Notes, page 15
+                • **Cardiology consult** (2025-02-20 14:00) - echo stable, continue current meds - According to Specialist Letter, page 2
+                • **Lab draw** (2025-03-10 08:15) - routine monitoring, awaiting results - According to Lab Order, page 8
+                • **Phone consult** (2025-01-25) - discussed weight loss, advised diet - According to Phone Notes, page 4
+                • **ER visit** (2024-12-28 22:45) - chest pain, ruled out MI, discharged - According to Discharge Summary, page 12
 
                 Add blank line between each bullet point for readability.
 
@@ -3537,9 +3531,9 @@ Format exactly as markdown bullet points with **bold** highlighting:
 • **Prognosis:** [Overall outlook with risk factors in **bold**] - {citation_format}
 
 Example:
-• **Current Status:** Diabetes **moderately controlled** with HbA1c **68 mmol/mol**, above target - Enligt Provresultat, sida 5
-• **Trend:** **Worsening glycemic control** over past 6 months (HbA1c 62→68), suggests **treatment intensification** needed - Enligt Trendanalys, sida 8
-• **Prognosis:** **Moderate risk** of complications given current control, requires **medication adjustment** and closer monitoring - Enligt Bedömning, sida 10
+• **Current Status:** Diabetes **moderately controlled** with HbA1c **68 mmol/mol**, above target - According to Lab Results, page 5
+• **Trend:** **Worsening glycemic control** over past 6 months (HbA1c 62→68), suggests **treatment intensification** needed - According to Trend Analysis, page 8
+• **Prognosis:** **Moderate risk** of complications given current control, requires **medication adjustment** and closer monitoring - According to Assessment, page 10
 
 RULES:
 - Use 3 bullet points as shown above
@@ -3618,10 +3612,10 @@ Format exactly as markdown bullet points with **bold** highlighting:
 • **[Action type]**: [Details with timing if available] - {citation_format}
 
 Example:
-• **Follow-up HbA1c**: Test due in **3 months** (April 2024) - Enligt Uppföljningsplan, sida 5
-• **Medication review**: Consider **metformin dose increase** to 1000mg BID - Enligt Behandlingsrekommendation, sida 8
-• **Endocrinology referral**: Pending consult for **insulin initiation** if HbA1c not improved - Enligt Remiss, sida 3
-• **Retinal screening**: **Annual** diabetic eye exam overdue, schedule ASAP - Enligt Screeningprogram, sida 10
+• **Follow-up HbA1c**: Test due in **3 months** (April 2024) - According to Follow-up Plan, page 5
+• **Medication review**: Consider **metformin dose increase** to 1000mg BID - According to Treatment Recommendations, page 8
+• **Endocrinology referral**: Pending consult for **insulin initiation** if HbA1c not improved - According to Referral, page 3
+• **Retinal screening**: **Annual** diabetic eye exam overdue, schedule ASAP - According to Screening Program, page 10
 
 RULES:
 - List 2-4 items ONLY related to {state.focused_aspect}
