@@ -2274,7 +2274,7 @@ Keep queries concise and medically precise.
                 • **Social Support:** [Care situation] - {citation_format}
 
                 Example:
-                • **Demographics:** **73M** (recorded 2024-01-15) - According to Clinical Notes, page 1
+                • **Demographics:** **73 Male** (recorded 2024-01-15) - According to Clinical Notes, page 1
                 • **Living Situation:** Lives alone, **retired teacher** (recorded 2023-12-10) - According to Social Notes, page 2
                 • **Functional Status:** **Independent** with ADLs, uses walker (assessed 2023-11-20) - According to Functional Status, page 4
                 • **Social Support:** **Home care** 2x/week (started 2023-10-01) - According to Care Plan, page 3
