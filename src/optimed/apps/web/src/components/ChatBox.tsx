@@ -314,13 +314,6 @@ interface MessageContentProps {
 }
 
 const MessageContent = ({ text, isUser, patientId, sessionId, citations = {} }: MessageContentProps) => {
-  // Debug logging
-  useEffect(() => {
-    console.log('MessageContent - citations:', citations);
-    console.log('MessageContent - citation keys:', Object.keys(citations || {}));
-    console.log('MessageContent - text preview:', text?.substring(0, 200));
-  }, [citations, text]);
-
   // Custom components for markdown rendering
   const markdownComponents = {
     // Links

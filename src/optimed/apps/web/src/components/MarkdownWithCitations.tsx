@@ -27,17 +27,8 @@ export const MarkdownWithCitations: React.FC<MarkdownWithCitationsProps> = ({
   const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Debug logging
-  React.useEffect(() => {
-    console.log('MarkdownWithCitations - citations:', citations);
-    console.log('MarkdownWithCitations - content preview:', content?.substring(0, 200));
-    console.log('MarkdownWithCitations - citation count:', Object.keys(citations || {}).length);
-  }, [citations, content]);
-
   const handleCitationClick = (citationId: string) => {
-    console.log('Citation clicked:', citationId);
     const citation = citations[citationId];
-    console.log('Citation data:', citation);
     if (citation) {
       setSelectedCitation(citation);
       setIsModalOpen(true);
@@ -60,14 +51,10 @@ export const MarkdownWithCitations: React.FC<MarkdownWithCitationsProps> = ({
     const parts: React.ReactNode[] = [];
     let lastIndex = 0;
     let match;
-    let matchCount = 0;
 
     while ((match = citationPattern.exec(text)) !== null) {
-      matchCount++;
       const citationId = match[1];
       const matchIndex = match.index;
-
-      console.log(`Found citation [${citationId}] at index ${matchIndex}`);
 
       // Add text before the citation
       if (matchIndex > lastIndex) {
@@ -77,7 +64,6 @@ export const MarkdownWithCitations: React.FC<MarkdownWithCitationsProps> = ({
       // Add the citation as a clickable superscript
       if (citations[citationId]) {
         const citation = citations[citationId];
-        console.log(`Rendering citation [${citationId}]:`, citation);
         parts.push(
           <sup
             key={`cite-${citationId}-${matchIndex}`}
@@ -85,10 +71,8 @@ export const MarkdownWithCitations: React.FC<MarkdownWithCitationsProps> = ({
             onClick={(e) => {
               e.stopPropagation();
               e.preventDefault();
-              console.log('SUP CLICKED!', citationId);
               handleCitationClick(citationId);
             }}
-            onMouseEnter={() => console.log('Mouse entered citation', citationId)}
             title={`Source: ${citation.document}${citation.page ? `, Page ${citation.page}` : ''}`}
             style={{ cursor: 'pointer' }}
           >
@@ -96,15 +80,12 @@ export const MarkdownWithCitations: React.FC<MarkdownWithCitationsProps> = ({
           </sup>
         );
       } else {
-        console.log(`Citation [${citationId}] not found in citations object`);
         // Keep the original if citation not found
         parts.push(match[0]);
       }
 
       lastIndex = matchIndex + match[0].length;
     }
-
-    console.log(`Total citations found in text: ${matchCount}`);
 
     // Add remaining text after last citation
     if (lastIndex < text.length) {

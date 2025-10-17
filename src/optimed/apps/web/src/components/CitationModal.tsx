@@ -52,7 +52,7 @@ export const CitationModal: React.FC<CitationModalProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg font-semibold">
             <FileText className="h-5 w-5 text-blue-600" />
@@ -82,10 +82,10 @@ export const CitationModal: React.FC<CitationModalProps> = ({
             </div>
           )}
 
-          {/* Excerpt */}
+          {/* Full Content */}
           <div>
-            <div className="text-sm font-medium text-gray-700 mb-1">Excerpt</div>
-            <div className="text-sm text-gray-900 bg-gray-50 px-3 py-3 rounded border border-gray-200 leading-relaxed max-h-48 overflow-y-auto">
+            <div className="text-sm font-medium text-gray-700 mb-1">Source Content</div>
+            <div className="text-sm text-gray-900 bg-gray-50 px-4 py-3 rounded border border-gray-200 leading-relaxed max-h-96 overflow-y-auto whitespace-pre-wrap">
               {citation.excerpt}
             </div>
           </div>

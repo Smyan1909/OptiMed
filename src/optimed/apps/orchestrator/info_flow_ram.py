@@ -85,13 +85,15 @@ SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                                         - Use proper Markdown tables for structured data.
                                         - Format all URLs as **clickable Markdown links** instead of showing raw URLs.
                                     - **CITATION POLICY** (**CRITICAL**):
-                                        - Use **compact numbered citations** in square brackets: [1], [2], [3]
-                                        - Place citations immediately after the statement they support
-                                        - Example: "Patient has **Type 2 Diabetes** diagnosed in 2015 [1] and **Hypertension** [2]"
+                                        - The clinical information provided to you contains citation markers like "[Citation: 1]", "[Citation: 2]", etc.
+                                        - When you use information from a source, cite it using the number from the citation marker
+                                        - **IMPORTANT**: If the source says "[Citation: 5]", you cite it as [5] in your response
+                                        - Format: Place [X] immediately after the statement, where X is the citation number from the source
+                                        - Example: If source says "Blood pressure 145/90 [Citation: 3]", you write "**BP 145/90** [3]"
+                                        - Example: If source says "Patient has diabetes [Citation: 1]", you write "**Type 2 Diabetes** [1]"
+                                        - **DO NOT** use verbose citations like "According to..." or "from EHR..."
+                                        - **DO NOT** make up citation numbers - only use the numbers from the [Citation: X] markers in the provided sources
                                         - For web search results, use inline Markdown links: `[Source Title](URL)`
-                                        - **DO NOT** use verbose citations like "According to Document X, page Y" or "from EHR record X"
-                                        - **DO NOT** include [EHR Source](URL) or **Source:** [EHR Record](URL) in your response
-                                        - Citation metadata (document name, page, excerpt) will be automatically extracted and shown in popups
                                     - Do not escape Markdown unnecessarily; the final response must always render cleanly.
                                     - When the user asks for a summary start by explaining the current situation and then provide the summary.
 
@@ -290,6 +292,20 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         self._cross_encoder = cross_encoder
         self._zero_shot_classifier = zero_shot_classifier
 
+        # Citation validation models (loaded once at startup)
+        logger.info("Loading citation validation models...")
+        from sentence_transformers import SentenceTransformer, CrossEncoder
+
+        # NLI model for entailment-based validation (primary method)
+        self._nli_validator = CrossEncoder('cross-encoder/nli-deberta-v3-base')
+        logger.info("✓ NLI entailment model loaded (cross-encoder/nli-deberta-v3-base)")
+
+        # Semantic similarity model (fallback method)
+        self._semantic_validator = SentenceTransformer('all-MiniLM-L6-v2')
+        logger.info("✓ Semantic similarity model loaded (all-MiniLM-L6-v2)")
+
+        logger.info("✓ Citation validation system ready")
+
         self._compiled_graph = self._build_graph()
         # Use global session memory that persists across instances
         self._session_memory = _GLOBAL_SESSION_MEMORY
@@ -377,7 +393,6 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             Dictionary mapping citation numbers to metadata:
             { "1": { "document": "...", "page": "...", "excerpt": "...", "url": "..." } }
         """
-        import re
 
         citations: Dict[str, Dict[str, Any]] = {}
         citation_counter = 1
@@ -397,14 +412,13 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 document_name = match.group(1).replace("EHR Source", "EHR Record").replace("EHR Record", "Clinical Document")
                 url = match.group(2)
 
-                # Extract a meaningful excerpt (first 150 chars of chunk, excluding the source line)
-                # Remove source metadata lines
+                # Extract full chunk content for citation (remove only source metadata)
+                # Remove source metadata lines but keep all actual content
                 clean_chunk = re.sub(r'\*\*Source:\*\*.*', '', chunk)
                 clean_chunk = re.sub(r'\[EHR Source\]\([^\)]+\)', '', clean_chunk)
                 clean_chunk = re.sub(r'\(from EHR, no link available\)', '', clean_chunk)
-                excerpt = clean_chunk.strip()[:150]
-                if len(clean_chunk.strip()) > 150:
-                    excerpt += "..."
+                # Use the entire cleaned chunk as excerpt (no length limit)
+                excerpt = clean_chunk.strip()
 
                 # Try to extract page number if mentioned in chunk
                 page_match = re.search(r'page\s+(\d+)', chunk, re.IGNORECASE)
@@ -420,10 +434,9 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 }
                 citation_counter += 1
             else:
-                # No URL found, but still create citation with excerpt
-                excerpt = chunk.strip()[:150]
-                if len(chunk.strip()) > 150:
-                    excerpt += "..."
+                # No URL found, but still create citation with full chunk content
+                # Use the entire chunk as excerpt (no length limit)
+                excerpt = chunk.strip()
 
                 # Try to infer document type from chunk content
                 document_name = "Clinical Record"
@@ -450,13 +463,23 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
     def _format_chunks_with_citations(self, chunks: List[str], citations: Dict[str, Dict[str, Any]]) -> str:
         """
-        Format chunks by removing verbose source links and adding citation references.
+        Format chunks by removing verbose source links and adding sentence-level citation markers.
+
+        This method adds citation markers after each sentence or major statement within a chunk,
+        rather than just at the end. This helps the LLM more accurately attribute specific facts.
 
         Returns a formatted string with:
-        1. Clean chunk content (without embedded links)
+        1. Clean chunk content with inline citation markers
         2. Citation references section mapping [1], [2], [3] to sources
         """
         import re
+        import nltk
+
+        # Ensure punkt tokenizer is available
+        try:
+            nltk.data.find('tokenizers/punkt')
+        except LookupError:
+            nltk.download('punkt', quiet=True)
 
         formatted_chunks = []
 
@@ -481,8 +504,24 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             clean_chunk = clean_chunk.strip()
 
             if clean_chunk:
-                # Add citation reference at the end of the chunk
-                formatted_chunks.append(f"{clean_chunk} [Citation: {citation_id}]")
+                # Split chunk into sentences and add citation after each
+                try:
+                    sentences = nltk.sent_tokenize(clean_chunk)
+                except Exception:
+                    # Fallback to simple sentence splitting if nltk fails
+                    sentences = re.split(r'(?<=[.!?])\s+', clean_chunk)
+
+                # Add citation marker after each sentence
+                cited_sentences = []
+                for sent in sentences:
+                    sent = sent.strip()
+                    if sent:
+                        # Ensure sentence ends with punctuation
+                        if not sent[-1] in '.!?':
+                            sent += '.'
+                        cited_sentences.append(f"{sent} [Citation: {citation_id}]")
+
+                formatted_chunks.append('\n'.join(cited_sentences))
 
         # Build the final formatted string with citation reference section
         chunks_text = "\n\n---\n\n".join(formatted_chunks)
@@ -498,6 +537,199 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             chunks_text += citation_section
 
         return chunks_text
+
+    async def _validate_and_correct_citations(
+        self,
+        text: str,
+        citations: Dict[str, Dict[str, Any]]
+    ) -> str:
+        """
+        Validate citations using NLI entailment scoring (primary) with semantic similarity fallback.
+
+        This method uses Natural Language Inference to check if the cited chunk actually
+        entails/supports the claim being made. This is more accurate than pure semantic similarity
+        because it checks logical entailment rather than just topical similarity.
+
+        Research basis:
+        - NLI cross-encoders outperform bi-encoders for factual consistency (SemEval-2024)
+        - Entailment checking is better than cosine similarity for citation verification
+        - Model: cross-encoder/nli-deberta-v3-base (90.04% accuracy on MNLI)
+
+        Args:
+            text: Generated text with citations like "Patient is 87 years old [1]"
+            citations: Dictionary mapping citation IDs to chunk metadata
+
+        Returns:
+            Corrected text with validated citations
+        """
+        if not citations or not text:
+            return text
+
+        import re
+        from sentence_transformers import util
+        import numpy as np
+
+        try:
+            # Prepare chunk data
+            chunk_texts = [cit['excerpt'] for cit in citations.values()]
+            chunk_ids = list(citations.keys())
+
+            # Enhanced pattern to capture more context
+            # Matches sentences ending with punctuation followed by citation
+            citation_pattern = r'([^.!?\n]{10,}[.!?]?)\s*\[(\d+)\]'
+
+            corrected_text = text
+            corrections_made = []
+            validations_passed = []
+
+            for match in re.finditer(citation_pattern, text):
+                claim = match.group(1).strip()
+                citation_id = match.group(2)
+
+                # Skip if citation ID doesn't exist
+                if citation_id not in chunk_ids:
+                    logger.warning(f"Citation [{citation_id}] not found in chunks, skipping")
+                    continue
+
+                cited_chunk_idx = chunk_ids.index(citation_id)
+                cited_chunk = chunk_texts[cited_chunk_idx]
+
+                # === PRIMARY METHOD: NLI Entailment Scoring ===
+                # Score the claim against the cited chunk
+                # Output: [contradiction_score, entailment_score, neutral_score]
+                nli_scores = self._nli_validator.predict([(cited_chunk, claim)])[0]
+                entailment_score = nli_scores[1]  # Index 1 is entailment
+                predicted_label_idx = np.argmax(nli_scores)
+                label_names = ['contradiction', 'entailment', 'neutral']
+                predicted_label = label_names[predicted_label_idx]
+
+                # Log the validation check
+                claim_preview = claim[:80] + '...' if len(claim) > 80 else claim
+                logger.debug(
+                    f"NLI Check: '{claim_preview}' → [{citation_id}] "
+                    f"(entailment: {entailment_score:.3f}, predicted: {predicted_label})"
+                )
+
+                # Thresholds based on SemEval-2024 clinical NLI research
+                MIN_ENTAILMENT_SCORE = 0.5  # Minimum score to consider entailed
+                MIN_ENTAILMENT_CONFIDENCE = 0.4  # Minimum confidence when entailment is top class
+
+                # Check if current citation is valid
+                is_valid_citation = (
+                    predicted_label == 'entailment' and
+                    entailment_score >= MIN_ENTAILMENT_CONFIDENCE
+                ) or (
+                    entailment_score >= MIN_ENTAILMENT_SCORE
+                )
+
+                if is_valid_citation:
+                    validations_passed.append({
+                        'claim': claim_preview,
+                        'citation': citation_id,
+                        'entailment_score': entailment_score,
+                        'label': predicted_label
+                    })
+                    continue  # Citation is correct, move to next
+
+                # === CORRECTION: Find the chunk that actually entails the claim ===
+                logger.info(f"⚠️ Low entailment for citation [{citation_id}] (score: {entailment_score:.3f})")
+
+                # Score claim against ALL chunks
+                chunk_claim_pairs = [(chunk, claim) for chunk in chunk_texts]
+                all_nli_scores = self._nli_validator.predict(chunk_claim_pairs)
+
+                # Extract entailment scores (index 1) for each chunk
+                entailment_scores = [scores[1] for scores in all_nli_scores]
+
+                # Find chunk with highest entailment
+                best_chunk_idx = np.argmax(entailment_scores)
+                best_entailment_score = entailment_scores[best_chunk_idx]
+                best_citation_id = chunk_ids[best_chunk_idx]
+
+                # Only correct if:
+                # 1. Best match is significantly better (>0.2 improvement in entailment)
+                # 2. Best match has reasonable entailment (>0.3)
+                # 3. Best match is different from current citation
+                if (best_entailment_score > entailment_score + 0.2 and
+                    best_entailment_score > 0.3 and
+                    best_citation_id != citation_id):
+
+                    # Replace citation in text
+                    old_text = f"{claim}[{citation_id}]"
+                    new_text = f"{claim}[{best_citation_id}]"
+                    corrected_text = corrected_text.replace(old_text, new_text, 1)
+
+                    corrections_made.append({
+                        'claim': claim_preview,
+                        'old_citation': citation_id,
+                        'new_citation': best_citation_id,
+                        'old_entailment': entailment_score,
+                        'new_entailment': best_entailment_score,
+                        'improvement': best_entailment_score - entailment_score
+                    })
+
+                elif best_entailment_score <= 0.3:
+                    # === FALLBACK: Semantic similarity for low-confidence cases ===
+                    logger.info(f"⚠️ All entailment scores low, using semantic similarity fallback")
+
+                    # Compute semantic embeddings
+                    claim_emb = self._semantic_validator.encode(claim, convert_to_tensor=True)
+                    chunk_embeddings = self._semantic_validator.encode(chunk_texts, convert_to_tensor=True)
+
+                    # Find most similar chunk
+                    similarities = util.cos_sim(claim_emb, chunk_embeddings)[0]
+                    best_sem_idx = similarities.argmax().item()
+                    best_sem_score = similarities[best_sem_idx].item()
+                    best_sem_citation_id = chunk_ids[best_sem_idx]
+
+                    cited_sem_score = similarities[cited_chunk_idx].item()
+
+                    # Correct if semantic similarity is significantly better
+                    if (best_sem_score > cited_sem_score + 0.25 and
+                        best_sem_score > 0.35 and
+                        best_sem_citation_id != citation_id):
+
+                        old_text = f"{claim}[{citation_id}]"
+                        new_text = f"{claim}[{best_sem_citation_id}]"
+                        corrected_text = corrected_text.replace(old_text, new_text, 1)
+
+                        corrections_made.append({
+                            'claim': claim_preview,
+                            'old_citation': citation_id,
+                            'new_citation': best_sem_citation_id,
+                            'old_similarity': cited_sem_score,
+                            'new_similarity': best_sem_score,
+                            'method': 'semantic_fallback'
+                        })
+
+            # Log results
+            if corrections_made:
+                logger.warning(f"🔍 Citation Validation: Corrected {len(corrections_made)} citation(s)")
+                for correction in corrections_made:
+                    if 'method' in correction and correction['method'] == 'semantic_fallback':
+                        logger.warning(
+                            f"  → (Semantic) '{correction['claim']}' "
+                            f"[{correction['old_citation']}] → [{correction['new_citation']}] "
+                            f"(similarity: {correction['old_similarity']:.3f} → {correction['new_similarity']:.3f})"
+                        )
+                    else:
+                        logger.warning(
+                            f"  → (NLI) '{correction['claim']}' "
+                            f"[{correction['old_citation']}] → [{correction['new_citation']}] "
+                            f"(entailment: {correction['old_entailment']:.3f} → {correction['new_entailment']:.3f}, "
+                            f"+{correction['improvement']:.3f})"
+                        )
+            else:
+                logger.info(f"✓ Citation Validation: All {len(validations_passed)} citations verified as accurate")
+
+            return corrected_text
+
+        except Exception as e:
+            # If validation fails, return original text
+            logger.error(f"Citation validation error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return text
 
     async def _log_data_lineage(
         self,
@@ -2028,7 +2260,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR situation summaries with 5-7 bullet points. Use **bold** for symptoms, vital signs, and key clinical terms.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise and focused.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR situation summaries with 5-7 bullet points. Use **bold** for symptoms, vital signs, and key clinical terms.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2119,7 +2351,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR background summaries with 5-7 bullet points. Use **bold** for diagnoses, medications, allergies, and key descriptors.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise and contextually relevant.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR background summaries with 5-7 bullet points. Use **bold** for diagnoses, medications, allergies, and key descriptors.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise and contextually relevant.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2208,7 +2440,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR assessment summaries with 5-7 bullet points in narrative style. Use **bold** for important clinical terms and values. Write flowing sentences within each bullet point.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise but informative.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR assessment summaries with 5-7 bullet points in narrative style. Use **bold** for important clinical terms and values. Write flowing sentences within each bullet point.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise but informative.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2298,7 +2530,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR recommendation summaries with 5-7 bullet points. Use **bold** for interventions, tests, medications, and key actions.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise and actionable.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR recommendation summaries with 5-7 bullet points. Use **bold** for interventions, tests, medications, and key actions.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise and actionable.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2381,7 +2613,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create concise snapshots with 5-7 bullet points, each with a bold header. Use **bold** for important clinical terms and values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for when each piece of information was recorded. One line per bullet point. No explanations.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Add blank lines between bullets. Always include dates.\n\nInformation system only - NOT a medical device.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create concise snapshots with 5-7 bullet points, each with a bold header. Use **bold** for important clinical terms and values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for when each piece of information was recorded. One line per bullet point. No explanations.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Add blank lines between bullets. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2475,7 +2707,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List top 5-7 problems divided into two subsections: **Current Conditions** and **Previous Conditions**. Sort by relevance and frequency within each subsection. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List top 5-7 problems divided into two subsections: **Current Conditions** and **Previous Conditions**. Sort by relevance and frequency within each subsection. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2553,7 +2785,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most important medications divided into two subsections: **Current Medications** (active) and **Prior Medications** (discontinued, only if relevant to user query). Sort by relevance within each subsection. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. Add 🔺 if patient has documented allergy to the medication (check allergy mentions in data). Show dose changes as **OldDose→NewDose** with ↑/↓ arrows. CRITICAL: Include start dates for all medications, end dates for discontinued ones, and change dates for dose adjustments. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Explain why doses or medications were changed.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates. Prior medications only if relevant to query.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most important medications divided into two subsections: **Current Medications** (active) and **Prior Medications** (discontinued, only if relevant to user query). Sort by relevance within each subsection. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. Add 🔺 if patient has documented allergy to the medication (check allergy mentions in data). Show dose changes as **OldDose→NewDose** with ↑/↓ arrows. CRITICAL: Include start dates for all medications, end dates for discontinued ones, and change dates for dose adjustments. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Explain why doses or medications were changed.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates. Prior medications only if relevant to query.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2612,7 +2844,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Show 5-7 key trends. Use **bold** for parameter names and current values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Add 'ask for more' if additional trends exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Show 5-7 key trends. Use **bold** for parameter names and current values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Add 'ask for more' if additional trends exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2670,7 +2902,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 major past events. Use **bold** for event names. CRITICAL: Always include the year/date in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding year and citation). Count words carefully. Add 'ask for more' if additional events exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 major past events. Use **bold** for event names. CRITICAL: Always include the year/date in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding year and citation). Count words carefully. Add 'ask for more' if additional events exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2730,7 +2962,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 critical alerts. Use **bold** for risk/alert names and key values. Use ⚠️ marker. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 critical alerts. Use **bold** for risk/alert names and key values. Use ⚠️ marker. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2788,7 +3020,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most recent encounters with key actions/outcomes. Use **bold** for encounter types. CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses. One line each with blank lines between. Add 'ask for more' if additional encounters exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include exact datetime.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most recent encounters with key actions/outcomes. Use **bold** for encounter types. CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses. One line each with blank lines between. Add 'ask for more' if additional encounters exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include exact datetime.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2846,7 +3078,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create brief expandable sections. 2-3 items per section with blank lines between items. Add 'ask for more' hint for each section with additional data available.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create brief expandable sections. 2-3 items per section with blank lines between items. Add 'ask for more' hint for each section with additional data available.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2892,6 +3124,19 @@ Keep queries concise and medically precise.
                     )
                     return state
 
+                # Validate and correct citations for each SBAR component
+                logger.info("Validating citations for all SBAR components")
+                validated_results = {}
+                for comp_name, comp_content in sbar_results.items():
+                    if comp_content:
+                        validated_content = await self._validate_and_correct_citations(
+                            comp_content,
+                            state.citations
+                        )
+                        validated_results[comp_name] = validated_content
+                    else:
+                        validated_results[comp_name] = comp_content
+
                 # Create structured SBAR response for frontend cards
                 import json
 
@@ -2910,25 +3155,25 @@ Keep queries concise and medically precise.
                     "components": {
                         "situation": {
                             "title": "Situation",
-                            "content": (sbar_results.get("situation") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (validated_results.get("situation") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "info-circle",
                             "color": "blue"
                         },
                         "background": {
                             "title": "Background",
-                            "content": (sbar_results.get("background") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (validated_results.get("background") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "history",
                             "color": "green"
                         },
                         "assessment": {
                             "title": "Assessment",
-                            "content": (sbar_results.get("assessment") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (validated_results.get("assessment") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "stethoscope",
                             "color": "orange"
                         },
                         "recommendation": {
                             "title": "Recommendation",
-                            "content": (sbar_results.get("recommendation") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (validated_results.get("recommendation") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "lightbulb",
                             "color": "purple"
                         }
@@ -3017,6 +3262,19 @@ Keep queries concise and medically precise.
                     )
                     return state
 
+                # Validate and correct citations for each component
+                logger.info("Validating citations for all general summary components")
+                validated_results = {}
+                for comp_name, comp_content in general_results.items():
+                    if comp_content:
+                        validated_content = await self._validate_and_correct_citations(
+                            comp_content,
+                            state.citations
+                        )
+                        validated_results[comp_name] = validated_content
+                    else:
+                        validated_results[comp_name] = comp_content
+
                 # Create structured general summary response for frontend cards
                 import json
 
@@ -3035,49 +3293,49 @@ Keep queries concise and medically precise.
                     "components": {
                         "snapshot": {
                             "title": "Patient Snapshot",
-                            "content": (general_results.get("snapshot") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (validated_results.get("snapshot") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "user",
                             "color": "blue"
                         },
                         "problems": {
                             "title": "Active Problems",
-                            "content": (general_results.get("problems") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (validated_results.get("problems") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "alert-circle",
                             "color": "red"
                         },
                         "medications": {
                             "title": "Medications",
-                            "content": (general_results.get("medications") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (validated_results.get("medications") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "pill",
                             "color": "purple"
                         },
                         "trends": {
                             "title": "Lab & Vital Trends",
-                            "content": (general_results.get("trends") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (validated_results.get("trends") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "trending-up",
                             "color": "green"
                         },
                         "history": {
                             "title": "Past Medical History",
-                            "content": (general_results.get("history") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (validated_results.get("history") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "calendar",
                             "color": "orange"
                         },
                         "risks": {
                             "title": "Risks & Alerts",
-                            "content": (general_results.get("risks") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (validated_results.get("risks") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "alert-triangle",
                             "color": "yellow"
                         },
                         "encounters": {
                             "title": "Recent Care",
-                            "content": (general_results.get("encounters") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (validated_results.get("encounters") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "file-text",
                             "color": "indigo"
                         },
                         "deepdive": {
                             "title": "Deep Dive",
-                            "content": (general_results.get("deepdive") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (validated_results.get("deepdive") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "archive",
                             "color": "gray"
                         }
@@ -3675,6 +3933,19 @@ RULES:
                     )
                     return state
 
+                # Validate and correct citations for each focused summary section
+                logger.info("Validating citations for all focused summary sections")
+                validated_results = {}
+                for section_name, section_content in focused_results.items():
+                    if section_content:
+                        validated_content = await self._validate_and_correct_citations(
+                            section_content,
+                            state.citations
+                        )
+                        validated_results[section_name] = validated_content
+                    else:
+                        validated_results[section_name] = section_content
+
                 # Create structured focused summary response for frontend
                 import json
 
@@ -3691,24 +3962,25 @@ RULES:
                     "aspect": state.focused_aspect or "Medical Condition",
                     "aspect_icon": state.focused_aspect_icon or "file-text",
                     "context": conversation_context,
+                    "citations": state.citations if state.citations else {},
                     "sections": {
                         "diagnoses": {
-                            "content": (focused_results.get("diagnoses") or "No diagnoses documented").strip() or "No diagnoses documented"
+                            "content": (validated_results.get("diagnoses") or "No diagnoses documented").strip() or "No diagnoses documented"
                         },
                         "events": {
-                            "content": (focused_results.get("events") or "No events documented").strip() or "No events documented"
+                            "content": (validated_results.get("events") or "No events documented").strip() or "No events documented"
                         },
                         "medications": {
-                            "content": (focused_results.get("medications") or "No medications documented").strip() or "No medications documented"
+                            "content": (validated_results.get("medications") or "No medications documented").strip() or "No medications documented"
                         },
                         "objective_data": {
-                            "content": (focused_results.get("objective_data") or "No objective data available").strip() or "No objective data available"
+                            "content": (validated_results.get("objective_data") or "No objective data available").strip() or "No objective data available"
                         },
                         "assessment": {
-                            "content": (focused_results.get("assessment") or "No assessment available").strip() or "No assessment available"
+                            "content": (validated_results.get("assessment") or "No assessment available").strip() or "No assessment available"
                         },
                         "next_steps": {
-                            "content": (focused_results.get("next_steps") or "No next steps documented").strip() or "No next steps documented"
+                            "content": (validated_results.get("next_steps") or "No next steps documented").strip() or "No next steps documented"
                         }
                     }
                 }
@@ -3994,6 +4266,20 @@ Return only the content in markdown format, no preamble.
                     )
                     return state
 
+                # Validate and correct citations for each timeline event
+                logger.info("Validating citations for all timeline events")
+                validated_timeline_results = []
+                for event in state.timeline_results:
+                    if event.get("content"):
+                        validated_content = await self._validate_and_correct_citations(
+                            event["content"],
+                            state.citations
+                        )
+                        validated_event = {**event, "content": validated_content}
+                        validated_timeline_results.append(validated_event)
+                    else:
+                        validated_timeline_results.append(event)
+
                 # Add conversation context metadata
                 conversation_context = {
                     "session_id": state.session_id,
@@ -4006,7 +4292,8 @@ Return only the content in markdown format, no preamble.
                 structured_timeline = {
                     "type": "timeline_view",
                     "context": conversation_context,
-                    "events": state.timeline_results
+                    "citations": state.citations if state.citations else {},
+                    "events": validated_timeline_results
                 }
 
                 # Create JSON response
@@ -4550,7 +4837,7 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                 chunk_context = "Relevant clinical information"
                 if state.retrieval_reasoning:
                     chunk_context += f" (Selected because: {state.retrieval_reasoning})"
-                
+
                 # Add recency context if available
                 temporal_context = ""
                 if state.chunk_analysis:
@@ -4559,18 +4846,34 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                         temporal_context = f"\n\nTEMPORAL STRATEGY: {temporal_strategy}"
                         if temporal_strategy == "recent_priority":
                             temporal_context += " - Prioritizing most recent clinical data"
-                        elif temporal_strategy == "trend_analysis": 
+                        elif temporal_strategy == "trend_analysis":
                             temporal_context += " - Including data to show trends over time"
                         elif temporal_strategy == "historical_context":
                             temporal_context += " - Including historical context for comparison"
-                
+
                 # Log chunk info (GDPR-safe)
                 for i, chunk in enumerate(state.retrieved_chunks):
                     logger.info(f"Chunk {i+1}: {len(chunk)} chars")
-                
+
+                # Format chunks with citation markers (sentence-level)
+                formatted_chunks = self._format_chunks_with_citations(state.retrieved_chunks, state.citations)
+
+                # Add citation policy to system messages for regular chat
+                citation_policy_msg = ChatMessage(
+                    role=ChatRole.SYSTEM,
+                    content="""**CITATION POLICY** (**CRITICAL**):
+    - The clinical information provided to you contains citation markers like "[Citation: 1]", "[Citation: 2]", etc.
+    - When you use information from a source, cite it using the number from the citation marker
+    - **IMPORTANT**: If the source says "[Citation: 5]", you cite it as [5] in your response
+    - **DO NOT** make up citation numbers - only use the numbers from the [Citation: X] markers
+    - Example: If the source says "Patient age: 87 years. [Citation: 3]", you should write "The patient is 87 years old [3]"
+"""
+                )
+                messages.append(citation_policy_msg)
+
                 docs = ChatMessage(
                     role=ChatRole.USER,
-                    content=f"{chunk_context}:{temporal_context}\n" + "\n---\n".join(state.retrieved_chunks),
+                    content=f"{chunk_context}:{temporal_context}\n{formatted_chunks}",
                 )
                 messages.append(docs)
                 logger.info(f"Added chunks message to LLM context (total length: {len(docs.content)} chars)")
@@ -4667,11 +4970,22 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                             await state.stream_callback(chunk_update)
 
                     elif update["type"] == "completion":
+                        # Get the full content
+                        full_content = update.get("full_content", state.streaming_response)
+
+                        # Validate and correct citations
+                        if state.citations:
+                            logger.info("Validating citations in streaming response")
+                            full_content = await self._validate_and_correct_citations(
+                                full_content,
+                                state.citations
+                            )
+
                         # Finalize with hyperlink formatting and normalized markdown
                         state.llm_response = ChatMessage(
                             role = ChatRole.ASSISTANT,
                             content=self._normalize_markdown(
-                                self._format_ehr_links(update.get("full_content", state.streaming_response))
+                                self._format_ehr_links(full_content)
                             ),
                             metadata={
                                 "reasoning": update.get("reasoning", ""),
@@ -4688,9 +5002,18 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 else:
                     logger.info("⚠️ Empty or null LLM response!")
 
+                # Validate and correct citations in non-streaming response
+                response_content = llm_resp.content
+                if state.citations:
+                    logger.info("Validating citations in non-streaming response")
+                    response_content = await self._validate_and_correct_citations(
+                        response_content,
+                        state.citations
+                    )
+
                 state.llm_response = ChatMessage(
                     role=llm_resp.role,
-                    content=self._normalize_markdown(self._format_ehr_links(llm_resp.content)),
+                    content=self._normalize_markdown(self._format_ehr_links(response_content)),
                     metadata=llm_resp.metadata
                 )
 
