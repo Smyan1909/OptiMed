@@ -482,7 +482,52 @@
   "generalSummary": {
     "patientSummary": "Patient Summary",
     "reasoningSteps": "Reasoning Steps:",
-    "detailedReasoning": "Detailed Reasoning:"
+    "detailedReasoning": "Detailed Reasoning:",
+    "comprehensiveView": "Comprehensive View",
+    "loading": "Loading...",
+    "complete": "Complete",
+    "pending": "Pending",
+    "generating": "Generating {component}...",
+    "contentNotAvailable": "{component} content not available",
+    "step": "Step {step}:",
+    "aiReasoning": "AI Reasoning",
+    "patientSummaryDescription": "provides a comprehensive at-a-glance view of the patient's medical history, current conditions, medications, trends, and recent care for efficient clinical decision-making.",
+    "disclaimer": "Disclaimer:",
+    "disclaimerText": "This is an information system, not a medical device. Information provided is for clinical decision support only. Healthcare professionals must use their own clinical judgment and verify all information before making medical decisions.",
+    "cards": {
+      "snapshot": {
+        "title": "Patient Snapshot",
+        "description": "At-a-glance patient overview"
+      },
+      "problems": {
+        "title": "Active Problems",
+        "description": "Current diagnoses and chronic conditions"
+      },
+      "medications": {
+        "title": "Medications",
+        "description": "Current medications and high-risk drugs"
+      },
+      "trends": {
+        "title": "Lab & Vital Trends",
+        "description": "Recent lab values and vital signs"
+      },
+      "history": {
+        "title": "Past Medical History",
+        "description": "Major surgeries and hospitalizations"
+      },
+      "risks": {
+        "title": "Risks & Alerts",
+        "description": "Allergies, fall risk, and clinical alerts"
+      },
+      "encounters": {
+        "title": "Recent Care",
+        "description": "Narrative summary of recent encounters"
+      },
+      "deepdive": {
+        "title": "Deep Dive",
+        "description": "Detailed clinical information: hospital admissions, imaging reports, and specialist consultations"
+      }
+    }
   },
   "templateManagement": {
     "noteTemplates": "Note Templates",
@@ -804,7 +849,13 @@
     "reasoningSteps": "Reasoning Steps",
     "detailedReasoning": "Detailed Reasoning",
     "sbarDescription": "<strong>SBAR</strong> (Situation, Background, Assessment, Recommendation) is a structured communication framework used in healthcare to ensure clear and comprehensive information exchange. This summary provides educational information and should not replace professional medical judgment.",
-    "sbarDescriptionText": "(Situation, Background, Assessment, Recommendation) is a structured communication framework used in healthcare to ensure clear and comprehensive information exchange. This summary provides educational information and should not replace professional medical judgment."
+    "sbarDescriptionText": "(Situation, Background, Assessment, Recommendation) is a structured communication framework used in healthcare to ensure clear and comprehensive information exchange. This summary provides educational information and should not replace professional medical judgment.",
+    "loading": "Loading...",
+    "complete": "Complete",
+    "pending": "Pending",
+    "generating": "Generating {component}...",
+    "contentNotAvailable": "{component} content not available",
+    "step": "Step {step}:"
   },
   "back" : {
     "toPatients": "Back to Patients"

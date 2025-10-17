@@ -84,15 +84,14 @@ SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                                         - Use bullet points (`-`) or numbered lists (`1.`, `2.`) where appropriate.
                                         - Use proper Markdown tables for structured data.
                                         - Format all URLs as **clickable Markdown links** instead of showing raw URLs.
-                                    - If web search results are used, cite with inline Markdown links like:
-                                        `[Source Title](URL)`
-                                        Otherwise, omit citations.
-                                    - Link policy (**STRICT for EHR**):
-                                        When referencing specific patient data from the clinical information chunks, you MUST include the source links that are embedded in the chunk content.
-                                        - For atomic data (vitals, labs, medications, etc.): The chunks contain data in the format "value [EHR Source](URL)" - preserve this exact format when referencing the data
-                                        - For narrative data (reports, impressions, etc.): The chunks contain source information at the end as "**Source:** [EHR Record](URL)" - preserve this when referencing the content
-                                        - If you see data without a source link, write `(from EHR, no link available)` immediately after that item
-                                        - NEVER remove or modify existing source links - they are essential for clinical traceability
+                                    - **CITATION POLICY** (**CRITICAL**):
+                                        - Use **compact numbered citations** in square brackets: [1], [2], [3]
+                                        - Place citations immediately after the statement they support
+                                        - Example: "Patient has **Type 2 Diabetes** diagnosed in 2015 [1] and **Hypertension** [2]"
+                                        - For web search results, use inline Markdown links: `[Source Title](URL)`
+                                        - **DO NOT** use verbose citations like "According to Document X, page Y" or "from EHR record X"
+                                        - **DO NOT** include [EHR Source](URL) or **Source:** [EHR Record](URL) in your response
+                                        - Citation metadata (document name, page, excerpt) will be automatically extracted and shown in popups
                                     - Do not escape Markdown unnecessarily; the final response must always render cleanly.
                                     - When the user asks for a summary start by explaining the current situation and then provide the summary.
 
@@ -118,6 +117,9 @@ class FlowState(BaseModel):
     uploaded_pdfs: List[PDFDocument] = Field(default_factory=list)  # Store PDF documents
     uploaded_xmls: List[XMLDocument] = Field(default_factory=list)  # Store XML documents
     retrieved_chunks: List[str] = Field(default_factory=list)
+
+    # Citation tracking for compact inline citations
+    citations: Dict[str, Dict[str, Any]] = Field(default_factory=dict)  # { "1": { "document": "...", "page": "...", "excerpt": "...", "url": "..." } }
 
     chunk_analysis: dict[str, Any] = Field(default_factory=dict)
     filtered_chunks: List[dict[str, Any]] = Field(default_factory=list)
@@ -362,6 +364,140 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
         logger.info(f"Limited chunks: {len(chunks)} → {len(limited_chunks)}, estimated tokens: ~{total_tokens}")
         return limited_chunks
+
+    def _extract_citations_from_chunks(self, chunks: List[str]) -> Dict[str, Dict[str, Any]]:
+        """
+        Extract citation metadata from chunks containing embedded source links.
+
+        Chunks may contain:
+        - Atomic data: "value [EHR Source](URL)"
+        - Narrative data: "text...\n\n**Source:** [EHR Record](URL)"
+
+        Returns:
+            Dictionary mapping citation numbers to metadata:
+            { "1": { "document": "...", "page": "...", "excerpt": "...", "url": "..." } }
+        """
+        import re
+
+        citations: Dict[str, Dict[str, Any]] = {}
+        citation_counter = 1
+
+        for chunk_idx, chunk in enumerate(chunks):
+            if not chunk:
+                continue
+
+            # Extract document name and URL from embedded links
+            # Pattern 1: [Document Name](URL) - for both atomic and narrative
+            link_pattern = r'\[([^\]]+)\]\((https?://[^\)]+)\)'
+            matches = list(re.finditer(link_pattern, chunk))
+
+            if matches:
+                # Use the first link found in the chunk
+                match = matches[0]
+                document_name = match.group(1).replace("EHR Source", "EHR Record").replace("EHR Record", "Clinical Document")
+                url = match.group(2)
+
+                # Extract a meaningful excerpt (first 150 chars of chunk, excluding the source line)
+                # Remove source metadata lines
+                clean_chunk = re.sub(r'\*\*Source:\*\*.*', '', chunk)
+                clean_chunk = re.sub(r'\[EHR Source\]\([^\)]+\)', '', clean_chunk)
+                clean_chunk = re.sub(r'\(from EHR, no link available\)', '', clean_chunk)
+                excerpt = clean_chunk.strip()[:150]
+                if len(clean_chunk.strip()) > 150:
+                    excerpt += "..."
+
+                # Try to extract page number if mentioned in chunk
+                page_match = re.search(r'page\s+(\d+)', chunk, re.IGNORECASE)
+                page = page_match.group(1) if page_match else None
+
+                # Build citation entry
+                citation_id = str(citation_counter)
+                citations[citation_id] = {
+                    "document": document_name,
+                    "page": page,
+                    "excerpt": excerpt,
+                    "url": url
+                }
+                citation_counter += 1
+            else:
+                # No URL found, but still create citation with excerpt
+                excerpt = chunk.strip()[:150]
+                if len(chunk.strip()) > 150:
+                    excerpt += "..."
+
+                # Try to infer document type from chunk content
+                document_name = "Clinical Record"
+                if "vital" in chunk.lower() or "bp " in chunk.lower() or "heart rate" in chunk.lower():
+                    document_name = "Vital Signs"
+                elif "lab" in chunk.lower() or "result" in chunk.lower():
+                    document_name = "Laboratory Results"
+                elif "medication" in chunk.lower() or "drug" in chunk.lower():
+                    document_name = "Medication List"
+                elif "diagnosis" in chunk.lower() or "condition" in chunk.lower():
+                    document_name = "Problem List"
+
+                citation_id = str(citation_counter)
+                citations[citation_id] = {
+                    "document": document_name,
+                    "page": None,
+                    "excerpt": excerpt,
+                    "url": None
+                }
+                citation_counter += 1
+
+        logger.info(f"Extracted {len(citations)} citations from {len(chunks)} chunks")
+        return citations
+
+    def _format_chunks_with_citations(self, chunks: List[str], citations: Dict[str, Dict[str, Any]]) -> str:
+        """
+        Format chunks by removing verbose source links and adding citation references.
+
+        Returns a formatted string with:
+        1. Clean chunk content (without embedded links)
+        2. Citation references section mapping [1], [2], [3] to sources
+        """
+        import re
+
+        formatted_chunks = []
+
+        # Process each chunk and assign citation ID
+        for idx, chunk in enumerate(chunks):
+            if not chunk:
+                continue
+
+            # Citation ID is idx + 1 (1-indexed)
+            citation_id = str(idx + 1)
+
+            # Remove verbose source links from chunk
+            clean_chunk = chunk
+            # Remove **Source:** [Document](URL) patterns
+            clean_chunk = re.sub(r'\*\*Source:\*\*\s*\[([^\]]+)\]\([^\)]+\)', '', clean_chunk)
+            # Remove inline [EHR Source](URL) patterns
+            clean_chunk = re.sub(r'\[EHR Source\]\([^\)]+\)', '', clean_chunk)
+            # Remove (from EHR, no link available) patterns
+            clean_chunk = re.sub(r'\(from EHR, no link available\)', '', clean_chunk)
+            # Clean up extra whitespace
+            clean_chunk = re.sub(r'\n\s*\n\s*\n+', '\n\n', clean_chunk)
+            clean_chunk = clean_chunk.strip()
+
+            if clean_chunk:
+                # Add citation reference at the end of the chunk
+                formatted_chunks.append(f"{clean_chunk} [Citation: {citation_id}]")
+
+        # Build the final formatted string with citation reference section
+        chunks_text = "\n\n---\n\n".join(formatted_chunks)
+
+        # Add citation reference section
+        if citations:
+            citation_section = "\n\n=== CITATION REFERENCES ===\n"
+            for cit_id, cit_data in sorted(citations.items(), key=lambda x: int(x[0])):
+                doc_name = cit_data.get("document", "Unknown Document")
+                page = cit_data.get("page")
+                page_info = f", Page {page}" if page else ""
+                citation_section += f"[{cit_id}]: {doc_name}{page_info}\n"
+            chunks_text += citation_section
+
+        return chunks_text
 
     async def _log_data_lineage(
         self,
@@ -928,9 +1064,14 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                         refinements = []
                         state.refined_queries = []
                     state.retrieval_retry_attempts += 1
-                    
+
                     # Set partial state for streaming decorator to show progress
                     state.retrieved_chunks = [cast(str, chunks[i]["content"]) for i in final_selected] if final_selected else []
+
+                    # Extract citations from selected chunks
+                    if state.retrieved_chunks:
+                        state.citations = self._extract_citations_from_chunks(state.retrieved_chunks)
+
                     state.chunk_analysis = {
                         "method": "bi_cross_mmr_gate_refining",
                         "dynamic_n": len(final_selected),
@@ -988,6 +1129,15 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
                 # Set state variables early so streaming decorator can access them
                 state.retrieved_chunks = [cast(str, chunks[i]["content"]) for i in final_selected]
+
+                # Extract citations from selected chunks
+                state.citations = self._extract_citations_from_chunks(state.retrieved_chunks)
+                logger.info(f"🔖 Extracted citations: {len(state.citations)} total")
+                logger.info(f"🔖 Citation IDs: {list(state.citations.keys())}")
+                if state.citations:
+                    first_citation = list(state.citations.values())[0]
+                    logger.info(f"🔖 First citation sample: {first_citation}")
+
                 state.chunk_analysis = {
                     "method": "bi_cross_mmr_gate",
                     "dynamic_n": len(final_selected),
@@ -1846,18 +1996,6 @@ Keep queries concise and medically precise.
                 # Get situation-specific chunks
                 situation_chunks = state.sbar_situation_chunks or []
 
-                # Detect user language for appropriate citation format
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                # Set language-appropriate citation format
-                if active_lang == "sv":
-                    citation_format = '"Enligt [Dokument], sida X"'
-                else:
-                    citation_format = '"According to [Document], page X"'
-
                 # Build prompt for situation
                 situation_prompt = f"""
                 Generate a concise SBAR Situation summary with 5-7 bullet points.
@@ -1874,23 +2012,23 @@ Keep queries concise and medically precise.
                 • **Patient awareness**: [patient's understanding/concern level]
 
                 Example:
-                • **Chief complaint**: Patient presenting with **chest pain** radiating to left arm, started 2 hours ago - According to Triage Notes, page 1
-                • **Current presentation**: **BP 145/90**, HR 92, **diaphoretic**, appears anxious - According to Vital Signs, page 2
-                • **Acute symptoms**: **Crushing substernal pain** 7/10, worse with exertion, not relieved by rest - According to History, page 1
-                • **Recent changes**: Pain intensity **increased** from 5/10 to 7/10 in last hour - According to Follow-up, page 3
-                • **Immediate concerns**: **Possible ACS**, needs urgent ECG and troponin - According to Assessment, page 2
+                • **Chief complaint**: Patient presenting with **chest pain** radiating to left arm, started 2 hours ago [1]
+                • **Current presentation**: **BP 145/90**, HR 92, **diaphoretic**, appears anxious [2]
+                • **Acute symptoms**: **Crushing substernal pain** 7/10, worse with exertion, not relieved by rest [1]
+                • **Recent changes**: Pain intensity **increased** from 5/10 to 7/10 in last hour [3]
+                • **Immediate concerns**: **Possible ACS**, needs urgent ECG and troponin [2]
 
                 Add blank line between each bullet point for readability.
 
                 MANDATORY:
                 - Use **bold** markdown for symptoms, vital signs, and key clinical terms
-                - Cite page numbers: {citation_format}
+                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 concise bullet points. Keep focused on current situation only.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR situation summaries with 5-7 bullet points. Use **bold** for symptoms, vital signs, and key clinical terms.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise and focused.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR situation summaries with 5-7 bullet points. Use **bold** for symptoms, vital signs, and key clinical terms.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise and focused.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -1920,7 +2058,8 @@ Keep queries concise and medically precise.
                 if situation_chunks:
                     # Limit chunks to prevent context overflow
                     limited_chunks = self._limit_chunks_for_context(situation_chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
+                    # Format chunks with citation references
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
@@ -1946,18 +2085,6 @@ Keep queries concise and medically precise.
                 # Get background-specific chunks
                 background_chunks = state.sbar_background_chunks or []
 
-                # Detect user language for appropriate citation format
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                # Set language-appropriate citation format
-                if active_lang == "sv":
-                    citation_format = '"Enligt [Dokument], sida X"'
-                else:
-                    citation_format = '"According to [Document], page X"'
-
                 # Build prompt for background
                 background_prompt = f"""
                 Generate a concise SBAR Background summary with 5-7 bullet points.
@@ -1974,25 +2101,25 @@ Keep queries concise and medically precise.
                 • **Baseline function**: [usual activity level and independence]
 
                 Example:
-                • **Patient demographics**: **73M**, lives alone, retired, has home care 2x/week - According to Social Notes, page 2
-                • **Major diagnoses**: **T2DM** (2010), **HTN** (2005), **CKD Stage 3a** (2018), **COPD GOLD II** (2015) - According to Diagnosis List, page 1
-                • **Critical medications**: **Warfarin 5mg** (INR target 2-3), **Metformin 1000mg 2x/day**, **Enalapril 20mg** - According to Medication List, page 1
-                • **Important allergies**: **Penicillin** (rash and angioedema 2008) - According to Allergies, page 1
-                • **Past procedures**: **Hip replacement** (2015), **Cholecystectomy** (2001) - According to Surgical Records, page 3
-                • **Recent admissions**: **COPD exacerbation** (3 months ago), treated with antibiotics and steroids - According to Discharge Summary, page 8
-                • **Baseline function**: **Independent** with ADLs, uses walker for mobility, cognitively intact - According to Functional Status, page 4
+                • **Patient demographics**: **73M**, lives alone, retired, has home care 2x/week [1]
+                • **Major diagnoses**: **T2DM** (2010), **HTN** (2005), **CKD Stage 3a** (2018), **COPD GOLD II** (2015) [2]
+                • **Critical medications**: **Warfarin 5mg** (INR target 2-3), **Metformin 1000mg 2x/day**, **Enalapril 20mg** [3]
+                • **Important allergies**: **Penicillin** (rash and angioedema 2008) [4]
+                • **Past procedures**: **Hip replacement** (2015), **Cholecystectomy** (2001) [5]
+                • **Recent admissions**: **COPD exacerbation** (3 months ago), treated with antibiotics and steroids [6]
+                • **Baseline function**: **Independent** with ADLs, uses walker for mobility, cognitively intact [1]
 
                 Add blank line between each bullet point for readability.
 
                 MANDATORY:
                 - Use **bold** markdown for key diagnoses, medications, allergies, and functional descriptors
-                - Cite page numbers: {citation_format}
+                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 concise bullet points. Focus on context relevant to current situation.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR background summaries with 5-7 bullet points. Use **bold** for diagnoses, medications, allergies, and key descriptors.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise and contextually relevant.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR background summaries with 5-7 bullet points. Use **bold** for diagnoses, medications, allergies, and key descriptors.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise and contextually relevant.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2022,7 +2149,7 @@ Keep queries concise and medically precise.
                 if background_chunks:
                     # Limit chunks to prevent context overflow
                     limited_chunks = self._limit_chunks_for_context(background_chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
@@ -2048,18 +2175,6 @@ Keep queries concise and medically precise.
                 # Get assessment-specific chunks
                 assessment_chunks = state.sbar_assessment_chunks or []
 
-                # Detect user language for appropriate citation format
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                # Set language-appropriate citation format
-                if active_lang == "sv":
-                    citation_format = '"Enligt [Dokument], sida X"'
-                else:
-                    citation_format = '"According to [Document], page X"'
-
                 # Build prompt for assessment
                 assessment_prompt = f"""
                 Generate a concise SBAR Assessment summary with 5-7 bullet points in narrative style.
@@ -2076,24 +2191,24 @@ Keep queries concise and medically precise.
                 • **Critical concerns**: [narrative of urgent issues if any]
 
                 Example:
-                • **Clinical impression**: Patient with **multimorbidity** showing signs of **worsening diabetic control** with HbA1c rising from 62 to 68 mmol/mol over 6 months - According to Lab Results, page 5
-                • **Current status**: Generally **stable** but requires medication adjustment and closer monitoring of renal function given declining eGFR - According to Clinical Notes, page 15
-                • **Key findings**: **Declining kidney function** (eGFR 64→52), **elevated blood pressure** (145/85), and **worsening glycemic control** suggest need for therapeutic review - According to Lab Results, page 5
-                • **Risk assessment**: **Moderate-to-high risk** for cardiovascular events given uncontrolled HTN, T2DM, and CKD Stage 3a - According to Risk Assessment, page 8
-                • **Critical concerns**: Patient on **warfarin** with recent **INR fluctuations**, requires close monitoring to prevent bleeding complications - According to Medication List, page 2
+                • **Clinical impression**: Patient with **multimorbidity** showing signs of **worsening diabetic control** with HbA1c rising from 62 to 68 mmol/mol over 6 months [1]
+                • **Current status**: Generally **stable** but requires medication adjustment and closer monitoring of renal function given declining eGFR [2]
+                • **Key findings**: **Declining kidney function** (eGFR 64→52), **elevated blood pressure** (145/85), and **worsening glycemic control** suggest need for therapeutic review [1]
+                • **Risk assessment**: **Moderate-to-high risk** for cardiovascular events given uncontrolled HTN, T2DM, and CKD Stage 3a [3]
+                • **Critical concerns**: Patient on **warfarin** with recent **INR fluctuations**, requires close monitoring to prevent bleeding complications [4]
 
                 Add blank line between each bullet point for readability.
 
                 MANDATORY:
                 - Use **bold** markdown for important clinical terms, values, and risk levels
-                - Cite page numbers: {citation_format}
+                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 - Write in narrative free-text style within each bullet point
                 CRITICAL: 5-7 bullet points with narrative descriptions. Each bullet contains a flowing sentence, not just keywords. Keep concise but informative.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR assessment summaries with 5-7 bullet points in narrative style. Use **bold** for important clinical terms and values. Write flowing sentences within each bullet point.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise but informative.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR assessment summaries with 5-7 bullet points in narrative style. Use **bold** for important clinical terms and values. Write flowing sentences within each bullet point.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise but informative.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2123,7 +2238,7 @@ Keep queries concise and medically precise.
                 if assessment_chunks:
                     # Limit chunks to prevent context overflow
                     limited_chunks = self._limit_chunks_for_context(assessment_chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
@@ -2149,18 +2264,6 @@ Keep queries concise and medically precise.
                 # Get recommendation-specific chunks
                 recommendation_chunks = state.sbar_recommendation_chunks or []
 
-                # Detect user language for appropriate citation format
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                # Set language-appropriate citation format
-                if active_lang == "sv":
-                    citation_format = '"Enligt [Dokument], sida X"'
-                else:
-                    citation_format = '"According to [Document], page X"'
-
                 # Build prompt for recommendation
                 recommendation_prompt = f"""
                 Generate a concise SBAR Recommendation summary with 5-7 bullet points.
@@ -2177,25 +2280,25 @@ Keep queries concise and medically precise.
                 • **Safety measures**: [precautions and risk mitigation]
 
                 Example:
-                • **Urgent interventions**: Obtain **12-lead ECG** immediately, establish **IV access**, give **aspirin 300mg** if not contraindicated - According to Emergency Protocol, page 1
-                • **Diagnostic workup**: **Troponin** at 0 and 3 hours, **chest X-ray**, continuous **cardiac monitoring** - According to Diagnostic Protocol, page 3
-                • **Treatment adjustments**: Consider **nitroglycerin SL** for chest pain, hold **metformin** if contrast study needed - According to Treatment Guidelines, page 5
-                • **Monitoring plan**: **Vital signs q15min**, monitor for **arrhythmias**, assess **pain response** to treatment - According to Monitoring Protocol, page 2
-                • **Consultation needs**: **Cardiology** consult for possible ACS, consider **interventional** if STEMI criteria met - According to Consultation Guidelines, page 4
-                • **Follow-up timing**: Reassess after **troponin results**, plan disposition based on findings - According to Follow-up Plan, page 6
-                • **Safety measures**: Keep patient **NPO**, ensure **resuscitation equipment** at bedside, discuss **code status** if not documented - According to Safety Procedures, page 7
+                • **Urgent interventions**: Obtain **12-lead ECG** immediately, establish **IV access**, give **aspirin 300mg** if not contraindicated [1]
+                • **Diagnostic workup**: **Troponin** at 0 and 3 hours, **chest X-ray**, continuous **cardiac monitoring** [2]
+                • **Treatment adjustments**: Consider **nitroglycerin SL** for chest pain, hold **metformin** if contrast study needed [3]
+                • **Monitoring plan**: **Vital signs q15min**, monitor for **arrhythmias**, assess **pain response** to treatment [4]
+                • **Consultation needs**: **Cardiology** consult for possible ACS, consider **interventional** if STEMI criteria met [5]
+                • **Follow-up timing**: Reassess after **troponin results**, plan disposition based on findings [6]
+                • **Safety measures**: Keep patient **NPO**, ensure **resuscitation equipment** at bedside, discuss **code status** if not documented [7]
 
                 Add blank line between each bullet point for readability.
 
                 MANDATORY:
                 - Use **bold** markdown for interventions, tests, medications, and key actions
-                - Cite page numbers: {citation_format}
+                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 concise bullet points. Educational information only - refer complex decisions to healthcare providers. Keep actionable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR recommendation summaries with 5-7 bullet points. Use **bold** for interventions, tests, medications, and key actions.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise and actionable.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR recommendation summaries with 5-7 bullet points. Use **bold** for interventions, tests, medications, and key actions.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise and actionable.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2225,7 +2328,7 @@ Keep queries concise and medically precise.
                 if recommendation_chunks:
                     # Limit chunks to prevent context overflow
                     limited_chunks = self._limit_chunks_for_context(recommendation_chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
@@ -2250,47 +2353,35 @@ Keep queries concise and medically precise.
 
                 chunks = state.general_snapshot_chunks or []
 
-                # Detect user language for appropriate citation format
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                # Set language-appropriate citation format
-                if active_lang == "sv":
-                    citation_format = '"Enligt [Dokument], sida X"'
-                else:
-                    citation_format = '"According to [Document], page X"'
-
                 prompt = f"""
                 Create a concise Patient Snapshot with 5-7 bullet points with headers:
 
                 USER QUERY: {state.user_prompt}
 
                 Format as 5-7 bullet points with bold headers:
-                • **Demographics:** [Age, sex] - {citation_format}
-                • **Living Situation:** [Living arrangement, occupation/status] - {citation_format}
-                • **Functional Status:** [Mobility and independence level] - {citation_format}
-                • **Social Support:** [Care situation] - {citation_format}
+                • **Demographics:** [Age, sex]
+                • **Living Situation:** [Living arrangement, occupation/status]
+                • **Functional Status:** [Mobility and independence level]
+                • **Social Support:** [Care situation]
 
                 Example:
-                • **Demographics:** **73 Male** (recorded 2024-01-15) - According to Clinical Notes, page 1
-                • **Living Situation:** Lives alone, **retired teacher** (recorded 2023-12-10) - According to Social Notes, page 2
-                • **Functional Status:** **Independent** with ADLs, uses walker (assessed 2023-11-20) - According to Functional Status, page 4
-                • **Social Support:** **Home care** 2x/week (started 2023-10-01) - According to Care Plan, page 3
+                • **Demographics:** **73 Male** (recorded 2024-01-15) [1]
+                • **Living Situation:** Lives alone, **retired teacher** (recorded 2023-12-10) [2]
+                • **Functional Status:** **Independent** with ADLs, uses walker (assessed 2023-11-20) [3]
+                • **Social Support:** **Home care** 2x/week (started 2023-10-01) [4]
 
                 MANDATORY:
                 - Each bullet must have a bold header followed by colon
                 - Use **bold** markdown for important clinical terms, values, and key phrases
                 - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when the information was recorded
-                - Cite page numbers: {citation_format}
+                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 - Add blank line between each bullet point for readability
                 CRITICAL: 5-7 bullet points with headers. 6-12 words each. Each bullet point one line. Include dates. Keep very concise and scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create concise snapshots with 5-7 bullet points, each with a bold header. Use **bold** for important clinical terms and values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for when each piece of information was recorded. One line per bullet point. No explanations.\n\nMANDATORY: Always cite page numbers: {citation_format}. Add blank lines between bullets. Always include dates.\n\nInformation system only - NOT a medical device.")
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create concise snapshots with 5-7 bullet points, each with a bold header. Use **bold** for important clinical terms and values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for when each piece of information was recorded. One line per bullet point. No explanations.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Add blank lines between bullets. Always include dates.\n\nInformation system only - NOT a medical device.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2319,7 +2410,7 @@ Keep queries concise and medically precise.
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2341,18 +2432,6 @@ Keep queries concise and medically precise.
 
                 chunks = state.general_problems_chunks or []
 
-                # Detect user language for appropriate citation format
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                # Set language-appropriate citation format
-                if active_lang == "sv":
-                    citation_format = '"Enligt [Dokument], sida X"'
-                else:
-                    citation_format = '"According to [Document], page X"'
-
                 prompt = f"""
                 List the top 5-7 problems divided into two subsections - EXACTLY 6-12 words per bullet.
 
@@ -2361,23 +2440,23 @@ Keep queries concise and medically precise.
                 Format with TWO subsections (most relevant and frequently mentioned at the top of each list):
 
                 ## Current Conditions
-                • **Disease name** (year) - status - {citation_format}
+                • **Disease name** (year) - status
 
                 ## Previous Conditions
-                • **Disease name** (year) - status - {citation_format}
+                • **Disease name** (year) - status
 
                 Example (count the words - each is 6-12 words):
                 ## Current Conditions
-                • **T2DM** (diagnosed 2012) **HbA1c 68** moderate control (2024-01-15) - According to Clinical Notes, page 3 (11 words)
+                • **T2DM** (diagnosed 2012) **HbA1c 68** moderate control (2024-01-15) [1]
 
-                • **HTN** (since 2005) **BP 145/85** on treatment (2024-01-15 09:00) - According to Medications, page 1 (12 words)
+                • **HTN** (since 2005) **BP 145/85** on treatment (2024-01-15 09:00) [2] 
 
-                • **CKD Stage 3a** (2020) **eGFR 52** monitored (2024-01-15 08:30) - According to Lab Results, page 5 (11 words)
+                • **CKD Stage 3a** (2020) **eGFR 52** monitored (2024-01-15 08:30) [3]
 
                 ## Previous Conditions
-                • **COPD GOLD II** (2018) stable uses inhaler (reviewed 2024-01-10) - According to Diagnosis List, page 2 (11 words)
+                • **COPD GOLD II** (2018) stable uses inhaler (reviewed 2024-01-10) [4]
 
-                • **Osteoarthritis** bilateral knees uses walker (assessed 2023-12-20) - According to Notes, page 8 (10 words)
+                • **Osteoarthritis** bilateral knees uses walker (assessed 2023-12-20) [5] 
 
                 Add blank line between each bullet point for readability.
 
@@ -2390,20 +2469,20 @@ Keep queries concise and medically precise.
                 - Use **bold** markdown for disease names and key values
                 - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when the information was recorded/updated
                 - Each bullet MUST be between 6-12 words (excluding date and citation) - COUNT THEM
-                - Cite page numbers: {citation_format}
+                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 problems total across both subsections. 6-12 words each. Include dates. Blank lines between bullets. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List top 5-7 problems divided into two subsections: **Current Conditions** and **Previous Conditions**. Sort by relevance and frequency within each subsection. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List top 5-7 problems divided into two subsections: **Current Conditions** and **Previous Conditions**. Sort by relevance and frequency within each subsection. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2425,18 +2504,6 @@ Keep queries concise and medically precise.
 
                 chunks = state.general_medications_chunks or []
 
-                # Detect user language for appropriate citation format
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                # Set language-appropriate citation format
-                if active_lang == "sv":
-                    citation_format = '"Enligt [Dokument], sida X"'
-                else:
-                    citation_format = '"According to [Document], page X"'
-
                 prompt = f"""
                 List 5-7 most important/recent medications divided into two subsections - EXACTLY 6-12 words per bullet.
 
@@ -2445,26 +2512,26 @@ Keep queries concise and medically precise.
                 Format with TWO subsections (most relevant at the top of each list):
 
                 ## Current Medications
-                • **Drug name dose** (started YYYY-MM-DD) - purpose - {citation_format}
-                • **Drug 250mg→500mg** ↑ (increased YYYY-MM-DD) - purpose/reason for change - {citation_format}
-                • 🔺 **Drug dose** (dates) - purpose ALLERGY NOTED - {citation_format}  ← Add 🔺 if patient has documented allergy
-                • ⚠️ **High-risk drug dose** (dates) - purpose - {citation_format}  ← Mark anticoagulants, opioids, insulin with ⚠️
+                • **Drug name dose** (started YYYY-MM-DD) - purpose
+                • **Drug 250mg→500mg** ↑ (increased YYYY-MM-DD) - purpose/reason for change
+                • 🔺 **Drug dose** (dates) - purpose ALLERGY NOTED  ← Add 🔺 if patient has documented allergy
+                • ⚠️ **High-risk drug dose** (dates) - purpose  ← Mark anticoagulants, opioids, insulin with ⚠️
 
                 ### Prior Medications
-                • **Drug dose** (started YYYY-MM-DD, stopped YYYY-MM-DD) - reason for discontinuation - {citation_format}
+                • **Drug dose** (started YYYY-MM-DD, stopped YYYY-MM-DD) - reason for discontinuation
 
                 Example (count the words - each is 6-12 words):
                 ### Current Medications
-                • **Metformin 1000mg 2x/day** (started 2024-01-10) - diabetes control **HbA1c 68** - According to Medication List, page 2 (10 words)
+                • **Metformin 1000mg 2x/day** (started 2024-01-10) - diabetes control **HbA1c 68** [1] (10 words)
 
-                • **Enalapril 5mg→10mg** ↑ (increased 2024-01-15) - BP control dose adjustment - According to Medication List, page 2 (10 words)
+                • **Enalapril 5mg→10mg** ↑ (increased 2024-01-15) - BP control dose adjustment [2] (10 words)
 
-                • 🔺 **Penicillin 250mg→500mg** ↑ (increased 2024-01-05) - infection worsened ALLERGY NOTED - According to Medication List, page 3 (11 words)
+                • 🔺 **Penicillin 250mg→500mg** ↑ (increased 2024-01-05) - infection worsened ALLERGY NOTED [3] (11 words)
 
-                • ⚠️ **Warfarin 5mg** (started 2023-11-01) - anticoagulation **INR 2.5** - According to Medication List, page 2 (9 words)
+                • ⚠️ **Warfarin 5mg** (started 2023-11-01) - anticoagulation **INR 2.5** [4] (9 words)
 
                 ## Prior Medications
-                • **Simvastatin 20mg** (2020-05-15 to 2023-12-20) - switched to atorvastatin - According to Medication List, page 5 (10 words)
+                • **Simvastatin 20mg** (2020-05-15 to 2023-12-20) - switched to atorvastatin [5] (10 words)
 
                 Add blank line between each bullet point for readability.
 
@@ -2480,20 +2547,20 @@ Keep queries concise and medically precise.
                 - CRITICAL: Include start date for all medications; include end date for discontinued medications
                 - For dose changes, include the date of change and brief explanation
                 - Each bullet MUST be between 6-12 words (excluding dates and citation) - COUNT THEM
-                - Cite page numbers: {citation_format}
+                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 most important meds total. 6-12 words each. Include dates. Blank lines between bullets. Prior medications only if relevant. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most important medications divided into two subsections: **Current Medications** (active) and **Prior Medications** (discontinued, only if relevant to user query). Sort by relevance within each subsection. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. Add 🔺 if patient has documented allergy to the medication (check allergy mentions in data). Show dose changes as **OldDose→NewDose** with ↑/↓ arrows. CRITICAL: Include start dates for all medications, end dates for discontinued ones, and change dates for dose adjustments. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Explain why doses or medications were changed.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates. Prior medications only if relevant to query.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most important medications divided into two subsections: **Current Medications** (active) and **Prior Medications** (discontinued, only if relevant to user query). Sort by relevance within each subsection. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. Add 🔺 if patient has documented allergy to the medication (check allergy mentions in data). Show dose changes as **OldDose→NewDose** with ↑/↓ arrows. CRITICAL: Include start dates for all medications, end dates for discontinued ones, and change dates for dose adjustments. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Explain why doses or medications were changed.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates. Prior medications only if relevant to query.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2515,32 +2582,20 @@ Keep queries concise and medically precise.
 
                 chunks = state.general_trends_chunks or []
 
-                # Detect user language for appropriate citation format
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                # Set language-appropriate citation format
-                if active_lang == "sv":
-                    citation_format = '"Enligt [Dokument], sida X"'
-                else:
-                    citation_format = '"According to [Document], page X"'
-
                 prompt = f"""
                 Show 5-7 key lab/vital trends - EXACTLY 6-12 words per bullet. Use arrows: ↑ ↓ →
 
                 USER QUERY: {state.user_prompt}
 
                 Format (ONE line per value, 6-12 words ONLY):
-                • **Lab/Vital**: old → **new** (arrow) note - {citation_format}
+                • **Lab/Vital**: old → **new** (arrow) note
 
                 Example (count the words - each is 6-12 words):
-                • **HbA1c**: 62 (2023-07-10) → **68 mmol/mol** (2024-01-15) (↑) worsening control - According to Lab Results, page 5 (12 words)
-                • **eGFR**: 64 (2023-06-15) → **52** (2024-01-15 08:30) (↓) declining kidney function - According to Lab Results, page 5 (12 words)
-                • **Weight**: 98 (2023-12-01) → **96 kg** (2024-01-15 09:00) (↓) intentional loss - According to Vital Signs, page 2 (12 words)
-                • **BP**: 135/80 (2023-11-10) → **145/85** (2024-01-15 09:00) (↑) target 140/90 - According to Vital Signs, page 3 (12 words)
-                • **INR**: 2.8 (2024-01-08) → **2.5** (2024-01-15 09:00) (↓) now in range - According to Lab Results, page 6 (12 words)
+                • **HbA1c**: 62 (2023-07-10) → **68 mmol/mol** (2024-01-15) (↑) worsening control [1] (12 words)
+                • **eGFR**: 64 (2023-06-15) → **52** (2024-01-15 08:30) (↓) declining kidney function [2] (12 words)
+                • **Weight**: 98 (2023-12-01) → **96 kg** (2024-01-15 09:00) (↓) intentional loss [3] (12 words)
+                • **BP**: 135/80 (2023-11-10) → **145/85** (2024-01-15 09:00) (↑) target 140/90 [4] (12 words)
+                • **INR**: 2.8 (2024-01-08) → **2.5** (2024-01-15 09:00) (↓) now in range [5] (12 words)
 
                 Add blank line between each bullet point for readability.
 
@@ -2551,20 +2606,20 @@ Keep queries concise and medically precise.
                 - Use **bold** markdown for parameter names and current values
                 - CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values
                 - Each bullet MUST be between 6-12 words (excluding dates and citation) - COUNT THEM
-                - Cite page numbers: {citation_format}
+                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 most important trends. 6-12 words each. Include dates for both values. Blank lines between bullets. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Show 5-7 key trends. Use **bold** for parameter names and current values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Add 'ask for more' if additional trends exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Show 5-7 key trends. Use **bold** for parameter names and current values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Add 'ask for more' if additional trends exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2586,32 +2641,20 @@ Keep queries concise and medically precise.
 
                 chunks = state.general_history_chunks or []
 
-                # Detect user language for appropriate citation format
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                # Set language-appropriate citation format
-                if active_lang == "sv":
-                    citation_format = '"Enligt [Dokument], sida X"'
-                else:
-                    citation_format = '"According to [Document], page X"'
-
                 prompt = f"""
                 List 5-7 major past medical/surgical events - EXACTLY 6-12 words per bullet.
 
                 USER QUERY: {state.user_prompt}
 
                 Format (ONE line per event, 6-12 words ONLY):
-                • **Event name** (year) - outcome - {citation_format}
+                • **Event name** (year) - outcome
 
                 Example (count the words - each is 6-12 words):
-                • **Cholecystectomy** (2001) uncomplicated recovery - According to Surgical Records, page 1 (7 words)
-                • **Hip replacement** (2015) left hip good function - According to Surgical Records, page 3 (9 words)
-                • **Stroke** (2020) left hemisphere mild residual weakness - According to Clinical Notes, page 12 (10 words)
-                • **MI** (2018) anterior wall stent placed - According to Discharge Summary, page 5 (9 words)
-                • **Appendectomy** (1995) no complications - According to History, page 2 (6 words)
+                • **Cholecystectomy** (2001) uncomplicated recovery [1] (7 words)
+                • **Hip replacement** (2015) left hip good function [2] (9 words)
+                • **Stroke** (2020) left hemisphere mild residual weakness [3] (10 words)
+                • **MI** (2018) anterior wall stent placed [4] (9 words)
+                • **Appendectomy** (1995) no complications [5] (6 words)
 
                 Add blank line between each bullet point for readability.
 
@@ -2621,20 +2664,20 @@ Keep queries concise and medically precise.
                 MANDATORY:
                 - Use **bold** markdown for event names
                 - Each bullet MUST be between 6-12 words (excluding citation) - COUNT THEM
-                - Cite page numbers: {citation_format}
+                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 most significant events. 6-12 words each. Blank lines between bullets. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 major past events. Use **bold** for event names. CRITICAL: Always include the year/date in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding year and citation). Count words carefully. Add 'ask for more' if additional events exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 major past events. Use **bold** for event names. CRITICAL: Always include the year/date in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding year and citation). Count words carefully. Add 'ask for more' if additional events exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2656,33 +2699,21 @@ Keep queries concise and medically precise.
 
                 chunks = state.general_risks_chunks or []
 
-                # Detect user language for appropriate citation format
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                # Set language-appropriate citation format
-                if active_lang == "sv":
-                    citation_format = '"Enligt [Dokument], sida X"'
-                else:
-                    citation_format = '"According to [Document], page X"'
-
                 prompt = f"""
                 List 5-7 critical alerts/risks - EXACTLY 6-12 words per bullet.
 
                 USER QUERY: {state.user_prompt}
 
                 Format (SHORT phrases, 6-12 words ONLY):
-                • ⚠️ **Risk/Alert** - implication - {citation_format}
+                • ⚠️ **Risk/Alert** - implication
 
                 Example (count the words - each is 6-12 words):
-                • ⚠️ **Penicillin allergy** - rash and angioedema (documented 2015-03-20) - According to Clinical Notes, page 1 (9 words)
-                • ⚠️ **Warfarin therapy** - **INR 2.5** bleeding risk (checked 2024-01-15 09:00) - According to Medication List, page 2 (10 words)
-                • ⚠️ **Fall risk** - 3 falls last year uses walker (assessed 2024-01-10) - According to Notes, page 8 (12 words)
-                • ⚠️ **DNR documented** - patient wishes respected (signed 2023-11-15) - According to Care Plan, page 1 (8 words)
-                • ⚠️ **Renal impairment** - **eGFR 52** adjust meds (tested 2024-01-15 08:30) - According to Lab Results, page 5 (9 words)
-                • ⚠️ **Lives alone** - no regular support (noted 2024-01-05) - According to Social Notes, page 3 (9 words)
+                • ⚠️ **Penicillin allergy** - rash and angioedema (documented 2015-03-20) [1] (9 words)
+                • ⚠️ **Warfarin therapy** - **INR 2.5** bleeding risk (checked 2024-01-15 09:00) [2] (10 words)
+                • ⚠️ **Fall risk** - 3 falls last year uses walker (assessed 2024-01-10) [3] (12 words)
+                • ⚠️ **DNR documented** - patient wishes respected (signed 2023-11-15) [4] (8 words)
+                • ⚠️ **Renal impairment** - **eGFR 52** adjust meds (tested 2024-01-15 08:30) [5] (9 words)
+                • ⚠️ **Lives alone** - no regular support (noted 2024-01-05) [6] (9 words)
 
                 Add blank line between each bullet point for readability.
 
@@ -2693,20 +2724,20 @@ Keep queries concise and medically precise.
                 - Use **bold** markdown for risk/alert names and key values
                 - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when information was documented
                 - Each bullet MUST be between 6-12 words (excluding date and citation) - COUNT THEM
-                - Cite page numbers: {citation_format}
+                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 most important alerts. 6-12 words each. Include dates. Blank lines between bullets. Use ⚠️ for visibility. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 critical alerts. Use **bold** for risk/alert names and key values. Use ⚠️ marker. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 critical alerts. Use **bold** for risk/alert names and key values. Use ⚠️ marker. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2728,32 +2759,20 @@ Keep queries concise and medically precise.
 
                 chunks = state.general_encounters_chunks or []
 
-                # Detect user language for appropriate citation format
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                # Set language-appropriate citation format
-                if active_lang == "sv":
-                    citation_format = '"Enligt [Dokument], sida X"'
-                else:
-                    citation_format = '"According to [Document], page X"'
-
                 prompt = f"""
                 List 5-7 most recent encounters with key actions/outcomes.
 
                 USER QUERY: {state.user_prompt}
 
                 Format (ONE line per encounter):
-                • **Encounter type** (date) - key action/outcome - {citation_format}
+                • **Encounter type** (date) - key action/outcome
 
                 Example:
-                • **GP visit** (2025-04-15 10:30) - adjusted enalapril to 20mg, ordered HbA1c - According to Clinical Notes, page 15
-                • **Cardiology consult** (2025-02-20 14:00) - echo stable, continue current meds - According to Specialist Letter, page 2
-                • **Lab draw** (2025-03-10 08:15) - routine monitoring, awaiting results - According to Lab Order, page 8
-                • **Phone consult** (2025-01-25) - discussed weight loss, advised diet - According to Phone Notes, page 4
-                • **ER visit** (2024-12-28 22:45) - chest pain, ruled out MI, discharged - According to Discharge Summary, page 12
+                • **GP visit** (2025-04-15 10:30) - adjusted enalapril to 20mg, ordered HbA1c [1]
+                • **Cardiology consult** (2025-02-20 14:00) - echo stable, continue current meds [2]
+                • **Lab draw** (2025-03-10 08:15) - routine monitoring, awaiting results [3]
+                • **Phone consult** (2025-01-25) - discussed weight loss, advised diet [4]
+                • **ER visit** (2024-12-28 22:45) - chest pain, ruled out MI, discharged [5]
 
                 Add blank line between each bullet point for readability.
 
@@ -2763,20 +2782,20 @@ Keep queries concise and medically precise.
                 MANDATORY:
                 - Use **bold** markdown for encounter types
                 - CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses
-                - Cite page numbers: {citation_format}
+                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 most recent encounters. ONE line each. Blank lines between bullets. Full datetime + action + outcome. Keep concise.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most recent encounters with key actions/outcomes. Use **bold** for encounter types. CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses. One line each with blank lines between. Add 'ask for more' if additional encounters exist.\n\nMANDATORY: Always cite page numbers: {citation_format}. Always include exact datetime.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most recent encounters with key actions/outcomes. Use **bold** for encounter types. CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses. One line each with blank lines between. Add 'ask for more' if additional encounters exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include exact datetime.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2798,18 +2817,6 @@ Keep queries concise and medically precise.
 
                 chunks = state.general_deepdive_chunks or []
 
-                # Detect user language for appropriate citation format
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                # Set language-appropriate citation format
-                if active_lang == "sv":
-                    citation_format = '"Enligt [Dokument], sida X"'
-                else:
-                    citation_format = '"According to [Document], page X"'
-
                 prompt = f"""
                 Create expandable sections with brief summaries. User can ask for more if needed.
 
@@ -2818,13 +2825,13 @@ Keep queries concise and medically precise.
                 Format with headers (include if data exists):
 
                 **Hospital Admissions** (if any)
-                • Date: Reason - Outcome - {citation_format}
+                • Date: Reason - Outcome
 
                 **Specialist Letters** (if any)
-                • Date Specialty: Key conclusion - {citation_format}
+                • Date Specialty: Key conclusion
 
                 **Imaging** (if any)
-                • Date Type: Finding - {citation_format}
+                • Date Type: Finding
 
                 Add blank line between each bullet point for readability.
                 Make the Language consistent (either Swedish or English) for everything in the generated outputs including headers (Hospital Admissions, Specialist Letters, Imaging).
@@ -2833,20 +2840,20 @@ Keep queries concise and medically precise.
                 "_Fråga om fler [X]_" (Swedish) or "_Ask for more [X]_" (English)
                 Where [X] is "admissions", "letters", or "imaging results"
 
-                MANDATORY: Cite page numbers: {citation_format}
+                MANDATORY: Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: Each section 2-3 bullet points max. ONE line per item with blank lines between. User can ask "tell me more about X" if they need details.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create brief expandable sections. 2-3 items per section with blank lines between items. Add 'ask for more' hint for each section with additional data available.\n\nMANDATORY: Always cite page numbers: {citation_format}\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create brief expandable sections. 2-3 items per section with blank lines between items. Add 'ask for more' hint for each section with additional data available.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -2899,6 +2906,7 @@ Keep queries concise and medically precise.
                 structured_sbar = {
                     "type": "sbar_cards",
                     "context": conversation_context,
+                    "citations": state.citations if state.citations else {},
                     "components": {
                         "situation": {
                             "title": "Situation",
@@ -3023,6 +3031,7 @@ Keep queries concise and medically precise.
                 structured_summary = {
                     "type": "general_summary_cards",
                     "context": conversation_context,
+                    "citations": state.citations if state.citations else {},
                     "components": {
                         "snapshot": {
                             "title": "Patient Snapshot",
@@ -3206,14 +3215,6 @@ Keep queries concise and medically precise.
 
                 chunks = state.focused_diagnoses_chunks or []
 
-                # Detect language
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
-
                 prompt = f"""
 Generate a CONCISE diagnoses section for a focused summary about: {state.focused_aspect}
 
@@ -3221,16 +3222,16 @@ USER QUERY: {state.user_prompt}
 
 Format exactly as markdown bullet points with **bold** highlighting:
 
-• **[Diagnosis 1]** ([Year diagnosed or duration]) - {citation_format}
+• **[Diagnosis 1]** ([Year diagnosed or duration])
 
-• **[Diagnosis 2]** ([Timeline or status]) - {citation_format}
+• **[Diagnosis 2]** ([Timeline or status])
 
-• **[Diagnosis 3]** ([Resolution status or ongoing]) - {citation_format}
+• **[Diagnosis 3]** ([Resolution status or ongoing])
 
 Example:
-• **Type 2 Diabetes Mellitus** (E11.9, since **2018**) - {citation_format}
-• **Hypertension** (**2005**, well-controlled on meds) - {citation_format}
-• **COPD GOLD II** (J44.1, **2015**, stable) - {citation_format}
+• **Type 2 Diabetes Mellitus** (E11.9, since **2018**) [1]
+• **Hypertension** (**2005**, well-controlled on meds) [2]
+• **COPD GOLD II** (J44.1, **2015**, stable) [3]
 
 RULES:
 - List 2-4 diagnoses ONLY related to {state.focused_aspect}
@@ -3240,19 +3241,19 @@ RULES:
 - Use markdown bullet points with • character
 - Add a blank line between each bullet point for readability
 - Be concise - one line per diagnosis
-- MANDATORY: Cite sources using format {citation_format}
+- MANDATORY: Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
 - If no diagnoses found, state "No formal diagnoses documented for {state.focused_aspect}"
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused diagnoses section. Use **bold** for diagnosis names and key terms. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused diagnoses section. Use **bold** for diagnosis names and key terms. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant information about {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = f"Relevant information about {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -3293,13 +3294,6 @@ RULES:
 
                 chunks = state.focused_events_chunks or []
 
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
-
                 prompt = f"""
 Generate a CONCISE key events timeline for: {state.focused_aspect}
 
@@ -3321,19 +3315,19 @@ RULES:
 - Include: interventions, hospitalizations, imaging, test results, treatment changes
 - Be specific but concise - one line per event after the date
 - Chronological order (oldest to newest)
-- MANDATORY: Cite sources using format {citation_format}
+- MANDATORY: Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
 - If no events found, state "No significant clinical events documented for {state.focused_aspect}"
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused events timeline. Use **bold** for dates and key clinical terms. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused events timeline. Use **bold** for dates and key clinical terms. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant events for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = f"Relevant events for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -3374,13 +3368,6 @@ RULES:
 
                 chunks = state.focused_medications_chunks or []
 
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
-
                 prompt = f"""
 Generate a CONCISE medications list for: {state.focused_aspect}
 
@@ -3395,10 +3382,10 @@ Format exactly as markdown bullet points with **bold** highlighting:
 • **[Medication 3]** [dosage] [frequency]
 
 Example:
-• **Metoprolol** 50mg BID - {citation_format}
-• **Lisinopril** 10mg daily - {citation_format}
-• **Aspirin** 81mg daily - {citation_format}
-• **Prednisone** 20mg daily (started **2023**) - {citation_format}
+• **Metoprolol** 50mg BID [1]
+• **Lisinopril** 10mg daily [2]
+• **Aspirin** 81mg daily [3]
+• **Prednisone** 20mg daily (started **2023**) [4]
 
 RULES:
 - List ONLY medications relevant to {state.focused_aspect}
@@ -3408,19 +3395,19 @@ RULES:
 - Add blank line between each bullet point for readability
 - Maximum 5 medications
 - Include duration if relevant
-- MANDATORY: Cite sources using format {citation_format}
+- MANDATORY: Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
 - If no medications found, state "No medications documented for {state.focused_aspect}"
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused medications list. Use **bold** for medication names and key terms. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused medications list. Use **bold** for medication names and key terms. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant medications for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = f"Relevant medications for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -3461,13 +3448,6 @@ RULES:
 
                 chunks = state.focused_objective_data_chunks or []
 
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
-
                 prompt = f"""
 Generate CONCISE objective data for: {state.focused_aspect}
 
@@ -3488,19 +3468,19 @@ RULES:
 - Include columns: Metric, Value, Unit, Date
 - Maximum 5 rows of data
 - For imaging/test summaries, use Metric column for test name, Value column for result
-- MANDATORY: Cite sources after the table using format {citation_format}
+- MANDATORY: Use **numbered citations [1], [2], [3]** after the table - DO NOT use verbose citations like "According to..." or "from EHR..."
 - If no data found, state "No recent objective data documented for {state.focused_aspect}"
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating focused objective data. Use **bold** for abnormal/critical values and important metrics. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating focused objective data. Use **bold** for abnormal/critical values and important metrics. MANDATORY: Use compact numbered citations [1], [2], [3] after the table - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant objective data for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = f"Relevant objective data for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -3541,13 +3521,6 @@ RULES:
 
                 chunks = state.focused_assessment_chunks or []
 
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
-
                 prompt = f"""
 Generate a CONCISE clinical assessment for: {state.focused_aspect}
 
@@ -3555,16 +3528,16 @@ USER QUERY: {state.user_prompt}
 
 Format exactly as markdown bullet points with **bold** highlighting:
 
-• **Current Status:** [Disease control/status summary with key clinical terms in **bold**] - {citation_format}
+• **Current Status:** [Disease control/status summary with key clinical terms in **bold**]
 
-• **Trend:** [Progression, stability, or improvement with key findings in **bold**] - {citation_format}
+• **Trend:** [Progression, stability, or improvement with key findings in **bold**]
 
-• **Prognosis:** [Overall outlook with risk factors in **bold**] - {citation_format}
+• **Prognosis:** [Overall outlook with risk factors in **bold**]
 
 Example:
-• **Current Status:** Diabetes **moderately controlled** with HbA1c **68 mmol/mol**, above target - According to Lab Results, page 5
-• **Trend:** **Worsening glycemic control** over past 6 months (HbA1c 62→68), suggests **treatment intensification** needed - According to Trend Analysis, page 8
-• **Prognosis:** **Moderate risk** of complications given current control, requires **medication adjustment** and closer monitoring - According to Assessment, page 10
+• **Current Status:** Diabetes **moderately controlled** with HbA1c **68 mmol/mol**, above target [1]
+• **Trend:** **Worsening glycemic control** over past 6 months (HbA1c 62→68), suggests **treatment intensification** needed [2]
+• **Prognosis:** **Moderate risk** of complications given current control, requires **medication adjustment** and closer monitoring [3]
 
 RULES:
 - Use 3 bullet points as shown above
@@ -3573,19 +3546,19 @@ RULES:
 - Be clinically precise but accessible
 - Add a blank line between each bullet point for readability
 - Each bullet should be one concise line
-- MANDATORY: Cite sources using format {citation_format}
+- MANDATORY: Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
 - If insufficient data, state "Limited clinical assessment available for {state.focused_aspect}"
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused clinical assessment. Use **bold** for key clinical terms, status descriptors, and risk levels. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused clinical assessment. Use **bold** for key clinical terms, status descriptors, and risk levels. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant assessment data for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = f"Relevant assessment data for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -3626,13 +3599,6 @@ RULES:
 
                 chunks = state.focused_next_steps_chunks or []
 
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                citation_format = '"Enligt [Dokument], sida X"' if active_lang == "sv" else '"According to [Document], page X"'
-
                 prompt = f"""
 Generate CONCISE next steps for: {state.focused_aspect}
 
@@ -3640,13 +3606,13 @@ USER QUERY: {state.user_prompt}
 
 Format exactly as markdown bullet points with **bold** highlighting:
 
-• **[Action type]**: [Details with timing if available] - {citation_format}
+• **[Action type]**: [Details with timing if available]
 
 Example:
-• **Follow-up HbA1c**: Test due in **3 months** (April 2024) - According to Follow-up Plan, page 5
-• **Medication review**: Consider **metformin dose increase** to 1000mg BID - According to Treatment Recommendations, page 8
-• **Endocrinology referral**: Pending consult for **insulin initiation** if HbA1c not improved - According to Referral, page 3
-• **Retinal screening**: **Annual** diabetic eye exam overdue, schedule ASAP - According to Screening Program, page 10
+• **Follow-up HbA1c**: Test due in **3 months** (April 2024) [1]
+• **Medication review**: Consider **metformin dose increase** to 1000mg BID [2]
+• **Endocrinology referral**: Pending consult for **insulin initiation** if HbA1c not improved [3]
+• **Retinal screening**: **Annual** diabetic eye exam overdue, schedule ASAP [4]
 
 RULES:
 - List 2-4 items ONLY related to {state.focused_aspect}
@@ -3656,19 +3622,19 @@ RULES:
 - One line per item
 - Include: pending tests, follow-ups, medication reviews, referrals, outstanding issues
 - Include specific timing if available
-- MANDATORY: Cite sources using format {citation_format}
+- MANDATORY: Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
 - If no next steps found, state "No pending follow-up documented for {state.focused_aspect}"
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating focused next steps. Use **bold** for action types, key interventions, and timing. Cite sources: {citation_format}. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating focused next steps. Use **bold** for action types, key interventions, and timing. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant next steps for {state.focused_aspect}:\n" + "\n---\n".join(limited_chunks)
+                    chunk_content = f"Relevant next steps for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages)
@@ -3939,9 +3905,6 @@ Return ONLY the JSON array, no additional text.
 
                     logger.info(f"Generating content for: {title}")
 
-                    # Citation format
-                    citation_format = "Use **page X** format" if detect_language_code(state.user_prompt) == "en" else "Use **sida X** format"
-
                     # Build chunks context
                     chunks_text = "\n\n---\n\n".join(chunks) if chunks else "No specific information available"
 
@@ -3971,15 +3934,15 @@ Format as 5-7 bullet points covering:
 • **Provider notes**: [relevant clinician observations]
 
 Example:
-• **What happened**: Patient admitted to **ER** with **chest pain** and **shortness of breath** - {citation_format}
-• **Clinical findings**: **ECG** showed ST elevations in leads II, III, aVF, **troponin** elevated at 450 ng/L - {citation_format}
-• **Treatments**: Given **aspirin 300mg**, **heparin** infusion started, **morphine** 5mg for pain - {citation_format}
-• **Outcome**: Pain reduced to **3/10**, hemodynamically **stable**, monitored in CCU - {citation_format}
-• **Significance**: First **acute MI** event, indicates need for aggressive cardiovascular risk management - {citation_format}
+• **What happened**: Patient admitted to **ER** with **chest pain** and **shortness of breath** [1]
+• **Clinical findings**: **ECG** showed ST elevations in leads II, III, aVF, **troponin** elevated at 450 ng/L [2]
+• **Treatments**: Given **aspirin 300mg**, **heparin** infusion started, **morphine** 5mg for pain [3]
+• **Outcome**: Pain reduced to **3/10**, hemodynamically **stable**, monitored in CCU [4]
+• **Significance**: First **acute MI** event, indicates need for aggressive cardiovascular risk management [5]
 
 IMPORTANT:
 - Use **bold** markdown for key clinical terms, findings, medications, and important descriptors
-- Include citations using {citation_format}
+- Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
 - Preserve any EHR source links from the clinical information
 - Keep each bullet point concise (one line)
 - Focus on clinically significant information
@@ -3989,7 +3952,7 @@ Return only the content in markdown format, no preamble.
 
                     messages = [
                         self._get_language_policy_message(state),
-                        ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create timeline explanations with 5-7 concise bullet points. Use **bold** for key clinical terms, findings, and medications.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Always cite page numbers: {citation_format}. Keep concise but informative."),
+                        ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create timeline explanations with 5-7 concise bullet points. Use **bold** for key clinical terms, findings, and medications.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise but informative."),
                         ChatMessage(role=ChatRole.USER, content=prompt)
                     ]
 
@@ -6187,11 +6150,19 @@ Content:
                         "timestamp": datetime.now().isoformat(),
                         "final_response": final_response_content
                     }
-                    
+
                     # Include reasoning in completion
                     if previous_state and previous_state.get("llm_reasoning"):
                         completion_update["reasoning"] = previous_state["llm_reasoning"]
                         completion_update["reasoning_steps"] = previous_state.get("reasoning_steps", [])
+
+                    # Include citations in completion
+                    if previous_state and previous_state.get("citations"):
+                        completion_update["citations"] = previous_state["citations"]
+                        logger.info(f"🔖 Adding citations to completion event: {len(previous_state['citations'])} citations")
+                        logger.info(f"🔖 Citation keys in completion: {list(previous_state['citations'].keys())}")
+                    else:
+                        logger.warning("🔖 No citations found in previous_state for completion event")
                     
 
 
@@ -6285,6 +6256,12 @@ Content:
         if data.get("reasoning_steps"):
             completion_update["reasoning_steps"] = data.get("reasoning_steps", [])
 
+        # Include citations if available
+        if data.get("citations"):
+            completion_update["citations"] = data.get("citations")
+            logger.info(f"🔖 _to_output: Adding {len(data['citations'])} citations to completion")
+        else:
+            logger.warning("🔖 _to_output: No citations in data")
 
         return completion_update
 
@@ -6336,7 +6313,7 @@ Content:
                 "oldest_reference": None
             }
 
-        return {
+        result = {
             "explanation": data["llm_response"].content if data["llm_response"] else "",
             "created_by_user_id": data.get("user_id"),
             "is_ai_generated": True,
@@ -6344,6 +6321,15 @@ Content:
             "cross_session_history_info": cross_session_info,
             "session_id": data.get("session_id"),
         }
+
+        # Include citations if available
+        if data.get("citations"):
+            result["citations"] = data.get("citations")
+            logger.info(f"🔖 chat_output: Adding {len(data['citations'])} citations to result")
+        else:
+            logger.warning("🔖 chat_output: No citations in data")
+
+        return result
     
 
     @property

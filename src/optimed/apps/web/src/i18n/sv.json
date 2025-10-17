@@ -482,7 +482,52 @@
   "generalSummary": {
     "patientSummary": "Patientsammanfattning",
     "reasoningSteps": "Resonemangssteg:",
-    "detailedReasoning": "Detaljerat resonemang:"
+    "detailedReasoning": "Detaljerat resonemang:",
+    "comprehensiveView": "Helhetsöversikt",
+    "loading": "Laddar...",
+    "complete": "Klar",
+    "pending": "Väntar",
+    "generating": "Genererar {component}...",
+    "contentNotAvailable": "{component} innehåll ej tillgängligt",
+    "step": "Steg {step}:",
+    "aiReasoning": "AI-resonemang",
+    "patientSummaryDescription": "ger en omfattande överblick av patientens sjukdomshistoria, aktuella tillstånd, läkemedel, trender och senaste vård för effektivt kliniskt beslutsfattande.",
+    "disclaimer": "Ansvarsfriskrivning:",
+    "disclaimerText": "Detta är ett informationssystem, inte en medicinteknisk produkt. Informationen tillhandahålls endast för kliniskt beslutsstöd. Vårdpersonal måste använda sitt eget kliniska omdöme och verifiera all information innan medicinska beslut fattas.",
+    "cards": {
+      "snapshot": {
+        "title": "Patientöversikt",
+        "description": "Snabb överblick av patienten"
+      },
+      "problems": {
+        "title": "Aktiva problem",
+        "description": "Aktuella diagnoser och kroniska tillstånd"
+      },
+      "medications": {
+        "title": "Läkemedel",
+        "description": "Aktuella läkemedel och högriskläkemedel"
+      },
+      "trends": {
+        "title": "Lab- och vitaltrender",
+        "description": "Senaste laboratorievärden och vitalparametrar"
+      },
+      "history": {
+        "title": "Tidigare sjukhistoria",
+        "description": "Större operationer och sjukhusvistelser"
+      },
+      "risks": {
+        "title": "Risker och varningar",
+        "description": "Allergier, fallrisk och kliniska varningar"
+      },
+      "encounters": {
+        "title": "Senaste vård",
+        "description": "Berättande sammanfattning av senaste vårdkontakter"
+      },
+      "deepdive": {
+        "title": "Djupdykning",
+        "description": "Detaljerad klinisk information: sjukhusvistelser, röntgensvar och specialistutlåtanden"
+      }
+    }
   },
   "templateManagement": {
     "noteTemplates": "Anteckningsmallar",
@@ -804,7 +849,13 @@
     "reasoningSteps": "Resonemangssteg",
     "detailedReasoning": "Detaljerat resonemang",
     "sbarDescription": "<strong>SBAR</strong> (Situation, Bakgrund, Bedömning, Rekommendation) är ett strukturerat kommunikationsramverk som används inom vården för att säkerställa tydlig och omfattande informationsutbyte. Denna sammanfattning ger utbildningsinformation och bör inte ersätta professionell medicinsk bedömning.",
-    "sbarDescriptionText": "(Situation, Bakgrund, Bedömning, Rekommendation) är ett strukturerat kommunikationsramverk som används inom vården för att säkerställa tydlig och omfattande informationsutbyte. Denna sammanfattning ger utbildningsinformation och bör inte ersätta professionell medicinsk bedömning."
+    "sbarDescriptionText": "(Situation, Bakgrund, Bedömning, Rekommendation) är ett strukturerat kommunikationsramverk som används inom vården för att säkerställa tydlig och omfattande informationsutbyte. Denna sammanfattning ger utbildningsinformation och bör inte ersätta professionell medicinsk bedömning.",
+    "loading": "Laddar...",
+    "complete": "Klar",
+    "pending": "Väntar",
+    "generating": "Genererar {component}...",
+    "contentNotAvailable": "{component} innehåll ej tillgängligt",
+    "step": "Steg {step}:"
   },
   "back" : {
     "toPatients": "Tillbaka till patientsida"
