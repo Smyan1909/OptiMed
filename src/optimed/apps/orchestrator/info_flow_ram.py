@@ -191,6 +191,12 @@ class FlowState(BaseModel):
     sbar_assessment_result: Optional[str] = None
     sbar_recommendation_result: Optional[str] = None
 
+    # Cited chunk IDs from LLM for each SBAR component
+    sbar_situation_cited_ids: Optional[List[str]] = None
+    sbar_background_cited_ids: Optional[List[str]] = None
+    sbar_assessment_cited_ids: Optional[List[str]] = None
+    sbar_recommendation_cited_ids: Optional[List[str]] = None
+
     # SBAR retrieval cache for performance optimization
     sbar_retrieval_cache: Optional[Dict[str, Any]] = None
 
@@ -233,6 +239,16 @@ class FlowState(BaseModel):
     general_encounters_result: Optional[str] = None
     general_deepdive_result: Optional[str] = None
 
+    # Cited chunk IDs from LLM for each general summary component
+    general_snapshot_cited_ids: Optional[List[str]] = None
+    general_problems_cited_ids: Optional[List[str]] = None
+    general_medications_cited_ids: Optional[List[str]] = None
+    general_trends_cited_ids: Optional[List[str]] = None
+    general_history_cited_ids: Optional[List[str]] = None
+    general_risks_cited_ids: Optional[List[str]] = None
+    general_encounters_cited_ids: Optional[List[str]] = None
+    general_deepdive_cited_ids: Optional[List[str]] = None
+
     # General summary retrieval cache for performance optimization
     general_retrieval_cache: Optional[Dict[str, Any]] = None
 
@@ -255,6 +271,14 @@ class FlowState(BaseModel):
     focused_objective_data_result: Optional[str] = None
     focused_assessment_result: Optional[str] = None
     focused_next_steps_result: Optional[str] = None
+
+    # Cited chunk IDs from LLM for each focused summary component
+    focused_diagnoses_cited_ids: Optional[List[str]] = None
+    focused_events_cited_ids: Optional[List[str]] = None
+    focused_medications_cited_ids: Optional[List[str]] = None
+    focused_objective_data_cited_ids: Optional[List[str]] = None
+    focused_assessment_cited_ids: Optional[List[str]] = None
+    focused_next_steps_cited_ids: Optional[List[str]] = None
 
     # Focused summary retrieval cache for performance optimization
     focused_retrieval_cache: Optional[Dict[str, Any]] = None
@@ -2131,6 +2155,7 @@ Keep queries concise and medically precise.
 
                 # Store in SBAR results
                 state.sbar_situation_result = response.content.strip()
+                state.sbar_situation_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated situation summary: {len(response.content)} chars")
 
@@ -2221,6 +2246,7 @@ Keep queries concise and medically precise.
 
                 # Store in SBAR results
                 state.sbar_background_result = response.content.strip()
+                state.sbar_background_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated background summary: {len(response.content)} chars")
 
@@ -2310,6 +2336,7 @@ Keep queries concise and medically precise.
 
                 # Store in SBAR results
                 state.sbar_assessment_result = response.content.strip()
+                state.sbar_assessment_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated assessment summary: {len(response.content)} chars")
 
@@ -2400,6 +2427,7 @@ Keep queries concise and medically precise.
 
                 # Store in SBAR results
                 state.sbar_recommendation_result = response.content.strip()
+                state.sbar_recommendation_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated recommendation summary: {len(response.content)} chars")
 
@@ -2479,6 +2507,7 @@ Keep queries concise and medically precise.
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_snapshot_result = response.content.strip()
+                state.general_snapshot_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated snapshot summary: {len(response.content)} chars")
 
@@ -2551,6 +2580,7 @@ Keep queries concise and medically precise.
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_problems_result = response.content.strip()
+                state.general_problems_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated problems summary: {len(response.content)} chars")
 
@@ -2629,6 +2659,7 @@ Keep queries concise and medically precise.
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_medications_result = response.content.strip()
+                state.general_medications_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated medications summary: {len(response.content)} chars")
 
@@ -2688,6 +2719,7 @@ Keep queries concise and medically precise.
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_trends_result = response.content.strip()
+                state.general_trends_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated trends summary: {len(response.content)} chars")
 
@@ -2746,6 +2778,7 @@ Keep queries concise and medically precise.
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_history_result = response.content.strip()
+                state.general_history_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated history summary: {len(response.content)} chars")
 
@@ -2806,6 +2839,7 @@ Keep queries concise and medically precise.
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_risks_result = response.content.strip()
+                state.general_risks_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated risks summary: {len(response.content)} chars")
 
@@ -2864,6 +2898,7 @@ Keep queries concise and medically precise.
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_encounters_result = response.content.strip()
+                state.general_encounters_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated encounters summary: {len(response.content)} chars")
 
@@ -2922,6 +2957,7 @@ Keep queries concise and medically precise.
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_deepdive_result = response.content.strip()
+                state.general_deepdive_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated deep dive summary: {len(response.content)} chars")
 
@@ -2967,11 +3003,15 @@ Keep queries concise and medically precise.
                     "has_history": bool(state.chat_history)
                 }
 
-                # Extract cited chunk IDs from all SBAR components and build filtered citations
+                # Extract cited chunk IDs from stored citation fields (not from content regex)
                 all_cited_chunk_ids = set()
-                for component_content in sbar_results.values():
-                    if component_content:
-                        cited_ids = self._extract_cited_chunk_ids(component_content)
+                for cited_ids in [
+                    state.sbar_situation_cited_ids,
+                    state.sbar_background_cited_ids,
+                    state.sbar_assessment_cited_ids,
+                    state.sbar_recommendation_cited_ids
+                ]:
+                    if cited_ids:
                         all_cited_chunk_ids.update(cited_ids)
 
                 filtered_citations = {
@@ -3112,11 +3152,19 @@ Keep queries concise and medically precise.
                 # Create structured general summary response for frontend cards
                 import json
 
-                # Extract cited chunk IDs from all general summary components and build filtered citations
+                # Extract cited chunk IDs from stored citation fields (not from content regex)
                 all_cited_chunk_ids = set()
-                for component_content in general_results.values():
-                    if component_content:
-                        cited_ids = self._extract_cited_chunk_ids(component_content)
+                for cited_ids in [
+                    state.general_snapshot_cited_ids,
+                    state.general_problems_cited_ids,
+                    state.general_medications_cited_ids,
+                    state.general_trends_cited_ids,
+                    state.general_history_cited_ids,
+                    state.general_risks_cited_ids,
+                    state.general_encounters_cited_ids,
+                    state.general_deepdive_cited_ids
+                ]:
+                    if cited_ids:
                         all_cited_chunk_ids.update(cited_ids)
 
                 filtered_citations = {
@@ -3378,6 +3426,7 @@ RULES:
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.focused_diagnoses_result = response.content.strip()
+                state.focused_diagnoses_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated diagnoses section: {len(response.content)} chars")
 
@@ -3452,6 +3501,7 @@ RULES:
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.focused_events_result = response.content.strip()
+                state.focused_events_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated events section: {len(response.content)} chars")
 
@@ -3532,6 +3582,7 @@ RULES:
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.focused_medications_result = response.content.strip()
+                state.focused_medications_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated medications section: {len(response.content)} chars")
 
@@ -3605,6 +3656,7 @@ RULES:
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.focused_objective_data_result = response.content.strip()
+                state.focused_objective_data_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated objective data section: {len(response.content)} chars")
 
@@ -3683,6 +3735,7 @@ RULES:
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.focused_assessment_result = response.content.strip()
+                state.focused_assessment_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated assessment section: {len(response.content)} chars")
 
@@ -3759,6 +3812,7 @@ RULES:
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.focused_next_steps_result = response.content.strip()
+                state.focused_next_steps_cited_ids = response.cited_chunk_ids or []
 
                 logger.info(f"Generated next steps section: {len(response.content)} chars")
 
@@ -3798,11 +3852,17 @@ RULES:
                 # Create structured focused summary response for frontend
                 import json
 
-                # Extract cited chunk IDs from all focused summary sections
+                # Extract cited chunk IDs from stored citation fields (not from content regex)
                 all_cited_chunk_ids = set()
-                for section_content in focused_results.values():
-                    if section_content:
-                        cited_ids = self._extract_cited_chunk_ids(section_content)
+                for cited_ids in [
+                    state.focused_diagnoses_cited_ids,
+                    state.focused_events_cited_ids,
+                    state.focused_medications_cited_ids,
+                    state.focused_objective_data_cited_ids,
+                    state.focused_assessment_cited_ids,
+                    state.focused_next_steps_cited_ids
+                ]:
+                    if cited_ids:
                         all_cited_chunk_ids.update(cited_ids)
 
                 # Build filtered citations dict from cited chunks only
@@ -4113,13 +4173,14 @@ Return only the content in markdown format, no preamble.
                     response = await self._llm.chat(messages, enable_chunk_citations=True)
                     content = response.content.strip()
 
-                    # Create timeline event result
+                    # Create timeline event result with cited chunk IDs
                     timeline_event = {
                         "timestamp": time_period,
                         "title": title,
                         "content": content,
                         "icon": icon_mapping.get(idx, "calendar"),
-                        "color": color_mapping.get(idx, "blue")
+                        "color": color_mapping.get(idx, "blue"),
+                        "cited_chunk_ids": response.cited_chunk_ids or []
                     }
 
                     state.timeline_results.append(timeline_event)
@@ -4147,11 +4208,11 @@ Return only the content in markdown format, no preamble.
                     )
                     return state
 
-                # Extract cited chunk IDs from all timeline events
+                # Extract cited chunk IDs from stored citation fields in each event (not from content regex)
                 all_cited_chunk_ids = set()
                 for event in state.timeline_results:
-                    if event.get("content"):
-                        cited_ids = self._extract_cited_chunk_ids(event["content"])
+                    cited_ids = event.get("cited_chunk_ids", [])
+                    if cited_ids:
                         all_cited_chunk_ids.update(cited_ids)
 
                 # Build filtered citations dict from cited chunks only

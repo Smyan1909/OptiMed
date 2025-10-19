@@ -1,6 +1,8 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MarkdownWithCitations } from './MarkdownWithCitations';
+import type { Citation } from './CitationModal';
 import { useTranslations } from 'next-intl';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -41,6 +43,7 @@ interface FocusedSummaryCardsProps {
   isLoading?: boolean;
   patientId?: string;
   sessionId?: string | null;
+  citations?: Record<string, Citation>;
 }
 
 // Custom markdown components for focused summary
@@ -111,7 +114,8 @@ const SectionContent: React.FC<{
   sectionName: string;
   patientId?: string;
   sessionId?: string | null;
-}> = ({ content, lookup, sectionName, patientId, sessionId }) => {
+  citations?: Record<string, Citation>;
+}> = ({ content, lookup, sectionName, patientId, sessionId, citations = {} }) => {
   return (
     <div
       ref={lookup.contentRef}
@@ -120,12 +124,11 @@ const SectionContent: React.FC<{
       onMouseUp={lookup.handleMouseUp}
       onKeyUp={lookup.handleKeyUp}
     >
-      <ReactMarkdown
+      <MarkdownWithCitations
+        content={formatNumbersInText(content)}
+        citations={citations}
         components={FocusedSummaryMarkdownComponents}
-        remarkPlugins={[remarkGfm]}
-      >
-        {formatNumbersInText(content)}
-      </ReactMarkdown>
+      />
       <lookup.LookupButton />
       {lookup.showLookup && lookup.lookupTerm && (
         <LookupPanel
@@ -160,7 +163,8 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
   aspectIcon,
   isLoading = false,
   patientId,
-  sessionId
+  sessionId,
+  citations = {}
 }) => {
   const t = useTranslations('focusedSummary');
   // Create separate lookup hooks for each section
@@ -226,6 +230,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
                   sectionName="diagnoses"
                   patientId={patientId}
                   sessionId={sessionId}
+                  citations={citations}
                 />
               </div>
             </div>
@@ -245,6 +250,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
                   sectionName="events"
                   patientId={patientId}
                   sessionId={sessionId}
+                  citations={citations}
                 />
               </div>
             </div>
@@ -264,6 +270,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
                   sectionName="medications"
                   patientId={patientId}
                   sessionId={sessionId}
+                  citations={citations}
                 />
               </div>
             </div>
@@ -283,6 +290,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
                   sectionName="objective_data"
                   patientId={patientId}
                   sessionId={sessionId}
+                  citations={citations}
                 />
               </div>
             </div>
@@ -302,6 +310,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
                   sectionName="assessment"
                   patientId={patientId}
                   sessionId={sessionId}
+                  citations={citations}
                 />
               </div>
             </div>
@@ -321,6 +330,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
                   sectionName="next_steps"
                   patientId={patientId}
                   sessionId={sessionId}
+                  citations={citations}
                 />
               </div>
             </div>

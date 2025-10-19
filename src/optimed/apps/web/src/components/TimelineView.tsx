@@ -1,6 +1,8 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MarkdownWithCitations } from './MarkdownWithCitations';
+import type { Citation } from './CitationModal';
 import { Card, CardContent } from '@/components/ui/card';
 import { Calendar, Clock, Activity, TrendingUp, AlertCircle, FileText } from 'lucide-react';
 import { useTranslations } from 'next-intl';
@@ -28,6 +30,7 @@ interface TimelineViewProps {
   isLoading?: boolean;
   patientId?: string;
   sessionId?: string | null;
+  citations?: Record<string, Citation>;
 }
 
 // Custom markdown components for Timeline
@@ -105,7 +108,8 @@ const TimelineEventContent: React.FC<{
   isLoading: boolean;
   patientId?: string;
   sessionId?: string | null;
-}> = ({ content, lookup, isLoading, patientId, sessionId }) => {
+  citations?: Record<string, Citation>;
+}> = ({ content, lookup, isLoading, patientId, sessionId, citations = {} }) => {
   return (
     <div
       ref={lookup.contentRef}
@@ -114,12 +118,11 @@ const TimelineEventContent: React.FC<{
       onMouseUp={lookup.handleMouseUp}
       onKeyUp={lookup.handleKeyUp}
     >
-      <ReactMarkdown
+      <MarkdownWithCitations
+        content={formatNumbersInText(content)}
+        citations={citations}
         components={TimelineMarkdownComponents}
-        remarkPlugins={[remarkGfm]}
-      >
-        {formatNumbersInText(content)}
-      </ReactMarkdown>
+      />
       <lookup.LookupButton />
       {lookup.showLookup && lookup.lookupTerm && (
         <LookupPanel
@@ -192,7 +195,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   events,
   isLoading = false,
   patientId,
-  sessionId
+  sessionId,
+  citations = {}
 }) => {
   const t = useTranslations('timeline');
 
@@ -258,6 +262,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                         isLoading={isLoading}
                         patientId={patientId}
                         sessionId={sessionId}
+                        citations={citations}
                       />
                     ) : (
                       <div className="text-sm text-gray-400 italic py-2">
