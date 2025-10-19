@@ -56,6 +56,7 @@ class ChatMessage(FrozenModel):
     user_role: Optional[UserRole] = None  # Role of the user (e.g., doctor, nurse)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    cited_chunk_ids: Optional[List[str]] = None  # Chunk IDs that LLM actually used
 
     @property
     def is_from_staff(self) -> bool:

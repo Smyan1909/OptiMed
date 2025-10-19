@@ -118,7 +118,7 @@ class FlowState(BaseModel):
     journal_entries: List[JournalEntry] = Field(default_factory=list)  # Store fetched journal entries
     uploaded_pdfs: List[PDFDocument] = Field(default_factory=list)  # Store PDF documents
     uploaded_xmls: List[XMLDocument] = Field(default_factory=list)  # Store XML documents
-    retrieved_chunks: List[str] = Field(default_factory=list)
+    retrieved_chunks: List[Dict[str, Any]] = Field(default_factory=list)  # Chunk dicts with chunk_id, content, metadata
 
     # Citation tracking for compact inline citations
     citations: Dict[str, Dict[str, Any]] = Field(default_factory=dict)  # { "1": { "document": "...", "page": "...", "excerpt": "...", "url": "..." } }
@@ -181,10 +181,10 @@ class FlowState(BaseModel):
     is_sbar_flow: bool = False
 
     # Separate fields for each SBAR component to avoid concurrent updates
-    sbar_situation_chunks: Optional[List[str]] = None
-    sbar_background_chunks: Optional[List[str]] = None
-    sbar_assessment_chunks: Optional[List[str]] = None
-    sbar_recommendation_chunks: Optional[List[str]] = None
+    sbar_situation_chunks: Optional[List[Dict[str, Any]]] = None
+    sbar_background_chunks: Optional[List[Dict[str, Any]]] = None
+    sbar_assessment_chunks: Optional[List[Dict[str, Any]]] = None
+    sbar_recommendation_chunks: Optional[List[Dict[str, Any]]] = None
 
     sbar_situation_result: Optional[str] = None
     sbar_background_result: Optional[str] = None
@@ -197,7 +197,7 @@ class FlowState(BaseModel):
     # Timeline flow fields
     is_timeline_flow: bool = False
     timeline_events: Optional[List[Dict[str, Any]]] = None  # Generated timeline events
-    timeline_chunks: Optional[Dict[str, List[str]]] = None  # Chunks per event
+    timeline_chunks: Optional[Dict[str, List[Dict[str, Any]]]] = None  # Chunks per event
     timeline_results: Optional[List[Dict[str, Any]]] = None  # Final timeline bubbles
     timeline_retrieval_cache: Optional[Dict[str, Any]] = None
 
@@ -215,14 +215,14 @@ class FlowState(BaseModel):
     is_general_summary_flow: bool = False
 
     # Separate fields for each general summary component to avoid concurrent updates
-    general_snapshot_chunks: Optional[List[str]] = None
-    general_problems_chunks: Optional[List[str]] = None
-    general_medications_chunks: Optional[List[str]] = None
-    general_trends_chunks: Optional[List[str]] = None
-    general_history_chunks: Optional[List[str]] = None
-    general_risks_chunks: Optional[List[str]] = None
-    general_encounters_chunks: Optional[List[str]] = None
-    general_deepdive_chunks: Optional[List[str]] = None
+    general_snapshot_chunks: Optional[List[Dict[str, Any]]] = None
+    general_problems_chunks: Optional[List[Dict[str, Any]]] = None
+    general_medications_chunks: Optional[List[Dict[str, Any]]] = None
+    general_trends_chunks: Optional[List[Dict[str, Any]]] = None
+    general_history_chunks: Optional[List[Dict[str, Any]]] = None
+    general_risks_chunks: Optional[List[Dict[str, Any]]] = None
+    general_encounters_chunks: Optional[List[Dict[str, Any]]] = None
+    general_deepdive_chunks: Optional[List[Dict[str, Any]]] = None
 
     general_snapshot_result: Optional[str] = None
     general_problems_result: Optional[str] = None
@@ -242,12 +242,12 @@ class FlowState(BaseModel):
     focused_aspect_icon: Optional[str] = None  # Icon for the aspect
 
     # Separate fields for each focused summary component to avoid concurrent updates
-    focused_diagnoses_chunks: Optional[List[str]] = None
-    focused_events_chunks: Optional[List[str]] = None
-    focused_medications_chunks: Optional[List[str]] = None
-    focused_objective_data_chunks: Optional[List[str]] = None
-    focused_assessment_chunks: Optional[List[str]] = None
-    focused_next_steps_chunks: Optional[List[str]] = None
+    focused_diagnoses_chunks: Optional[List[Dict[str, Any]]] = None
+    focused_events_chunks: Optional[List[Dict[str, Any]]] = None
+    focused_medications_chunks: Optional[List[Dict[str, Any]]] = None
+    focused_objective_data_chunks: Optional[List[Dict[str, Any]]] = None
+    focused_assessment_chunks: Optional[List[Dict[str, Any]]] = None
+    focused_next_steps_chunks: Optional[List[Dict[str, Any]]] = None
 
     focused_diagnoses_result: Optional[str] = None
     focused_events_result: Optional[str] = None
@@ -292,20 +292,6 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         self._cross_encoder = cross_encoder
         self._zero_shot_classifier = zero_shot_classifier
 
-        # Citation validation models (loaded once at startup)
-        logger.info("Loading citation validation models...")
-        from sentence_transformers import SentenceTransformer, CrossEncoder
-
-        # NLI model for entailment-based validation (primary method)
-        self._nli_validator = CrossEncoder('cross-encoder/nli-deberta-v3-base')
-        logger.info("✓ NLI entailment model loaded (cross-encoder/nli-deberta-v3-base)")
-
-        # Semantic similarity model (fallback method)
-        self._semantic_validator = SentenceTransformer('all-MiniLM-L6-v2')
-        logger.info("✓ Semantic similarity model loaded (all-MiniLM-L6-v2)")
-
-        logger.info("✓ Citation validation system ready")
-
         self._compiled_graph = self._build_graph()
         # Use global session memory that persists across instances
         self._session_memory = _GLOBAL_SESSION_MEMORY
@@ -345,30 +331,33 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         """Estimate token count (rough: 1 token ≈ 4 characters)."""
         return len(text) // 4
 
-    def _limit_chunks_for_context(self, chunks: list[str], max_tokens: int = 200000, max_chunk_chars: int = 50000) -> list[str]:
+    def _limit_chunks_for_context(self, chunks: List[Dict[str, Any]], max_tokens: int = 200000, max_chunk_chars: int = 50000) -> List[Dict[str, Any]]:
         """
         Limit chunks to prevent context window overflow.
 
         Args:
-            chunks: List of chunk content strings
+            chunks: List of chunk dicts with chunk_id, content, and metadata
             max_tokens: Maximum total tokens for all chunks
             max_chunk_chars: Maximum characters per individual chunk
 
         Returns:
             Limited and truncated chunks that fit within constraints
         """
-        limited_chunks: list[str] = []
+        limited_chunks: List[Dict[str, Any]] = []
         total_tokens = 0
 
         for chunk in chunks:
-            # Truncate individual chunks that are too large
-            if len(chunk) > max_chunk_chars:
-                truncated = chunk[:max_chunk_chars] + "\n... [truncated for length]"
-                logger.warning(f"Truncated chunk from {len(chunk)} to {max_chunk_chars} chars")
-                chunk = truncated
+            content = chunk.get("content", "")
 
-            # Estimate tokens
-            chunk_tokens = self._estimate_tokens(chunk)
+            # Truncate individual chunks that are too large
+            if len(content) > max_chunk_chars:
+                truncated = content[:max_chunk_chars] + "\n... [truncated for length]"
+                logger.warning(f"Truncated chunk from {len(content)} to {max_chunk_chars} chars")
+                # Create new chunk with truncated content
+                chunk = {**chunk, "content": truncated}
+
+            # Estimate tokens based on content
+            chunk_tokens = self._estimate_tokens(content)
 
             # Stop adding chunks if we'd exceed the limit
             if total_tokens + chunk_tokens > max_tokens:
@@ -381,355 +370,152 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         logger.info(f"Limited chunks: {len(chunks)} → {len(limited_chunks)}, estimated tokens: ~{total_tokens}")
         return limited_chunks
 
-    def _extract_citations_from_chunks(self, chunks: List[str]) -> Dict[str, Dict[str, Any]]:
+    def _build_citations_from_chunks(self, chunks: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         """
-        Extract citation metadata from chunks containing embedded source links.
+        Build citations dictionary from chunk metadata.
 
-        Chunks may contain:
-        - Atomic data: "value [EHR Source](URL)"
-        - Narrative data: "text...\n\n**Source:** [EHR Record](URL)"
-
-        Returns:
-            Dictionary mapping citation numbers to metadata:
-            { "1": { "document": "...", "page": "...", "excerpt": "...", "url": "..." } }
-        """
-
-        citations: Dict[str, Dict[str, Any]] = {}
-        citation_counter = 1
-
-        for chunk_idx, chunk in enumerate(chunks):
-            if not chunk:
-                continue
-
-            # Extract document name and URL from embedded links
-            # Pattern 1: [Document Name](URL) - for both atomic and narrative
-            link_pattern = r'\[([^\]]+)\]\((https?://[^\)]+)\)'
-            matches = list(re.finditer(link_pattern, chunk))
-
-            if matches:
-                # Use the first link found in the chunk
-                match = matches[0]
-                document_name = match.group(1).replace("EHR Source", "EHR Record").replace("EHR Record", "Clinical Document")
-                url = match.group(2)
-
-                # Extract full chunk content for citation (remove only source metadata)
-                # Remove source metadata lines but keep all actual content
-                clean_chunk = re.sub(r'\*\*Source:\*\*.*', '', chunk)
-                clean_chunk = re.sub(r'\[EHR Source\]\([^\)]+\)', '', clean_chunk)
-                clean_chunk = re.sub(r'\(from EHR, no link available\)', '', clean_chunk)
-                # Use the entire cleaned chunk as excerpt (no length limit)
-                excerpt = clean_chunk.strip()
-
-                # Try to extract page number if mentioned in chunk
-                page_match = re.search(r'page\s+(\d+)', chunk, re.IGNORECASE)
-                page = page_match.group(1) if page_match else None
-
-                # Build citation entry
-                citation_id = str(citation_counter)
-                citations[citation_id] = {
-                    "document": document_name,
-                    "page": page,
-                    "excerpt": excerpt,
-                    "url": url
-                }
-                citation_counter += 1
-            else:
-                # No URL found, but still create citation with full chunk content
-                # Use the entire chunk as excerpt (no length limit)
-                excerpt = chunk.strip()
-
-                # Try to infer document type from chunk content
-                document_name = "Clinical Record"
-                if "vital" in chunk.lower() or "bp " in chunk.lower() or "heart rate" in chunk.lower():
-                    document_name = "Vital Signs"
-                elif "lab" in chunk.lower() or "result" in chunk.lower():
-                    document_name = "Laboratory Results"
-                elif "medication" in chunk.lower() or "drug" in chunk.lower():
-                    document_name = "Medication List"
-                elif "diagnosis" in chunk.lower() or "condition" in chunk.lower():
-                    document_name = "Problem List"
-
-                citation_id = str(citation_counter)
-                citations[citation_id] = {
-                    "document": document_name,
-                    "page": None,
-                    "excerpt": excerpt,
-                    "url": None
-                }
-                citation_counter += 1
-
-        logger.info(f"Extracted {len(citations)} citations from {len(chunks)} chunks")
-        return citations
-
-    def _format_chunks_with_citations(self, chunks: List[str], citations: Dict[str, Dict[str, Any]]) -> str:
-        """
-        Format chunks by removing verbose source links and adding sentence-level citation markers.
-
-        This method adds citation markers after each sentence or major statement within a chunk,
-        rather than just at the end. This helps the LLM more accurately attribute specific facts.
-
-        Returns a formatted string with:
-        1. Clean chunk content with inline citation markers
-        2. Citation references section mapping [1], [2], [3] to sources
-        """
-        import re
-        import nltk
-
-        # Ensure punkt tokenizer is available
-        try:
-            nltk.data.find('tokenizers/punkt')
-        except LookupError:
-            nltk.download('punkt', quiet=True)
-
-        formatted_chunks = []
-
-        # Process each chunk and assign citation ID
-        for idx, chunk in enumerate(chunks):
-            if not chunk:
-                continue
-
-            # Citation ID is idx + 1 (1-indexed)
-            citation_id = str(idx + 1)
-
-            # Remove verbose source links from chunk
-            clean_chunk = chunk
-            # Remove **Source:** [Document](URL) patterns
-            clean_chunk = re.sub(r'\*\*Source:\*\*\s*\[([^\]]+)\]\([^\)]+\)', '', clean_chunk)
-            # Remove inline [EHR Source](URL) patterns
-            clean_chunk = re.sub(r'\[EHR Source\]\([^\)]+\)', '', clean_chunk)
-            # Remove (from EHR, no link available) patterns
-            clean_chunk = re.sub(r'\(from EHR, no link available\)', '', clean_chunk)
-            # Clean up extra whitespace
-            clean_chunk = re.sub(r'\n\s*\n\s*\n+', '\n\n', clean_chunk)
-            clean_chunk = clean_chunk.strip()
-
-            if clean_chunk:
-                # Split chunk into sentences and add citation after each
-                try:
-                    sentences = nltk.sent_tokenize(clean_chunk)
-                except Exception:
-                    # Fallback to simple sentence splitting if nltk fails
-                    sentences = re.split(r'(?<=[.!?])\s+', clean_chunk)
-
-                # Add citation marker after each sentence
-                cited_sentences = []
-                for sent in sentences:
-                    sent = sent.strip()
-                    if sent:
-                        # Ensure sentence ends with punctuation
-                        if not sent[-1] in '.!?':
-                            sent += '.'
-                        cited_sentences.append(f"{sent} [Citation: {citation_id}]")
-
-                formatted_chunks.append('\n'.join(cited_sentences))
-
-        # Build the final formatted string with citation reference section
-        chunks_text = "\n\n---\n\n".join(formatted_chunks)
-
-        # Add citation reference section
-        if citations:
-            citation_section = "\n\n=== CITATION REFERENCES ===\n"
-            for cit_id, cit_data in sorted(citations.items(), key=lambda x: int(x[0])):
-                doc_name = cit_data.get("document", "Unknown Document")
-                page = cit_data.get("page")
-                page_info = f", Page {page}" if page else ""
-                citation_section += f"[{cit_id}]: {doc_name}{page_info}\n"
-            chunks_text += citation_section
-
-        return chunks_text
-
-    async def _validate_and_correct_citations(
-        self,
-        text: str,
-        citations: Dict[str, Dict[str, Any]]
-    ) -> str:
-        """
-        Validate citations using NLI entailment scoring (primary) with semantic similarity fallback.
-
-        This method uses Natural Language Inference to check if the cited chunk actually
-        entails/supports the claim being made. This is more accurate than pure semantic similarity
-        because it checks logical entailment rather than just topical similarity.
-
-        Research basis:
-        - NLI cross-encoders outperform bi-encoders for factual consistency (SemEval-2024)
-        - Entailment checking is better than cosine similarity for citation verification
-        - Model: cross-encoder/nli-deberta-v3-base (90.04% accuracy on MNLI)
+        This replaces the old _extract_citations_from_chunks method.
+        Now we use chunk_id as the key instead of sequential numbers,
+        and extract metadata from the chunk dict instead of parsing text.
 
         Args:
-            text: Generated text with citations like "Patient is 87 years old [1]"
-            citations: Dictionary mapping citation IDs to chunk metadata
+            chunks: List of chunk dicts with chunk_id, content, and metadata
 
         Returns:
-            Corrected text with validated citations
+            Dictionary mapping chunk_id to citation metadata:
+            { "chunk-id-123": { "id": "chunk-id-123", "document": "...", "page": "...", "excerpt": "...", "url": "..." } }
         """
-        if not citations or not text:
-            return text
+        citations = {}
 
+        for chunk in chunks:
+            chunk_id = chunk.get("chunk_id")
+            if not chunk_id:
+                logger.warning("Chunk missing chunk_id, skipping citation")
+                continue
+
+            metadata = chunk.get("metadata", {})
+            content = chunk.get("content", "")
+
+            # Clean content (remove old embedded source links if any)
+            import re
+            clean_content = re.sub(r'\*\*Source:\*\*\s*\[([^\]]+)\]\([^\)]+\)', '', content)
+            clean_content = re.sub(r'\[EHR Source\]\([^\)]+\)', '', clean_content)
+            clean_content = re.sub(r'\(from EHR, no link available\)', '', clean_content)
+            clean_content = clean_content.strip()
+
+            citations[chunk_id] = {
+                "id": chunk_id,
+                "document": metadata.get("document", "Clinical Record"),
+                "page": metadata.get("page"),
+                "excerpt": clean_content,  # Full chunk content
+                "url": metadata.get("url"),
+            }
+
+        logger.info(f"Built {len(citations)} citations from {len(chunks)} chunks")
+        return citations
+
+    def _format_chunks_with_citations(self, chunks: List[Dict[str, Any]]) -> str:
+        """
+        Format chunks with chunk_id markers for LLM to cite.
+
+        The LLM will be instructed to cite chunks using [cite: chunk_id] in its response.
+        This method formats chunks as:
+        [chunk_id: abc-123]
+        <chunk content>
+        [/chunk_id]
+
+        Args:
+            chunks: List of chunk dicts with chunk_id, content, and metadata
+
+        Returns:
+            Formatted string with chunk_id markers
+        """
         import re
-        from sentence_transformers import util
-        import numpy as np
+        formatted_parts = []
 
-        try:
-            # Prepare chunk data
-            chunk_texts = [cit['excerpt'] for cit in citations.values()]
-            chunk_ids = list(citations.keys())
+        for chunk in chunks:
+            chunk_id = chunk.get("chunk_id", "unknown")
+            content = chunk.get("content", "")
 
-            # Enhanced pattern to capture more context
-            # Matches sentences ending with punctuation followed by citation
-            citation_pattern = r'([^.!?\n]{10,}[.!?]?)\s*\[(\d+)\]'
+            # Clean content (remove old verbose citations if any)
+            clean_content = re.sub(r'\*\*Source:\*\*\s*\[([^\]]+)\]\([^\)]+\)', '', content)
+            clean_content = re.sub(r'\[EHR Source\]\([^\)]+\)', '', clean_content)
+            clean_content = re.sub(r'\(from EHR, no link available\)', '', clean_content)
+            clean_content = re.sub(r'\n\s*\n\s*\n+', '\n\n', clean_content)
+            clean_content = clean_content.strip()
 
-            corrected_text = text
-            corrections_made = []
-            validations_passed = []
+            if clean_content:
+                # Format with chunk_id markers for LLM to reference
+                formatted_parts.append(f"[chunk_id: {chunk_id}]\n{clean_content}\n[/chunk_id]")
 
-            for match in re.finditer(citation_pattern, text):
-                claim = match.group(1).strip()
-                citation_id = match.group(2)
+        return "\n\n".join(formatted_parts)
 
-                # Skip if citation ID doesn't exist
-                if citation_id not in chunk_ids:
-                    logger.warning(f"Citation [{citation_id}] not found in chunks, skipping")
-                    continue
+    def _extract_cited_chunk_ids(self, content: str) -> set:
+        """
+        Extract chunk IDs that were actually cited in the content.
+        Looks for [cite: chunk_id] markers in the content.
 
-                cited_chunk_idx = chunk_ids.index(citation_id)
-                cited_chunk = chunk_texts[cited_chunk_idx]
+        Args:
+            content: The generated content text
 
-                # === PRIMARY METHOD: NLI Entailment Scoring ===
-                # Score the claim against the cited chunk
-                # Output: [contradiction_score, entailment_score, neutral_score]
-                nli_scores = self._nli_validator.predict([(cited_chunk, claim)])[0]
-                entailment_score = nli_scores[1]  # Index 1 is entailment
-                predicted_label_idx = np.argmax(nli_scores)
-                label_names = ['contradiction', 'entailment', 'neutral']
-                predicted_label = label_names[predicted_label_idx]
+        Returns:
+            Set of chunk IDs that were cited
+        """
+        import re
+        cited_ids = set()
 
-                # Log the validation check
-                claim_preview = claim[:80] + '...' if len(claim) > 80 else claim
-                logger.debug(
-                    f"NLI Check: '{claim_preview}' → [{citation_id}] "
-                    f"(entailment: {entailment_score:.3f}, predicted: {predicted_label})"
-                )
+        # Pattern to match [cite: chunk_id]
+        pattern = r'\[cite:\s*([^\]]+)\]'
+        matches = re.findall(pattern, content)
 
-                # Thresholds based on SemEval-2024 clinical NLI research
-                MIN_ENTAILMENT_SCORE = 0.5  # Minimum score to consider entailed
-                MIN_ENTAILMENT_CONFIDENCE = 0.4  # Minimum confidence when entailment is top class
+        for match in matches:
+            chunk_id = match.strip()
+            cited_ids.add(chunk_id)
 
-                # Check if current citation is valid
-                is_valid_citation = (
-                    predicted_label == 'entailment' and
-                    entailment_score >= MIN_ENTAILMENT_CONFIDENCE
-                ) or (
-                    entailment_score >= MIN_ENTAILMENT_SCORE
-                )
+        return cited_ids
 
-                if is_valid_citation:
-                    validations_passed.append({
-                        'claim': claim_preview,
-                        'citation': citation_id,
-                        'entailment_score': entailment_score,
-                        'label': predicted_label
-                    })
-                    continue  # Citation is correct, move to next
+    def _convert_citations_to_numbered(self, content: str, citations: Dict[str, Dict[str, Any]]) -> tuple[str, Dict[str, Dict[str, Any]]]:
+        """
+        Convert [cite: chunk_id] markers to numbered citations [1], [2], etc.
+        and renumber the citations dict accordingly.
 
-                # === CORRECTION: Find the chunk that actually entails the claim ===
-                logger.info(f"⚠️ Low entailment for citation [{citation_id}] (score: {entailment_score:.3f})")
+        Args:
+            content: Content with [cite: chunk_id] markers
+            citations: Citations dict keyed by chunk_id
 
-                # Score claim against ALL chunks
-                chunk_claim_pairs = [(chunk, claim) for chunk in chunk_texts]
-                all_nli_scores = self._nli_validator.predict(chunk_claim_pairs)
+        Returns:
+            Tuple of (updated_content, numbered_citations_dict)
+        """
+        import re
 
-                # Extract entailment scores (index 1) for each chunk
-                entailment_scores = [scores[1] for scores in all_nli_scores]
+        # Extract all cited chunk IDs in order of appearance
+        pattern = r'\[cite:\s*([^\]]+)\]'
+        matches = re.findall(pattern, content)
 
-                # Find chunk with highest entailment
-                best_chunk_idx = np.argmax(entailment_scores)
-                best_entailment_score = entailment_scores[best_chunk_idx]
-                best_citation_id = chunk_ids[best_chunk_idx]
+        # Create ordered mapping from chunk_id to number
+        chunk_id_to_number = {}
+        number = 1
+        for match in matches:
+            chunk_id = match.strip()
+            if chunk_id not in chunk_id_to_number:
+                chunk_id_to_number[chunk_id] = number
+                number += 1
 
-                # Only correct if:
-                # 1. Best match is significantly better (>0.2 improvement in entailment)
-                # 2. Best match has reasonable entailment (>0.3)
-                # 3. Best match is different from current citation
-                if (best_entailment_score > entailment_score + 0.2 and
-                    best_entailment_score > 0.3 and
-                    best_citation_id != citation_id):
+        # Replace [cite: chunk_id] with [number] in content
+        def replace_citation(match):
+            chunk_id = match.group(1).strip()
+            citation_num = chunk_id_to_number.get(chunk_id, "?")
+            return f"[{citation_num}]"
 
-                    # Replace citation in text
-                    old_text = f"{claim}[{citation_id}]"
-                    new_text = f"{claim}[{best_citation_id}]"
-                    corrected_text = corrected_text.replace(old_text, new_text, 1)
+        updated_content = re.sub(pattern, replace_citation, content)
 
-                    corrections_made.append({
-                        'claim': claim_preview,
-                        'old_citation': citation_id,
-                        'new_citation': best_citation_id,
-                        'old_entailment': entailment_score,
-                        'new_entailment': best_entailment_score,
-                        'improvement': best_entailment_score - entailment_score
-                    })
+        # Renumber citations dict from chunk_id keys to number keys
+        numbered_citations = {}
+        for chunk_id, citation_num in chunk_id_to_number.items():
+            if chunk_id in citations:
+                numbered_citations[str(citation_num)] = citations[chunk_id]
 
-                elif best_entailment_score <= 0.3:
-                    # === FALLBACK: Semantic similarity for low-confidence cases ===
-                    logger.info(f"⚠️ All entailment scores low, using semantic similarity fallback")
-
-                    # Compute semantic embeddings
-                    claim_emb = self._semantic_validator.encode(claim, convert_to_tensor=True)
-                    chunk_embeddings = self._semantic_validator.encode(chunk_texts, convert_to_tensor=True)
-
-                    # Find most similar chunk
-                    similarities = util.cos_sim(claim_emb, chunk_embeddings)[0]
-                    best_sem_idx = similarities.argmax().item()
-                    best_sem_score = similarities[best_sem_idx].item()
-                    best_sem_citation_id = chunk_ids[best_sem_idx]
-
-                    cited_sem_score = similarities[cited_chunk_idx].item()
-
-                    # Correct if semantic similarity is significantly better
-                    if (best_sem_score > cited_sem_score + 0.25 and
-                        best_sem_score > 0.35 and
-                        best_sem_citation_id != citation_id):
-
-                        old_text = f"{claim}[{citation_id}]"
-                        new_text = f"{claim}[{best_sem_citation_id}]"
-                        corrected_text = corrected_text.replace(old_text, new_text, 1)
-
-                        corrections_made.append({
-                            'claim': claim_preview,
-                            'old_citation': citation_id,
-                            'new_citation': best_sem_citation_id,
-                            'old_similarity': cited_sem_score,
-                            'new_similarity': best_sem_score,
-                            'method': 'semantic_fallback'
-                        })
-
-            # Log results
-            if corrections_made:
-                logger.warning(f"🔍 Citation Validation: Corrected {len(corrections_made)} citation(s)")
-                for correction in corrections_made:
-                    if 'method' in correction and correction['method'] == 'semantic_fallback':
-                        logger.warning(
-                            f"  → (Semantic) '{correction['claim']}' "
-                            f"[{correction['old_citation']}] → [{correction['new_citation']}] "
-                            f"(similarity: {correction['old_similarity']:.3f} → {correction['new_similarity']:.3f})"
-                        )
-                    else:
-                        logger.warning(
-                            f"  → (NLI) '{correction['claim']}' "
-                            f"[{correction['old_citation']}] → [{correction['new_citation']}] "
-                            f"(entailment: {correction['old_entailment']:.3f} → {correction['new_entailment']:.3f}, "
-                            f"+{correction['improvement']:.3f})"
-                        )
-            else:
-                logger.info(f"✓ Citation Validation: All {len(validations_passed)} citations verified as accurate")
-
-            return corrected_text
-
-        except Exception as e:
-            # If validation fails, return original text
-            logger.error(f"Citation validation error: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return text
+        return updated_content, numbered_citations
 
     async def _log_data_lineage(
         self,
@@ -1156,9 +942,18 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
                 # Adapt to local chunk dicts
                 chunks: list[dict[str, Any]] = [{
-                    "id": c.id,
+                    "chunk_id": c.id,
+                    "id": c.id,  # Keep for backward compatibility
                     "content": c.text,
-                    "metadata": {"patient_id": patient_id_str, "data_type": c.resource_type, "timestamp": str(int(time.time()*1000))},
+                    "metadata": {
+                        "patient_id": patient_id_str,
+                        "data_type": c.resource_type,
+                        "resource_type": c.resource_type,
+                        "timestamp": c.timestamp.isoformat() if c.timestamp else str(int(time.time()*1000)),
+                        "document": c.meta.get("document_name", "Clinical Record") if c.meta else "Clinical Record",
+                        "page": c.meta.get("page") if c.meta else None,
+                        "url": c.meta.get("url") if c.meta else None,
+                    },
                     "data_type": c.resource_type,
                 } for c in all_chunks]
                 
@@ -1298,11 +1093,18 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     state.retrieval_retry_attempts += 1
 
                     # Set partial state for streaming decorator to show progress
-                    state.retrieved_chunks = [cast(str, chunks[i]["content"]) for i in final_selected] if final_selected else []
+                    state.retrieved_chunks = [
+                        {
+                            "chunk_id": chunks[i]["chunk_id"],
+                            "content": chunks[i]["content"],
+                            "metadata": chunks[i]["metadata"]
+                        }
+                        for i in final_selected
+                    ] if final_selected else []
 
-                    # Extract citations from selected chunks
+                    # Build citations from chunk metadata
                     if state.retrieved_chunks:
-                        state.citations = self._extract_citations_from_chunks(state.retrieved_chunks)
+                        state.citations = self._build_citations_from_chunks(state.retrieved_chunks)
 
                     state.chunk_analysis = {
                         "method": "bi_cross_mmr_gate_refining",
@@ -1360,11 +1162,18 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     )
 
                 # Set state variables early so streaming decorator can access them
-                state.retrieved_chunks = [cast(str, chunks[i]["content"]) for i in final_selected]
+                state.retrieved_chunks = [
+                    {
+                        "chunk_id": chunks[i]["chunk_id"],
+                        "content": chunks[i]["content"],
+                        "metadata": chunks[i]["metadata"]
+                    }
+                    for i in final_selected
+                ]
 
-                # Extract citations from selected chunks
-                state.citations = self._extract_citations_from_chunks(state.retrieved_chunks)
-                logger.info(f"🔖 Extracted citations: {len(state.citations)} total")
+                # Build citations from chunk metadata
+                state.citations = self._build_citations_from_chunks(state.retrieved_chunks)
+                logger.info(f"🔖 Built citations: {len(state.citations)} total")
                 logger.info(f"🔖 Citation IDs: {list(state.citations.keys())}")
                 if state.citations:
                     first_citation = list(state.citations.values())[0]
@@ -1399,21 +1208,37 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
                 # Get chunks from state - try multiple sources
                 chunks = []
+                chunk_contents = []  # For embedding
                 if state.retrieved_chunks:
                     chunks = state.retrieved_chunks[:50]  # Use cached chunks if available
+                    # Extract content from chunk dictionaries
+                    chunk_contents = [chunk.get("content", "") if isinstance(chunk, dict) else chunk for chunk in chunks]
                     logger.info(f"{focus} - Using {len(chunks)} cached chunks")
                 else:
                     # Fall back to doing quick retrieval ourselves
                     logger.info(f"{focus} - No cached chunks, doing quick retrieval")
                     if state.patient_ctx and state.journal_entries:
                         # Quick retrieval from journal entries (most relevant for SBAR)
-                        for entry in state.journal_entries[:15]:  # Limit for speed
+                        import hashlib
+                        for idx, entry in enumerate(state.journal_entries[:15]):  # Limit for speed
+                            content = ""
                             if hasattr(entry, 'content') and entry.content:
-                                chunks.append(entry.content)
+                                content = entry.content
                             elif hasattr(entry, 'text') and entry.text:
-                                chunks.append(entry.text)
+                                content = entry.text
 
-                    if not chunks:
+                            if content:
+                                # Wrap in minimal chunk dict structure
+                                chunk_id = hashlib.md5(content.encode()).hexdigest()[:16]
+                                chunk_dict = {
+                                    "chunk_id": chunk_id,
+                                    "content": content,
+                                    "metadata": {"source": "journal_entry", "index": idx}
+                                }
+                                chunks.append(chunk_dict)
+                                chunk_contents.append(content)
+
+                    if not chunk_contents:
                         logger.info(f"{focus} - No chunks available")
                         return []
 
@@ -1422,8 +1247,8 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 query_vecs = await self._embed_many(queries, mode="query")
                 logger.info(f"{focus} - Embedded {len(query_vecs)} queries")
 
-                # Embed the chunks
-                chunk_vecs = await self._embed_many(chunks, mode="passage")
+                # Embed the chunk contents (strings)
+                chunk_vecs = await self._embed_many(chunk_contents, mode="passage")
                 logger.info(f"{focus} - Embedded {len(chunk_vecs)} chunks")
 
                 # Compute bi-encoder scores (max cosine similarity across all queries)
@@ -1431,7 +1256,9 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 for i, chunk_vec in enumerate(chunk_vecs):
                     max_score = max(self._cosine(chunk_vec, qv) for qv in query_vecs)
                     if max_score > 0.0:  # Only include chunks with some similarity
-                        scored_chunks.append((max_score, chunks[i]))
+                        # Return full chunk dict (if available) or content string (fallback)
+                        chunk_data = chunks[i] if i < len(chunks) else chunk_contents[i]
+                        scored_chunks.append((max_score, chunk_data))
 
                 # Sort by score and return top chunks
                 scored_chunks.sort(key=lambda x: x[0], reverse=True)
@@ -1599,13 +1426,16 @@ Keep queries concise and medical terminology appropriate.
 
                 # Get chunks from state - try multiple sources
                 chunks = []
+                chunk_contents = []  # For embedding
                 if state.retrieved_chunks:
                     chunks = state.retrieved_chunks[:50]  # Use cached chunks if available
+                    # Extract content from chunk dictionaries
+                    chunk_contents = [chunk.get("content", "") if isinstance(chunk, dict) else chunk for chunk in chunks]
                     logger.info(f"{focus} - Using {len(chunks)} cached chunks")
                 else:
                     logger.info(f"{focus} - No cached chunks available, using keyword matching only")
 
-                if not chunks:
+                if not chunk_contents and not chunks:
                     logger.info(f"{focus} - No chunks available for retrieval")
                     return []
 
@@ -1614,8 +1444,8 @@ Keep queries concise and medical terminology appropriate.
                 query_vecs = await self._embed_many(queries, mode="query")
                 logger.info(f"{focus} - Embedded {len(query_vecs)} queries")
 
-                # Embed the chunks
-                chunk_vecs = await self._embed_many(chunks, mode="passage")
+                # Embed the chunk contents (strings)
+                chunk_vecs = await self._embed_many(chunk_contents, mode="passage")
                 logger.info(f"{focus} - Embedded {len(chunk_vecs)} chunks")
 
                 # Compute bi-encoder scores (max cosine similarity across all queries)
@@ -1623,7 +1453,9 @@ Keep queries concise and medical terminology appropriate.
                 for i, chunk_vec in enumerate(chunk_vecs):
                     max_score = max(self._cosine(chunk_vec, qv) for qv in query_vecs)
                     if max_score > 0.0:  # Only include chunks with some similarity
-                        scored_chunks.append((max_score, chunks[i]))
+                        # Return full chunk dict (if available) or content string (fallback)
+                        chunk_data = chunks[i] if i < len(chunks) else chunk_contents[i]
+                        scored_chunks.append((max_score, chunk_data))
 
                 # Sort by score and return top chunks
                 scored_chunks.sort(key=lambda x: x[0], reverse=True)
@@ -2291,11 +2123,11 @@ Keep queries concise and medically precise.
                     # Limit chunks to prevent context overflow
                     limited_chunks = self._limit_chunks_for_context(situation_chunks, max_tokens=200000, max_chunk_chars=50000)
                     # Format chunks with citation references
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
 
                 # Store in SBAR results
                 state.sbar_situation_result = response.content.strip()
@@ -2381,11 +2213,11 @@ Keep queries concise and medically precise.
                 if background_chunks:
                     # Limit chunks to prevent context overflow
                     limited_chunks = self._limit_chunks_for_context(background_chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
 
                 # Store in SBAR results
                 state.sbar_background_result = response.content.strip()
@@ -2470,11 +2302,11 @@ Keep queries concise and medically precise.
                 if assessment_chunks:
                     # Limit chunks to prevent context overflow
                     limited_chunks = self._limit_chunks_for_context(assessment_chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
 
                 # Store in SBAR results
                 state.sbar_assessment_result = response.content.strip()
@@ -2560,11 +2392,11 @@ Keep queries concise and medically precise.
                 if recommendation_chunks:
                     # Limit chunks to prevent context overflow
                     limited_chunks = self._limit_chunks_for_context(recommendation_chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
 
                 # Store in SBAR results
                 state.sbar_recommendation_result = response.content.strip()
@@ -2642,10 +2474,10 @@ Keep queries concise and medically precise.
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_snapshot_result = response.content.strip()
 
                 logger.info(f"Generated snapshot summary: {len(response.content)} chars")
@@ -2714,10 +2546,10 @@ Keep queries concise and medically precise.
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_problems_result = response.content.strip()
 
                 logger.info(f"Generated problems summary: {len(response.content)} chars")
@@ -2792,10 +2624,10 @@ Keep queries concise and medically precise.
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_medications_result = response.content.strip()
 
                 logger.info(f"Generated medications summary: {len(response.content)} chars")
@@ -2851,10 +2683,10 @@ Keep queries concise and medically precise.
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_trends_result = response.content.strip()
 
                 logger.info(f"Generated trends summary: {len(response.content)} chars")
@@ -2909,10 +2741,10 @@ Keep queries concise and medically precise.
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_history_result = response.content.strip()
 
                 logger.info(f"Generated history summary: {len(response.content)} chars")
@@ -2969,10 +2801,10 @@ Keep queries concise and medically precise.
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_risks_result = response.content.strip()
 
                 logger.info(f"Generated risks summary: {len(response.content)} chars")
@@ -3027,10 +2859,10 @@ Keep queries concise and medically precise.
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_encounters_result = response.content.strip()
 
                 logger.info(f"Generated encounters summary: {len(response.content)} chars")
@@ -3085,10 +2917,10 @@ Keep queries concise and medically precise.
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.general_deepdive_result = response.content.strip()
 
                 logger.info(f"Generated deep dive summary: {len(response.content)} chars")
@@ -3124,19 +2956,6 @@ Keep queries concise and medically precise.
                     )
                     return state
 
-                # Validate and correct citations for each SBAR component
-                logger.info("Validating citations for all SBAR components")
-                validated_results = {}
-                for comp_name, comp_content in sbar_results.items():
-                    if comp_content:
-                        validated_content = await self._validate_and_correct_citations(
-                            comp_content,
-                            state.citations
-                        )
-                        validated_results[comp_name] = validated_content
-                    else:
-                        validated_results[comp_name] = comp_content
-
                 # Create structured SBAR response for frontend cards
                 import json
 
@@ -3148,32 +2967,60 @@ Keep queries concise and medically precise.
                     "has_history": bool(state.chat_history)
                 }
 
+                # Extract cited chunk IDs from all SBAR components and build filtered citations
+                all_cited_chunk_ids = set()
+                for component_content in sbar_results.values():
+                    if component_content:
+                        cited_ids = self._extract_cited_chunk_ids(component_content)
+                        all_cited_chunk_ids.update(cited_ids)
+
+                filtered_citations = {
+                    chunk_id: state.citations[chunk_id]
+                    for chunk_id in all_cited_chunk_ids
+                    if chunk_id in state.citations
+                } if state.citations else {}
+
+                logger.info(f"SBAR citations: {len(all_cited_chunk_ids)} cited out of {len(state.citations) if state.citations else 0} total")
+
+                # Convert to numbered citations - concatenate all content to establish numbering
+                combined_content = "\n\n".join([content for content in sbar_results.values() if content])
+                _, numbered_citations = self._convert_citations_to_numbered(combined_content, filtered_citations)
+
+                # Convert each component's content to numbered format
+                numbered_sbar_results = {}
+                for comp_name, comp_content in sbar_results.items():
+                    if comp_content:
+                        numbered_content, _ = self._convert_citations_to_numbered(comp_content, filtered_citations)
+                        numbered_sbar_results[comp_name] = numbered_content
+                    else:
+                        numbered_sbar_results[comp_name] = comp_content
+
                 structured_sbar = {
                     "type": "sbar_cards",
                     "context": conversation_context,
-                    "citations": state.citations if state.citations else {},
+                    "citations": numbered_citations,
                     "components": {
                         "situation": {
                             "title": "Situation",
-                            "content": (validated_results.get("situation") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (numbered_sbar_results.get("situation") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "info-circle",
                             "color": "blue"
                         },
                         "background": {
                             "title": "Background",
-                            "content": (validated_results.get("background") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (numbered_sbar_results.get("background") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "history",
                             "color": "green"
                         },
                         "assessment": {
                             "title": "Assessment",
-                            "content": (validated_results.get("assessment") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (numbered_sbar_results.get("assessment") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "stethoscope",
                             "color": "orange"
                         },
                         "recommendation": {
                             "title": "Recommendation",
-                            "content": (validated_results.get("recommendation") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (numbered_sbar_results.get("recommendation") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "lightbulb",
                             "color": "purple"
                         }
@@ -3262,21 +3109,36 @@ Keep queries concise and medically precise.
                     )
                     return state
 
-                # Validate and correct citations for each component
-                logger.info("Validating citations for all general summary components")
-                validated_results = {}
-                for comp_name, comp_content in general_results.items():
-                    if comp_content:
-                        validated_content = await self._validate_and_correct_citations(
-                            comp_content,
-                            state.citations
-                        )
-                        validated_results[comp_name] = validated_content
-                    else:
-                        validated_results[comp_name] = comp_content
-
                 # Create structured general summary response for frontend cards
                 import json
+
+                # Extract cited chunk IDs from all general summary components and build filtered citations
+                all_cited_chunk_ids = set()
+                for component_content in general_results.values():
+                    if component_content:
+                        cited_ids = self._extract_cited_chunk_ids(component_content)
+                        all_cited_chunk_ids.update(cited_ids)
+
+                filtered_citations = {
+                    chunk_id: state.citations[chunk_id]
+                    for chunk_id in all_cited_chunk_ids
+                    if chunk_id in state.citations
+                } if state.citations else {}
+
+                logger.info(f"General Summary citations: {len(all_cited_chunk_ids)} cited out of {len(state.citations) if state.citations else 0} total")
+
+                # Convert to numbered citations - concatenate all content to establish numbering
+                combined_content = "\n\n".join([content for content in general_results.values() if content])
+                _, numbered_citations = self._convert_citations_to_numbered(combined_content, filtered_citations)
+
+                # Convert each component's content to numbered format
+                numbered_general_results = {}
+                for comp_name, comp_content in general_results.items():
+                    if comp_content:
+                        numbered_content, _ = self._convert_citations_to_numbered(comp_content, filtered_citations)
+                        numbered_general_results[comp_name] = numbered_content
+                    else:
+                        numbered_general_results[comp_name] = comp_content
 
                 # Add conversation context metadata for future reference
                 conversation_context = {
@@ -3289,53 +3151,53 @@ Keep queries concise and medically precise.
                 structured_summary = {
                     "type": "general_summary_cards",
                     "context": conversation_context,
-                    "citations": state.citations if state.citations else {},
+                    "citations": numbered_citations,
                     "components": {
                         "snapshot": {
                             "title": "Patient Snapshot",
-                            "content": (validated_results.get("snapshot") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (numbered_general_results.get("snapshot") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "user",
                             "color": "blue"
                         },
                         "problems": {
                             "title": "Active Problems",
-                            "content": (validated_results.get("problems") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (numbered_general_results.get("problems") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "alert-circle",
                             "color": "red"
                         },
                         "medications": {
                             "title": "Medications",
-                            "content": (validated_results.get("medications") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (numbered_general_results.get("medications") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "pill",
                             "color": "purple"
                         },
                         "trends": {
                             "title": "Lab & Vital Trends",
-                            "content": (validated_results.get("trends") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (numbered_general_results.get("trends") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "trending-up",
                             "color": "green"
                         },
                         "history": {
                             "title": "Past Medical History",
-                            "content": (validated_results.get("history") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (numbered_general_results.get("history") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "calendar",
                             "color": "orange"
                         },
                         "risks": {
                             "title": "Risks & Alerts",
-                            "content": (validated_results.get("risks") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (numbered_general_results.get("risks") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "alert-triangle",
                             "color": "yellow"
                         },
                         "encounters": {
                             "title": "Recent Care",
-                            "content": (validated_results.get("encounters") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (numbered_general_results.get("encounters") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "file-text",
                             "color": "indigo"
                         },
                         "deepdive": {
                             "title": "Deep Dive",
-                            "content": (validated_results.get("deepdive") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (numbered_general_results.get("deepdive") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "archive",
                             "color": "gray"
                         }
@@ -3511,10 +3373,10 @@ RULES:
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant information about {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = f"Relevant information about {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.focused_diagnoses_result = response.content.strip()
 
                 logger.info(f"Generated diagnoses section: {len(response.content)} chars")
@@ -3585,10 +3447,10 @@ RULES:
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant events for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = f"Relevant events for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.focused_events_result = response.content.strip()
 
                 logger.info(f"Generated events section: {len(response.content)} chars")
@@ -3665,10 +3527,10 @@ RULES:
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant medications for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = f"Relevant medications for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.focused_medications_result = response.content.strip()
 
                 logger.info(f"Generated medications section: {len(response.content)} chars")
@@ -3738,10 +3600,10 @@ RULES:
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant objective data for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = f"Relevant objective data for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.focused_objective_data_result = response.content.strip()
 
                 logger.info(f"Generated objective data section: {len(response.content)} chars")
@@ -3816,10 +3678,10 @@ RULES:
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant assessment data for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = f"Relevant assessment data for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.focused_assessment_result = response.content.strip()
 
                 logger.info(f"Generated assessment section: {len(response.content)} chars")
@@ -3892,10 +3754,10 @@ RULES:
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant next steps for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.citations)
+                    chunk_content = f"Relevant next steps for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages)
+                response = await self._llm.chat(messages, enable_chunk_citations=True)
                 state.focused_next_steps_result = response.content.strip()
 
                 logger.info(f"Generated next steps section: {len(response.content)} chars")
@@ -3933,21 +3795,37 @@ RULES:
                     )
                     return state
 
-                # Validate and correct citations for each focused summary section
-                logger.info("Validating citations for all focused summary sections")
-                validated_results = {}
-                for section_name, section_content in focused_results.items():
-                    if section_content:
-                        validated_content = await self._validate_and_correct_citations(
-                            section_content,
-                            state.citations
-                        )
-                        validated_results[section_name] = validated_content
-                    else:
-                        validated_results[section_name] = section_content
-
                 # Create structured focused summary response for frontend
                 import json
+
+                # Extract cited chunk IDs from all focused summary sections
+                all_cited_chunk_ids = set()
+                for section_content in focused_results.values():
+                    if section_content:
+                        cited_ids = self._extract_cited_chunk_ids(section_content)
+                        all_cited_chunk_ids.update(cited_ids)
+
+                # Build filtered citations dict from cited chunks only
+                filtered_citations = {
+                    chunk_id: state.citations[chunk_id]
+                    for chunk_id in all_cited_chunk_ids
+                    if chunk_id in state.citations
+                } if state.citations else {}
+
+                logger.info(f"Focused Summary citations: {len(all_cited_chunk_ids)} cited out of {len(state.citations) if state.citations else 0} total")
+
+                # Convert to numbered citations - concatenate all content to establish numbering
+                combined_content = "\n\n".join([content for content in focused_results.values() if content])
+                _, numbered_citations = self._convert_citations_to_numbered(combined_content, filtered_citations)
+
+                # Convert each section's content to numbered format
+                numbered_focused_results = {}
+                for section_name, section_content in focused_results.items():
+                    if section_content:
+                        numbered_content, _ = self._convert_citations_to_numbered(section_content, filtered_citations)
+                        numbered_focused_results[section_name] = numbered_content
+                    else:
+                        numbered_focused_results[section_name] = section_content
 
                 # Add conversation context metadata
                 conversation_context = {
@@ -3962,25 +3840,25 @@ RULES:
                     "aspect": state.focused_aspect or "Medical Condition",
                     "aspect_icon": state.focused_aspect_icon or "file-text",
                     "context": conversation_context,
-                    "citations": state.citations if state.citations else {},
+                    "citations": numbered_citations,
                     "sections": {
                         "diagnoses": {
-                            "content": (validated_results.get("diagnoses") or "No diagnoses documented").strip() or "No diagnoses documented"
+                            "content": (numbered_focused_results.get("diagnoses") or "No diagnoses documented").strip() or "No diagnoses documented"
                         },
                         "events": {
-                            "content": (validated_results.get("events") or "No events documented").strip() or "No events documented"
+                            "content": (numbered_focused_results.get("events") or "No events documented").strip() or "No events documented"
                         },
                         "medications": {
-                            "content": (validated_results.get("medications") or "No medications documented").strip() or "No medications documented"
+                            "content": (numbered_focused_results.get("medications") or "No medications documented").strip() or "No medications documented"
                         },
                         "objective_data": {
-                            "content": (validated_results.get("objective_data") or "No objective data available").strip() or "No objective data available"
+                            "content": (numbered_focused_results.get("objective_data") or "No objective data available").strip() or "No objective data available"
                         },
                         "assessment": {
-                            "content": (validated_results.get("assessment") or "No assessment available").strip() or "No assessment available"
+                            "content": (numbered_focused_results.get("assessment") or "No assessment available").strip() or "No assessment available"
                         },
                         "next_steps": {
-                            "content": (validated_results.get("next_steps") or "No next steps documented").strip() or "No next steps documented"
+                            "content": (numbered_focused_results.get("next_steps") or "No next steps documented").strip() or "No next steps documented"
                         }
                     }
                 }
@@ -4177,8 +4055,11 @@ Return ONLY the JSON array, no additional text.
 
                     logger.info(f"Generating content for: {title}")
 
-                    # Build chunks context
-                    chunks_text = "\n\n---\n\n".join(chunks) if chunks else "No specific information available"
+                    # Build chunks context with citation markers
+                    if chunks:
+                        chunks_text = self._format_chunks_with_citations(chunks)
+                    else:
+                        chunks_text = "No specific information available"
 
                     # Build chat history context
                     history_text = "\n".join([f"{msg.role.value}: {msg.content[:200]}" for msg in recent_history]) if recent_history else ""
@@ -4229,7 +4110,7 @@ Return only the content in markdown format, no preamble.
                     ]
 
                     # Generate content
-                    response = await self._llm.chat(messages)
+                    response = await self._llm.chat(messages, enable_chunk_citations=True)
                     content = response.content.strip()
 
                     # Create timeline event result
@@ -4266,19 +4147,35 @@ Return only the content in markdown format, no preamble.
                     )
                     return state
 
-                # Validate and correct citations for each timeline event
-                logger.info("Validating citations for all timeline events")
-                validated_timeline_results = []
+                # Extract cited chunk IDs from all timeline events
+                all_cited_chunk_ids = set()
                 for event in state.timeline_results:
                     if event.get("content"):
-                        validated_content = await self._validate_and_correct_citations(
-                            event["content"],
-                            state.citations
-                        )
-                        validated_event = {**event, "content": validated_content}
-                        validated_timeline_results.append(validated_event)
+                        cited_ids = self._extract_cited_chunk_ids(event["content"])
+                        all_cited_chunk_ids.update(cited_ids)
+
+                # Build filtered citations dict from cited chunks only
+                filtered_citations = {
+                    chunk_id: state.citations[chunk_id]
+                    for chunk_id in all_cited_chunk_ids
+                    if chunk_id in state.citations
+                } if state.citations else {}
+
+                logger.info(f"Timeline citations: {len(all_cited_chunk_ids)} cited out of {len(state.citations) if state.citations else 0} total")
+
+                # Convert to numbered citations - concatenate all event content to establish numbering
+                combined_content = "\n\n".join([event.get("content", "") for event in state.timeline_results if event.get("content")])
+                _, numbered_citations = self._convert_citations_to_numbered(combined_content, filtered_citations)
+
+                # Convert each event's content to numbered format
+                numbered_timeline_events = []
+                for event in state.timeline_results:
+                    if event.get("content"):
+                        numbered_content, _ = self._convert_citations_to_numbered(event["content"], filtered_citations)
+                        numbered_event = {**event, "content": numbered_content}
+                        numbered_timeline_events.append(numbered_event)
                     else:
-                        validated_timeline_results.append(event)
+                        numbered_timeline_events.append(event)
 
                 # Add conversation context metadata
                 conversation_context = {
@@ -4292,8 +4189,8 @@ Return only the content in markdown format, no preamble.
                 structured_timeline = {
                     "type": "timeline_view",
                     "context": conversation_context,
-                    "citations": state.citations if state.citations else {},
-                    "events": validated_timeline_results
+                    "citations": numbered_citations,
+                    "events": numbered_timeline_events
                 }
 
                 # Create JSON response
@@ -4442,10 +4339,11 @@ Return only the content in markdown format, no preamble.
                 fields = template.template_structure.get("fields", [])
 
                 # Use existing retrieved chunks (already in state from retrieval step)
-                chunks_text = "\n\n".join([
-                    f"[Source {i+1}]\n{chunk}"
-                    for i, chunk in enumerate(state.retrieved_chunks[:15])
-                ])
+                if state.retrieved_chunks:
+                    limited_chunks = self._limit_chunks_for_context(state.retrieved_chunks[:15], max_tokens=100000, max_chunk_chars=30000)
+                    chunks_text = self._format_chunks_with_citations(limited_chunks)
+                else:
+                    chunks_text = "No clinical information available"
 
                 # Include conversation history if requested
                 conversation_context = ""
@@ -4544,7 +4442,7 @@ Generate the content for "{field_label}" section now:"""
                         ChatMessage(role=ChatRole.USER, content=section_prompt)
                     ]
 
-                    section_response = await self._llm.chat(messages)
+                    section_response = await self._llm.chat(messages, enable_chunk_citations=True)
                     section_content = section_response.content.strip()
 
                     sections[field_name] = section_content
@@ -4853,10 +4751,11 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
 
                 # Log chunk info (GDPR-safe)
                 for i, chunk in enumerate(state.retrieved_chunks):
-                    logger.info(f"Chunk {i+1}: {len(chunk)} chars")
+                    chunk_len = len(chunk.get("content", "")) if isinstance(chunk, dict) else len(chunk)
+                    logger.info(f"Chunk {i+1}: {chunk_len} chars")
 
                 # Format chunks with citation markers (sentence-level)
-                formatted_chunks = self._format_chunks_with_citations(state.retrieved_chunks, state.citations)
+                formatted_chunks = self._format_chunks_with_citations(state.retrieved_chunks)
 
                 # Add citation policy to system messages for regular chat
                 citation_policy_msg = ChatMessage(

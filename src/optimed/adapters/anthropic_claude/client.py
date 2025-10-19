@@ -46,9 +46,10 @@ class AnthropicClaudeClient(LLMClient, VisionLLMClient):
     async def chat(
             self,
             messages: Sequence[ChatMessage],
-            json_mode: bool = False, 
+            json_mode: bool = False,
             temperature: float = 0.7,
             max_tokens: int | None = None,
+            enable_chunk_citations: bool = False,
     ) -> ChatMessage:
         """
         • Pull out the *first* system prompt (optional)
@@ -67,9 +68,30 @@ class AnthropicClaudeClient(LLMClient, VisionLLMClient):
                     "role": msg.role.value,
                     "content": msg.content
                 })
-        
+
+        # Chunk citations require JSON mode
+        if enable_chunk_citations:
+            json_mode = True
+
         if json_mode:
-            json_instruction = """Please respond with valid JSON only. Do not include any text outside of the JSON structure. 
+            if enable_chunk_citations:
+                # Special JSON instruction for chunk citations
+                json_instruction = """RESPONSE FORMAT (REQUIRED):
+You must respond with valid JSON in this exact structure:
+{
+  "response": "Your clinical response here. When using information from a chunk, include [cite: chunk_id] immediately after the statement.",
+  "cited_chunks": ["chunk-id-1", "chunk-id-2"]
+}
+
+CITATION RULES:
+1. Include ONLY chunk IDs that you actually used in your response
+2. Cite the chunk IMMEDIATELY after the sentence that uses its information
+3. Use the EXACT chunk_id from the [chunk_id: ...] markers in the provided information
+4. Example: "The patient is 87 years old [cite: abc-123] and lives with her daughter [cite: def-456]."
+
+IMPORTANT: Response must be valid JSON only. No text outside the JSON structure."""
+            else:
+                json_instruction = """Please respond with valid JSON only. Do not include any text outside of the JSON structure.
 
 IMPORTANT: Your response must be properly formatted JSON that can be parsed. If you cannot provide the requested information, return a valid JSON object with appropriate null/empty values rather than no response at all.
 
@@ -110,11 +132,25 @@ Example format:
             if getattr(block, "type", None) == "text"
         )
 
+        # Parse cited chunks if chunk citations are enabled
+        cited_chunk_ids = None
+        if enable_chunk_citations and assistant_text:
+            try:
+                import json
+                response_json = json.loads(assistant_text)
+                cited_chunk_ids = response_json.get("cited_chunks", [])
+                # Extract the actual response content
+                assistant_text = response_json.get("response", assistant_text)
+            except json.JSONDecodeError:
+                # If parsing fails, return the raw text
+                pass
+
         return ChatMessage(
             role=ChatRole.ASSISTANT,
             content=assistant_text,
+            cited_chunk_ids=cited_chunk_ids,
             metadata={
-                "model": self._model, 
+                "model": self._model,
                 "response_id": response.id,
                 "input_tokens": str(response.usage.input_tokens),
                 "output_tokens": str(response.usage.output_tokens)
@@ -127,6 +163,7 @@ Example format:
         json_mode: bool = False,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        enable_chunk_citations: bool = False,
     ) -> AsyncGenerator[str, None]: 
         
         system_prompt: str | None = None
@@ -140,9 +177,30 @@ Example format:
                     "role": msg.role.value,
                     "content": msg.content
                 })
-        
+
+        # Chunk citations require JSON mode
+        if enable_chunk_citations:
+            json_mode = True
+
         if json_mode:
-            json_instruction = """Please respond with valid JSON only. Do not include any text outside of the JSON structure. 
+            if enable_chunk_citations:
+                # Special JSON instruction for chunk citations
+                json_instruction = """RESPONSE FORMAT (REQUIRED):
+You must respond with valid JSON in this exact structure:
+{
+  "response": "Your clinical response here. When using information from a chunk, include [cite: chunk_id] immediately after the statement.",
+  "cited_chunks": ["chunk-id-1", "chunk-id-2"]
+}
+
+CITATION RULES:
+1. Include ONLY chunk IDs that you actually used in your response
+2. Cite the chunk IMMEDIATELY after the sentence that uses its information
+3. Use the EXACT chunk_id from the [chunk_id: ...] markers in the provided information
+4. Example: "The patient is 87 years old [cite: abc-123] and lives with her daughter [cite: def-456]."
+
+IMPORTANT: Response must be valid JSON only. No text outside the JSON structure."""
+            else:
+                json_instruction = """Please respond with valid JSON only. Do not include any text outside of the JSON structure.
 
 IMPORTANT: Your response must be properly formatted JSON that can be parsed. If you cannot provide the requested information, return a valid JSON object with appropriate null/empty values rather than no response at all.
 
