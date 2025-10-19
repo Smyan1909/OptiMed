@@ -1970,6 +1970,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                       isLoading={msg.loading}
                       patientId={patientId}
                       sessionId={sessionId}
+                      citations={msg.citations}
                     />
                   </div>
                 )}
@@ -1981,6 +1982,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                       isLoading={msg.loading}
                       patientId={patientId}
                       sessionId={sessionId}
+                      citations={msg.citations}
                     />
                   </div>
                 )}
