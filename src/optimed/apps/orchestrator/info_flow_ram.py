@@ -2116,7 +2116,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR situation summaries with 5-7 bullet points. Use **bold** for symptoms, vital signs, and key clinical terms.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR situation summaries with 5-7 bullet points. Use **bold** for symptoms, vital signs, and key clinical terms.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2208,7 +2208,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR background summaries with 5-7 bullet points. Use **bold** for diagnoses, medications, allergies, and key descriptors.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise and contextually relevant.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR background summaries with 5-7 bullet points. Use **bold** for diagnoses, medications, allergies, and key descriptors.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise and contextually relevant.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2298,7 +2298,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR assessment summaries with 5-7 bullet points in narrative style. Use **bold** for important clinical terms and values. Write flowing sentences within each bullet point.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise but informative.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR assessment summaries with 5-7 bullet points in narrative style. Use **bold** for important clinical terms and values. Write flowing sentences within each bullet point.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise but informative.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2389,7 +2389,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create SBAR recommendation summaries with 5-7 bullet points. Use **bold** for interventions, tests, medications, and key actions.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise and actionable.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR recommendation summaries with 5-7 bullet points. Use **bold** for interventions, tests, medications, and key actions.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise and actionable.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2473,7 +2473,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create concise snapshots with 5-7 bullet points, each with a bold header. Use **bold** for important clinical terms and values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for when each piece of information was recorded. One line per bullet point. No explanations.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Add blank lines between bullets. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Create concise snapshots with 5-7 bullet points, each with a bold header. Use **bold** for important clinical terms and values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for when each piece of information was recorded. One line per bullet point. No explanations.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Add blank lines between bullets. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2568,7 +2568,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List top 5-7 problems divided into two subsections: **Current Conditions** and **Previous Conditions**. Sort by relevance and frequency within each subsection. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List top 5-7 problems divided into two subsections: **Current Conditions** and **Previous Conditions**. Sort by relevance and frequency within each subsection. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2647,7 +2647,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most important medications divided into two subsections: **Current Medications** (active) and **Prior Medications** (discontinued, only if relevant to user query). Sort by relevance within each subsection. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. Add 🔺 if patient has documented allergy to the medication (check allergy mentions in data). Show dose changes as **OldDose→NewDose** with ↑/↓ arrows. CRITICAL: Include start dates for all medications, end dates for discontinued ones, and change dates for dose adjustments. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Explain why doses or medications were changed.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates. Prior medications only if relevant to query.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 most important medications divided into two subsections: **Current Medications** (active) and **Prior Medications** (discontinued, only if relevant to user query). Sort by relevance within each subsection. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. Add 🔺 if patient has documented allergy to the medication (check allergy mentions in data). Show dose changes as **OldDose→NewDose** with ↑/↓ arrows. CRITICAL: Include start dates for all medications, end dates for discontinued ones, and change dates for dose adjustments. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Explain why doses or medications were changed.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates. Prior medications only if relevant to query.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2707,7 +2707,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Show 5-7 key trends. Use **bold** for parameter names and current values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Add 'ask for more' if additional trends exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Show 5-7 key trends. Use **bold** for parameter names and current values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Add 'ask for more' if additional trends exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2766,7 +2766,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 major past events. Use **bold** for event names. CRITICAL: Always include the year/date in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding year and citation). Count words carefully. Add 'ask for more' if additional events exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 major past events. Use **bold** for event names. CRITICAL: Always include the year/date in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding year and citation). Count words carefully. Add 'ask for more' if additional events exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2827,7 +2827,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 critical alerts. Use **bold** for risk/alert names and key values. Use ⚠️ marker. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 critical alerts. Use **bold** for risk/alert names and key values. Use ⚠️ marker. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2886,7 +2886,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. List 5-7 most recent encounters with key actions/outcomes. Use **bold** for encounter types. CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses. One line each with blank lines between. Add 'ask for more' if additional encounters exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include exact datetime.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 most recent encounters with key actions/outcomes. Use **bold** for encounter types. CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses. One line each with blank lines between. Add 'ask for more' if additional encounters exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include exact datetime.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2945,7 +2945,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Create brief expandable sections. 2-3 items per section with blank lines between items. Add 'ask for more' hint for each section with additional data available.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Create brief expandable sections. 2-3 items per section with blank lines between items. Add 'ask for more' hint for each section with additional data available.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3415,7 +3415,7 @@ RULES:
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused diagnoses section. Use **bold** for diagnosis names and key terms. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused diagnoses section. Use **bold** for diagnosis names and key terms. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3490,7 +3490,7 @@ RULES:
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused events timeline. Use **bold** for dates and key clinical terms. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused events timeline. Use **bold** for dates and key clinical terms. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3571,7 +3571,7 @@ RULES:
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused medications list. Use **bold** for medication names and key terms. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused medications list. Use **bold** for medication names and key terms. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3645,7 +3645,7 @@ RULES:
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating focused objective data. Use **bold** for abnormal/critical values and important metrics. MANDATORY: Use compact numbered citations [1], [2], [3] after the table - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating focused objective data. Use **bold** for abnormal/critical values and important metrics. MANDATORY: Use compact numbered citations [1], [2], [3] after the table - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3724,7 +3724,7 @@ RULES:
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating a focused clinical assessment. Use **bold** for key clinical terms, status descriptors, and risk levels. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused clinical assessment. Use **bold** for key clinical terms, status descriptors, and risk levels. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3801,7 +3801,7 @@ RULES:
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA generating focused next steps. Use **bold** for action types, key interventions, and timing. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating focused next steps. Use **bold** for action types, key interventions, and timing. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -4165,7 +4165,7 @@ Return only the content in markdown format, no preamble.
 
                     messages = [
                         self._get_language_policy_message(state),
-                        ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA, a clinical information assistant. Create timeline explanations with 5-7 concise bullet points. Use **bold** for key clinical terms, findings, and medications.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise but informative."),
+                        ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create timeline explanations with 5-7 concise bullet points. Use **bold** for key clinical terms, findings, and medications.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise but informative."),
                         ChatMessage(role=ChatRole.USER, content=prompt)
                     ]
 
