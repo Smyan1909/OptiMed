@@ -237,8 +237,8 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
 
 class SessionEncryptionManager:
     """Manages session-specific encryption keys."""
-    
-    def __init__(self):
+
+    def __init__(self) -> None:
         self.session_keys: Dict[str, str] = {}
         self.encryption_service = get_encryption_service()
     

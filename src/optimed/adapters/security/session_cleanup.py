@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class SessionCleanupService:
     """Service for automatic session cleanup and memory management."""
     
-    def __init__(self, vector_store, user_repo=None):
+    def __init__(self, vector_store: Any, user_repo: Optional[Any] = None) -> None:
         self.vector_store = vector_store
         self.user_repo = user_repo
         self.active_sessions: Dict[str, datetime] = {}

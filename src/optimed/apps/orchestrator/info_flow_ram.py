@@ -541,6 +541,34 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
         return updated_content, numbered_citations
 
+    async def _validate_and_correct_citations(self, content: str, citations: Dict[str, Dict[str, Any]]) -> str:
+        """
+        Validate that all numbered citations in content exist in citations dict.
+        Remove or correct invalid citations.
+
+        Args:
+            content: Content with numbered citations [1], [2], etc.
+            citations: Citations dict keyed by citation number
+
+        Returns:
+            Content with validated citations
+        """
+        import re
+
+        # Find all numbered citations in content
+        pattern = r'\[(\d+)\]'
+
+        def validate_citation(match):
+            citation_num = match.group(1)
+            # Keep citation if it exists in citations dict
+            if citation_num in citations:
+                return match.group(0)  # Keep as-is
+            else:
+                return ""  # Remove invalid citation
+
+        validated_content = re.sub(pattern, validate_citation, content)
+        return validated_content
+
     async def _log_data_lineage(
         self,
         session_id: Optional[str],
@@ -985,7 +1013,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     logger.info("No chunks produced")
                     if state.patient_ctx:
                         logger.info("Using fallback to full patient context")
-                        state.retrieved_chunks = [state.patient_ctx.model_dump_json(indent=2)]
+                        state.retrieved_chunks = [{"content": state.patient_ctx.model_dump_json(indent=2), "chunk_id": "fallback-patient-context"}]
                         state.chunk_analysis = {"method": "fallback", "reason": "No chunks from patient context"}
                     else:
                         logger.info("No patient context or PDF content available")
@@ -1225,7 +1253,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
             return state
 
-        async def _fast_sbar_retrieve(state: FlowState, focus: str, queries: List[str]) -> List[str]:
+        async def _fast_sbar_retrieve(state: FlowState, focus: str, queries: List[str]) -> List[Dict[str, Any]]:
             """Fast SBAR retrieval using only bi-encoder similarity (no cross-encoder)."""
             try:
                 logger.info(f"{focus} - Starting fast bi-encoder retrieval")
@@ -1280,8 +1308,11 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 for i, chunk_vec in enumerate(chunk_vecs):
                     max_score = max(self._cosine(chunk_vec, qv) for qv in query_vecs)
                     if max_score > 0.0:  # Only include chunks with some similarity
-                        # Return full chunk dict (if available) or content string (fallback)
-                        chunk_data = chunks[i] if i < len(chunks) else chunk_contents[i]
+                        # Return full chunk dict (if available) or wrap content string as dict (fallback)
+                        if i < len(chunks):
+                            chunk_data = chunks[i]
+                        else:
+                            chunk_data = {"content": chunk_contents[i], "chunk_id": f"chunk-{i}"}
                         scored_chunks.append((max_score, chunk_data))
 
                 # Sort by score and return top chunks
@@ -1443,7 +1474,7 @@ Keep queries concise and medical terminology appropriate.
                 }
                 return fallback_queries.get(component, ["medical information"])
 
-        async def _fast_general_summary_retrieve(state: FlowState, focus: str, queries: List[str]) -> List[str]:
+        async def _fast_general_summary_retrieve(state: FlowState, focus: str, queries: List[str]) -> List[Dict[str, Any]]:
             """Fast general summary retrieval using only bi-encoder similarity (same pattern as SBAR)."""
             try:
                 logger.info(f"{focus} - Starting fast bi-encoder retrieval")
@@ -1477,8 +1508,11 @@ Keep queries concise and medical terminology appropriate.
                 for i, chunk_vec in enumerate(chunk_vecs):
                     max_score = max(self._cosine(chunk_vec, qv) for qv in query_vecs)
                     if max_score > 0.0:  # Only include chunks with some similarity
-                        # Return full chunk dict (if available) or content string (fallback)
-                        chunk_data = chunks[i] if i < len(chunks) else chunk_contents[i]
+                        # Return full chunk dict (if available) or wrap content string as dict (fallback)
+                        if i < len(chunks):
+                            chunk_data = chunks[i]
+                        else:
+                            chunk_data = {"content": chunk_contents[i], "chunk_id": f"chunk-{i}"}
                         scored_chunks.append((max_score, chunk_data))
 
                 # Sort by score and return top chunks
