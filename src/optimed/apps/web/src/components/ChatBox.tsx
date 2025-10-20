@@ -1372,6 +1372,11 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
               // Clear the text so we don't display the raw JSON
               messageText = '';
               logInfo(`✅ Successfully processed streaming Timeline, cleared text`);
+            } else if (parsedContent.type === 'general_response' && parsedContent.content) {
+              logInfo(`💬 Processing general response with citations`);
+              // Use the content field as the message text (don't clear it)
+              messageText = parsedContent.content;
+              logInfo(`✅ Successfully processed general response with ${Object.keys(parsedContent.citations || {}).length} citations`);
             }
           }
         } catch (e: any) {

@@ -4815,6 +4815,11 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                     chunk_len = len(chunk.get("content", "")) if isinstance(chunk, dict) else len(chunk)
                     logger.info(f"Chunk {i+1}: {chunk_len} chars")
 
+                # Build citations dict from all retrieved chunks
+                if not state.citations:
+                    state.citations = self._build_citations_from_chunks(state.retrieved_chunks)
+                    logger.info(f"Built {len(state.citations)} citations for provide_information")
+
                 # Format chunks with citation markers (sentence-level)
                 formatted_chunks = self._format_chunks_with_citations(state.retrieved_chunks)
 
@@ -4822,11 +4827,12 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                 citation_policy_msg = ChatMessage(
                     role=ChatRole.SYSTEM,
                     content="""**CITATION POLICY** (**CRITICAL**):
-    - The clinical information provided to you contains citation markers like "[Citation: 1]", "[Citation: 2]", etc.
-    - When you use information from a source, cite it using the number from the citation marker
-    - **IMPORTANT**: If the source says "[Citation: 5]", you cite it as [5] in your response
-    - **DO NOT** make up citation numbers - only use the numbers from the [Citation: X] markers
-    - Example: If the source says "Patient age: 87 years. [Citation: 3]", you should write "The patient is 87 years old [3]"
+    - The clinical information contains markers like "[chunk_id: abc123...]" identifying each source
+    - When you use information from a source, cite it using [cite: chunk_id] in your response
+    - **IMPORTANT**: Use the exact chunk_id from the [chunk_id: ...] markers
+    - **DO NOT** make up chunk IDs - only use IDs from the [chunk_id: ...] markers
+    - Example: If source says "[chunk_id: abc123]\\nPatient age: 87 years", write "Patient is 87 years old [cite: abc123]"
+    - Citations will be converted to numbered format [1], [2], etc. in the final response
 """
                 )
                 messages.append(citation_policy_msg)
@@ -4941,17 +4947,58 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                                 state.citations
                             )
 
-                        # Finalize with hyperlink formatting and normalized markdown
-                        state.llm_response = ChatMessage(
-                            role = ChatRole.ASSISTANT,
-                            content=self._normalize_markdown(
-                                self._format_ehr_links(full_content)
-                            ),
-                            metadata={
-                                "reasoning": update.get("reasoning", ""),
-                                "reasoning_steps": update.get("reasoning_steps", []),
+                        # Process citations if available
+                        if state.citations and state.retrieved_chunks:
+                            # Extract cited chunk IDs from response
+                            cited_ids = self._extract_cited_chunk_ids(full_content)
+
+                            # Filter citations to only cited chunks
+                            filtered_citations = {
+                                chunk_id: state.citations[chunk_id]
+                                for chunk_id in cited_ids
+                                if chunk_id in state.citations
                             }
-                        )
+
+                            # Convert to numbered citations
+                            numbered_content, numbered_citations = self._convert_citations_to_numbered(
+                                full_content,
+                                filtered_citations
+                            )
+
+                            # Build JSON response with citations
+                            import json
+                            response_with_citations = {
+                                "type": "general_response",
+                                "content": self._normalize_markdown(self._format_ehr_links(numbered_content)),
+                                "citations": numbered_citations,
+                                "context": {
+                                    "session_id": state.session_id,
+                                    "user_prompt": state.user_prompt,
+                                    "timestamp": str(int(time.time() * 1000)),
+                                    "has_history": bool(state.chat_history)
+                                }
+                            }
+
+                            state.llm_response = ChatMessage(
+                                role=ChatRole.ASSISTANT,
+                                content=json.dumps(response_with_citations, indent=2),
+                                metadata={
+                                    "reasoning": update.get("reasoning", ""),
+                                    "reasoning_steps": update.get("reasoning_steps", []),
+                                }
+                            )
+                        else:
+                            # No citations - return as plain text
+                            state.llm_response = ChatMessage(
+                                role=ChatRole.ASSISTANT,
+                                content=self._normalize_markdown(
+                                    self._format_ehr_links(full_content)
+                                ),
+                                metadata={
+                                    "reasoning": update.get("reasoning", ""),
+                                    "reasoning_steps": update.get("reasoning_steps", []),
+                                }
+                            )
                         break
             else:
                 logger.info("🚀 Starting non-streaming LLM call")
@@ -4971,11 +5018,50 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                         state.citations
                     )
 
-                state.llm_response = ChatMessage(
-                    role=llm_resp.role,
-                    content=self._normalize_markdown(self._format_ehr_links(response_content)),
-                    metadata=llm_resp.metadata
-                )
+                # Process citations if available
+                if state.citations and state.retrieved_chunks:
+                    # Extract cited chunk IDs from response
+                    cited_ids = self._extract_cited_chunk_ids(response_content)
+
+                    # Filter citations to only cited chunks
+                    filtered_citations = {
+                        chunk_id: state.citations[chunk_id]
+                        for chunk_id in cited_ids
+                        if chunk_id in state.citations
+                    }
+
+                    # Convert to numbered citations
+                    numbered_content, numbered_citations = self._convert_citations_to_numbered(
+                        response_content,
+                        filtered_citations
+                    )
+
+                    # Build JSON response with citations
+                    import json
+                    response_with_citations = {
+                        "type": "general_response",
+                        "content": self._normalize_markdown(self._format_ehr_links(numbered_content)),
+                        "citations": numbered_citations,
+                        "context": {
+                            "session_id": state.session_id,
+                            "user_prompt": state.user_prompt,
+                            "timestamp": str(int(time.time() * 1000)),
+                            "has_history": bool(state.chat_history)
+                        }
+                    }
+
+                    state.llm_response = ChatMessage(
+                        role=llm_resp.role,
+                        content=json.dumps(response_with_citations, indent=2),
+                        metadata=llm_resp.metadata
+                    )
+                else:
+                    # No citations - return as plain text
+                    state.llm_response = ChatMessage(
+                        role=llm_resp.role,
+                        content=self._normalize_markdown(self._format_ehr_links(response_content)),
+                        metadata=llm_resp.metadata
+                    )
 
             # Log user action (same as before)
             if state.user_id and state.user_context:
