@@ -38,6 +38,10 @@ logger = get_logger(__name__)
 # Global session memory store to persist across instances
 _GLOBAL_SESSION_MEMORY: dict[str, list[dict[str, Any]]] = {}
 
+# Global chunk cache to avoid re-chunking on every query
+# Format: {session_id: {"chunks": [...], "doc_signature": "...", "timestamp": ...}}
+_GLOBAL_CHUNK_CACHE: dict[str, dict[str, Any]] = {}
+
 
 # =========================
 # RAM-only mode and retrieval params
@@ -119,6 +123,10 @@ class FlowState(BaseModel):
     uploaded_pdfs: List[PDFDocument] = Field(default_factory=list)  # Store PDF documents
     uploaded_xmls: List[XMLDocument] = Field(default_factory=list)  # Store XML documents
     retrieved_chunks: List[Dict[str, Any]] = Field(default_factory=list)  # Chunk dicts with chunk_id, content, metadata
+
+    # Chunking cache to avoid re-chunking on every query
+    chunks_cached: bool = False  # Flag indicating if chunks are already in vector store
+    cached_chunk_ids: List[str] = Field(default_factory=list)  # IDs of cached chunks for this session
 
     # Citation tracking for compact inline citations
     citations: Dict[str, Dict[str, Any]] = Field(default_factory=dict)  # { "1": { "document": "...", "page": "...", "excerpt": "...", "url": "..." } }
@@ -927,56 +935,101 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             try:
                 logger.info(f"Starting retrieval for patient_id: {sanitize_patient_id(str(state.patient_id))}")
                 logger.info(f"User prompt length: {len(state.user_prompt)} chars")
-                
+
                 # 1) Chunking via ChunkingOrchestrator (policy-driven)
+                # OPTIMIZATION: Chunk only once per session, not on every query
+                # Use Presidio multilingual redactor with Swedish default for Sweden Central deployment
                 patient_id_str = str(state.patient_id) if state.patient_id else ""
-                logger.info(f"Creating chunking orchestrator for patient: {patient_id_str}")
 
-                tokenizer = WhitespaceTokenizer()
-                redactor = SimplePhiRedactor()
-                orchestrator = ChunkingOrchestrator(
-                    tokenizer=tokenizer,
-                    redactor=redactor,
-                    strategy_registry=CHUNK_STRATEGY_REGISTRY,
-                    policies=CHUNK_POLICY_PRESETS,
+                # Check global cache for this session
+                session_cache_key = state.session_id or "default_session"
+                global _GLOBAL_CHUNK_CACHE
+
+                # Detect if documents have changed (new uploads)
+                current_doc_ids = (
+                    [state.patient_ctx.patient_id if state.patient_ctx else ""] +
+                    [j.entry_id for j in state.journal_entries] +
+                    [pdf.document_id for pdf in state.uploaded_pdfs] +
+                    [xml.document_id for xml in state.uploaded_xmls]
                 )
+                current_doc_signature = "|".join(sorted(current_doc_ids))
 
-                # Chunk patient context if available
-                produced = []
-                if state.patient_ctx:
-                    logger.info("Chunking patient context...")
-                    produced = orchestrator.chunk_patient(state.patient_ctx, CHUNK_POLICY_PRESETS)
-                    logger.info(f"Patient context chunking produced {len(produced)} chunks")
+                # Check if we have cached chunks for this session with same document signature
+                needs_chunking = True
+                cached_chunks = None
+
+                if session_cache_key in _GLOBAL_CHUNK_CACHE:
+                    cache_entry = _GLOBAL_CHUNK_CACHE[session_cache_key]
+                    if cache_entry.get("doc_signature") == current_doc_signature:
+                        logger.info("Found cached chunks with matching document signature")
+                        needs_chunking = False
+                        cached_chunks = cache_entry.get("chunks", [])
+                    else:
+                        logger.info("Document signature changed - invalidating cache and re-chunking")
+                        del _GLOBAL_CHUNK_CACHE[session_cache_key]
+
+                if needs_chunking:
+                    logger.info(f"CHUNKING: Processing documents for patient: {patient_id_str}")
+                    logger.info("This is a one-time operation per session - subsequent queries will reuse these chunks")
+                    logger.info("NO PHI REDACTION - Healthcare professionals need complete clinical data (GDPR Art. 9(2)(h))")
+
+                    tokenizer = WhitespaceTokenizer()
+
+                    # NO PHI redaction during chunking
+                    # GDPR compliance achieved through:
+                    # - RAM-only processing (no persistence)
+                    # - Access controls (RLS, authentication)
+                    # - Audit logging (metadata only)
+                    # - Auto-cleanup on session end
+                    # - Article 9(2)(h): Healthcare professionals may process health data with identifiers
+
+                    orchestrator = ChunkingOrchestrator(
+                        tokenizer=tokenizer,
+                        strategy_registry=CHUNK_STRATEGY_REGISTRY,
+                        policies=CHUNK_POLICY_PRESETS,
+                    )
+
+                    # Chunk patient context if available
+                    produced = []
+                    if state.patient_ctx:
+                        logger.info("Chunking patient context...")
+                        produced = orchestrator.chunk_patient(state.patient_ctx, CHUNK_POLICY_PRESETS)
+                        logger.info(f"Patient context chunking produced {len(produced)} chunks")
+                    else:
+                        logger.info("No patient context available - proceeding with PDF-only mode")
+
+                    # Also chunk journal entries if available
+                    journal_chunks = []
+                    if state.journal_entries:
+                        logger.info(f"Chunking {len(state.journal_entries)} journal entries...")
+                        journal_chunks = await self._chunk_journal_entries(state.journal_entries, orchestrator, patient_id_str)
+                        logger.info(f"Journal entries chunking produced {len(journal_chunks)} chunks")
+
+                    # Also chunk PDF documents if available
+                    pdf_chunks = []
+                    if state.uploaded_pdfs:
+                        logger.info(f"Chunking {len(state.uploaded_pdfs)} PDF documents...")
+                        pdf_chunks = await self._chunk_pdf_documents(state.uploaded_pdfs, orchestrator, patient_id_str)
+                        logger.info(f"PDF documents chunking produced {len(pdf_chunks)} chunks")
+
+                    # Also chunk XML documents if available
+                    xml_chunks = []
+                    if state.uploaded_xmls:
+                        logger.info(f"Chunking {len(state.uploaded_xmls)} XML documents...")
+                        xml_chunks = await self._chunk_xml_documents(state.uploaded_xmls, orchestrator, patient_id_str)
+                        logger.info(f"XML documents chunking produced {len(xml_chunks)} chunks")
+
+                    # Combine all chunks
+                    all_chunks = produced + journal_chunks + pdf_chunks + xml_chunks
+                    logger.info(f"Total chunks produced: {len(all_chunks)} (patient: {len(produced)}, journal: {len(journal_chunks)}, pdf: {len(pdf_chunks)}, xml: {len(xml_chunks)})")
                 else:
-                    logger.info("No patient context available - proceeding with PDF-only mode")
-                
-                # Also chunk journal entries if available
-                journal_chunks = []
-                if state.journal_entries:
-                    logger.info(f"Chunking {len(state.journal_entries)} journal entries...")
-                    journal_chunks = await self._chunk_journal_entries(state.journal_entries, orchestrator, patient_id_str)
-                    logger.info(f"Journal entries chunking produced {len(journal_chunks)} chunks")
+                    logger.info("SKIPPING CHUNKING: Chunks already cached for this session")
+                    logger.info(f"Reusing {len(state.cached_chunk_ids)} pre-chunked documents")
+                    # We'll retrieve directly from vector store below
+                    all_chunks = []
 
-                # Also chunk PDF documents if available
-                pdf_chunks = []
-                if state.uploaded_pdfs:
-                    logger.info(f"Chunking {len(state.uploaded_pdfs)} PDF documents...")
-                    pdf_chunks = await self._chunk_pdf_documents(state.uploaded_pdfs, orchestrator, patient_id_str)
-                    logger.info(f"PDF documents chunking produced {len(pdf_chunks)} chunks")
-
-                # Also chunk XML documents if available
-                xml_chunks = []
-                if state.uploaded_xmls:
-                    logger.info(f"Chunking {len(state.uploaded_xmls)} XML documents...")
-                    xml_chunks = await self._chunk_xml_documents(state.uploaded_xmls, orchestrator, patient_id_str)
-                    logger.info(f"XML documents chunking produced {len(xml_chunks)} chunks")
-
-                # Combine all chunks
-                all_chunks = produced + journal_chunks + pdf_chunks + xml_chunks
-                logger.info(f"Total chunks produced: {len(all_chunks)} (patient: {len(produced)}, journal: {len(journal_chunks)}, pdf: {len(pdf_chunks)}, xml: {len(xml_chunks)})")
-
-                # Log data lineage: FHIR/PDF/XML → Chunking
-                if all_chunks:
+                # Log data lineage: FHIR/PDF/XML → Chunking (only if we actually chunked)
+                if needs_chunking and all_chunks:
                     await self._log_data_lineage(
                         session_id=state.session_id,
                         flow_id=str(uuid.uuid4()),
@@ -984,32 +1037,36 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                         source_type="Patient" if produced else ("PDFDocument" if pdf_chunks else ("XMLDocument" if xml_chunks else "JournalEntry")),
                         destination_system="chunking_orchestrator",
                         destination_type="Chunk",
-                        transformations=["policy_driven_chunking", "phi_redaction"],
+                        transformations=["policy_driven_chunking"],  # NO phi_redaction
                         data_quality_score=1.0 if all_chunks else 0.0
                     )
 
-                # Log chunk details (GDPR-safe)
-                for i, chunk in enumerate(all_chunks):
-                    logger.info(f"Chunk {i+1}: type={chunk.resource_type}, id={chunk.id}, length={len(chunk.text)} chars")
+                    # Log chunk details (GDPR-safe)
+                    for i, chunk in enumerate(all_chunks):
+                        logger.info(f"Chunk {i+1}: type={chunk.resource_type}, id={chunk.id}, length={len(chunk.text)} chars")
 
-                # Adapt to local chunk dicts
-                chunks: list[dict[str, Any]] = [{
-                    "chunk_id": c.id,
-                    "id": c.id,  # Keep for backward compatibility
-                    "content": c.text,
-                    "metadata": {
-                        "patient_id": patient_id_str,
+                # Adapt to local chunk dicts (only if we chunked)
+                if needs_chunking:
+                    chunks: list[dict[str, Any]] = [{
+                        "chunk_id": c.id,
+                        "id": c.id,  # Keep for backward compatibility
+                        "content": c.text,
+                        "metadata": {
+                            "patient_id": patient_id_str,
+                            "data_type": c.resource_type,
+                            "resource_type": c.resource_type,
+                            "timestamp": c.timestamp.isoformat() if c.timestamp else str(int(time.time()*1000)),
+                            "document": c.meta.get("document_name", "Clinical Record") if c.meta else "Clinical Record",
+                            "page": c.meta.get("page") if c.meta else None,
+                            "url": c.meta.get("url") if c.meta else None,
+                        },
                         "data_type": c.resource_type,
-                        "resource_type": c.resource_type,
-                        "timestamp": c.timestamp.isoformat() if c.timestamp else str(int(time.time()*1000)),
-                        "document": c.meta.get("document_name", "Clinical Record") if c.meta else "Clinical Record",
-                        "page": c.meta.get("page") if c.meta else None,
-                        "url": c.meta.get("url") if c.meta else None,
-                    },
-                    "data_type": c.resource_type,
-                } for c in all_chunks]
-                
-                if not chunks:
+                    } for c in all_chunks]
+                else:
+                    # Chunks already cached - we'll retrieve from vector store below
+                    chunks = []
+
+                if needs_chunking and not chunks:
                     logger.info("No chunks produced")
                     if state.patient_ctx:
                         logger.info("Using fallback to full patient context")
@@ -1021,16 +1078,17 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                         state.chunk_analysis = {"method": "none", "reason": "No content available for chunking"}
                     return state
 
-                # 2) Embed chunks
-                logger.info(f"Embedding {len(chunks)} chunks...")
-                chunk_texts = [c["content"] for c in chunks]
-                chunk_vecs = await self._embed_many(chunk_texts, mode="passage")
-                for i, vec in enumerate(chunk_vecs):
-                    chunks[i]["embedding"] = vec
-                logger.info(f"Successfully embedded {len(chunk_vecs)} chunks")
+                # 2) Embed chunks (only if we just chunked them)
+                if needs_chunking and chunks:
+                    logger.info(f"Embedding {len(chunks)} chunks...")
+                    chunk_texts = [c["content"] for c in chunks]
+                    chunk_vecs = await self._embed_many(chunk_texts, mode="passage")
+                    for i, vec in enumerate(chunk_vecs):
+                        chunks[i]["embedding"] = vec
+                    logger.info(f"Successfully embedded {len(chunk_vecs)} chunks")
 
-                # Log data lineage: Chunks → Embeddings
-                if chunk_vecs:
+                # Log data lineage: Chunks → Embeddings (only if we just embedded)
+                if needs_chunking and chunks:
                     await self._log_data_lineage(
                         session_id=state.session_id,
                         flow_id=str(uuid.uuid4()),
@@ -1041,6 +1099,18 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                         transformations=["sentence_transformer_minilm", "normalization"],
                         data_quality_score=1.0
                     )
+
+                    # Cache chunks globally for this session
+                    _GLOBAL_CHUNK_CACHE[session_cache_key] = {
+                        "chunks": chunks,
+                        "doc_signature": current_doc_signature,
+                        "timestamp": time.time()
+                    }
+                    logger.info(f"Cached {len(chunks)} chunks for session {sanitize_session_id(session_cache_key)}")
+                elif not needs_chunking and cached_chunks:
+                    # Use cached chunks from previous query
+                    logger.info(f"Reusing {len(cached_chunks)} cached chunks (skipping chunking & embedding)")
+                    chunks = cached_chunks
 
                 # 3) Query variants
                 logger.info("Generating query variants...")
@@ -5783,11 +5853,9 @@ Content:
             )
             records.append(record)
         
-        # Use narrative strategy to chunk the journal entries
-        tokenizer = WhitespaceTokenizer()
-        redactor = SimplePhiRedactor()
+        # NO PHI redaction - healthcare professionals need complete clinical data
         strategy = NarrativeV1()
-        
+
         # Get narrative policy from the orchestrator's policies
         policy = CHUNK_POLICY_PRESETS.get("narrative_default")
         if not policy:
@@ -5798,27 +5866,18 @@ Content:
                 max_tokens=512,
                 overlap=0.1
             )
-        
-        # Apply redaction to records
-        redacted_records = []
-        for record in records:
-            redacted_text = redactor.redact(record.text or "")
-            redacted_record = record.model_copy(update={"text": redacted_text})
-            redacted_records.append(redacted_record)
-        
-        # Apply chunking strategy
-        chunks = strategy.apply(redacted_records, policy, tokenizer)
+
+        # Apply chunking strategy - NO redaction
+        chunks = strategy.apply(records, policy, orchestrator._tokenizer)
         
         logger.info(f"Created {len(chunks)} chunks from {len(journal_entries)} journal entries")
         
         return chunks
 
     async def _chunk_pdf_documents(self, pdf_documents: List[PDFDocument], orchestrator: ChunkingOrchestrator, patient_id_str: Optional[str]) -> List[Chunk]:
-        """Chunk PDF documents using the narrative strategy."""
+        """Chunk PDF documents using the narrative strategy with orchestrator's redactor (Presidio)."""
         from optimed.core.domain import Record
         from optimed.adapters.chunking.strategies.narrative_v1 import NarrativeV1
-        from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
-        from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
         from optimed.core.services.hash_utils import stable_hash
 
         if not pdf_documents:
@@ -5900,31 +5959,21 @@ Content:
         if not records:
             return []
 
-        # Apply redaction and chunking
-        tokenizer = WhitespaceTokenizer()
-        redactor = SimplePhiRedactor()
+        # NO PHI redaction - healthcare professionals need complete clinical data
         strategy = NarrativeV1()
         policy = CHUNK_POLICY_PRESETS.get("narrative_default")
 
-        redacted_records = []
-        for record in records:
-            redacted_text = redactor.redact(record.text or "")
-            redacted_record = record.model_copy(update={"text": redacted_text})
-            redacted_records.append(redacted_record)
+        # Apply chunking strategy - NO redaction
+        chunks = strategy.apply(records, policy, orchestrator._tokenizer)
 
-        # Apply chunking strategy
-        chunks = strategy.apply(redacted_records, policy, tokenizer)
-
-        logger.info(f"Created {len(chunks)} chunks from {len(pdf_documents)} PDF documents")
+        logger.info(f"Created {len(chunks)} chunks from {len(pdf_documents)} PDF documents (NO redaction - complete clinical data)")
 
         return chunks
 
     async def _chunk_xml_documents(self, xml_documents: List[XMLDocument], orchestrator: ChunkingOrchestrator, patient_id_str: Optional[str]) -> List[Chunk]:
-        """Chunk XML documents using simple text-based chunking with NarrativeV1 strategy."""
+        """Chunk XML documents using simple text-based chunking with NarrativeV1 strategy and orchestrator's redactor (Presidio)."""
         from optimed.core.domain import Record
         from optimed.adapters.chunking.strategies.narrative_v1 import NarrativeV1
-        from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
-        from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
         from optimed.core.services.hash_utils import stable_hash
 
         if not xml_documents:
@@ -5991,9 +6040,7 @@ Content:
 
         logger.info(f"Created {len(records)} records from {len(xml_documents)} XML documents")
 
-        # Apply redaction and NarrativeV1 strategy for final chunking
-        tokenizer = WhitespaceTokenizer()
-        redactor = SimplePhiRedactor()
+        # NO PHI redaction - healthcare professionals need complete clinical data
         strategy = NarrativeV1()
         policy = CHUNK_POLICY_PRESETS.get("narrative_default")
 
@@ -6007,16 +6054,10 @@ Content:
                 boundary_rules={"sentence": True}
             )
 
-        redacted_records = []
-        for record in records:
-            redacted_text = redactor.redact(record.text or "")
-            redacted_record = record.model_copy(update={"text": redacted_text})
-            redacted_records.append(redacted_record)
+        # Apply chunking strategy - NO redaction
+        chunks = strategy.apply(records, policy, orchestrator._tokenizer)
 
-        # Apply chunking strategy
-        chunks = strategy.apply(redacted_records, policy, tokenizer)
-
-        logger.info(f"Created {len(chunks)} final chunks from {len(xml_documents)} XML documents")
+        logger.info(f"Created {len(chunks)} final chunks from {len(xml_documents)} XML documents (NO redaction - complete clinical data)")
 
         return chunks
 

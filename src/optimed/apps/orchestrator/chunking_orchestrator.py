@@ -11,28 +11,42 @@ from optimed.core.services.hash_utils import stable_hash
 
 
 class ChunkingOrchestrator(ChunkingOrchestratorPort):
-    """Apply inbound adapters -> strategies -> post-processing and invariants."""
+    """
+    Apply inbound adapters -> strategies -> post-processing and invariants.
+
+    NOTE: PHI redaction is NOT performed during chunking for GDPR compliance.
+    Instead, compliance is achieved through:
+    - RAM-only processing (no persistence)
+    - Access controls (RLS, authentication)
+    - Audit logging (metadata only, no PHI)
+    - Auto-cleanup on session end
+    - GDPR Article 9(2)(h): Healthcare professionals may process health data with identifiers
+    """
 
     def __init__(
         self,
         *,
         tokenizer: TokenizerPort,
-        redactor: PhiRedactorPort,
         strategy_registry: dict[str, str],  # resource_type -> strategy class name
         policies: PolicySet,
         feature_flags: dict[str, Any] | None = None,
     ) -> None:
         self._tokenizer = tokenizer
-        self._redactor = redactor
         self._strategy_registry = strategy_registry
         self._policies = policies
         self._feature_flags = feature_flags or {}
 
     # Public API
     def chunk_patient(self, patient_context: PatientContext, policy_set: PolicySet) -> list[Chunk]:
+        """
+        Chunk patient context WITHOUT PHI redaction.
+
+        Clinical data is preserved for healthcare professionals per GDPR Article 9(2)(h).
+        """
         from optimed.adapters.inbound.patient_context_chunker import PatientContextChunkerAdapter
 
-        adapter = PatientContextChunkerAdapter(self._redactor)
+        # No redactor - healthcare professionals need complete clinical data
+        adapter = PatientContextChunkerAdapter(redactor=None)
         records = adapter.to_records(patient_context)
         pseudo_patient = stable_hash({"pid": patient_context.patient_id}, namespace="patient")
         # attach pseudonymous patient_ref
@@ -40,9 +54,15 @@ class ChunkingOrchestrator(ChunkingOrchestratorPort):
         return self._chunk_records(records, policy_set)
 
     def chunk_document(self, document_ref: dict[str, Any], policy_set: PolicySet) -> list[Chunk]:
+        """
+        Chunk document WITHOUT PHI redaction.
+
+        Clinical data is preserved for healthcare professionals per GDPR Article 9(2)(h).
+        """
         from optimed.adapters.inbound.document_chunker import DocumentChunkerAdapter
 
-        adapter = DocumentChunkerAdapter(self._redactor)
+        # No redactor - healthcare professionals need complete clinical data
+        adapter = DocumentChunkerAdapter(redactor=None)
         doc_type = document_ref.get("type")
         if doc_type == "csv":
             records = adapter.csv_to_records(document_ref["path"], resource_type="csv_row")
@@ -70,8 +90,8 @@ class ChunkingOrchestrator(ChunkingOrchestratorPort):
             # map resource_type to policy preset
             preset_name = self._policy_for_resource(resource_type)
             policy = policy_set.get(preset_name)
-            # Apply redaction on any lingering text values just in case
-            group = [self._safe_redact_record(r) for r in group]
+            # NO redaction - healthcare professionals need complete clinical data
+            # GDPR compliance achieved through RAM-only processing + access controls
             produced.extend(strategy.apply(group, policy, self._tokenizer))
 
         # Bundle by encounter/time using bundling strategy if configured
@@ -105,14 +125,6 @@ class ChunkingOrchestrator(ChunkingOrchestratorPort):
         if resource_type in ("vital", "lab", "medication", "allergy", "diagnosis", "immunization"):
             return "atomic_default"
         return "narrative_default"
-
-    def _safe_redact_record(self, r: Record) -> Record:
-        updates: dict[str, Any] = {}
-        if r.text:
-            updates["text"] = self._redactor.redact(r.text)
-        if r.value:
-            updates["value"] = self._redactor.redact(r.value)
-        return r.model_copy(update=updates) if updates else r
 
     def _dedupe(self, chunks: list[Chunk]) -> list[Chunk]:
         seen = set()
