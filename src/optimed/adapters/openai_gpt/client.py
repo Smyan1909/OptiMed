@@ -45,15 +45,17 @@ class OpenAIGPT4oClient(LLMClient, VisionLLMClient):
     async def chat(
             self,
             messages: Sequence[ChatMessage],
-            json_mode: bool = False, 
+            json_mode: bool = False,
             temperature: float = 0.7,
             max_tokens: int | None = None,
+            enable_chunk_citations: bool = False,
     ) -> ChatMessage:
         """
         • Convert ChatMessage sequence to OpenAI format
         • Handle system messages appropriately
         • Fire the request asynchronously
         • Wrap the assistant answer back into our ChatMessage VO
+        • Support chunk citation tracking when enable_chunk_citations=True
         """
         openai_msgs: list[dict[str, str]] = []
 
@@ -62,12 +64,33 @@ class OpenAIGPT4oClient(LLMClient, VisionLLMClient):
                 "role": msg.role.value,
                 "content": msg.content
             })
-        
+
+        # Chunk citations require JSON mode
+        if enable_chunk_citations:
+            json_mode = True
+
         # Configure response format for JSON mode
         response_format = {"type": "json_object"} if json_mode else {"type": "text"}
-        
+
         if json_mode:
-            json_instruction = """Please respond with valid JSON only. Do not include any text outside of the JSON structure. 
+            if enable_chunk_citations:
+                # Special JSON instruction for chunk citations
+                json_instruction = """RESPONSE FORMAT (REQUIRED):
+You must respond with valid JSON in this exact structure:
+{
+  "response": "Your clinical response here. When using information from a chunk, include [cite: chunk_id] immediately after the statement.",
+  "cited_chunks": ["chunk-id-1", "chunk-id-2"]
+}
+
+CITATION RULES:
+1. Include ONLY chunk IDs that you actually used in your response
+2. Cite the chunk IMMEDIATELY after the sentence that uses its information
+3. Use the EXACT chunk_id from the [chunk_id: ...] markers in the provided information
+4. Example: "The patient is 87 years old [cite: abc-123] and lives with her daughter [cite: def-456]."
+
+IMPORTANT: Response must be valid JSON only. No text outside the JSON structure."""
+            else:
+                json_instruction = """Please respond with valid JSON only. Do not include any text outside of the JSON structure.
 
 IMPORTANT: Your response must be properly formatted JSON that can be parsed. If you cannot provide the requested information, return a valid JSON object with appropriate null/empty values rather than no response at all.
 
@@ -77,7 +100,7 @@ Example format:
     "field2": ["item1", "item2"],
     "field3": 0.5
 }"""
-            
+
             # Add JSON instruction to the last user message or create a new system message
             if openai_msgs and openai_msgs[-1]["role"] == "user":
                 openai_msgs[-1]["content"] = f"{openai_msgs[-1]['content']}\n\n{json_instruction}"
@@ -97,11 +120,25 @@ Example format:
 
         assistant_text = response.choices[0].message.content or ""
 
+        # Parse cited chunks if chunk citations are enabled
+        cited_chunk_ids = None
+        if enable_chunk_citations and assistant_text:
+            try:
+                import json
+                response_json = json.loads(assistant_text)
+                cited_chunk_ids = response_json.get("cited_chunks", [])
+                # Extract the actual response content
+                assistant_text = response_json.get("response", assistant_text)
+            except json.JSONDecodeError:
+                # If parsing fails, return the raw text
+                pass
+
         return ChatMessage(
             role=ChatRole.ASSISTANT,
             content=assistant_text,
+            cited_chunk_ids=cited_chunk_ids,
             metadata={
-                "model": self._model, 
+                "model": self._model,
                 "response_id": response.id,
                 "input_tokens": str(response.usage.prompt_tokens) if response.usage else "0",
                 "output_tokens": str(response.usage.completion_tokens) if response.usage else "0",
@@ -115,8 +152,9 @@ Example format:
         json_mode: bool = False,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        enable_chunk_citations: bool = False,
     ) -> AsyncGenerator[str, None]:
-        
+
         openai_msgs: list[dict[str, str]] = []
 
         for msg in messages:
@@ -124,12 +162,33 @@ Example format:
                 "role": msg.role.value,
                 "content": msg.content
             })
-        
+
+        # Chunk citations require JSON mode
+        if enable_chunk_citations:
+            json_mode = True
+
         # Configure response format for JSON mode
         response_format = {"type": "json_object"} if json_mode else {"type": "text"}
-        
+
         if json_mode:
-            json_instruction = """Please respond with valid JSON only. Do not include any text outside of the JSON structure. 
+            if enable_chunk_citations:
+                # Special JSON instruction for chunk citations
+                json_instruction = """RESPONSE FORMAT (REQUIRED):
+You must respond with valid JSON in this exact structure:
+{
+  "response": "Your clinical response here. When using information from a chunk, include [cite: chunk_id] immediately after the statement.",
+  "cited_chunks": ["chunk-id-1", "chunk-id-2"]
+}
+
+CITATION RULES:
+1. Include ONLY chunk IDs that you actually used in your response
+2. Cite the chunk IMMEDIATELY after the sentence that uses its information
+3. Use the EXACT chunk_id from the [chunk_id: ...] markers in the provided information
+4. Example: "The patient is 87 years old [cite: abc-123] and lives with her daughter [cite: def-456]."
+
+IMPORTANT: Response must be valid JSON only. No text outside the JSON structure."""
+            else:
+                json_instruction = """Please respond with valid JSON only. Do not include any text outside of the JSON structure.
 
 IMPORTANT: Your response must be properly formatted JSON that can be parsed. If you cannot provide the requested information, return a valid JSON object with appropriate null/empty values rather than no response at all.
 
@@ -139,7 +198,7 @@ Example format:
     "field2": ["item1", "item2"],
     "field3": 0.5
 }"""
-            
+
             # Add JSON instruction to the last user message or create a new system message
             if openai_msgs and openai_msgs[-1]["role"] == "user":
                 openai_msgs[-1]["content"] = f"{openai_msgs[-1]['content']}\n\n{json_instruction}"
@@ -158,6 +217,8 @@ Example format:
             stream=True
         )
 
+        # Note: For streaming with chunk citations, the orchestrator will accumulate
+        # the full JSON response and parse cited_chunks at completion time
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content

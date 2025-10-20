@@ -138,6 +138,7 @@ class LLMClient(Protocol):
         *,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        enable_chunk_citations: bool = False,
     ) -> ChatMessage:
         """Send a chat message sequence to the LLM and get a response."""
         ...
@@ -151,6 +152,7 @@ class LLMClient(Protocol):
         *,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        enable_chunk_citations: bool = False,
     ) -> AsyncGenerator[str, None]:
         """Stream chat responses from the LLM."""
         ...

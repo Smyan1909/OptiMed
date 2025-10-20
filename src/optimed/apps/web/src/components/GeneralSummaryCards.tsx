@@ -1,6 +1,8 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MarkdownWithCitations } from './MarkdownWithCitations';
+import type { Citation } from './CitationModal';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -43,6 +45,7 @@ interface GeneralSummaryCardsProps {
   reasoningSteps?: string[];
   patientId?: string;
   sessionId?: string | null;
+  citations?: Record<string, Citation>;
 }
 
 // Custom markdown components for summary cards
@@ -121,7 +124,8 @@ const SummaryCardContent: React.FC<{
   component: string;
   patientId?: string;
   sessionId?: string | null;
-}> = ({ content, lookup, isLoading, component, patientId, sessionId }) => {
+  citations?: Record<string, Citation>;
+}> = ({ content, lookup, isLoading, component, patientId, sessionId, citations = {} }) => {
   return (
     <div
       ref={lookup.contentRef}
@@ -130,12 +134,11 @@ const SummaryCardContent: React.FC<{
       onMouseUp={lookup.handleMouseUp}
       onKeyUp={lookup.handleKeyUp}
     >
-      <ReactMarkdown
+      <MarkdownWithCitations
+        content={formatNumbersInText(content)}
+        citations={citations}
         components={SummaryMarkdownComponents}
-        remarkPlugins={[remarkGfm]}
-      >
-        {formatNumbersInText(content)}
-      </ReactMarkdown>
+      />
       <lookup.LookupButton />
       {lookup.showLookup && lookup.lookupTerm && (
         <LookupPanel
@@ -149,71 +152,71 @@ const SummaryCardContent: React.FC<{
   );
 };
 
-const getSummaryConfig = (component: keyof GeneralSummaryResults) => {
+const getSummaryConfig = (component: keyof GeneralSummaryResults, t: any) => {
   const configs = {
     snapshot: {
-      title: 'Patient Snapshot',
+      title: t('cards.snapshot.title'),
       icon: User,
       color: 'bg-blue-50 border-blue-200',
       iconColor: 'text-blue-600',
       badgeColor: 'bg-blue-100 text-blue-800',
-      description: 'At-a-glance patient overview'
+      description: t('cards.snapshot.description')
     },
     problems: {
-      title: 'Active Problems',
+      title: t('cards.problems.title'),
       icon: AlertCircle,
       color: 'bg-red-50 border-red-200',
       iconColor: 'text-red-600',
       badgeColor: 'bg-red-100 text-red-800',
-      description: 'Current diagnoses and chronic conditions'
+      description: t('cards.problems.description')
     },
     medications: {
-      title: 'Medications',
+      title: t('cards.medications.title'),
       icon: Pill,
       color: 'bg-purple-50 border-purple-200',
       iconColor: 'text-purple-600',
       badgeColor: 'bg-purple-100 text-purple-800',
-      description: 'Current medications and high-risk drugs'
+      description: t('cards.medications.description')
     },
     trends: {
-      title: 'Lab & Vital Trends',
+      title: t('cards.trends.title'),
       icon: TrendingUp,
       color: 'bg-green-50 border-green-200',
       iconColor: 'text-green-600',
       badgeColor: 'bg-green-100 text-green-800',
-      description: 'Recent lab values and vital signs'
+      description: t('cards.trends.description')
     },
     history: {
-      title: 'Past Medical History',
+      title: t('cards.history.title'),
       icon: Calendar,
       color: 'bg-orange-50 border-orange-200',
       iconColor: 'text-orange-600',
       badgeColor: 'bg-orange-100 text-orange-800',
-      description: 'Major surgeries and hospitalizations'
+      description: t('cards.history.description')
     },
     risks: {
-      title: 'Risks & Alerts',
+      title: t('cards.risks.title'),
       icon: AlertTriangle,
       color: 'bg-yellow-50 border-yellow-200',
       iconColor: 'text-yellow-600',
       badgeColor: 'bg-yellow-100 text-yellow-800',
-      description: 'Allergies, fall risk, and clinical alerts'
+      description: t('cards.risks.description')
     },
     encounters: {
-      title: 'Recent Care',
+      title: t('cards.encounters.title'),
       icon: FileText,
       color: 'bg-indigo-50 border-indigo-200',
       iconColor: 'text-indigo-600',
       badgeColor: 'bg-indigo-100 text-indigo-800',
-      description: 'Recent encounters and care plans'
+      description: t('cards.encounters.description')
     },
     deepdive: {
-      title: 'Deep Dive',
+      title: t('cards.deepdive.title'),
       icon: Archive,
       color: 'bg-gray-50 border-gray-200',
       iconColor: 'text-gray-600',
       badgeColor: 'bg-gray-100 text-gray-800',
-      description: 'Detailed admissions, imaging, and specialist letters'
+      description: t('cards.deepdive.description')
     }
   };
   return configs[component];
@@ -225,8 +228,10 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
   reasoning,
   reasoningSteps,
   patientId,
-  sessionId
+  sessionId,
+  citations = {}
 }) => {
+  const t = useTranslations('generalSummary');
   // Create separate lookup hooks for each card to avoid conflicts
   const snapshotLookup = useLookup({ patientId, sessionId });
   const problemsLookup = useLookup({ patientId, sessionId });
@@ -261,16 +266,16 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
     <div className="mt-6 space-y-4">
       <div className="flex items-center gap-3 mb-4">
         <User className="h-6 w-6 text-blue-600" />
-        <h3 className="text-xl font-semibold text-gray-900">Patient Summary</h3>
+        <h3 className="text-xl font-semibold text-gray-900">{t('patientSummary')}</h3>
         <Badge variant="secondary" className="text-sm px-3 py-1">
-          Comprehensive View
+          {t('comprehensiveView')}
         </Badge>
       </div>
 
       {/* Cards 1-6: Standard 2x3 grid */}
       <div className="grid gap-6 grid-cols-1 xl:grid-cols-2">
         {gridComponents.map((component) => {
-          const config = getSummaryConfig(component);
+          const config = getSummaryConfig(component, t);
           const Icon = config.icon;
           const content = summaryResults[component];
           const hasContent = content && content.trim() !== '';
@@ -289,7 +294,7 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
                   <Badge
                     className={`text-xs font-semibold ${config.badgeColor}`}
                   >
-                    {isLoading && !hasContent ? 'Loading...' : hasContent ? 'Complete' : 'Pending'}
+                    {isLoading && !hasContent ? t('loading') : hasContent ? t('complete') : t('pending')}
                   </Badge>
                 </CardTitle>
                 <p className="text-xs text-gray-500 leading-tight">{config.description}</p>
@@ -299,7 +304,7 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
                 {isLoading && !hasContent ? (
                   <div className="flex-grow flex items-center justify-center">
                     <div className="animate-pulse text-sm text-gray-500">
-                      Generating {component}...
+                      {t('generating', { component })}
                     </div>
                   </div>
                 ) : hasContent ? (
@@ -310,11 +315,12 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
                     component={component}
                     patientId={patientId}
                     sessionId={sessionId}
+                    citations={citations}
                   />
                 ) : (
                   <div className="flex-grow flex items-center justify-center">
                     <div className="text-sm text-gray-400 italic">
-                      {component.charAt(0).toUpperCase() + component.slice(1)} content not available
+                      {t('contentNotAvailable', { component: component.charAt(0).toUpperCase() + component.slice(1) })}
                     </div>
                   </div>
                 )}
@@ -331,13 +337,13 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
             <CardTitle className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-3">
                 <FileText className="h-6 w-6 text-indigo-600" />
-                <span className="font-bold text-gray-900 text-lg">Recent Care</span>
+                <span className="font-bold text-gray-900 text-lg">{t('cards.encounters.title')}</span>
               </div>
               <Badge className="text-xs font-semibold bg-indigo-100 text-indigo-800">
-                {summaryResults.encounters && summaryResults.encounters.trim() !== '' ? 'Complete' : 'Pending'}
+                {summaryResults.encounters && summaryResults.encounters.trim() !== '' ? t('complete') : t('pending')}
               </Badge>
             </CardTitle>
-            <p className="text-xs text-gray-500 leading-tight">Narrative summary of recent encounters</p>
+            <p className="text-xs text-gray-500 leading-tight">{t('cards.encounters.description')}</p>
           </CardHeader>
 
           <CardContent className="pt-0">
@@ -348,6 +354,7 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
               component="encounters"
               patientId={patientId}
               sessionId={sessionId}
+              citations={citations}
             />
           </CardContent>
         </Card>
@@ -360,14 +367,14 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
             <CardTitle className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-3">
                 <Archive className="h-7 w-7 text-gray-600" />
-                <span className="font-bold text-gray-900 text-xl">Deep Dive</span>
+                <span className="font-bold text-gray-900 text-xl">{t('cards.deepdive.title')}</span>
               </div>
               <Badge className="text-xs font-semibold bg-gray-100 text-gray-800">
-                {summaryResults.deepdive && summaryResults.deepdive.trim() !== '' ? 'Complete' : 'Pending'}
+                {summaryResults.deepdive && summaryResults.deepdive.trim() !== '' ? t('complete') : t('pending')}
               </Badge>
             </CardTitle>
             <p className="text-sm text-gray-500 leading-tight">
-              Detailed clinical information: hospital admissions, imaging reports, and specialist consultations
+              {t('cards.deepdive.description')}
             </p>
           </CardHeader>
 
@@ -379,6 +386,7 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
               component="deepdive"
               patientId={patientId}
               sessionId={sessionId}
+              citations={citations}
             />
           </CardContent>
         </Card>
@@ -389,16 +397,16 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
           <div className="bg-gray-50 rounded-lg border border-gray-200 p-4">
             <h4 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <span className="text-blue-600">🧠</span>
-              AI Reasoning
+              {t('aiReasoning')}
             </h4>
 
             {reasoningSteps && reasoningSteps.length > 0 && (
               <div className="mb-4">
-                <h5 className="text-sm font-medium text-gray-700 mb-2">Reasoning Steps:</h5>
+                <h5 className="text-sm font-medium text-gray-700 mb-2">{t('reasoningSteps')}</h5>
                 <ul className="space-y-2">
                   {reasoningSteps.map((step, index) => (
                     <li key={index} className="text-sm text-gray-600 bg-white p-2 rounded border-l-4 border-blue-200">
-                      <span className="font-medium text-blue-600">Step {index + 1}:</span> {step}
+                      <span className="font-medium text-blue-600">{t('step', { step: index + 1 })}</span> {step}
                     </li>
                   ))}
                 </ul>
@@ -407,7 +415,7 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
 
             {reasoning && (
               <div>
-                <h5 className="text-sm font-medium text-gray-700 mb-2">Detailed Reasoning:</h5>
+                <h5 className="text-sm font-medium text-gray-700 mb-2">{t('detailedReasoning')}</h5>
                 <div className="text-sm text-gray-600 bg-white p-3 rounded border">
                   {reasoning}
                 </div>
@@ -421,14 +429,11 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
         <p className="text-sm text-blue-700 flex items-start leading-relaxed mb-3">
           <User className="h-4 w-4 inline mr-3 flex-shrink-0 mt-0.5" />
           <span>
-            <strong>Patient Summary</strong> provides a comprehensive at-a-glance view of the patient's medical history,
-            current conditions, medications, trends, and recent care for efficient clinical decision-making.
+            <strong>{t('patientSummary')}</strong> {t('patientSummaryDescription')}
           </span>
         </p>
         <p className="text-xs text-gray-600 leading-relaxed border-t border-blue-200 pt-3">
-          <strong>Disclaimer:</strong> This is an information system, not a medical device.
-          Information provided is for clinical decision support only. Healthcare professionals must use their own
-          clinical judgment and verify all information before making medical decisions.
+          <strong>{t('disclaimer')}</strong> {t('disclaimerText')}
         </p>
       </div>
     </div>

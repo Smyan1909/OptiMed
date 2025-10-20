@@ -6,6 +6,7 @@ import { Download, Image as ImageIcon, ExternalLink, Paperclip, FileText, X, Fil
 import { getGeneratedImageUrl, downloadGeneratedImage, lookupTerm, LookupResponse, uploadPDFDocument, listPDFDocuments, deletePDFDocument, PDFDocument, uploadXMLDocument, listXMLDocuments, deleteXMLDocument, XMLDocument, cleanupSessionDocuments } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MarkdownWithCitations } from './MarkdownWithCitations';
 import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { StreamingProgress } from "./StreamingProgress";
 import { ReasoningViewer } from "./ReasoningViewer";
@@ -99,6 +100,14 @@ interface FocusedSummaryResults {
   next_steps?: string;
 }
 
+interface Citation {
+  id: string;
+  document: string;
+  page?: string | null;
+  excerpt: string;
+  url?: string | null;
+}
+
 interface Message {
   sender: "user" | "system";
   text: string;
@@ -114,6 +123,7 @@ interface Message {
   focusedAspect?: string;
   focusedAspectIcon?: string;
   timelineResults?: TimelineResults;
+  citations?: Record<string, Citation>;
 }
 
 interface ChatBoxProps {
@@ -300,9 +310,10 @@ interface MessageContentProps {
   isUser: boolean;
   patientId?: string;
   sessionId?: string | null;
+  citations?: Record<string, Citation>;
 }
 
-const MessageContent = ({ text, isUser, patientId, sessionId }: MessageContentProps) => {
+const MessageContent = ({ text, isUser, patientId, sessionId, citations = {} }: MessageContentProps) => {
   // Custom components for markdown rendering
   const markdownComponents = {
     // Links
@@ -538,9 +549,11 @@ const MessageContent = ({ text, isUser, patientId, sessionId }: MessageContentPr
       onMouseUp={handleMouseUp}
       onKeyUp={updateSelection}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-        {text}
-      </ReactMarkdown>
+      <MarkdownWithCitations
+        content={text}
+        citations={citations}
+        components={markdownComponents}
+      />
       {selection && selection.length >= 2 && !isUser && (
         <div className="mt-2">
           <button
@@ -816,6 +829,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
     finalResponse,
     streamingResponse,
     generatedImage,
+    citations: streamingCitations,
     streamDifferentialDiagnoses, // Add this for differential diagnoses
     differentialDiagnosisProgress, // Add this for progress tracking
     noteGenerationProgress, // Add this for note generation tracking
@@ -1285,12 +1299,20 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         let focusedAspect = undefined;
         let focusedAspectIcon = undefined;
         let timelineResults = undefined;
+        let jsonCitations = undefined; // Extract citations from JSON responses
 
         try {
           const trimmedText = finalResponse?.trim();
           if (trimmedText && trimmedText.startsWith('{') && trimmedText.endsWith('}')) {
             const parsedContent = JSON.parse(trimmedText);
             logInfo(`🧪 Parsed streaming JSON - type: ${parsedContent.type}`);
+
+            // Extract citations if present in JSON
+            if (parsedContent.citations) {
+              jsonCitations = parsedContent.citations;
+              console.log('📚 Extracted citations from JSON:', jsonCitations);
+              console.log('📚 Citation keys from JSON:', Object.keys(jsonCitations));
+            }
 
             if (parsedContent.type === 'generated_note' && parsedContent.content) {
               logInfo(`📝 [NOTE DETECTION] Processing generated note - type: ${parsedContent.type}, templateName: ${parsedContent.template_name}, contentLength: ${parsedContent.content.length}, generation_id: ${parsedContent.generation_id}`);
@@ -1350,11 +1372,19 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
               // Clear the text so we don't display the raw JSON
               messageText = '';
               logInfo(`✅ Successfully processed streaming Timeline, cleared text`);
+            } else if (parsedContent.type === 'general_response' && parsedContent.content) {
+              logInfo(`💬 Processing general response with citations`);
+              // Use the content field as the message text (don't clear it)
+              messageText = parsedContent.content;
+              logInfo(`✅ Successfully processed general response with ${Object.keys(parsedContent.citations || {}).length} citations`);
             }
           }
         } catch (e: any) {
           logInfo(`📄 Failed to parse streaming JSON: ${e.message}`);
         }
+
+        // Use citations from JSON if available, otherwise use streaming citations
+        const finalCitations = jsonCitations || streamingCitations || {};
 
         const newMessage = {
           sender: "system" as const,
@@ -1364,6 +1394,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           reasoningSteps: reasoning,
           generatedImage: formattedGeneratedImage,
           differentialDiagnoses: streamDifferentialDiagnoses,
+          citations: finalCitations,
           sbarResults: sbarResults,
           generalSummaryResults: generalSummaryResults,
           focusedSummaryResults: focusedSummaryResults,
@@ -1372,7 +1403,11 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           timelineResults: timelineResults
         };
 
-        logInfo(`🔥 Creating new message - hasReasoning: ${!!(newMessage.reasoning || (newMessage.reasoningSteps && newMessage.reasoningSteps.length > 0))}, hasDifferential: ${!!(newMessage.differentialDiagnoses && newMessage.differentialDiagnoses.length > 0)}, hasImage: ${!!newMessage.generatedImage}`);
+        console.log('🎯 New message citations (final):', finalCitations);
+        console.log('🎯 Citation keys (final):', Object.keys(finalCitations || {}));
+        console.log('🎯 Citations from JSON:', jsonCitations);
+        console.log('🎯 Citations from streaming:', streamingCitations);
+        logInfo(`🔥 Creating new message - hasReasoning: ${!!(newMessage.reasoning || (newMessage.reasoningSteps && newMessage.reasoningSteps.length > 0))}, hasDifferential: ${!!(newMessage.differentialDiagnoses && newMessage.differentialDiagnoses.length > 0)}, hasImage: ${!!newMessage.generatedImage}, hasCitations: ${!!(finalCitations && Object.keys(finalCitations).length > 0)}`);
         
         return [
           ...prev,
@@ -1380,7 +1415,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         ];
       });
     }
-  }, [finalResponse, isStreaming, reasoning, generatedImage, streamDifferentialDiagnoses]);
+  }, [finalResponse, isStreaming, reasoning, generatedImage, streamDifferentialDiagnoses, streamingCitations]);
 
   // Handle streaming errors
   useEffect(() => {
@@ -1887,11 +1922,11 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
               <div className={msg.sender === 'user' ? "max-w-[80%]" : "max-w-4xl w-full"}>
                 {msg.sender === 'user' ? (
                   <div className="px-3 py-2 text-sm rounded-xl bg-gray-200 text-gray-900 mb-1">
-                    <MessageContent text={msg.text} isUser={true} patientId={patientId} sessionId={currentSessionId} />
+                    <MessageContent text={msg.text} isUser={true} patientId={patientId} sessionId={currentSessionId} citations={msg.citations} />
                   </div>
                 ) : (
                   <div className="text-sm text-gray-900 mb-1">
-                    <MessageContent text={msg.text} isUser={false} patientId={patientId} sessionId={currentSessionId} />
+                    <MessageContent text={msg.text} isUser={false} patientId={patientId} sessionId={currentSessionId} citations={msg.citations} />
                   </div>
                 )}
 
@@ -1912,6 +1947,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                       reasoningSteps={msg.reasoningSteps}
                       patientId={patientId}
                       sessionId={sessionId}
+                      citations={msg.citations}
                     />
                   </div>
                 )}
@@ -1925,6 +1961,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                       reasoningSteps={msg.reasoningSteps}
                       patientId={patientId}
                       sessionId={sessionId}
+                      citations={msg.citations}
                     />
                   </div>
                 )}
@@ -1938,6 +1975,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                       isLoading={msg.loading}
                       patientId={patientId}
                       sessionId={sessionId}
+                      citations={msg.citations}
                     />
                   </div>
                 )}
@@ -1949,6 +1987,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                       isLoading={msg.loading}
                       patientId={patientId}
                       sessionId={sessionId}
+                      citations={msg.citations}
                     />
                   </div>
                 )}
@@ -1991,9 +2030,11 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                     <div className="text-sm text-gray-900 mb-1">
                       <div className="rounded-2xl px-4 py-3 bg-white border border-gray-200 shadow-sm">
                         <div className="text-sm leading-relaxed text-gray-900">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                            {streamingResponse}
-                          </ReactMarkdown>
+                          <MarkdownWithCitations
+                            content={streamingResponse}
+                            citations={streamingCitations || {}}
+                            components={markdownComponents}
+                          />
                           <span className="inline-block w-2 h-5 bg-blue-600 animate-pulse ml-1" />
                         </div>
                       </div>

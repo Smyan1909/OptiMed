@@ -1,6 +1,9 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MarkdownWithCitations } from './MarkdownWithCitations';
+import type { Citation } from './CitationModal';
+import { useTranslations } from 'next-intl';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -40,6 +43,7 @@ interface FocusedSummaryCardsProps {
   isLoading?: boolean;
   patientId?: string;
   sessionId?: string | null;
+  citations?: Record<string, Citation>;
 }
 
 // Custom markdown components for focused summary
@@ -110,7 +114,8 @@ const SectionContent: React.FC<{
   sectionName: string;
   patientId?: string;
   sessionId?: string | null;
-}> = ({ content, lookup, sectionName, patientId, sessionId }) => {
+  citations?: Record<string, Citation>;
+}> = ({ content, lookup, sectionName, patientId, sessionId, citations = {} }) => {
   return (
     <div
       ref={lookup.contentRef}
@@ -119,12 +124,11 @@ const SectionContent: React.FC<{
       onMouseUp={lookup.handleMouseUp}
       onKeyUp={lookup.handleKeyUp}
     >
-      <ReactMarkdown
+      <MarkdownWithCitations
+        content={formatNumbersInText(content)}
+        citations={citations}
         components={FocusedSummaryMarkdownComponents}
-        remarkPlugins={[remarkGfm]}
-      >
-        {formatNumbersInText(content)}
-      </ReactMarkdown>
+      />
       <lookup.LookupButton />
       {lookup.showLookup && lookup.lookupTerm && (
         <LookupPanel
@@ -159,8 +163,10 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
   aspectIcon,
   isLoading = false,
   patientId,
-  sessionId
+  sessionId,
+  citations = {}
 }) => {
+  const t = useTranslations('focusedSummary');
   // Create separate lookup hooks for each section
   const diagnosesLookup = useLookup({ patientId, sessionId });
   const eventsLookup = useLookup({ patientId, sessionId });
@@ -189,7 +195,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
       {/* Header with aspect name and icon */}
       <div className="flex items-center gap-3 mb-4">
         <Icon className="h-7 w-7 text-blue-600" />
-        <h3 className="text-2xl font-bold text-gray-900">{aspect} Summary</h3>
+        <h3 className="text-2xl font-bold text-gray-900">{aspect} {t('summary')}</h3>
         <Badge variant="secondary" className="text-sm px-3 py-1">
           Focused View
         </Badge>
@@ -215,7 +221,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
             <div className="space-y-2">
               <div className="flex items-center gap-2 mb-3">
                 <FileText className="h-5 w-5 text-red-600" />
-                <h4 className="text-base font-bold text-gray-900">Diagnoses</h4>
+                <h4 className="text-base font-bold text-gray-900">{t('diagnoses')}</h4>
               </div>
               <div className="border-l-4 border-red-300 pl-4 py-2 bg-red-50 rounded-r">
                 <SectionContent
@@ -224,6 +230,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
                   sectionName="diagnoses"
                   patientId={patientId}
                   sessionId={sessionId}
+                  citations={citations}
                 />
               </div>
             </div>
@@ -234,7 +241,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
             <div className="space-y-2">
               <div className="flex items-center gap-2 mb-3">
                 <Activity className="h-5 w-5 text-blue-600" />
-                <h4 className="text-base font-bold text-gray-900">Key Events</h4>
+                <h4 className="text-base font-bold text-gray-900">{t('keyEvents')}</h4>
               </div>
               <div className="border-l-4 border-blue-300 pl-4 py-2 bg-blue-50 rounded-r">
                 <SectionContent
@@ -243,6 +250,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
                   sectionName="events"
                   patientId={patientId}
                   sessionId={sessionId}
+                  citations={citations}
                 />
               </div>
             </div>
@@ -253,7 +261,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
             <div className="space-y-2">
               <div className="flex items-center gap-2 mb-3">
                 <Droplet className="h-5 w-5 text-purple-600" />
-                <h4 className="text-base font-bold text-gray-900">Current Medications</h4>
+                <h4 className="text-base font-bold text-gray-900">{t('currentMedications')}</h4>
               </div>
               <div className="border-l-4 border-purple-300 pl-4 py-2 bg-purple-50 rounded-r">
                 <SectionContent
@@ -262,6 +270,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
                   sectionName="medications"
                   patientId={patientId}
                   sessionId={sessionId}
+                  citations={citations}
                 />
               </div>
             </div>
@@ -272,7 +281,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
             <div className="space-y-2">
               <div className="flex items-center gap-2 mb-3">
                 <TrendingUp className="h-5 w-5 text-green-600" />
-                <h4 className="text-base font-bold text-gray-900">Latest Objective Data</h4>
+                <h4 className="text-base font-bold text-gray-900">{t('latestObjectiveData')}</h4>
               </div>
               <div className="border-l-4 border-green-300 pl-4 py-2 bg-green-50 rounded-r">
                 <SectionContent
@@ -281,6 +290,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
                   sectionName="objective_data"
                   patientId={patientId}
                   sessionId={sessionId}
+                  citations={citations}
                 />
               </div>
             </div>
@@ -291,7 +301,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
             <div className="space-y-2">
               <div className="flex items-center gap-2 mb-3">
                 <Brain className="h-5 w-5 text-indigo-600" />
-                <h4 className="text-base font-bold text-gray-900">Assessment</h4>
+                <h4 className="text-base font-bold text-gray-900">{t('assessment')}</h4>
               </div>
               <div className="border-l-4 border-indigo-300 pl-4 py-2 bg-indigo-50 rounded-r">
                 <SectionContent
@@ -300,6 +310,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
                   sectionName="assessment"
                   patientId={patientId}
                   sessionId={sessionId}
+                  citations={citations}
                 />
               </div>
             </div>
@@ -310,7 +321,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
             <div className="space-y-2">
               <div className="flex items-center gap-2 mb-3">
                 <AlertCircle className="h-5 w-5 text-orange-600" />
-                <h4 className="text-base font-bold text-gray-900">Next Steps / Outstanding Issues</h4>
+                <h4 className="text-base font-bold text-gray-900">{t('nextSteps')}</h4>
               </div>
               <div className="border-l-4 border-orange-300 pl-4 py-2 bg-orange-50 rounded-r">
                 <SectionContent
@@ -319,6 +330,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
                   sectionName="next_steps"
                   patientId={patientId}
                   sessionId={sessionId}
+                  citations={citations}
                 />
               </div>
             </div>

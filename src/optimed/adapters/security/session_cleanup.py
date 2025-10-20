@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class SessionCleanupService:
     """Service for automatic session cleanup and memory management."""
     
-    def __init__(self, vector_store, user_repo=None):
+    def __init__(self, vector_store: Any, user_repo: Optional[Any] = None) -> None:
         self.vector_store = vector_store
         self.user_repo = user_repo
         self.active_sessions: Dict[str, datetime] = {}
@@ -138,9 +138,9 @@ class SessionCleanupService:
                 (current_time - created_at).total_seconds() / 60
                 for created_at in self.active_sessions.values()
             ]
-            
-            stats["oldest_session_age_minutes"] = max(session_ages)
-            stats["newest_session_age_minutes"] = min(session_ages)
+
+            stats["oldest_session_age_minutes"] = int(max(session_ages))
+            stats["newest_session_age_minutes"] = int(min(session_ages))
         
         return stats
 

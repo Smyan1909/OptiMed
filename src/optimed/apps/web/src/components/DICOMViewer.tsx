@@ -3,6 +3,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { useTranslations } from 'next-intl';
 import { logError } from '@/lib/logger';
 import { 
   Upload, 
@@ -150,6 +151,7 @@ const DICOMAnalysisMarkdownComponents = {
 };
 
 export function DICOMViewer({ className }: DICOMViewerProps) {
+  const t = useTranslations('dicomViewer');
   const [selectedImage, setSelectedImage] = useState<DICOMImage | null>(null);
   const [uploadedImages, setUploadedImages] = useState<DICOMImage[]>([]);
   const [pixelData, setPixelData] = useState<DICOMPixelData | null>(null);
@@ -875,7 +877,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
             {/* ... (keep all existing panels - Basic Info, Pixel Statistics, Detailed Metadata) ... */}
             {/* Basic Info */}
             <div className="bg-white border border-gray-200 rounded-lg p-4">
-              <h4 className="font-medium text-gray-900 mb-3">Basic Information</h4>
+              <h4 className="font-medium text-gray-900 mb-3">{t('basicInformation')}</h4>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-600">File:</span>
@@ -921,7 +923,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
             {/* Pixel Statistics */}
             {pixelData && (
               <div className="bg-white border border-gray-200 rounded-lg p-4">
-                <h4 className="font-medium text-gray-900 mb-3">Pixel Statistics</h4>
+                <h4 className="font-medium text-gray-900 mb-3">{t('pixelStatistics')}</h4>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-gray-600">Min:</span>
@@ -945,7 +947,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
 
             {/* Detailed Metadata */}
             <div className="bg-white border border-gray-200 rounded-lg p-4">
-              <h4 className="font-medium text-gray-900 mb-3">DICOM Metadata</h4>
+              <h4 className="font-medium text-gray-900 mb-3">{t('dicomMetadata')}</h4>
               <div className="max-h-60 overflow-y-auto space-y-2">
                 {Object.entries(selectedImage.metadata).map(([key, value]) => (
                   <div key={key} className="text-xs border-b border-gray-100 pb-2 last:border-b-0">
@@ -961,7 +963,7 @@ export function DICOMViewer({ className }: DICOMViewerProps) {
         /* Empty State */
         <div className="text-center py-12">
           <ImageIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No DICOM Image Selected</h3>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">{t('noImageSelected')}</h3>
           <p className="text-gray-600 mb-6">
             Upload a DICOM file or select an existing image to begin viewing and analysis.
           </p>

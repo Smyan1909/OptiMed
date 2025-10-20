@@ -1,6 +1,8 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MarkdownWithCitations } from './MarkdownWithCitations';
+import type { Citation } from './CitationModal';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Activity, Clock, Stethoscope, Lightbulb } from 'lucide-react';
@@ -30,6 +32,7 @@ interface SBARSummaryCardsProps {
   reasoningSteps?: string[];
   patientId?: string;
   sessionId?: string | null;
+  citations?: Record<string, Citation>;
 }
 
 // Custom markdown components for SBAR cards
@@ -108,7 +111,8 @@ const SBARCardContent: React.FC<{
   component: string;
   patientId?: string;
   sessionId?: string | null;
-}> = ({ content, lookup, isLoading, component, patientId, sessionId }) => {
+  citations?: Record<string, Citation>;
+}> = ({ content, lookup, isLoading, component, patientId, sessionId, citations = {} }) => {
   return (
     <div
       ref={lookup.contentRef}
@@ -117,12 +121,11 @@ const SBARCardContent: React.FC<{
       onMouseUp={lookup.handleMouseUp}
       onKeyUp={lookup.handleKeyUp}
     >
-      <ReactMarkdown
+      <MarkdownWithCitations
+        content={formatNumbersInText(content)}
+        citations={citations}
         components={SBARMarkdownComponents}
-        remarkPlugins={[remarkGfm]}
-      >
-        {formatNumbersInText(content)}
-      </ReactMarkdown>
+      />
       <lookup.LookupButton />
       {lookup.showLookup && lookup.lookupTerm && (
         <LookupPanel
@@ -180,7 +183,8 @@ export const SBARSummaryCards: React.FC<SBARSummaryCardsProps> = ({
   reasoning,
   reasoningSteps,
   patientId,
-  sessionId
+  sessionId,
+  citations = {}
 }) => {
   const t = useTranslations('sbar');
 
@@ -234,7 +238,7 @@ export const SBARSummaryCards: React.FC<SBARSummaryCardsProps> = ({
                   <Badge
                     className={`text-xs font-semibold ${config.badgeColor}`}
                   >
-                    {isLoading && !hasContent ? 'Loading...' : hasContent ? 'Complete' : 'Pending'}
+                    {isLoading && !hasContent ? t('loading') : hasContent ? t('complete') : t('pending')}
                   </Badge>
                 </CardTitle>
                 <p className="text-xs text-gray-500 leading-tight">{config.description}</p>
@@ -244,7 +248,7 @@ export const SBARSummaryCards: React.FC<SBARSummaryCardsProps> = ({
                 {isLoading && !hasContent ? (
                   <div className="flex-grow flex items-center justify-center">
                     <div className="animate-pulse text-sm text-gray-500">
-                      Generating {component}...
+                      {t('generating', { component })}
                     </div>
                   </div>
                 ) : hasContent ? (
@@ -255,11 +259,12 @@ export const SBARSummaryCards: React.FC<SBARSummaryCardsProps> = ({
                     component={component}
                     patientId={patientId}
                     sessionId={sessionId}
+                    citations={citations}
                   />
                 ) : (
                   <div className="flex-grow flex items-center justify-center">
                     <div className="text-sm text-gray-400 italic">
-                      {component.charAt(0).toUpperCase() + component.slice(1)} content not available
+                      {t('contentNotAvailable', { component: component.charAt(0).toUpperCase() + component.slice(1) })}
                     </div>
                   </div>
                 )}
@@ -283,7 +288,7 @@ export const SBARSummaryCards: React.FC<SBARSummaryCardsProps> = ({
                 <ul className="space-y-2">
                   {reasoningSteps.map((step, index) => (
                     <li key={index} className="text-sm text-gray-600 bg-white p-2 rounded border-l-4 border-blue-200">
-                      <span className="font-medium text-blue-600">Step {index + 1}:</span> {step}
+                      <span className="font-medium text-blue-600">{t('step', { step: index + 1 })}</span> {step}
                     </li>
                   ))}
                 </ul>

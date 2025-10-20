@@ -28,7 +28,7 @@ class DocumentEvent:
 class DocumentEventBroadcaster:
     """Manages document event subscriptions using asyncio.Queue."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         # user_id -> set of queues
         self._subscribers: Dict[str, Set[asyncio.Queue]] = {}
         self._lock = asyncio.Lock()

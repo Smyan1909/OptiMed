@@ -19,12 +19,12 @@ logger = get_logger(__name__)
 class SessionPDFData:
     """Container for PDF data associated with a session."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.pdfs: Dict[str, PDFDocument] = {}
         self.raw_content: Dict[str, bytes] = {}  # Store raw PDF bytes
         self.last_accessed = datetime.now(timezone.utc)
 
-    def update_access_time(self):
+    def update_access_time(self) -> None:
         self.last_accessed = datetime.now(timezone.utc)
 
 

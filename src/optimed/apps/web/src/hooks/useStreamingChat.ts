@@ -17,6 +17,14 @@ interface GeneratedImage {
   metadata?: any;
 }
 
+interface Citation {
+  id: string;
+  document: string;
+  page?: string | null;
+  excerpt: string;
+  url?: string | null;
+}
+
 interface StreamingUpdate {
   type: 'status' | 'reasoning' | 'reasoning_complete' | 'response_chunk' | 'completion' | 'error' | 'differential_diagnosis_progress' | 'note_generation_progress';
   step?: string;
@@ -32,6 +40,7 @@ interface StreamingUpdate {
   generated_image?: GeneratedImage;
   differential_diagnoses?: DifferentialDiagnosis[];
   reasoning_steps?: string[];
+  citations?: Record<string, Citation>;
   // New fields for differential diagnosis progress
   diagnosis_name?: string;
   details?: string;
@@ -53,6 +62,7 @@ interface StreamingState {
   updates: StreamingUpdate[];
   currentReasoning: string;
   generatedImage: GeneratedImage | null;
+  citations: Record<string, Citation>;
   // New fields for differential diagnosis progress
   differentialDiagnosisProgress: {
     isComputing: boolean;
@@ -82,6 +92,7 @@ export const useStreamingChat = (sessionId?: string) => {
     updates: [],
     currentReasoning: '',
     generatedImage: null,
+    citations: {},
     differentialDiagnosisProgress: {
       isComputing: false,
       currentDiagnosis: '',
@@ -218,6 +229,7 @@ export const useStreamingChat = (sessionId?: string) => {
             finalResponse: update.content || prev.streamingResponse || '', // Use streamed content if available
             generatedImage: update.generated_image || null,
             reasoning: finalReasoning,
+            citations: update.citations || {},
             progress: 100,
             currentStep: 'Complete',
             currentDescription: 'Analysis finished',
@@ -335,6 +347,7 @@ export const useStreamingChat = (sessionId?: string) => {
       updates: [],
       currentReasoning: '',
       generatedImage: null,
+      citations: {},
       differentialDiagnosisProgress: {
         isComputing: false,
         currentDiagnosis: '',
@@ -474,6 +487,7 @@ export const useStreamingChat = (sessionId?: string) => {
     updates: state.updates,
     currentReasoning: state.currentReasoning,
     generatedImage: state.generatedImage,
+    citations: state.citations,
     differentialDiagnosisProgress: state.differentialDiagnosisProgress,
     noteGenerationProgress: state.noteGenerationProgress,
 

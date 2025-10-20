@@ -14,7 +14,7 @@ from optimed.core.logging_utils import get_logger
 logger = get_logger(__name__)
 
 
-def summarize(chunks):
+def summarize(chunks: list) -> None:
     logger.info(f"Total chunks: {len(chunks)}")
     by_strategy: dict[str, int] = {}
     token_counts = []

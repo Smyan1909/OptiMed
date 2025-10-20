@@ -79,16 +79,39 @@ class AzureOpenAIGPT5MiniClient(LLMClient):
         messages: Sequence[ChatMessage],
         json_mode: bool = False,
         max_tokens: int | None = None,
+        enable_chunk_citations: bool = False,
     ) -> ChatMessage:
         # Build input payload
         input_payload = self._to_responses_input(messages)
 
+        # Chunk citations require JSON mode
+        if enable_chunk_citations:
+            json_mode = True
 
         # If you prefer an extra safety belt, you can still append a JSON instruction:
         if json_mode and input_payload and input_payload[-1]["role"] == "user":
+            if enable_chunk_citations:
+                # Special JSON instruction for chunk citations
+                json_instruction = """RESPONSE FORMAT (REQUIRED):
+You must respond with valid JSON in this exact structure:
+{
+  "response": "Your clinical response here. When using information from a chunk, include [cite: chunk_id] immediately after the statement.",
+  "cited_chunks": ["chunk-id-1", "chunk-id-2"]
+}
+
+CITATION RULES:
+1. Include ONLY chunk IDs that you actually used in your response
+2. Cite the chunk IMMEDIATELY after the sentence that uses its information
+3. Use the EXACT chunk_id from the [chunk_id: ...] markers in the provided information
+4. Example: "The patient is 87 years old [cite: abc-123] and lives with her daughter [cite: def-456]."
+
+IMPORTANT: Response must be valid JSON only. No text outside the JSON structure."""
+            else:
+                json_instruction = "Please return ONLY strict, valid JSON with no extra text."
+
             input_payload[-1]["content"].append({
                 "type": "input_text",
-                "text": "Please return ONLY strict, valid JSON with no extra text."
+                "text": json_instruction
             })
 
         # Build request kwargs
@@ -108,6 +131,19 @@ class AzureOpenAIGPT5MiniClient(LLMClient):
 
         assistant_text = getattr(response, "output_text", "") or ""
 
+        # Parse cited chunks if chunk citations are enabled
+        cited_chunk_ids = None
+        if enable_chunk_citations and assistant_text:
+            try:
+                import json
+                response_json = json.loads(assistant_text)
+                cited_chunk_ids = response_json.get("cited_chunks", [])
+                # Extract the actual response content
+                assistant_text = response_json.get("response", assistant_text)
+            except json.JSONDecodeError:
+                # If parsing fails, return the raw text
+                pass
+
         usage = getattr(response, "usage", None)
         input_tokens = str(getattr(usage, "input_tokens", 0)) if usage else "0"
         output_tokens = str(getattr(usage, "output_tokens", 0)) if usage else "0"
@@ -116,6 +152,7 @@ class AzureOpenAIGPT5MiniClient(LLMClient):
         return ChatMessage(
             role=ChatRole.ASSISTANT,
             content=assistant_text,
+            cited_chunk_ids=cited_chunk_ids,
             metadata={
                 "model": self._model,
                 "response_id": response.id,
@@ -131,14 +168,38 @@ class AzureOpenAIGPT5MiniClient(LLMClient):
         messages: Sequence[ChatMessage],
         json_mode: bool = False,
         max_tokens: int | None = None,
+        enable_chunk_citations: bool = False,
     ) -> AsyncGenerator[str, None]:
         # Build input payload
         input_payload = self._to_responses_input(messages)
 
+        # Chunk citations require JSON mode
+        if enable_chunk_citations:
+            json_mode = True
+
         if json_mode and input_payload and input_payload[-1]["role"] == "user":
+            if enable_chunk_citations:
+                # Special JSON instruction for chunk citations
+                json_instruction = """RESPONSE FORMAT (REQUIRED):
+You must respond with valid JSON in this exact structure:
+{
+  "response": "Your clinical response here. When using information from a chunk, include [cite: chunk_id] immediately after the statement.",
+  "cited_chunks": ["chunk-id-1", "chunk-id-2"]
+}
+
+CITATION RULES:
+1. Include ONLY chunk IDs that you actually used in your response
+2. Cite the chunk IMMEDIATELY after the sentence that uses its information
+3. Use the EXACT chunk_id from the [chunk_id: ...] markers in the provided information
+4. Example: "The patient is 87 years old [cite: abc-123] and lives with her daughter [cite: def-456]."
+
+IMPORTANT: Response must be valid JSON only. No text outside the JSON structure."""
+            else:
+                json_instruction = "Please return ONLY strict, valid JSON with no extra text."
+
             input_payload[-1]["content"].append({
                 "type": "input_text",
-                "text": "Please return ONLY strict, valid JSON with no extra text."
+                "text": json_instruction
             })
 
         kwargs: Dict[str, Any] = {
