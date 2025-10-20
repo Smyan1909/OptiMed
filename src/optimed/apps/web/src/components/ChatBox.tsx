@@ -984,12 +984,59 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
   }, [patientId, currentSessionId]);
 
   // Track session start time to filter out old auth session documents
-  const sessionStartTime = useRef<number>(Date.now());
+  // Persist session start time in localStorage to survive page refreshes
+  const getInitialSessionStartTime = () => {
+    if (typeof window !== 'undefined') {
+      const key = `session_start_time_${currentSessionId}`;
+      const stored = localStorage.getItem(key);
+      if (stored) {
+        const storedTime = parseInt(stored, 10);
+        logInfo(`[ChatBox] Restored session start time from localStorage: ${new Date(storedTime).toISOString()}`);
+        return storedTime;
+      }
+    }
+    const now = Date.now();
+    logInfo(`[ChatBox] Created new session start time: ${new Date(now).toISOString()}`);
+    return now;
+  };
+
+  const sessionStartTime = useRef<number>(getInitialSessionStartTime());
 
   // Reset session start time when session changes
   useEffect(() => {
-    logInfo(`[ChatBox] Session changed, resetting session start time and clearing documents - sessionId: ${sanitizeSessionId(currentSessionId)}`);
-    sessionStartTime.current = Date.now();
+    logInfo(`[ChatBox] Session changed, initializing session start time - sessionId: ${sanitizeSessionId(currentSessionId)}`);
+
+    // Persist session start time to localStorage
+    if (typeof window !== 'undefined') {
+      const key = `session_start_time_${currentSessionId}`;
+      const existingTime = localStorage.getItem(key);
+
+      // Only set new time if this is a new session (no existing time)
+      if (!existingTime) {
+        const now = Date.now();
+        sessionStartTime.current = now;
+        localStorage.setItem(key, now.toString());
+        logInfo(`[ChatBox] Created new session start time: ${new Date(now).toISOString()}`);
+      } else {
+        // Session already exists (e.g., after page refresh), restore the time
+        const storedTime = parseInt(existingTime, 10);
+        sessionStartTime.current = storedTime;
+        logInfo(`[ChatBox] Restored existing session start time: ${new Date(storedTime).toISOString()}`);
+      }
+
+      // Clean up old session start times (older than 7 days)
+      const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+      Object.keys(localStorage).forEach(storageKey => {
+        if (storageKey.startsWith('session_start_time_')) {
+          const timeValue = localStorage.getItem(storageKey);
+          if (timeValue && parseInt(timeValue, 10) < sevenDaysAgo) {
+            localStorage.removeItem(storageKey);
+            logInfo(`[ChatBox] Cleaned up old session start time: ${storageKey}`);
+          }
+        }
+      });
+    }
+
     setUploadedPDFs([]);
     setUploadedXMLs([]);
 

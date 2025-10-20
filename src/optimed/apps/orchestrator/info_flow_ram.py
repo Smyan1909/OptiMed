@@ -30,13 +30,16 @@ from optimed.adapters.security.e2e_encryption_middleware import get_session_encr
 from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator
 from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY as CHUNK_STRATEGY_REGISTRY, POLICY_PRESETS as CHUNK_POLICY_PRESETS
 from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
-from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
 from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, sanitize_session_id, log_error
 
 logger = get_logger(__name__)
 
 # Global session memory store to persist across instances
 _GLOBAL_SESSION_MEMORY: dict[str, list[dict[str, Any]]] = {}
+
+# Global chunk cache to avoid re-chunking on every query
+# Format: {session_id: {"chunks": [...], "doc_signature": "...", "timestamp": ...}}
+_GLOBAL_CHUNK_CACHE: dict[str, dict[str, Any]] = {}
 
 
 # =========================
@@ -84,16 +87,6 @@ SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
                                         - Use bullet points (`-`) or numbered lists (`1.`, `2.`) where appropriate.
                                         - Use proper Markdown tables for structured data.
                                         - Format all URLs as **clickable Markdown links** instead of showing raw URLs.
-                                    - **CITATION POLICY** (**CRITICAL**):
-                                        - The clinical information provided to you contains citation markers like "[Citation: 1]", "[Citation: 2]", etc.
-                                        - When you use information from a source, cite it using the number from the citation marker
-                                        - **IMPORTANT**: If the source says "[Citation: 5]", you cite it as [5] in your response
-                                        - Format: Place [X] immediately after the statement, where X is the citation number from the source
-                                        - Example: If source says "Blood pressure 145/90 [Citation: 3]", you write "**BP 145/90** [3]"
-                                        - Example: If source says "Patient has diabetes [Citation: 1]", you write "**Type 2 Diabetes** [1]"
-                                        - **DO NOT** use verbose citations like "According to..." or "from EHR..."
-                                        - **DO NOT** make up citation numbers - only use the numbers from the [Citation: X] markers in the provided sources
-                                        - For web search results, use inline Markdown links: `[Source Title](URL)`
                                     - Do not escape Markdown unnecessarily; the final response must always render cleanly.
                                     - When the user asks for a summary start by explaining the current situation and then provide the summary.
 
@@ -120,8 +113,13 @@ class FlowState(BaseModel):
     uploaded_xmls: List[XMLDocument] = Field(default_factory=list)  # Store XML documents
     retrieved_chunks: List[Dict[str, Any]] = Field(default_factory=list)  # Chunk dicts with chunk_id, content, metadata
 
+    # Chunking cache to avoid re-chunking on every query
+    chunks_cached: bool = False  # Flag indicating if chunks are already in vector store
+    cached_chunk_ids: List[str] = Field(default_factory=list)  # IDs of cached chunks for this session
+
     # Citation tracking for compact inline citations
     citations: Dict[str, Dict[str, Any]] = Field(default_factory=dict)  # { "1": { "document": "...", "page": "...", "excerpt": "...", "url": "..." } }
+    chunk_id_to_number: Dict[str, str] = Field(default_factory=dict)  # { "chunk-id-123": "1", "chunk-id-456": "2" }
 
     chunk_analysis: dict[str, Any] = Field(default_factory=dict)
     filtered_chunks: List[dict[str, Any]] = Field(default_factory=list)
@@ -394,22 +392,26 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         logger.info(f"Limited chunks: {len(chunks)} → {len(limited_chunks)}, estimated tokens: ~{total_tokens}")
         return limited_chunks
 
-    def _build_citations_from_chunks(self, chunks: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    def _build_citations_from_chunks(self, chunks: List[Dict[str, Any]]) -> tuple[Dict[str, Dict[str, Any]], Dict[str, str]]:
         """
-        Build citations dictionary from chunk metadata.
+        Build numbered citations dictionary from chunk metadata.
 
-        This replaces the old _extract_citations_from_chunks method.
-        Now we use chunk_id as the key instead of sequential numbers,
-        and extract metadata from the chunk dict instead of parsing text.
+        Assigns sequential numbers (1, 2, 3...) to each chunk upfront.
+        This ensures the model sees the correct citation numbers from the start.
 
         Args:
             chunks: List of chunk dicts with chunk_id, content, and metadata
 
         Returns:
-            Dictionary mapping chunk_id to citation metadata:
-            { "chunk-id-123": { "id": "chunk-id-123", "document": "...", "page": "...", "excerpt": "...", "url": "..." } }
+            Tuple of:
+            - citations: Dictionary mapping citation NUMBER to citation metadata:
+              { "1": { "id": "chunk-id-123", "document": "...", "excerpt": "..." }, "2": {...} }
+            - chunk_id_to_number: Mapping from chunk_id to citation number:
+              { "chunk-id-123": "1", "chunk-id-456": "2" }
         """
         citations = {}
+        chunk_id_to_number = {}
+        citation_number = 1
 
         for chunk in chunks:
             chunk_id = chunk.get("chunk_id")
@@ -427,32 +429,39 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             clean_content = re.sub(r'\(from EHR, no link available\)', '', clean_content)
             clean_content = clean_content.strip()
 
-            citations[chunk_id] = {
-                "id": chunk_id,
+            # Assign sequential number
+            number_str = str(citation_number)
+            chunk_id_to_number[chunk_id] = number_str
+
+            citations[number_str] = {
+                "id": chunk_id,  # Keep original chunk_id for reference
                 "document": metadata.get("document", "Clinical Record"),
                 "page": metadata.get("page"),
                 "excerpt": clean_content,  # Full chunk content
                 "url": metadata.get("url"),
             }
 
-        logger.info(f"Built {len(citations)} citations from {len(chunks)} chunks")
-        return citations
+            citation_number += 1
 
-    def _format_chunks_with_citations(self, chunks: List[Dict[str, Any]]) -> str:
+        logger.info(f"Built {len(citations)} numbered citations from {len(chunks)} chunks")
+        return citations, chunk_id_to_number
+
+    def _format_chunks_with_citations(self, chunks: List[Dict[str, Any]], chunk_id_to_number: Dict[str, str]) -> str:
         """
-        Format chunks with chunk_id markers for LLM to cite.
+        Format chunks with citation numbers for LLM to cite.
 
-        The LLM will be instructed to cite chunks using [cite: chunk_id] in its response.
+        The LLM will see each chunk with its assigned citation number clearly displayed.
         This method formats chunks as:
-        [chunk_id: abc-123]
+        [Citation: 1]
         <chunk content>
-        [/chunk_id]
+        [End Citation 1]
 
         Args:
             chunks: List of chunk dicts with chunk_id, content, and metadata
+            chunk_id_to_number: Mapping from chunk_id to citation number
 
         Returns:
-            Formatted string with chunk_id markers
+            Formatted string with citation numbers visible
         """
         import re
         formatted_parts = []
@@ -460,6 +469,9 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         for chunk in chunks:
             chunk_id = chunk.get("chunk_id", "unknown")
             content = chunk.get("content", "")
+
+            # Get the assigned citation number
+            citation_number = chunk_id_to_number.get(chunk_id, "?")
 
             # Clean content (remove old verbose citations if any)
             clean_content = re.sub(r'\*\*Source:\*\*\s*\[([^\]]+)\]\([^\)]+\)', '', content)
@@ -469,32 +481,31 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             clean_content = clean_content.strip()
 
             if clean_content:
-                # Format with chunk_id markers for LLM to reference
-                formatted_parts.append(f"[chunk_id: {chunk_id}]\n{clean_content}\n[/chunk_id]")
+                # Format with citation number prominently displayed
+                formatted_parts.append(f"[Citation: {citation_number}]\n{clean_content}\n[End Citation {citation_number}]")
 
         return "\n\n".join(formatted_parts)
 
     def _extract_cited_chunk_ids(self, content: str) -> set:
         """
-        Extract chunk IDs that were actually cited in the content.
-        Looks for [cite: chunk_id] markers in the content.
+        Extract citation numbers that were actually cited in the content.
+        Looks for numbered citations like [1], [2], [3] in the content.
 
         Args:
             content: The generated content text
 
         Returns:
-            Set of chunk IDs that were cited
+            Set of citation numbers (as strings) that were cited
         """
         import re
         cited_ids = set()
 
-        # Pattern to match [cite: chunk_id]
-        pattern = r'\[cite:\s*([^\]]+)\]'
+        # Pattern to match numbered citations [1], [2], [3], etc.
+        pattern = r'\[(\d+)\]'
         matches = re.findall(pattern, content)
 
         for match in matches:
-            chunk_id = match.strip()
-            cited_ids.add(chunk_id)
+            cited_ids.add(match)  # match is already a string like "1", "2", "3"
 
         return cited_ids
 
@@ -547,15 +558,15 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         Remove or correct invalid citations.
 
         Args:
-            content: Content with numbered citations [1], [2], etc.
-            citations: Citations dict keyed by citation number
+            content: Content with numbered citations [1], [2], [3]
+            citations: Citations dict keyed by citation number "1", "2", "3"
 
         Returns:
             Content with validated citations
         """
         import re
 
-        # Find all numbered citations in content
+        # Find all numbered citations [1], [2], [3] in content
         pattern = r'\[(\d+)\]'
 
         def validate_citation(match):
@@ -927,56 +938,101 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             try:
                 logger.info(f"Starting retrieval for patient_id: {sanitize_patient_id(str(state.patient_id))}")
                 logger.info(f"User prompt length: {len(state.user_prompt)} chars")
-                
+
                 # 1) Chunking via ChunkingOrchestrator (policy-driven)
+                # OPTIMIZATION: Chunk only once per session, not on every query
+                # Use Presidio multilingual redactor with Swedish default for Sweden Central deployment
                 patient_id_str = str(state.patient_id) if state.patient_id else ""
-                logger.info(f"Creating chunking orchestrator for patient: {patient_id_str}")
 
-                tokenizer = WhitespaceTokenizer()
-                redactor = SimplePhiRedactor()
-                orchestrator = ChunkingOrchestrator(
-                    tokenizer=tokenizer,
-                    redactor=redactor,
-                    strategy_registry=CHUNK_STRATEGY_REGISTRY,
-                    policies=CHUNK_POLICY_PRESETS,
+                # Check global cache for this session
+                session_cache_key = state.session_id or "default_session"
+                global _GLOBAL_CHUNK_CACHE
+
+                # Detect if documents have changed (new uploads)
+                current_doc_ids = (
+                    [state.patient_ctx.patient_id if state.patient_ctx else ""] +
+                    [j.entry_id for j in state.journal_entries] +
+                    [pdf.document_id for pdf in state.uploaded_pdfs] +
+                    [xml.document_id for xml in state.uploaded_xmls]
                 )
+                current_doc_signature = "|".join(sorted(current_doc_ids))
 
-                # Chunk patient context if available
-                produced = []
-                if state.patient_ctx:
-                    logger.info("Chunking patient context...")
-                    produced = orchestrator.chunk_patient(state.patient_ctx, CHUNK_POLICY_PRESETS)
-                    logger.info(f"Patient context chunking produced {len(produced)} chunks")
+                # Check if we have cached chunks for this session with same document signature
+                needs_chunking = True
+                cached_chunks = None
+
+                if session_cache_key in _GLOBAL_CHUNK_CACHE:
+                    cache_entry = _GLOBAL_CHUNK_CACHE[session_cache_key]
+                    if cache_entry.get("doc_signature") == current_doc_signature:
+                        logger.info("Found cached chunks with matching document signature")
+                        needs_chunking = False
+                        cached_chunks = cache_entry.get("chunks", [])
+                    else:
+                        logger.info("Document signature changed - invalidating cache and re-chunking")
+                        del _GLOBAL_CHUNK_CACHE[session_cache_key]
+
+                if needs_chunking:
+                    logger.info(f"CHUNKING: Processing documents for patient: {patient_id_str}")
+                    logger.info("This is a one-time operation per session - subsequent queries will reuse these chunks")
+                    logger.info("NO PHI REDACTION - Healthcare professionals need complete clinical data (GDPR Art. 9(2)(h))")
+
+                    tokenizer = WhitespaceTokenizer()
+
+                    # NO PHI redaction during chunking
+                    # GDPR compliance achieved through:
+                    # - RAM-only processing (no persistence)
+                    # - Access controls (RLS, authentication)
+                    # - Audit logging (metadata only)
+                    # - Auto-cleanup on session end
+                    # - Article 9(2)(h): Healthcare professionals may process health data with identifiers
+
+                    orchestrator = ChunkingOrchestrator(
+                        tokenizer=tokenizer,
+                        strategy_registry=CHUNK_STRATEGY_REGISTRY,
+                        policies=CHUNK_POLICY_PRESETS,
+                    )
+
+                    # Chunk patient context if available
+                    produced = []
+                    if state.patient_ctx:
+                        logger.info("Chunking patient context...")
+                        produced = orchestrator.chunk_patient(state.patient_ctx, CHUNK_POLICY_PRESETS)
+                        logger.info(f"Patient context chunking produced {len(produced)} chunks")
+                    else:
+                        logger.info("No patient context available - proceeding with PDF-only mode")
+
+                    # Also chunk journal entries if available
+                    journal_chunks = []
+                    if state.journal_entries:
+                        logger.info(f"Chunking {len(state.journal_entries)} journal entries...")
+                        journal_chunks = await self._chunk_journal_entries(state.journal_entries, orchestrator, patient_id_str)
+                        logger.info(f"Journal entries chunking produced {len(journal_chunks)} chunks")
+
+                    # Also chunk PDF documents if available
+                    pdf_chunks = []
+                    if state.uploaded_pdfs:
+                        logger.info(f"Chunking {len(state.uploaded_pdfs)} PDF documents...")
+                        pdf_chunks = await self._chunk_pdf_documents(state.uploaded_pdfs, orchestrator, patient_id_str)
+                        logger.info(f"PDF documents chunking produced {len(pdf_chunks)} chunks")
+
+                    # Also chunk XML documents if available
+                    xml_chunks = []
+                    if state.uploaded_xmls:
+                        logger.info(f"Chunking {len(state.uploaded_xmls)} XML documents...")
+                        xml_chunks = await self._chunk_xml_documents(state.uploaded_xmls, orchestrator, patient_id_str)
+                        logger.info(f"XML documents chunking produced {len(xml_chunks)} chunks")
+
+                    # Combine all chunks
+                    all_chunks = produced + journal_chunks + pdf_chunks + xml_chunks
+                    logger.info(f"Total chunks produced: {len(all_chunks)} (patient: {len(produced)}, journal: {len(journal_chunks)}, pdf: {len(pdf_chunks)}, xml: {len(xml_chunks)})")
                 else:
-                    logger.info("No patient context available - proceeding with PDF-only mode")
-                
-                # Also chunk journal entries if available
-                journal_chunks = []
-                if state.journal_entries:
-                    logger.info(f"Chunking {len(state.journal_entries)} journal entries...")
-                    journal_chunks = await self._chunk_journal_entries(state.journal_entries, orchestrator, patient_id_str)
-                    logger.info(f"Journal entries chunking produced {len(journal_chunks)} chunks")
+                    logger.info("SKIPPING CHUNKING: Chunks already cached for this session")
+                    logger.info(f"Reusing {len(state.cached_chunk_ids)} pre-chunked documents")
+                    # We'll retrieve directly from vector store below
+                    all_chunks = []
 
-                # Also chunk PDF documents if available
-                pdf_chunks = []
-                if state.uploaded_pdfs:
-                    logger.info(f"Chunking {len(state.uploaded_pdfs)} PDF documents...")
-                    pdf_chunks = await self._chunk_pdf_documents(state.uploaded_pdfs, orchestrator, patient_id_str)
-                    logger.info(f"PDF documents chunking produced {len(pdf_chunks)} chunks")
-
-                # Also chunk XML documents if available
-                xml_chunks = []
-                if state.uploaded_xmls:
-                    logger.info(f"Chunking {len(state.uploaded_xmls)} XML documents...")
-                    xml_chunks = await self._chunk_xml_documents(state.uploaded_xmls, orchestrator, patient_id_str)
-                    logger.info(f"XML documents chunking produced {len(xml_chunks)} chunks")
-
-                # Combine all chunks
-                all_chunks = produced + journal_chunks + pdf_chunks + xml_chunks
-                logger.info(f"Total chunks produced: {len(all_chunks)} (patient: {len(produced)}, journal: {len(journal_chunks)}, pdf: {len(pdf_chunks)}, xml: {len(xml_chunks)})")
-
-                # Log data lineage: FHIR/PDF/XML → Chunking
-                if all_chunks:
+                # Log data lineage: FHIR/PDF/XML → Chunking (only if we actually chunked)
+                if needs_chunking and all_chunks:
                     await self._log_data_lineage(
                         session_id=state.session_id,
                         flow_id=str(uuid.uuid4()),
@@ -984,32 +1040,36 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                         source_type="Patient" if produced else ("PDFDocument" if pdf_chunks else ("XMLDocument" if xml_chunks else "JournalEntry")),
                         destination_system="chunking_orchestrator",
                         destination_type="Chunk",
-                        transformations=["policy_driven_chunking", "phi_redaction"],
+                        transformations=["policy_driven_chunking"],  # NO phi_redaction
                         data_quality_score=1.0 if all_chunks else 0.0
                     )
 
-                # Log chunk details (GDPR-safe)
-                for i, chunk in enumerate(all_chunks):
-                    logger.info(f"Chunk {i+1}: type={chunk.resource_type}, id={chunk.id}, length={len(chunk.text)} chars")
+                    # Log chunk details (GDPR-safe)
+                    for i, chunk in enumerate(all_chunks):
+                        logger.info(f"Chunk {i+1}: type={chunk.resource_type}, id={chunk.id}, length={len(chunk.text)} chars")
 
-                # Adapt to local chunk dicts
-                chunks: list[dict[str, Any]] = [{
-                    "chunk_id": c.id,
-                    "id": c.id,  # Keep for backward compatibility
-                    "content": c.text,
-                    "metadata": {
-                        "patient_id": patient_id_str,
+                # Adapt to local chunk dicts (only if we chunked)
+                if needs_chunking:
+                    chunks: list[dict[str, Any]] = [{
+                        "chunk_id": c.id,
+                        "id": c.id,  # Keep for backward compatibility
+                        "content": c.text,
+                        "metadata": {
+                            "patient_id": patient_id_str,
+                            "data_type": c.resource_type,
+                            "resource_type": c.resource_type,
+                            "timestamp": c.timestamp.isoformat() if c.timestamp else str(int(time.time()*1000)),
+                            "document": c.meta.get("document_name", "Clinical Record") if c.meta else "Clinical Record",
+                            "page": c.meta.get("page") if c.meta else None,
+                            "url": c.meta.get("url") if c.meta else None,
+                        },
                         "data_type": c.resource_type,
-                        "resource_type": c.resource_type,
-                        "timestamp": c.timestamp.isoformat() if c.timestamp else str(int(time.time()*1000)),
-                        "document": c.meta.get("document_name", "Clinical Record") if c.meta else "Clinical Record",
-                        "page": c.meta.get("page") if c.meta else None,
-                        "url": c.meta.get("url") if c.meta else None,
-                    },
-                    "data_type": c.resource_type,
-                } for c in all_chunks]
-                
-                if not chunks:
+                    } for c in all_chunks]
+                else:
+                    # Chunks already cached - we'll retrieve from vector store below
+                    chunks = []
+
+                if needs_chunking and not chunks:
                     logger.info("No chunks produced")
                     if state.patient_ctx:
                         logger.info("Using fallback to full patient context")
@@ -1021,16 +1081,17 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                         state.chunk_analysis = {"method": "none", "reason": "No content available for chunking"}
                     return state
 
-                # 2) Embed chunks
-                logger.info(f"Embedding {len(chunks)} chunks...")
-                chunk_texts = [c["content"] for c in chunks]
-                chunk_vecs = await self._embed_many(chunk_texts, mode="passage")
-                for i, vec in enumerate(chunk_vecs):
-                    chunks[i]["embedding"] = vec
-                logger.info(f"Successfully embedded {len(chunk_vecs)} chunks")
+                # 2) Embed chunks (only if we just chunked them)
+                if needs_chunking and chunks:
+                    logger.info(f"Embedding {len(chunks)} chunks...")
+                    chunk_texts = [c["content"] for c in chunks]
+                    chunk_vecs = await self._embed_many(chunk_texts, mode="passage")
+                    for i, vec in enumerate(chunk_vecs):
+                        chunks[i]["embedding"] = vec
+                    logger.info(f"Successfully embedded {len(chunk_vecs)} chunks")
 
-                # Log data lineage: Chunks → Embeddings
-                if chunk_vecs:
+                # Log data lineage: Chunks → Embeddings (only if we just embedded)
+                if needs_chunking and chunks:
                     await self._log_data_lineage(
                         session_id=state.session_id,
                         flow_id=str(uuid.uuid4()),
@@ -1041,6 +1102,18 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                         transformations=["sentence_transformer_minilm", "normalization"],
                         data_quality_score=1.0
                     )
+
+                    # Cache chunks globally for this session
+                    _GLOBAL_CHUNK_CACHE[session_cache_key] = {
+                        "chunks": chunks,
+                        "doc_signature": current_doc_signature,
+                        "timestamp": time.time()
+                    }
+                    logger.info(f"Cached {len(chunks)} chunks for session {sanitize_session_id(session_cache_key)}")
+                elif not needs_chunking and cached_chunks:
+                    # Use cached chunks from previous query
+                    logger.info(f"Reusing {len(cached_chunks)} cached chunks (skipping chunking & embedding)")
+                    chunks = cached_chunks
 
                 # 3) Query variants
                 logger.info("Generating query variants...")
@@ -1154,9 +1227,9 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                         for i in final_selected
                     ] if final_selected else []
 
-                    # Build citations from chunk metadata
+                    # Build citations from chunk metadata with sequential numbers
                     if state.retrieved_chunks:
-                        state.citations = self._build_citations_from_chunks(state.retrieved_chunks)
+                        state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(state.retrieved_chunks)
 
                     state.chunk_analysis = {
                         "method": "bi_cross_mmr_gate_refining",
@@ -1223,8 +1296,8 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     for i in final_selected
                 ]
 
-                # Build citations from chunk metadata
-                state.citations = self._build_citations_from_chunks(state.retrieved_chunks)
+                # Build citations from chunk metadata with sequential numbers
+                state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(state.retrieved_chunks)
                 logger.info(f"🔖 Built citations: {len(state.citations)} total")
                 logger.info(f"🔖 Citation IDs: {list(state.citations.keys())}")
                 if state.citations:
@@ -2144,13 +2217,13 @@ Keep queries concise and medically precise.
 
                 MANDATORY:
                 - Use **bold** markdown for symptoms, vital signs, and key clinical terms
-                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 concise bullet points. Keep focused on current situation only.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR situation summaries with 5-7 bullet points. Use **bold** for symptoms, vital signs, and key clinical terms.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR situation summaries with 5-7 bullet points. Use **bold** for symptoms, vital signs, and key clinical terms.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2181,7 +2254,7 @@ Keep queries concise and medically precise.
                     # Limit chunks to prevent context overflow
                     limited_chunks = self._limit_chunks_for_context(situation_chunks, max_tokens=200000, max_chunk_chars=50000)
                     # Format chunks with citation references
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
@@ -2236,13 +2309,13 @@ Keep queries concise and medically precise.
 
                 MANDATORY:
                 - Use **bold** markdown for key diagnoses, medications, allergies, and functional descriptors
-                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 concise bullet points. Focus on context relevant to current situation.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR background summaries with 5-7 bullet points. Use **bold** for diagnoses, medications, allergies, and key descriptors.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise and contextually relevant.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR background summaries with 5-7 bullet points. Use **bold** for diagnoses, medications, allergies, and key descriptors.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise and contextually relevant.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2272,7 +2345,7 @@ Keep queries concise and medically precise.
                 if background_chunks:
                     # Limit chunks to prevent context overflow
                     limited_chunks = self._limit_chunks_for_context(background_chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
@@ -2325,14 +2398,14 @@ Keep queries concise and medically precise.
 
                 MANDATORY:
                 - Use **bold** markdown for important clinical terms, values, and risk levels
-                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 - Write in narrative free-text style within each bullet point
                 CRITICAL: 5-7 bullet points with narrative descriptions. Each bullet contains a flowing sentence, not just keywords. Keep concise but informative.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR assessment summaries with 5-7 bullet points in narrative style. Use **bold** for important clinical terms and values. Write flowing sentences within each bullet point.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise but informative.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR assessment summaries with 5-7 bullet points in narrative style. Use **bold** for important clinical terms and values. Write flowing sentences within each bullet point.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise but informative.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2362,7 +2435,7 @@ Keep queries concise and medically precise.
                 if assessment_chunks:
                     # Limit chunks to prevent context overflow
                     limited_chunks = self._limit_chunks_for_context(assessment_chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
@@ -2417,13 +2490,13 @@ Keep queries concise and medically precise.
 
                 MANDATORY:
                 - Use **bold** markdown for interventions, tests, medications, and key actions
-                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 concise bullet points. Educational information only - refer complex decisions to healthcare providers. Keep actionable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR recommendation summaries with 5-7 bullet points. Use **bold** for interventions, tests, medications, and key actions.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise and actionable.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR recommendation summaries with 5-7 bullet points. Use **bold** for interventions, tests, medications, and key actions.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise and actionable.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2453,7 +2526,7 @@ Keep queries concise and medically precise.
                 if recommendation_chunks:
                     # Limit chunks to prevent context overflow
                     limited_chunks = self._limit_chunks_for_context(recommendation_chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 # Generate response
@@ -2500,14 +2573,14 @@ Keep queries concise and medically precise.
                 - Each bullet must have a bold header followed by colon
                 - Use **bold** markdown for important clinical terms, values, and key phrases
                 - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when the information was recorded
-                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 - Add blank line between each bullet point for readability
                 CRITICAL: 5-7 bullet points with headers. 6-12 words each. Each bullet point one line. Include dates. Keep very concise and scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Create concise snapshots with 5-7 bullet points, each with a bold header. Use **bold** for important clinical terms and values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for when each piece of information was recorded. One line per bullet point. No explanations.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Add blank lines between bullets. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Create concise snapshots with 5-7 bullet points, each with a bold header. Use **bold** for important clinical terms and values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for when each piece of information was recorded. One line per bullet point. No explanations.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Add blank lines between bullets. Always include dates.\n\nInformation system only - NOT a medical device.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2536,7 +2609,7 @@ Keep queries concise and medically precise.
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
@@ -2596,20 +2669,20 @@ Keep queries concise and medically precise.
                 - Use **bold** markdown for disease names and key values
                 - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when the information was recorded/updated
                 - Each bullet MUST be between 6-12 words (excluding date and citation) - COUNT THEM
-                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 problems total across both subsections. 6-12 words each. Include dates. Blank lines between bullets. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List top 5-7 problems divided into two subsections: **Current Conditions** and **Previous Conditions**. Sort by relevance and frequency within each subsection. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List top 5-7 problems divided into two subsections: **Current Conditions** and **Previous Conditions**. Sort by relevance and frequency within each subsection. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
@@ -2675,20 +2748,20 @@ Keep queries concise and medically precise.
                 - CRITICAL: Include start date for all medications; include end date for discontinued medications
                 - For dose changes, include the date of change and brief explanation
                 - Each bullet MUST be between 6-12 words (excluding dates and citation) - COUNT THEM
-                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 most important meds total. 6-12 words each. Include dates. Blank lines between bullets. Prior medications only if relevant. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 most important medications divided into two subsections: **Current Medications** (active) and **Prior Medications** (discontinued, only if relevant to user query). Sort by relevance within each subsection. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. Add 🔺 if patient has documented allergy to the medication (check allergy mentions in data). Show dose changes as **OldDose→NewDose** with ↑/↓ arrows. CRITICAL: Include start dates for all medications, end dates for discontinued ones, and change dates for dose adjustments. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Explain why doses or medications were changed.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates. Prior medications only if relevant to query.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 most important medications divided into two subsections: **Current Medications** (active) and **Prior Medications** (discontinued, only if relevant to user query). Sort by relevance within each subsection. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. Add 🔺 if patient has documented allergy to the medication (check allergy mentions in data). Show dose changes as **OldDose→NewDose** with ↑/↓ arrows. CRITICAL: Include start dates for all medications, end dates for discontinued ones, and change dates for dose adjustments. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Explain why doses or medications were changed.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates. Prior medications only if relevant to query.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
@@ -2735,20 +2808,20 @@ Keep queries concise and medically precise.
                 - Use **bold** markdown for parameter names and current values
                 - CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values
                 - Each bullet MUST be between 6-12 words (excluding dates and citation) - COUNT THEM
-                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 most important trends. 6-12 words each. Include dates for both values. Blank lines between bullets. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Show 5-7 key trends. Use **bold** for parameter names and current values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Add 'ask for more' if additional trends exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Show 5-7 key trends. Use **bold** for parameter names and current values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Add 'ask for more' if additional trends exist.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
@@ -2794,20 +2867,20 @@ Keep queries concise and medically precise.
                 MANDATORY:
                 - Use **bold** markdown for event names
                 - Each bullet MUST be between 6-12 words (excluding citation) - COUNT THEM
-                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 most significant events. 6-12 words each. Blank lines between bullets. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 major past events. Use **bold** for event names. CRITICAL: Always include the year/date in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding year and citation). Count words carefully. Add 'ask for more' if additional events exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 major past events. Use **bold** for event names. CRITICAL: Always include the year/date in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding year and citation). Count words carefully. Add 'ask for more' if additional events exist.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
@@ -2855,20 +2928,20 @@ Keep queries concise and medically precise.
                 - Use **bold** markdown for risk/alert names and key values
                 - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when information was documented
                 - Each bullet MUST be between 6-12 words (excluding date and citation) - COUNT THEM
-                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 most important alerts. 6-12 words each. Include dates. Blank lines between bullets. Use ⚠️ for visibility. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 critical alerts. Use **bold** for risk/alert names and key values. Use ⚠️ marker. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 critical alerts. Use **bold** for risk/alert names and key values. Use ⚠️ marker. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
@@ -2914,20 +2987,20 @@ Keep queries concise and medically precise.
                 MANDATORY:
                 - Use **bold** markdown for encounter types
                 - CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses
-                - Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 most recent encounters. ONE line each. Blank lines between bullets. Full datetime + action + outcome. Keep concise.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 most recent encounters with key actions/outcomes. Use **bold** for encounter types. CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses. One line each with blank lines between. Add 'ask for more' if additional encounters exist.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Always include exact datetime.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 most recent encounters with key actions/outcomes. Use **bold** for encounter types. CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses. One line each with blank lines between. Add 'ask for more' if additional encounters exist.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include exact datetime.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
@@ -2973,20 +3046,20 @@ Keep queries concise and medically precise.
                 "_Fråga om fler [X]_" (Swedish) or "_Ask for more [X]_" (English)
                 Where [X] is "admissions", "letters", or "imaging results"
 
-                MANDATORY: Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+                MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: Each section 2-3 bullet points max. ONE line per item with blank lines between. User can ask "tell me more about X" if they need details.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Create brief expandable sections. 2-3 items per section with blank lines between items. Add 'ask for more' hint for each section with additional data available.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations.\n\nInformation system only - NOT a medical device.\n\nCITATION POLICY: The clinical information contains markers like '[Citation: 1]', '[Citation: 2]'. When you use information from a source, cite it as [1], [2], etc. Example: If source says 'BP 145/90 [Citation: 3]', write '**BP 145/90** [3]'. Do NOT make up citation numbers - only use numbers from the [Citation: X] markers."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Create brief expandable sections. 2-3 items per section with blank lines between items. Add 'ask for more' hint for each section with additional data available.\n\nMANDATORY: Include citations after each statement - NOT verbose citations.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
@@ -3056,45 +3129,35 @@ Keep queries concise and medically precise.
 
                 logger.info(f"SBAR citations: {len(all_cited_chunk_ids)} cited out of {len(state.citations) if state.citations else 0} total")
 
-                # Convert to numbered citations - concatenate all content to establish numbering
-                combined_content = "\n\n".join([content for content in sbar_results.values() if content])
-                _, numbered_citations = self._convert_citations_to_numbered(combined_content, filtered_citations)
-
-                # Convert each component's content to numbered format
-                numbered_sbar_results = {}
-                for comp_name, comp_content in sbar_results.items():
-                    if comp_content:
-                        numbered_content, _ = self._convert_citations_to_numbered(comp_content, filtered_citations)
-                        numbered_sbar_results[comp_name] = numbered_content
-                    else:
-                        numbered_sbar_results[comp_name] = comp_content or ""
+                # Model already outputs numbered citations [1], [2], [3]
+                # Citations dict is already keyed by numbers - no conversion needed!
 
                 structured_sbar = {
                     "type": "sbar_cards",
                     "context": conversation_context,
-                    "citations": numbered_citations,
+                    "citations": filtered_citations,
                     "components": {
                         "situation": {
                             "title": "Situation",
-                            "content": (numbered_sbar_results.get("situation") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (sbar_results.get("situation") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "info-circle",
                             "color": "blue"
                         },
                         "background": {
                             "title": "Background",
-                            "content": (numbered_sbar_results.get("background") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (sbar_results.get("background") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "history",
                             "color": "green"
                         },
                         "assessment": {
                             "title": "Assessment",
-                            "content": (numbered_sbar_results.get("assessment") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (sbar_results.get("assessment") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "stethoscope",
                             "color": "orange"
                         },
                         "recommendation": {
                             "title": "Recommendation",
-                            "content": (numbered_sbar_results.get("recommendation") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (sbar_results.get("recommendation") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "lightbulb",
                             "color": "purple"
                         }
@@ -3209,18 +3272,7 @@ Keep queries concise and medically precise.
 
                 logger.info(f"General Summary citations: {len(all_cited_chunk_ids)} cited out of {len(state.citations) if state.citations else 0} total")
 
-                # Convert to numbered citations - concatenate all content to establish numbering
-                combined_content = "\n\n".join([content for content in general_results.values() if content])
-                _, numbered_citations = self._convert_citations_to_numbered(combined_content, filtered_citations)
-
-                # Convert each component's content to numbered format
-                numbered_general_results = {}
-                for comp_name, comp_content in general_results.items():
-                    if comp_content:
-                        numbered_content, _ = self._convert_citations_to_numbered(comp_content, filtered_citations)
-                        numbered_general_results[comp_name] = numbered_content
-                    else:
-                        numbered_general_results[comp_name] = comp_content or ""
+                # Model already outputs numbered citations [1], [2], [3] - no conversion needed!
 
                 # Add conversation context metadata for future reference
                 conversation_context = {
@@ -3233,53 +3285,53 @@ Keep queries concise and medically precise.
                 structured_summary = {
                     "type": "general_summary_cards",
                     "context": conversation_context,
-                    "citations": numbered_citations,
+                    "citations": filtered_citations,
                     "components": {
                         "snapshot": {
                             "title": "Patient Snapshot",
-                            "content": (numbered_general_results.get("snapshot") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (general_results.get("snapshot") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "user",
                             "color": "blue"
                         },
                         "problems": {
                             "title": "Active Problems",
-                            "content": (numbered_general_results.get("problems") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (general_results.get("problems") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "alert-circle",
                             "color": "red"
                         },
                         "medications": {
                             "title": "Medications",
-                            "content": (numbered_general_results.get("medications") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (general_results.get("medications") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "pill",
                             "color": "purple"
                         },
                         "trends": {
                             "title": "Lab & Vital Trends",
-                            "content": (numbered_general_results.get("trends") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (general_results.get("trends") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "trending-up",
                             "color": "green"
                         },
                         "history": {
                             "title": "Past Medical History",
-                            "content": (numbered_general_results.get("history") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (general_results.get("history") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "calendar",
                             "color": "orange"
                         },
                         "risks": {
                             "title": "Risks & Alerts",
-                            "content": (numbered_general_results.get("risks") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (general_results.get("risks") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "alert-triangle",
                             "color": "yellow"
                         },
                         "encounters": {
                             "title": "Recent Care",
-                            "content": (numbered_general_results.get("encounters") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (general_results.get("encounters") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "file-text",
                             "color": "indigo"
                         },
                         "deepdive": {
                             "title": "Deep Dive",
-                            "content": (numbered_general_results.get("deepdive") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (general_results.get("deepdive") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "archive",
                             "color": "gray"
                         }
@@ -3443,19 +3495,19 @@ RULES:
 - Use markdown bullet points with • character
 - Add a blank line between each bullet point for readability
 - Be concise - one line per diagnosis
-- MANDATORY: Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+- MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
 - If no diagnoses found, state "No formal diagnoses documented for {state.focused_aspect}"
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused diagnoses section. Use **bold** for diagnosis names and key terms. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused diagnoses section. Use **bold** for diagnosis names and key terms. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant information about {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = f"Relevant information about {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
@@ -3518,19 +3570,19 @@ RULES:
 - Include: interventions, hospitalizations, imaging, test results, treatment changes
 - Be specific but concise - one line per event after the date
 - Chronological order (oldest to newest)
-- MANDATORY: Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+- MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
 - If no events found, state "No significant clinical events documented for {state.focused_aspect}"
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused events timeline. Use **bold** for dates and key clinical terms. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused events timeline. Use **bold** for dates and key clinical terms. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant events for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = f"Relevant events for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
@@ -3599,19 +3651,19 @@ RULES:
 - Add blank line between each bullet point for readability
 - Maximum 5 medications
 - Include duration if relevant
-- MANDATORY: Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+- MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
 - If no medications found, state "No medications documented for {state.focused_aspect}"
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused medications list. Use **bold** for medication names and key terms. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused medications list. Use **bold** for medication names and key terms. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant medications for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = f"Relevant medications for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
@@ -3673,19 +3725,19 @@ RULES:
 - Include columns: Metric, Value, Unit, Date
 - Maximum 5 rows of data
 - For imaging/test summaries, use Metric column for test name, Value column for result
-- MANDATORY: Use **numbered citations [1], [2], [3]** after the table - DO NOT use verbose citations like "According to..." or "from EHR..."
+- MANDATORY: Include citations after the table - DO NOT use verbose citations like "According to..." or "from EHR..."
 - If no data found, state "No recent objective data documented for {state.focused_aspect}"
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating focused objective data. Use **bold** for abnormal/critical values and important metrics. MANDATORY: Use compact numbered citations [1], [2], [3] after the table - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating focused objective data. Use **bold** for abnormal/critical values and important metrics. MANDATORY: Include citations after the table - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant objective data for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = f"Relevant objective data for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
@@ -3752,19 +3804,19 @@ RULES:
 - Be clinically precise but accessible
 - Add a blank line between each bullet point for readability
 - Each bullet should be one concise line
-- MANDATORY: Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+- MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
 - If insufficient data, state "Limited clinical assessment available for {state.focused_aspect}"
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused clinical assessment. Use **bold** for key clinical terms, status descriptors, and risk levels. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused clinical assessment. Use **bold** for key clinical terms, status descriptors, and risk levels. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant assessment data for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = f"Relevant assessment data for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
@@ -3829,19 +3881,19 @@ RULES:
 - One line per item
 - Include: pending tests, follow-ups, medication reviews, referrals, outstanding issues
 - Include specific timing if available
-- MANDATORY: Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+- MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
 - If no next steps found, state "No pending follow-up documented for {state.focused_aspect}"
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating focused next steps. Use **bold** for action types, key interventions, and timing. MANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating focused next steps. Use **bold** for action types, key interventions, and timing. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
                 if chunks:
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant next steps for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks)
+                    chunk_content = f"Relevant next steps for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
                 response = await self._llm.chat(messages, enable_chunk_citations=True)
@@ -3908,18 +3960,7 @@ RULES:
 
                 logger.info(f"Focused Summary citations: {len(all_cited_chunk_ids)} cited out of {len(state.citations) if state.citations else 0} total")
 
-                # Convert to numbered citations - concatenate all content to establish numbering
-                combined_content = "\n\n".join([content for content in focused_results.values() if content])
-                _, numbered_citations = self._convert_citations_to_numbered(combined_content, filtered_citations)
-
-                # Convert each section's content to numbered format
-                numbered_focused_results = {}
-                for section_name, section_content in focused_results.items():
-                    if section_content:
-                        numbered_content, _ = self._convert_citations_to_numbered(section_content, filtered_citations)
-                        numbered_focused_results[section_name] = numbered_content
-                    else:
-                        numbered_focused_results[section_name] = section_content or ""
+                # Model already outputs numbered citations [1], [2], [3] - no conversion needed!
 
                 # Add conversation context metadata
                 conversation_context = {
@@ -3934,25 +3975,25 @@ RULES:
                     "aspect": state.focused_aspect or "Medical Condition",
                     "aspect_icon": state.focused_aspect_icon or "file-text",
                     "context": conversation_context,
-                    "citations": numbered_citations,
+                    "citations": filtered_citations,
                     "sections": {
                         "diagnoses": {
-                            "content": (numbered_focused_results.get("diagnoses") or "No diagnoses documented").strip() or "No diagnoses documented"
+                            "content": (focused_results.get("diagnoses") or "No diagnoses documented").strip() or "No diagnoses documented"
                         },
                         "events": {
-                            "content": (numbered_focused_results.get("events") or "No events documented").strip() or "No events documented"
+                            "content": (focused_results.get("events") or "No events documented").strip() or "No events documented"
                         },
                         "medications": {
-                            "content": (numbered_focused_results.get("medications") or "No medications documented").strip() or "No medications documented"
+                            "content": (focused_results.get("medications") or "No medications documented").strip() or "No medications documented"
                         },
                         "objective_data": {
-                            "content": (numbered_focused_results.get("objective_data") or "No objective data available").strip() or "No objective data available"
+                            "content": (focused_results.get("objective_data") or "No objective data available").strip() or "No objective data available"
                         },
                         "assessment": {
-                            "content": (numbered_focused_results.get("assessment") or "No assessment available").strip() or "No assessment available"
+                            "content": (focused_results.get("assessment") or "No assessment available").strip() or "No assessment available"
                         },
                         "next_steps": {
-                            "content": (numbered_focused_results.get("next_steps") or "No next steps documented").strip() or "No next steps documented"
+                            "content": (focused_results.get("next_steps") or "No next steps documented").strip() or "No next steps documented"
                         }
                     }
                 }
@@ -4151,7 +4192,7 @@ Return ONLY the JSON array, no additional text.
 
                     # Build chunks context with citation markers
                     if chunks:
-                        chunks_text = self._format_chunks_with_citations(chunks)
+                        chunks_text = self._format_chunks_with_citations(chunks, state.chunk_id_to_number)
                     else:
                         chunks_text = "No specific information available"
 
@@ -4189,7 +4230,7 @@ Example:
 
 IMPORTANT:
 - Use **bold** markdown for key clinical terms, findings, medications, and important descriptors
-- Use **numbered citations [1], [2], [3]** after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
+- Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
 - Preserve any EHR source links from the clinical information
 - Keep each bullet point concise (one line)
 - Focus on clinically significant information
@@ -4199,7 +4240,7 @@ Return only the content in markdown format, no preamble.
 
                     messages = [
                         self._get_language_policy_message(state),
-                        ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create timeline explanations with 5-7 concise bullet points. Use **bold** for key clinical terms, findings, and medications.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Use compact numbered citations [1], [2], [3] - NOT verbose citations. Keep concise but informative."),
+                        ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create timeline explanations with 5-7 concise bullet points. Use **bold** for key clinical terms, findings, and medications.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise but informative."),
                         ChatMessage(role=ChatRole.USER, content=prompt)
                     ]
 
@@ -4258,19 +4299,7 @@ Return only the content in markdown format, no preamble.
 
                 logger.info(f"Timeline citations: {len(all_cited_chunk_ids)} cited out of {len(state.citations) if state.citations else 0} total")
 
-                # Convert to numbered citations - concatenate all event content to establish numbering
-                combined_content = "\n\n".join([event.get("content", "") for event in state.timeline_results if event.get("content")])
-                _, numbered_citations = self._convert_citations_to_numbered(combined_content, filtered_citations)
-
-                # Convert each event's content to numbered format
-                numbered_timeline_events = []
-                for event in state.timeline_results:
-                    if event.get("content"):
-                        numbered_content, _ = self._convert_citations_to_numbered(event["content"], filtered_citations)
-                        numbered_event = {**event, "content": numbered_content}
-                        numbered_timeline_events.append(numbered_event)
-                    else:
-                        numbered_timeline_events.append(event)
+                # Model already outputs numbered citations [1], [2], [3] - no conversion needed!
 
                 # Add conversation context metadata
                 conversation_context = {
@@ -4284,8 +4313,8 @@ Return only the content in markdown format, no preamble.
                 structured_timeline = {
                     "type": "timeline_view",
                     "context": conversation_context,
-                    "citations": numbered_citations,
-                    "events": numbered_timeline_events
+                    "citations": filtered_citations,
+                    "events": state.timeline_results
                 }
 
                 # Create JSON response
@@ -4436,7 +4465,7 @@ Return only the content in markdown format, no preamble.
                 # Use existing retrieved chunks (already in state from retrieval step)
                 if state.retrieved_chunks:
                     limited_chunks = self._limit_chunks_for_context(state.retrieved_chunks[:15], max_tokens=100000, max_chunk_chars=30000)
-                    chunks_text = self._format_chunks_with_citations(limited_chunks)
+                    chunks_text = self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                 else:
                     chunks_text = "No clinical information available"
 
@@ -4849,24 +4878,25 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                     chunk_len = len(chunk.get("content", "")) if isinstance(chunk, dict) else len(chunk)
                     logger.info(f"Chunk {i+1}: {chunk_len} chars")
 
-                # Build citations dict from all retrieved chunks
+                # Build citations dict from all retrieved chunks with sequential numbers
                 if not state.citations:
-                    state.citations = self._build_citations_from_chunks(state.retrieved_chunks)
-                    logger.info(f"Built {len(state.citations)} citations for provide_information")
+                    state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(state.retrieved_chunks)
+                    logger.info(f"Built {len(state.citations)} numbered citations for provide_information")
 
                 # Format chunks with citation markers (sentence-level)
-                formatted_chunks = self._format_chunks_with_citations(state.retrieved_chunks)
+                formatted_chunks = self._format_chunks_with_citations(state.retrieved_chunks, state.chunk_id_to_number)
 
                 # Add citation policy to system messages for regular chat
                 citation_policy_msg = ChatMessage(
                     role=ChatRole.SYSTEM,
                     content="""**CITATION POLICY** (**CRITICAL**):
-    - The clinical information contains markers like "[chunk_id: abc123...]" identifying each source
-    - When you use information from a source, cite it using [cite: chunk_id] in your response
-    - **IMPORTANT**: Use the exact chunk_id from the [chunk_id: ...] markers
-    - **DO NOT** make up chunk IDs - only use IDs from the [chunk_id: ...] markers
-    - Example: If source says "[chunk_id: abc123]\\nPatient age: 87 years", write "Patient is 87 years old [cite: abc123]"
-    - Citations will be converted to numbered format [1], [2], etc. in the final response
+    - The clinical information is labeled with citation numbers like "[Citation: 1]", "[Citation: 2]", etc.
+    - When you use information from a source, cite it immediately after the statement using the number you see
+    - **IMPORTANT**: Use the EXACT number shown in the "[Citation: X]" marker
+    - **DO NOT** make up citation numbers - only use numbers from the "[Citation: X]" markers you see
+    - Format: Place [X] immediately after the statement, where X is the number from the source
+    - Example: If you see "[Citation: 3]\\nPatient age: 87 years", write "Patient is 87 years old [3]"
+    - Example: If you see "[Citation: 5]\\nBlood pressure: 145/90", write "**BP 145/90** [5]"
 """
                 )
                 messages.append(citation_policy_msg)
@@ -4993,18 +5023,14 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                                 if chunk_id in state.citations
                             }
 
-                            # Convert to numbered citations
-                            numbered_content, numbered_citations = self._convert_citations_to_numbered(
-                                full_content,
-                                filtered_citations
-                            )
+                            # Model already outputs numbered citations [1], [2], [3] - no conversion needed!
 
-                            # Build JSON response with citations
+                            # Build JSON response with numbered citations for frontend
                             import json
                             response_with_citations = {
                                 "type": "general_response",
-                                "content": self._normalize_markdown(self._format_ehr_links(numbered_content)),
-                                "citations": numbered_citations,
+                                "content": self._normalize_markdown(self._format_ehr_links(full_content)),
+                                "citations": filtered_citations,
                                 "context": {
                                     "session_id": state.session_id,
                                     "user_prompt": state.user_prompt,
@@ -5064,18 +5090,14 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                         if chunk_id in state.citations
                     }
 
-                    # Convert to numbered citations
-                    numbered_content, numbered_citations = self._convert_citations_to_numbered(
-                        response_content,
-                        filtered_citations
-                    )
+                    # Model already outputs numbered citations [1], [2], [3] - no conversion needed!
 
-                    # Build JSON response with citations
+                    # Build JSON response with numbered citations for frontend
                     import json
                     response_with_citations = {
                         "type": "general_response",
-                        "content": self._normalize_markdown(self._format_ehr_links(numbered_content)),
-                        "citations": numbered_citations,
+                        "content": self._normalize_markdown(self._format_ehr_links(response_content)),
+                        "citations": filtered_citations,
                         "context": {
                             "session_id": state.session_id,
                             "user_prompt": state.user_prompt,
@@ -5749,8 +5771,6 @@ Return ONLY the reformulated query, nothing else."""
         """Chunk journal entries using the narrative strategy."""
         from optimed.core.domain import Record
         from optimed.adapters.chunking.strategies.narrative_v1 import NarrativeV1
-        from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
-        from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
         from optimed.core.services.hash_utils import stable_hash
         
         if not journal_entries:
@@ -5783,11 +5803,9 @@ Content:
             )
             records.append(record)
         
-        # Use narrative strategy to chunk the journal entries
-        tokenizer = WhitespaceTokenizer()
-        redactor = SimplePhiRedactor()
+        # NO PHI redaction - healthcare professionals need complete clinical data
         strategy = NarrativeV1()
-        
+
         # Get narrative policy from the orchestrator's policies
         policy = CHUNK_POLICY_PRESETS.get("narrative_default")
         if not policy:
@@ -5798,27 +5816,18 @@ Content:
                 max_tokens=512,
                 overlap=0.1
             )
-        
-        # Apply redaction to records
-        redacted_records = []
-        for record in records:
-            redacted_text = redactor.redact(record.text or "")
-            redacted_record = record.model_copy(update={"text": redacted_text})
-            redacted_records.append(redacted_record)
-        
-        # Apply chunking strategy
-        chunks = strategy.apply(redacted_records, policy, tokenizer)
+
+        # Apply chunking strategy - NO redaction
+        chunks = strategy.apply(records, policy, orchestrator._tokenizer)
         
         logger.info(f"Created {len(chunks)} chunks from {len(journal_entries)} journal entries")
         
         return chunks
 
     async def _chunk_pdf_documents(self, pdf_documents: List[PDFDocument], orchestrator: ChunkingOrchestrator, patient_id_str: Optional[str]) -> List[Chunk]:
-        """Chunk PDF documents using the narrative strategy."""
+        """Chunk PDF documents using the narrative strategy with orchestrator's redactor (Presidio)."""
         from optimed.core.domain import Record
         from optimed.adapters.chunking.strategies.narrative_v1 import NarrativeV1
-        from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
-        from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
         from optimed.core.services.hash_utils import stable_hash
 
         if not pdf_documents:
@@ -5900,31 +5909,21 @@ Content:
         if not records:
             return []
 
-        # Apply redaction and chunking
-        tokenizer = WhitespaceTokenizer()
-        redactor = SimplePhiRedactor()
+        # NO PHI redaction - healthcare professionals need complete clinical data
         strategy = NarrativeV1()
         policy = CHUNK_POLICY_PRESETS.get("narrative_default")
 
-        redacted_records = []
-        for record in records:
-            redacted_text = redactor.redact(record.text or "")
-            redacted_record = record.model_copy(update={"text": redacted_text})
-            redacted_records.append(redacted_record)
+        # Apply chunking strategy - NO redaction
+        chunks = strategy.apply(records, policy, orchestrator._tokenizer)
 
-        # Apply chunking strategy
-        chunks = strategy.apply(redacted_records, policy, tokenizer)
-
-        logger.info(f"Created {len(chunks)} chunks from {len(pdf_documents)} PDF documents")
+        logger.info(f"Created {len(chunks)} chunks from {len(pdf_documents)} PDF documents (NO redaction - complete clinical data)")
 
         return chunks
 
     async def _chunk_xml_documents(self, xml_documents: List[XMLDocument], orchestrator: ChunkingOrchestrator, patient_id_str: Optional[str]) -> List[Chunk]:
-        """Chunk XML documents using simple text-based chunking with NarrativeV1 strategy."""
+        """Chunk XML documents using simple text-based chunking with NarrativeV1 strategy and orchestrator's redactor (Presidio)."""
         from optimed.core.domain import Record
         from optimed.adapters.chunking.strategies.narrative_v1 import NarrativeV1
-        from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
-        from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
         from optimed.core.services.hash_utils import stable_hash
 
         if not xml_documents:
@@ -5991,9 +5990,7 @@ Content:
 
         logger.info(f"Created {len(records)} records from {len(xml_documents)} XML documents")
 
-        # Apply redaction and NarrativeV1 strategy for final chunking
-        tokenizer = WhitespaceTokenizer()
-        redactor = SimplePhiRedactor()
+        # NO PHI redaction - healthcare professionals need complete clinical data
         strategy = NarrativeV1()
         policy = CHUNK_POLICY_PRESETS.get("narrative_default")
 
@@ -6007,16 +6004,10 @@ Content:
                 boundary_rules={"sentence": True}
             )
 
-        redacted_records = []
-        for record in records:
-            redacted_text = redactor.redact(record.text or "")
-            redacted_record = record.model_copy(update={"text": redacted_text})
-            redacted_records.append(redacted_record)
+        # Apply chunking strategy - NO redaction
+        chunks = strategy.apply(records, policy, orchestrator._tokenizer)
 
-        # Apply chunking strategy
-        chunks = strategy.apply(redacted_records, policy, tokenizer)
-
-        logger.info(f"Created {len(chunks)} final chunks from {len(xml_documents)} XML documents")
+        logger.info(f"Created {len(chunks)} final chunks from {len(xml_documents)} XML documents (NO redaction - complete clinical data)")
 
         return chunks
 

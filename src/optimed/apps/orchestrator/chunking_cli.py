@@ -7,7 +7,6 @@ from statistics import mean
 from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY, POLICY_PRESETS
 from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator
 from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
-from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
 from optimed.core.domain import PatientContext
 from optimed.core.logging_utils import get_logger
 
@@ -38,7 +37,6 @@ def main(argv: list[str] | None = None) -> int:
 
     orchestrator = ChunkingOrchestrator(
         tokenizer=WhitespaceTokenizer(),
-        redactor=SimplePhiRedactor(),
         strategy_registry=STRATEGY_REGISTRY,
         policies=POLICY_PRESETS,
     )

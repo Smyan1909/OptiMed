@@ -219,14 +219,25 @@ async def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
 
 # Chunking orchestrator factory (for CLI or future wiring)
 def create_chunking_orchestrator():
+    """
+    Create chunking orchestrator WITHOUT PHI redaction.
+
+    GDPR compliance is achieved through:
+    - RAM-only processing (no persistence)
+    - Access controls (RLS, authentication)
+    - Audit logging (metadata only, no PHI)
+    - Auto-cleanup on session end
+    - GDPR Article 9(2)(h): Healthcare professionals may process health data with identifiers
+    """
     from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator
     from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY, POLICY_PRESETS
     from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
-    from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
+
+    # NO PHI redaction - healthcare professionals need complete clinical data
+    logger.info("Creating ChunkingOrchestrator WITHOUT PHI redaction (GDPR-compliant via RAM-only processing)")
 
     return ChunkingOrchestrator(
         tokenizer=WhitespaceTokenizer(),
-        redactor=SimplePhiRedactor(),
         strategy_registry=STRATEGY_REGISTRY,
         policies=POLICY_PRESETS,
     )

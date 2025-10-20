@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from typing import Any
+from typing import Any, Optional
 
 from optimed.core.domain import Record, PolicySet
 from optimed.core.ports import ChunkerPort, PhiRedactorPort
@@ -14,7 +14,7 @@ class DocumentChunkerAdapter(ChunkerPort):
     and chunking are handled by the orchestrator.
     """
 
-    def __init__(self, redactor: PhiRedactorPort):
+    def __init__(self, redactor: Optional[PhiRedactorPort] = None):
         self._redactor = redactor
 
     def chunk_from_patient(self, patient_context, policy_set: PolicySet) -> list:
@@ -32,15 +32,15 @@ class DocumentChunkerAdapter(ChunkerPort):
                 # Concatenate columns into a text line, redact each value
                 parts: list[str] = []
                 for k, v in row.items():
-                    vv = self._redactor.redact(str(v)) if v is not None else ""
+                    vv = self._redactor.redact(str(v)) if (self._redactor and v is not None) else (str(v) if v is not None else "")
                     parts.append(f"{k}: {vv}")
                 text = " | ".join(parts)
                 records.append(Record(resource_type=resource_type, text=text))
         return records
 
     def pdf_to_records(self, text: str, resource_type: str = "pdf") -> list[Record]:
-        # Assume text already extracted by caller; redact here
-        redacted = self._redactor.redact(text)
+        # Assume text already extracted by caller; redact here (skip if no redactor)
+        redacted = self._redactor.redact(text) if self._redactor else text
         return [Record(resource_type=resource_type, text=redacted)]
 
 

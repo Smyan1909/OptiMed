@@ -91,19 +91,20 @@ class AzureOpenAIGPT5MiniClient(LLMClient):
         # If you prefer an extra safety belt, you can still append a JSON instruction:
         if json_mode and input_payload and input_payload[-1]["role"] == "user":
             if enable_chunk_citations:
-                # Special JSON instruction for chunk citations
+                # Special JSON instruction for numbered citations
                 json_instruction = """RESPONSE FORMAT (REQUIRED):
 You must respond with valid JSON in this exact structure:
 {
-  "response": "Your clinical response here. When using information from a chunk, include [cite: chunk_id] immediately after the statement.",
-  "cited_chunks": ["chunk-id-1", "chunk-id-2"]
+  "response": "Your clinical response here. When using information from a source, include [X] immediately after the statement, where X is the citation number.",
+  "cited_chunks": ["1", "2", "3"]
 }
 
 CITATION RULES:
-1. Include ONLY chunk IDs that you actually used in your response
-2. Cite the chunk IMMEDIATELY after the sentence that uses its information
-3. Use the EXACT chunk_id from the [chunk_id: ...] markers in the provided information
-4. Example: "The patient is 87 years old [cite: abc-123] and lives with her daughter [cite: def-456]."
+1. The clinical information is labeled with "[Citation: 1]", "[Citation: 2]", etc.
+2. Cite the source IMMEDIATELY after the sentence that uses its information
+3. Use the EXACT number shown in the "[Citation: X]" markers - just put [X] after your statement
+4. Example: If you see "[Citation: 3]\\nPatient is 87 years old", write "Patient is 87 years old [3]"
+5. In cited_chunks, list the citation numbers you actually used (as strings)
 
 IMPORTANT: Response must be valid JSON only. No text outside the JSON structure."""
             else:
@@ -179,19 +180,20 @@ IMPORTANT: Response must be valid JSON only. No text outside the JSON structure.
 
         if json_mode and input_payload and input_payload[-1]["role"] == "user":
             if enable_chunk_citations:
-                # Special JSON instruction for chunk citations
+                # Special JSON instruction for numbered citations
                 json_instruction = """RESPONSE FORMAT (REQUIRED):
 You must respond with valid JSON in this exact structure:
 {
-  "response": "Your clinical response here. When using information from a chunk, include [cite: chunk_id] immediately after the statement.",
-  "cited_chunks": ["chunk-id-1", "chunk-id-2"]
+  "response": "Your clinical response here. When using information from a source, include [X] immediately after the statement, where X is the citation number.",
+  "cited_chunks": ["1", "2", "3"]
 }
 
 CITATION RULES:
-1. Include ONLY chunk IDs that you actually used in your response
-2. Cite the chunk IMMEDIATELY after the sentence that uses its information
-3. Use the EXACT chunk_id from the [chunk_id: ...] markers in the provided information
-4. Example: "The patient is 87 years old [cite: abc-123] and lives with her daughter [cite: def-456]."
+1. The clinical information is labeled with "[Citation: 1]", "[Citation: 2]", etc.
+2. Cite the source IMMEDIATELY after the sentence that uses its information
+3. Use the EXACT number shown in the "[Citation: X]" markers - just put [X] after your statement
+4. Example: If you see "[Citation: 3]\\nPatient is 87 years old", write "Patient is 87 years old [3]"
+5. In cited_chunks, list the citation numbers you actually used (as strings)
 
 IMPORTANT: Response must be valid JSON only. No text outside the JSON structure."""
             else:
