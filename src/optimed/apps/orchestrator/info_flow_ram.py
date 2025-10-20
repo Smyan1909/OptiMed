@@ -30,7 +30,6 @@ from optimed.adapters.security.e2e_encryption_middleware import get_session_encr
 from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator
 from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY as CHUNK_STRATEGY_REGISTRY, POLICY_PRESETS as CHUNK_POLICY_PRESETS
 from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
-from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
 from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, sanitize_session_id, log_error
 
 logger = get_logger(__name__)
@@ -5772,8 +5771,6 @@ Return ONLY the reformulated query, nothing else."""
         """Chunk journal entries using the narrative strategy."""
         from optimed.core.domain import Record
         from optimed.adapters.chunking.strategies.narrative_v1 import NarrativeV1
-        from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
-        from optimed.adapters.outbound.phi_redactor.simple_redactor import SimplePhiRedactor
         from optimed.core.services.hash_utils import stable_hash
         
         if not journal_entries:

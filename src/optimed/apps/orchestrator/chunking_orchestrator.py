@@ -5,7 +5,7 @@ from typing import Any, Iterable, Sequence
 
 from optimed.core.domain import Chunk, Record, PolicySet, PatientContext
 from optimed.core.ports import ChunkingOrchestrator as ChunkingOrchestratorPort
-from optimed.core.ports import TokenizerPort, PhiRedactorPort
+from optimed.core.ports import TokenizerPort
 from optimed.adapters.chunking.strategies import STRATEGY_IMPLEMENTATIONS
 from optimed.core.services.hash_utils import stable_hash
 
