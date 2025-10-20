@@ -3067,7 +3067,7 @@ Keep queries concise and medically precise.
                         numbered_content, _ = self._convert_citations_to_numbered(comp_content, filtered_citations)
                         numbered_sbar_results[comp_name] = numbered_content
                     else:
-                        numbered_sbar_results[comp_name] = comp_content
+                        numbered_sbar_results[comp_name] = comp_content or ""
 
                 structured_sbar = {
                     "type": "sbar_cards",
@@ -3220,7 +3220,7 @@ Keep queries concise and medically precise.
                         numbered_content, _ = self._convert_citations_to_numbered(comp_content, filtered_citations)
                         numbered_general_results[comp_name] = numbered_content
                     else:
-                        numbered_general_results[comp_name] = comp_content
+                        numbered_general_results[comp_name] = comp_content or ""
 
                 # Add conversation context metadata for future reference
                 conversation_context = {
@@ -3919,7 +3919,7 @@ RULES:
                         numbered_content, _ = self._convert_citations_to_numbered(section_content, filtered_citations)
                         numbered_focused_results[section_name] = numbered_content
                     else:
-                        numbered_focused_results[section_name] = section_content
+                        numbered_focused_results[section_name] = section_content or ""
 
                 # Add conversation context metadata
                 conversation_context = {

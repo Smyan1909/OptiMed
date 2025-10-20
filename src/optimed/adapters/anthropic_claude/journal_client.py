@@ -38,9 +38,11 @@ class AnthropicClaudeJournalClient(LLMClient):
     async def chat(
             self,
             messages: Sequence[ChatMessage],
-            json_mode: bool = False, 
+            json_mode: bool = False,
+            *,
             temperature: float = 0.7,
             max_tokens: int | None = None,
+            enable_chunk_citations: bool = False,
     ) -> ChatMessage:
         """
         • Pull out the *first* system prompt (optional)
@@ -116,9 +118,11 @@ Example format:
     async def chat_stream(  # type: ignore
             self,
             messages: Sequence[ChatMessage],
-            json_mode: bool = False, 
+            json_mode: bool = False,
+            *,
             temperature: float = 0.7,
             max_tokens: int | None = None,
+            enable_chunk_citations: bool = False,
     ) -> AsyncGenerator[str, None]: 
         """
         Stream chat response from Claude.

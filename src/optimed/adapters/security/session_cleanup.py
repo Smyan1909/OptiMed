@@ -138,9 +138,9 @@ class SessionCleanupService:
                 (current_time - created_at).total_seconds() / 60
                 for created_at in self.active_sessions.values()
             ]
-            
-            stats["oldest_session_age_minutes"] = max(session_ages)
-            stats["newest_session_age_minutes"] = min(session_ages)
+
+            stats["oldest_session_age_minutes"] = int(max(session_ages))
+            stats["newest_session_age_minutes"] = int(min(session_ages))
         
         return stats
 
