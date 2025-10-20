@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from optimed.core.domain import PatientContext, Record, PolicySet
 from optimed.core.ports import ChunkerPort, PhiRedactorPort
@@ -14,7 +14,7 @@ class PatientContextChunkerAdapter(ChunkerPort):
     demographic fields before producing records.
     """
 
-    def __init__(self, redactor: PhiRedactorPort):
+    def __init__(self, redactor: Optional[PhiRedactorPort] = None):
         self._redactor = redactor
 
     def chunk_from_patient(self, patient_context: PatientContext, policy_set: PolicySet) -> list:
@@ -33,8 +33,8 @@ class PatientContextChunkerAdapter(ChunkerPort):
             if not kv:
                 return
             for key, value in kv.items():
-                # conservative redaction on value
-                redacted_value = self._redactor.redact(value)
+                # conservative redaction on value (skip if no redactor)
+                redacted_value = self._redactor.redact(value) if self._redactor else value
                 timestamp = None
                 if ts and key in ts and ts[key]:
                     try:
@@ -81,7 +81,7 @@ class PatientContextChunkerAdapter(ChunkerPort):
             if not kv:
                 return
             for key, text in kv.items():
-                redacted_text = self._redactor.redact(text)
+                redacted_text = self._redactor.redact(text) if self._redactor else text
                 timestamp = None
                 if ts and key in ts and ts[key]:
                     try:

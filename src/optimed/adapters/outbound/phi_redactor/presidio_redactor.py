@@ -143,7 +143,7 @@ class PresidioPhiRedactor(PhiRedactorPort):
         )
 
         # Also support English contexts (e.g., "Patient ID: 850315-1234")
-        recognizer.supported_languages = ["sv", "en"]
+        recognizer.supported_languages = ["sv", "en"]  # type: ignore[attr-defined]
 
         return recognizer
 
@@ -192,7 +192,7 @@ class PresidioPhiRedactor(PhiRedactorPort):
         )
 
         # Also add support for English
-        recognizer.supported_languages = ["sv", "en"]
+        recognizer.supported_languages = ["sv", "en"]  # type: ignore[attr-defined]
 
         return recognizer
 
@@ -744,7 +744,7 @@ class PresidioPhiRedactor(PhiRedactorPort):
 
             result = self.anonymizer.anonymize(
                 text=text,
-                analyzer_results=filtered_results,
+                analyzer_results=filtered_results,  # type: ignore[arg-type]
                 operators=operators,
             )
 
