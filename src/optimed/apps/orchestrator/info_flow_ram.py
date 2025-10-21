@@ -223,29 +223,29 @@ class FlowState(BaseModel):
     general_problems_chunks: Optional[List[Dict[str, Any]]] = None
     general_medications_chunks: Optional[List[Dict[str, Any]]] = None
     general_trends_chunks: Optional[List[Dict[str, Any]]] = None
-    general_history_chunks: Optional[List[Dict[str, Any]]] = None
+    general_history_chunks: Optional[List[Dict[str, Any]]] = None  # Now used for encounters
     general_risks_chunks: Optional[List[Dict[str, Any]]] = None
     general_encounters_chunks: Optional[List[Dict[str, Any]]] = None
-    general_deepdive_chunks: Optional[List[Dict[str, Any]]] = None
 
     general_snapshot_result: Optional[str] = None
     general_problems_result: Optional[str] = None
     general_medications_result: Optional[str] = None
     general_trends_result: Optional[str] = None
-    general_history_result: Optional[str] = None
+    general_history_result: Optional[str] = None  # Now stores encounters markdown
     general_risks_result: Optional[str] = None
     general_encounters_result: Optional[str] = None
-    general_deepdive_result: Optional[str] = None
+
+    # Structured encounter data for clickable detailed summaries
+    general_encounters_structured: Optional[List[Dict[str, Any]]] = None
 
     # Cited chunk IDs from LLM for each general summary component
     general_snapshot_cited_ids: Optional[List[str]] = None
     general_problems_cited_ids: Optional[List[str]] = None
     general_medications_cited_ids: Optional[List[str]] = None
     general_trends_cited_ids: Optional[List[str]] = None
-    general_history_cited_ids: Optional[List[str]] = None
+    general_history_cited_ids: Optional[List[str]] = None  # Now stores encounters citations
     general_risks_cited_ids: Optional[List[str]] = None
     general_encounters_cited_ids: Optional[List[str]] = None
-    general_deepdive_cited_ids: Optional[List[str]] = None
 
     # General summary retrieval cache for performance optimization
     general_retrieval_cache: Optional[Dict[str, Any]] = None
@@ -1468,14 +1468,12 @@ Keep queries concise and medical terminology appropriate.
 
                 # Define component-specific instructions
                 component_prompts = {
-                    "snapshot": "Age, sex, living situation, social context, smoking/alcohol history, top 3-5 chronic conditions",
+                    "snapshot": "Age, sex, living situation, social context, smoking/alcohol/substance use history, top 3-5 chronic conditions",
                     "problems": "Chronic diseases with onset dates, active problems, diagnosed conditions, current visit reason",
                     "medications": "Current medications with dosages, high-risk drugs (anticoagulants, opioids, insulin)",
                     "trends": "Lab values and vital signs trends over 6-12 months (HbA1c, eGFR, weight, blood pressure)",
-                    "history": "Major hospitalizations, surgeries, significant medical events with dates",
-                    "risks": "Allergies, fall risk, bleeding risk, DNR status, cognitive impairment, medication side-effects",
-                    "encounters": "Recent GP visits, specialist consultations, care plans, recent decisions, hospital encounters",
-                    "deepdive": "Hospital admission details, specialist letters, imaging reports, detailed clinical notes"
+                    "history": "Recent encounters - hospitalizations, ER visits, GP appointments, specialist consultations, procedures",
+                    "risks": "Allergies, fall risk, bleeding risk, DNR status, cognitive impairment, medication side-effects"
                 }
 
                 # Add chat history context if available for better query generation
@@ -1518,14 +1516,12 @@ Keep queries concise and medical terminology appropriate.
                 if len(queries) < 3:
                     # Fallback queries if LLM didn't generate enough
                     fallback = {
-                        "snapshot": ["demographics age sex", "living situation social", "chronic conditions"],
+                        "snapshot": ["demographics age sex", "living situation social smoking alcohol", "chronic conditions"],
                         "problems": ["active problems", "chronic diseases", "diagnosis onset date"],
                         "medications": ["current medications", "high-risk drugs", "anticoagulants insulin"],
                         "trends": ["HbA1c trend", "eGFR kidney function", "weight vital signs"],
-                        "history": ["hospitalizations surgeries", "major medical events", "surgical history"],
-                        "risks": ["allergies", "fall risk DNR", "bleeding risk cognitive"],
-                        "encounters": ["recent visits", "GP consultation", "specialist referral"],
-                        "deepdive": ["hospital admissions", "imaging reports", "specialist letters"]
+                        "history": ["recent hospitalizations ER visits", "GP appointments consultations", "recent procedures encounters"],
+                        "risks": ["allergies", "fall risk DNR", "bleeding risk cognitive"]
                     }
                     queries.extend(fallback.get(component, ["medical information"])[:3-len(queries)])
 
@@ -1536,16 +1532,44 @@ Keep queries concise and medical terminology appropriate.
                 log_error(logger, "_generate_general_summary_queries", e)
                 # Return fallback queries
                 fallback_queries = {
-                    "snapshot": ["demographics", "social history", "chronic conditions"],
+                    "snapshot": ["demographics", "social history smoking alcohol", "chronic conditions"],
                     "problems": ["active problems", "chronic diseases", "diagnosis"],
                     "medications": ["current medications", "high-risk drugs"],
                     "trends": ["lab trends", "vital signs trends"],
-                    "history": ["hospitalizations", "surgeries"],
-                    "risks": ["allergies", "fall risk", "DNR"],
-                    "encounters": ["recent visits", "specialist consultations"],
-                    "deepdive": ["hospital admissions", "imaging reports"]
+                    "history": ["recent hospitalizations ER visits", "GP appointments", "recent procedures"],
+                    "risks": ["allergies", "fall risk", "DNR"]
                 }
                 return fallback_queries.get(component, ["medical information"])
+
+        def _format_encounters_as_markdown(encounters_data: Dict[str, Any], is_swedish: bool = False) -> str:
+            """Convert structured encounters JSON to markdown for card display."""
+            encounters = encounters_data.get("encounters", [])
+            if not encounters:
+                if is_swedish:
+                    return "Inga senaste vårdtillfällen dokumenterade"
+                return "No recent encounters documented"
+
+            # Group by category
+            major = [e for e in encounters if e.get("category") == "major"]
+            minor = [e for e in encounters if e.get("category") == "minor"]
+
+            lines = []
+
+            if major:
+                major_header = "**Större vårdtillfällen**\n" if is_swedish else "**Major Encounters**\n"
+                lines.append(major_header)
+                for enc in major:
+                    # Format: • **Type** (date) - brief
+                    lines.append(f"• **{enc.get('encounter_type', 'Unknown')}** ({enc.get('date', 'Date unknown')}) - {enc.get('brief', 'No summary')}\n")
+                lines.append("")  # Blank line between sections
+
+            if minor:
+                minor_header = "**Mindre vårdtillfällen**\n" if is_swedish else "**Minor Encounters**\n"
+                lines.append(minor_header)
+                for enc in minor:
+                    lines.append(f"• **{enc.get('encounter_type', 'Unknown')}** ({enc.get('date', 'Date unknown')}) - {enc.get('brief', 'No summary')}\n")
+
+            return "\n".join(lines)
 
         async def _fast_general_summary_retrieve(state: FlowState, focus: str, queries: List[str]) -> List[Dict[str, Any]]:
             """Fast general summary retrieval using only bi-encoder similarity (same pattern as SBAR)."""
@@ -1983,44 +2007,6 @@ Keep queries concise and medically precise.
             except Exception as e:
                 logger.info(f"Error: {e}")
                 state.general_risks_chunks = []
-
-            return state
-
-        @streaming_step("retrieve_encounters_chunks")
-        async def retrieve_encounters_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on recent encounters and care plans."""
-            try:
-                logger.info("Generating encounters-focused queries from user prompt")
-
-                encounters_queries = await _generate_general_summary_queries(state, "encounters",
-                    "Generate queries focused on recent GP visits and specialist consultations")
-
-                chunks = await _fast_general_summary_retrieve(state, "encounters", encounters_queries)
-                state.general_encounters_chunks = chunks[:10]
-                logger.info(f"Retrieved {len(state.general_encounters_chunks)} chunks")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.general_encounters_chunks = []
-
-            return state
-
-        @streaming_step("retrieve_deepdive_chunks")
-        async def retrieve_deepdive_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks for deep dive section (detailed admissions, imaging, specialist letters)."""
-            try:
-                logger.info("Generating deep dive-focused queries from user prompt")
-
-                deepdive_queries = await _generate_general_summary_queries(state, "deepdive",
-                    "Generate queries focused on hospital admissions, imaging reports, and specialist letters")
-
-                chunks = await _fast_general_summary_retrieve(state, "deepdive", deepdive_queries)
-                state.general_deepdive_chunks = chunks[:15]  # Slightly more for deep dive
-                logger.info(f"Retrieved {len(state.general_deepdive_chunks)} chunks")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.general_deepdive_chunks = []
 
             return state
 
@@ -2553,21 +2539,23 @@ Keep queries concise and medically precise.
                 chunks = state.general_snapshot_chunks or []
 
                 prompt = f"""
-                Create a concise Patient Snapshot with 5-7 bullet points with headers:
+                Create a concise Patient Snapshot with 5 bullet points with headers:
 
                 USER QUERY: {state.user_prompt}
 
-                Format as 5-7 bullet points with bold headers:
+                Format as 5 bullet points with the following bold headers:
                 • **Demographics:** [Age, sex]
                 • **Living Situation:** [Living arrangement, occupation/status]
                 • **Functional Status:** [Mobility and independence level]
                 • **Social Support:** [Care situation]
+                • **Lifestyle Factors:** [Smoking, alcohol, substance use, diet, exercise]
 
                 Example:
                 • **Demographics:** **73 Male** (recorded 2024-01-15) [1]
                 • **Living Situation:** Lives alone, **retired teacher** (recorded 2023-12-10) [2]
                 • **Functional Status:** **Independent** with ADLs, uses walker (assessed 2023-11-20) [3]
                 • **Social Support:** **Home care** 2x/week (started 2023-10-01) [4]
+                • **Lifestyle Factors:** **Ex-smoker**, quit 2010; **occasional alcohol**; low exercise (2024-01-10) [5]
 
                 MANDATORY:
                 - Each bullet must have a bold header followed by colon
@@ -2575,7 +2563,7 @@ Keep queries concise and medically precise.
                 - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when the information was recorded
                 - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 - Add blank line between each bullet point for readability
-                CRITICAL: 5-7 bullet points with headers. 6-12 words each. Each bullet point one line. Include dates. Keep very concise and scannable.
+                CRITICAL: 5 bullet points with headers. 6-12 words each. Each bullet point one line. Include dates. Keep very concise and scannable.
                 """
 
                 messages = [
@@ -2639,21 +2627,21 @@ Keep queries concise and medically precise.
 
                 Format with TWO subsections (most relevant and frequently mentioned at the top of each list):
 
-                ## Current Conditions
+                # Current Conditions
                 • **Disease name** (year) - status
 
-                ## Previous Conditions
+                # Previous Conditions
                 • **Disease name** (year) - status
 
                 Example (count the words - each is 6-12 words):
-                ## Current Conditions
+                # Current Conditions
                 • **T2DM** (diagnosed 2012) **HbA1c 68** moderate control (2024-01-15) [1]
 
                 • **HTN** (since 2005) **BP 145/85** on treatment (2024-01-15 09:00) [2] 
 
                 • **CKD Stage 3a** (2020) **eGFR 52** monitored (2024-01-15 08:30) [3]
 
-                ## Previous Conditions
+                # Previous Conditions
                 • **COPD GOLD II** (2018) stable uses inhaler (reviewed 2024-01-10) [4]
 
                 • **Osteoarthritis** bilateral knees uses walker (assessed 2023-12-20) [5] 
@@ -2712,17 +2700,17 @@ Keep queries concise and medically precise.
 
                 Format with TWO subsections (most relevant at the top of each list):
 
-                ## Current Medications
+                # Current Medications
                 • **Drug name dose** (started YYYY-MM-DD) - purpose
                 • **Drug 250mg→500mg** ↑ (increased YYYY-MM-DD) - purpose/reason for change
                 • 🔺 **Drug dose** (dates) - purpose ALLERGY NOTED  ← Add 🔺 if patient has documented allergy
                 • ⚠️ **High-risk drug dose** (dates) - purpose  ← Mark anticoagulants, opioids, insulin with ⚠️
 
-                ### Prior Medications
+                # Prior Medications
                 • **Drug dose** (started YYYY-MM-DD, stopped YYYY-MM-DD) - reason for discontinuation
 
                 Example (count the words - each is 6-12 words):
-                ### Current Medications
+                # Current Medications
                 • **Metformin 1000mg 2x/day** (started 2024-01-10) - diabetes control **HbA1c 68** [1] (10 words)
 
                 • **Enalapril 5mg→10mg** ↑ (increased 2024-01-15) - BP control dose adjustment [2] (10 words)
@@ -2731,7 +2719,7 @@ Keep queries concise and medically precise.
 
                 • ⚠️ **Warfarin 5mg** (started 2023-11-01) - anticoagulation **INR 2.5** [4] (9 words)
 
-                ## Prior Medications
+                # Prior Medications
                 • **Simvastatin 20mg** (2020-05-15 to 2023-12-20) - switched to atorvastatin [5] (10 words)
 
                 Add blank line between each bullet point for readability.
@@ -2838,60 +2826,102 @@ Keep queries concise and medically precise.
 
         @streaming_step("generate_history_summary")
         async def generate_history_summary(state: FlowState) -> FlowState:
-            """Generate Past Medical/Surgical History component."""
+            """Generate Recent Encounters with structured JSON (brief + detailed summaries)."""
             try:
-                logger.info("Starting History generation")
+                logger.info("Starting Recent Encounters generation (JSON mode)")
 
                 chunks = state.general_history_chunks or []
 
+                # Determine language for instructions
+                is_swedish = state.user_language == "sv"
+
                 prompt = f"""
-                List 5-7 major past medical/surgical events - EXACTLY 6-12 words per bullet.
+Generate a JSON response with recent encounters. Classify each as MAJOR or MINOR, and provide both a brief one-liner and a detailed summary.
 
-                USER QUERY: {state.user_prompt}
+USER QUERY: {state.user_prompt}
 
-                Format (ONE line per event, 6-12 words ONLY):
-                • **Event name** (year) - outcome
+Output VALID JSON with this exact structure:
+{{
+  "encounters": [
+    {{
+      "id": "enc-001",
+      "date": "YYYY-MM-DD HH:MM",
+      "encounter_type": "Hospitalization | ER visit | GP visit | etc",
+      "category": "major",
+      "brief": "One-line summary (10-15 words) with citations [1] [2]",
+      "detailed": "Detailed summary (30-80 words) with presenting complaint, key findings, interventions, medications, outcome. Use **bold** for clinical terms. Citations [1] [2]"
+    }}
+  ]
+}}
 
-                Example (count the words - each is 6-12 words):
-                • **Cholecystectomy** (2001) uncomplicated recovery [1] (7 words)
-                • **Hip replacement** (2015) left hip good function [2] (9 words)
-                • **Stroke** (2020) left hemisphere mild residual weakness [3] (10 words)
-                • **MI** (2018) anterior wall stent placed [4] (9 words)
-                • **Appendectomy** (1995) no complications [5] (6 words)
+CATEGORIES:
+- MAJOR: Hospitalizations, ER visits, surgeries, ICU stays, specialist procedures, significant imaging
+- MINOR: GP visits, phone consults, lab draws, routine follow-ups, medication refills, minor procedures
 
-                Add blank line between each bullet point for readability.
+RULES:
+- Include 5-7 most recent encounters (newest first)
+- Brief: 10-15 words maximum, for display in the card
+- Detailed: 30-80 words with full clinical context for popup modal
+- Include citations [1] [2] etc in BOTH brief and detailed fields
+- Use **bold** markdown in detailed summaries for clinical terms
+- Include exact date/time when available (YYYY-MM-DD HH:MM format)
+- Each encounter must have a unique id
 
-                If there are MORE past events, add at the end:
-                "_Fråga om fler händelser_" (Swedish) or "_Ask for more history_" (English)
-
-                MANDATORY:
-                - Use **bold** markdown for event names
-                - Each bullet MUST be between 6-12 words (excluding citation) - COUNT THEM
-                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-                CRITICAL: 5-7 most significant events. 6-12 words each. Blank lines between bullets. Very scannable.
-                """
+CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JSON object.
+"""
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 major past events. Use **bold** for event names. CRITICAL: Always include the year/date in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding year and citation). Count words carefully. Add 'ask for more' if additional events exist.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Generate structured JSON with recent encounters. Each encounter needs TWO summaries: brief (10-15 words for card display) and detailed (30-80 words for popup). Always cite sources with [1] [2] etc. Use **bold** in detailed summaries.\n\nInformation system only - NOT a medical device.")
                 ]
 
                 if chunks:
-                    # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
+                    # Limit chunks to prevent context overflow
                     limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
+                    chunk_content = "Relevant encounter information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
                     messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
 
-                response = await self._llm.chat(messages, enable_chunk_citations=True)
-                state.general_history_result = response.content.strip()
-                state.general_history_cited_ids = response.cited_chunk_ids or []
+                messages.append(ChatMessage(role=ChatRole.USER, content=prompt))
 
-                logger.info(f"Generated history summary: {len(response.content)} chars")
+                # Use json_mode for structured output (without enable_chunk_citations to get pure JSON)
+                response = await self._llm.chat(messages, json_mode=True)
+
+                # Parse JSON response
+                import json
+                import re
+                try:
+                    encounters_data = json.loads(response.content.strip())
+                    state.general_encounters_structured = encounters_data.get("encounters", [])
+
+                    # Also create markdown version for card display
+                    markdown_brief = _format_encounters_as_markdown(encounters_data, is_swedish)
+                    state.general_history_result = markdown_brief
+
+                    # Extract citation IDs from the JSON content (look for [1] [2] etc)
+                    cited_ids = set()
+                    for encounter in state.general_encounters_structured:
+                        # Extract citations from both brief and detailed fields
+                        for field in ['brief', 'detailed']:
+                            content = encounter.get(field, '')
+                            # Find all [number] patterns
+                            citations = re.findall(r'\[(\d+)\]', content)
+                            cited_ids.update(citations)
+
+                    state.general_history_cited_ids = list(cited_ids)
+
+                    logger.info(f"Generated {len(state.general_encounters_structured)} encounters with detailed summaries, {len(cited_ids)} citations")
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse encounters JSON: {e}")
+                    logger.error(f"LLM response: {response.content[:500]}")
+                    state.general_history_result = "Error parsing encounters data - invalid JSON format"
+                    state.general_encounters_structured = []
+                    state.general_history_cited_ids = []
 
             except Exception as e:
                 logger.info(f"Error: {e}")
-                state.general_history_result = f"Error generating history: {str(e)}"
+                state.general_history_result = f"Error generating encounters: {str(e)}"
+                state.general_encounters_structured = []
 
             return state
 
@@ -2953,124 +2983,6 @@ Keep queries concise and medically precise.
             except Exception as e:
                 logger.info(f"Error: {e}")
                 state.general_risks_result = f"Error generating risks: {str(e)}"
-
-            return state
-
-        @streaming_step("generate_encounters_summary")
-        async def generate_encounters_summary(state: FlowState) -> FlowState:
-            """Generate Recent Encounters & Plans component."""
-            try:
-                logger.info("Starting Encounters generation")
-
-                chunks = state.general_encounters_chunks or []
-
-                prompt = f"""
-                List 5-7 most recent encounters with key actions/outcomes.
-
-                USER QUERY: {state.user_prompt}
-
-                Format (ONE line per encounter):
-                • **Encounter type** (date) - key action/outcome
-
-                Example:
-                • **GP visit** (2025-04-15 10:30) - adjusted enalapril to 20mg, ordered HbA1c [1]
-                • **Cardiology consult** (2025-02-20 14:00) - echo stable, continue current meds [2]
-                • **Lab draw** (2025-03-10 08:15) - routine monitoring, awaiting results [3]
-                • **Phone consult** (2025-01-25) - discussed weight loss, advised diet [4]
-                • **ER visit** (2024-12-28 22:45) - chest pain, ruled out MI, discharged [5]
-
-                Add blank line between each bullet point for readability.
-
-                If there are MORE encounters in the history, add at the end:
-                "_Fråga om fler besök_" (Swedish) or "_Ask for more encounters_" (English)
-
-                MANDATORY:
-                - Use **bold** markdown for encounter types
-                - CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses
-                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-                CRITICAL: 5-7 most recent encounters. ONE line each. Blank lines between bullets. Full datetime + action + outcome. Keep concise.
-                """
-
-                messages = [
-                    self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 most recent encounters with key actions/outcomes. Use **bold** for encounter types. CRITICAL: Include exact date and time (YYYY-MM-DD HH:MM or YYYY-MM-DD) in parentheses. One line each with blank lines between. Add 'ask for more' if additional encounters exist.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include exact datetime.\n\nInformation system only - NOT a medical device."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
-                ]
-
-                if chunks:
-                    # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
-                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
-                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
-
-                response = await self._llm.chat(messages, enable_chunk_citations=True)
-                state.general_encounters_result = response.content.strip()
-                state.general_encounters_cited_ids = response.cited_chunk_ids or []
-
-                logger.info(f"Generated encounters summary: {len(response.content)} chars")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.general_encounters_result = f"Error generating encounters: {str(e)}"
-
-            return state
-
-        @streaming_step("generate_deepdive_summary")
-        async def generate_deepdive_summary(state: FlowState) -> FlowState:
-            """Generate Deep Dive component (expandable details)."""
-            try:
-                logger.info("Starting Deep Dive generation")
-
-                chunks = state.general_deepdive_chunks or []
-
-                prompt = f"""
-                Create expandable sections with brief summaries. User can ask for more if needed.
-
-                USER QUERY: {state.user_prompt}
-
-                Format with headers (include if data exists):
-
-                **Hospital Admissions** (if any)
-                • Date: Reason - Outcome
-
-                **Specialist Letters** (if any)
-                • Date Specialty: Key conclusion
-
-                **Imaging** (if any)
-                • Date Type: Finding
-
-                Add blank line between each bullet point for readability.
-                Make the Language consistent (either Swedish or English) for everything in the generated outputs including headers (Hospital Admissions, Specialist Letters, Imaging).
-
-                For EACH section that has more items available (beyond 2-3), add:
-                "_Fråga om fler [X]_" (Swedish) or "_Ask for more [X]_" (English)
-                Where [X] is "admissions", "letters", or "imaging results"
-
-                MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-                CRITICAL: Each section 2-3 bullet points max. ONE line per item with blank lines between. User can ask "tell me more about X" if they need details.
-                """
-
-                messages = [
-                    self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Create brief expandable sections. 2-3 items per section with blank lines between items. Add 'ask for more' hint for each section with additional data available.\n\nMANDATORY: Include citations after each statement - NOT verbose citations.\n\nInformation system only - NOT a medical device."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
-                ]
-
-                if chunks:
-                    # Limit chunks to prevent context overflow (max 50k chars per chunk, 200k tokens total)
-                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
-                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
-
-                response = await self._llm.chat(messages, enable_chunk_citations=True)
-                state.general_deepdive_result = response.content.strip()
-                state.general_deepdive_cited_ids = response.cited_chunk_ids or []
-
-                logger.info(f"Generated deep dive summary: {len(response.content)} chars")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.general_deepdive_result = f"Error generating deep dive: {str(e)}"
 
             return state
 
@@ -3229,10 +3141,8 @@ Keep queries concise and medically precise.
                     "problems": state.general_problems_result,
                     "medications": state.general_medications_result,
                     "trends": state.general_trends_result,
-                    "history": state.general_history_result,
-                    "risks": state.general_risks_result,
-                    "encounters": state.general_encounters_result,
-                    "deepdive": state.general_deepdive_result
+                    "encounters": state.general_history_result,  # Now stores encounters
+                    "risks": state.general_risks_result
                 }
 
                 completed_components = [comp for comp, result in general_results.items() if result]
@@ -3256,10 +3166,8 @@ Keep queries concise and medically precise.
                     state.general_problems_cited_ids,
                     state.general_medications_cited_ids,
                     state.general_trends_cited_ids,
-                    state.general_history_cited_ids,
-                    state.general_risks_cited_ids,
-                    state.general_encounters_cited_ids,
-                    state.general_deepdive_cited_ids
+                    state.general_history_cited_ids,  # Now stores encounters citations
+                    state.general_risks_cited_ids
                 ]:
                     if cited_ids:
                         all_cited_chunk_ids.update(cited_ids)
@@ -3311,29 +3219,18 @@ Keep queries concise and medically precise.
                             "icon": "trending-up",
                             "color": "green"
                         },
-                        "history": {
-                            "title": "Past Medical History",
-                            "content": (general_results.get("history") or "Content generation failed").strip() or "Content generation failed",
-                            "icon": "calendar",
-                            "color": "orange"
+                        "encounters": {
+                            "title": "Senaste vårdtillfällen" if state.user_language == "sv" else "Recent Encounters",
+                            "content": (general_results.get("encounters") or "No encounters documented").strip() or "No encounters documented",
+                            "structured_data": state.general_encounters_structured or [],
+                            "icon": "file-text",
+                            "color": "indigo"
                         },
                         "risks": {
                             "title": "Risks & Alerts",
                             "content": (general_results.get("risks") or "Content generation failed").strip() or "Content generation failed",
                             "icon": "alert-triangle",
                             "color": "yellow"
-                        },
-                        "encounters": {
-                            "title": "Recent Care",
-                            "content": (general_results.get("encounters") or "Content generation failed").strip() or "Content generation failed",
-                            "icon": "file-text",
-                            "color": "indigo"
-                        },
-                        "deepdive": {
-                            "title": "Deep Dive",
-                            "content": (general_results.get("deepdive") or "Content generation failed").strip() or "Content generation failed",
-                            "icon": "archive",
-                            "color": "gray"
                         }
                     }
                 }
@@ -3361,10 +3258,8 @@ Keep queries concise and medically precise.
                         "problems": {"title": "Active Problems", "content": "Error generating content", "icon": "alert-circle", "color": "red"},
                         "medications": {"title": "Medications", "content": "Error generating content", "icon": "pill", "color": "purple"},
                         "trends": {"title": "Lab & Vital Trends", "content": "Error generating content", "icon": "trending-up", "color": "green"},
-                        "history": {"title": "Past Medical History", "content": "Error generating content", "icon": "calendar", "color": "orange"},
-                        "risks": {"title": "Risks & Alerts", "content": "Error generating content", "icon": "alert-triangle", "color": "yellow"},
-                        "encounters": {"title": "Recent Care", "content": "Error generating content", "icon": "file-text", "color": "indigo"},
-                        "deepdive": {"title": "Deep Dive", "content": "Error generating content", "icon": "archive", "color": "gray"}
+                        "encounters": {"title": "Senaste vårdtillfällen" if state.user_language == "sv" else "Recent Encounters", "content": "Error generating content", "structured_data": [], "icon": "file-text", "color": "indigo"},
+                        "risks": {"title": "Risks & Alerts", "content": "Error generating content", "icon": "alert-triangle", "color": "yellow"}
                     }
                 }
                 state.llm_response = ChatMessage(
@@ -5445,19 +5340,15 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_node("retrieve_problems_chunks", retrieve_problems_chunks)
         _builder.add_node("retrieve_medications_chunks", retrieve_medications_chunks)
         _builder.add_node("retrieve_trends_chunks", retrieve_trends_chunks)
-        _builder.add_node("retrieve_history_chunks", retrieve_history_chunks)
+        _builder.add_node("retrieve_history_chunks", retrieve_history_chunks)  # Now used for encounters
         _builder.add_node("retrieve_risks_chunks", retrieve_risks_chunks)
-        _builder.add_node("retrieve_encounters_chunks", retrieve_encounters_chunks)
-        _builder.add_node("retrieve_deepdive_chunks", retrieve_deepdive_chunks)
         # General summary parallel generation nodes
         _builder.add_node("generate_snapshot_summary", generate_snapshot_summary)
         _builder.add_node("generate_problems_summary", generate_problems_summary)
         _builder.add_node("generate_medications_summary", generate_medications_summary)
         _builder.add_node("generate_trends_summary", generate_trends_summary)
-        _builder.add_node("generate_history_summary", generate_history_summary)
+        _builder.add_node("generate_history_summary", generate_history_summary)  # Now generates encounters with JSON
         _builder.add_node("generate_risks_summary", generate_risks_summary)
-        _builder.add_node("generate_encounters_summary", generate_encounters_summary)
-        _builder.add_node("generate_deepdive_summary", generate_deepdive_summary)
         _builder.add_node("merge_general_summary_results", merge_general_summary_results)
         _builder.add_node("general_summary_parallel_dispatcher", general_summary_parallel_dispatcher)
         # Focused summary flow nodes
@@ -5580,13 +5471,9 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_edge("retrieve_history_chunks", "generate_history_summary")
         _builder.add_edge("generate_history_summary", "retrieve_risks_chunks")
         _builder.add_edge("retrieve_risks_chunks", "generate_risks_summary")
-        _builder.add_edge("generate_risks_summary", "retrieve_encounters_chunks")
-        _builder.add_edge("retrieve_encounters_chunks", "generate_encounters_summary")
-        _builder.add_edge("generate_encounters_summary", "retrieve_deepdive_chunks")
-        _builder.add_edge("retrieve_deepdive_chunks", "generate_deepdive_summary")
 
         # Final generation node goes to merge
-        _builder.add_edge("generate_deepdive_summary", "merge_general_summary_results")
+        _builder.add_edge("generate_risks_summary", "merge_general_summary_results")
 
         # General summary merge to store response
         _builder.add_edge("merge_general_summary_results", "store_assistant_response")

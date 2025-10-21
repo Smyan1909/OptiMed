@@ -1178,10 +1178,12 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                       problems: parsedContent.components.problems?.content || undefined,
                       medications: parsedContent.components.medications?.content || undefined,
                       trends: parsedContent.components.trends?.content || undefined,
-                      history: parsedContent.components.history?.content || undefined,
-                      risks: parsedContent.components.risks?.content || undefined,
-                      encounters: parsedContent.components.encounters?.content || undefined,
-                      deepdive: parsedContent.components.deepdive?.content || undefined
+                      // For encounters, pass the full object with structured_data for clickable encounters
+                      encounters: parsedContent.components.encounters ? {
+                        content: parsedContent.components.encounters.content || '',
+                        structured_data: parsedContent.components.encounters.structured_data || []
+                      } : undefined,
+                      risks: parsedContent.components.risks?.content || undefined
                     };
                     // Clear the content so we don't display the raw JSON
                     formattedMessage.text = '';
@@ -1388,10 +1390,12 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
                 problems: parsedContent.components.problems?.content || undefined,
                 medications: parsedContent.components.medications?.content || undefined,
                 trends: parsedContent.components.trends?.content || undefined,
-                history: parsedContent.components.history?.content || undefined,
-                risks: parsedContent.components.risks?.content || undefined,
-                encounters: parsedContent.components.encounters?.content || undefined,
-                deepdive: parsedContent.components.deepdive?.content || undefined
+                // For encounters, pass the full object with structured_data for clickable encounters
+                encounters: parsedContent.components.encounters ? {
+                  content: parsedContent.components.encounters.content || '',
+                  structured_data: parsedContent.components.encounters.structured_data || []
+                } : undefined,
+                risks: parsedContent.components.risks?.content || undefined
               };
               // Clear the text so we don't display the raw JSON
               messageText = '';

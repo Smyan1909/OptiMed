@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MarkdownWithCitations } from './MarkdownWithCitations';
+import { EncountersCardContent } from './EncountersCardContent';
+import { EncounterDetailModal } from './EncounterDetailModal';
 import type { Citation } from './CitationModal';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -12,8 +14,7 @@ import {
   TrendingUp,
   Calendar,
   AlertTriangle,
-  FileText,
-  Archive
+  FileText
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useLookup } from '@/hooks/useLookup';
@@ -27,15 +28,25 @@ const formatNumbersInText = (text: string): string => {
   });
 };
 
+interface EncounterDetail {
+  id: string;
+  date: string;
+  encounter_type: string;
+  category: 'major' | 'minor';
+  brief: string;
+  detailed: string;
+}
+
 interface GeneralSummaryResults {
   snapshot?: string;
   problems?: string;
   medications?: string;
   trends?: string;
-  history?: string;
+  encounters?: {
+    content: string;
+    structured_data?: EncounterDetail[];
+  } | string;  // Support both old string format and new object format
   risks?: string;
-  encounters?: string;
-  deepdive?: string;
 }
 
 interface GeneralSummaryCardsProps {
@@ -209,14 +220,6 @@ const getSummaryConfig = (component: keyof GeneralSummaryResults, t: any) => {
       iconColor: 'text-indigo-600',
       badgeColor: 'bg-indigo-100 text-indigo-800',
       description: t('cards.encounters.description')
-    },
-    deepdive: {
-      title: t('cards.deepdive.title'),
-      icon: Archive,
-      color: 'bg-gray-50 border-gray-200',
-      iconColor: 'text-gray-600',
-      badgeColor: 'bg-gray-100 text-gray-800',
-      description: t('cards.deepdive.description')
     }
   };
   return configs[component];
@@ -232,34 +235,32 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
   citations = {}
 }) => {
   const t = useTranslations('generalSummary');
+  const [selectedEncounter, setSelectedEncounter] = useState<EncounterDetail | null>(null);
+
   // Create separate lookup hooks for each card to avoid conflicts
   const snapshotLookup = useLookup({ patientId, sessionId });
   const problemsLookup = useLookup({ patientId, sessionId });
   const medicationsLookup = useLookup({ patientId, sessionId });
   const trendsLookup = useLookup({ patientId, sessionId });
-  const historyLookup = useLookup({ patientId, sessionId });
-  const risksLookup = useLookup({ patientId, sessionId });
   const encountersLookup = useLookup({ patientId, sessionId });
-  const deepdiveLookup = useLookup({ patientId, sessionId });
+  const risksLookup = useLookup({ patientId, sessionId });
 
   const lookupMap = {
     snapshot: snapshotLookup,
     problems: problemsLookup,
     medications: medicationsLookup,
     trends: trendsLookup,
-    history: historyLookup,
-    risks: risksLookup,
     encounters: encountersLookup,
-    deepdive: deepdiveLookup,
+    risks: risksLookup,
   };
 
   if (!summaryResults || Object.keys(summaryResults).length === 0) {
     return null;
   }
 
-  // Grid cards (Cards 1-6)
+  // Grid cards (Cards 1-5)
   const gridComponents: (keyof GeneralSummaryResults)[] = [
-    'snapshot', 'problems', 'medications', 'trends', 'history', 'risks'
+    'snapshot', 'problems', 'medications', 'trends', 'risks'
   ];
 
   return (
@@ -278,7 +279,10 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
           const config = getSummaryConfig(component, t);
           const Icon = config.icon;
           const content = summaryResults[component];
-          const hasContent = content && content.trim() !== '';
+          const hasContent =
+            typeof content === 'string'
+              ? content.trim() !== ''
+              : content && typeof content === 'object' && 'content' in content && content.content.trim() !== '';
 
           return (
             <Card
@@ -309,7 +313,13 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
                   </div>
                 ) : hasContent ? (
                   <SummaryCardContent
-                    content={content}
+                    content={
+                      typeof content === 'string'
+                        ? content
+                        : content && typeof content === 'object' && 'content' in content
+                          ? content.content
+                          : ''
+                    }
                     lookup={lookupMap[component]}
                     isLoading={isLoading}
                     component={component}
@@ -330,8 +340,14 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
         })}
       </div>
 
-      {/* Card 7: Recent Care (Full width narrative block) */}
-      {summaryResults.encounters && (
+      {/* Card 6: Recent Encounters (Full width, clickable) */}
+      {(() => {
+        const encounters = summaryResults.encounters;
+        const hasEncounters = typeof encounters === 'string'
+          ? encounters.trim() !== ''
+          : encounters && typeof encounters === 'object' && 'content' in encounters && encounters.content.trim() !== '';
+
+        return hasEncounters && (
         <Card className="border-2 bg-indigo-50 border-indigo-200 hover:shadow-lg transition-all duration-200 w-full">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center justify-between mb-2">
@@ -340,57 +356,29 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
                 <span className="font-bold text-gray-900 text-lg">{t('cards.encounters.title')}</span>
               </div>
               <Badge className="text-xs font-semibold bg-indigo-100 text-indigo-800">
-                {summaryResults.encounters && summaryResults.encounters.trim() !== '' ? t('complete') : t('pending')}
+                {t('complete')}
               </Badge>
             </CardTitle>
             <p className="text-xs text-gray-500 leading-tight">{t('cards.encounters.description')}</p>
           </CardHeader>
 
-          <CardContent className="pt-0">
-            <SummaryCardContent
-              content={summaryResults.encounters}
-              lookup={encountersLookup}
-              isLoading={isLoading}
-              component="encounters"
-              patientId={patientId}
-              sessionId={sessionId}
+          <CardContent className="pt-0 p-2">
+            <EncountersCardContent
+              encountersData={summaryResults.encounters}
+              onEncounterClick={setSelectedEncounter}
               citations={citations}
             />
           </CardContent>
         </Card>
-      )}
+        );
+      })()}
 
-      {/* Card 8: Deep Dive (Full width, larger, centered) */}
-      {summaryResults.deepdive && (
-        <Card className="border-2 bg-gray-50 border-gray-200 hover:shadow-lg transition-all duration-200 w-full min-h-[500px]">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-3">
-                <Archive className="h-7 w-7 text-gray-600" />
-                <span className="font-bold text-gray-900 text-xl">{t('cards.deepdive.title')}</span>
-              </div>
-              <Badge className="text-xs font-semibold bg-gray-100 text-gray-800">
-                {summaryResults.deepdive && summaryResults.deepdive.trim() !== '' ? t('complete') : t('pending')}
-              </Badge>
-            </CardTitle>
-            <p className="text-sm text-gray-500 leading-tight">
-              {t('cards.deepdive.description')}
-            </p>
-          </CardHeader>
-
-          <CardContent className="pt-0">
-            <SummaryCardContent
-              content={summaryResults.deepdive}
-              lookup={deepdiveLookup}
-              isLoading={isLoading}
-              component="deepdive"
-              patientId={patientId}
-              sessionId={sessionId}
-              citations={citations}
-            />
-          </CardContent>
-        </Card>
-      )}
+      {/* Encounter Detail Modal */}
+      <EncounterDetailModal
+        encounter={selectedEncounter}
+        onClose={() => setSelectedEncounter(null)}
+        citations={citations}
+      />
 
       {(reasoning || (reasoningSteps && reasoningSteps.length > 0)) && (
         <div className="mt-6">

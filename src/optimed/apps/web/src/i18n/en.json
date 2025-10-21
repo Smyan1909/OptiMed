@@ -511,23 +511,24 @@
         "title": "Lab & Vital Trends",
         "description": "Recent lab values and vital signs"
       },
-      "history": {
-        "title": "Past Medical History",
-        "description": "Major surgeries and hospitalizations"
+      "encounters": {
+        "title": "Recent Encounters",
+        "description": "Recent hospital visits and care encounters (major and minor). Click for details."
       },
       "risks": {
         "title": "Risks & Alerts",
         "description": "Allergies, fall risk, and clinical alerts"
-      },
-      "encounters": {
-        "title": "Recent Care",
-        "description": "Narrative summary of recent encounters"
-      },
-      "deepdive": {
-        "title": "Deep Dive",
-        "description": "Detailed clinical information: hospital admissions, imaging reports, and specialist consultations"
       }
-    }
+    },
+    "majorEncounters": "Major Encounters",
+    "minorEncounters": "Minor Encounters"
+  },
+  "encountersCard":{
+    "detailSummary": "Detailed Summary",
+    "minorEncounter": "Minor Encounter",
+    "majorEncounter": "Major Encounter",
+    "note": "Note",
+    "disclaimer": "This information is extracted from patient records. Click citations to view source documents."
   },
   "templateManagement": {
     "noteTemplates": "Note Templates",

@@ -511,23 +511,24 @@
         "title": "Lab- och vitaltrender",
         "description": "Senaste laboratorievärden och vitalparametrar"
       },
-      "history": {
-        "title": "Tidigare sjukhistoria",
-        "description": "Större operationer och sjukhusvistelser"
+      "encounters": {
+        "title": "Senaste vårdtillfällen",
+        "description": "Senaste vårdbesök och vårdkontakter (större och mindre). Klicka för detaljer."
       },
       "risks": {
         "title": "Risker och varningar",
         "description": "Allergier, fallrisk och kliniska varningar"
-      },
-      "encounters": {
-        "title": "Senaste vård",
-        "description": "Berättande sammanfattning av senaste vårdkontakter"
-      },
-      "deepdive": {
-        "title": "Djupdykning",
-        "description": "Detaljerad klinisk information: sjukhusvistelser, röntgensvar och specialistutlåtanden"
       }
-    }
+    },
+    "majorEncounters": "Större Vårdkontakter",
+    "minorEncounters": "Mindre Vårdkontakter"
+  },
+  "encountersCard":{
+    "detailSummary": "Detaljerad Sammanfattning",
+    "minorEncounter": "Mindre Vårdkontakt",
+    "majorEncounter": "Större Vårdkontakt",
+    "note": "Notera",
+    "disclaimer": "Denna information är hämtad från patientjournaler. Klicka på referenser för att visa källdokument."
   },
   "templateManagement": {
     "noteTemplates": "Anteckningsmallar",
