@@ -41,17 +41,17 @@ class LLMZeroShotClassifier:
 
         # Intent descriptions for the LLM prompt
         self._intent_descriptions = {
-            "focused_summary": "Summary of a specific medical condition, organ system, or disease (e.g., 'summarize heart condition', 'kidney disease status')",
-            "general_summary": "Complete overview of the entire patient status across all conditions (e.g., 'summarize this patient', 'overall patient summary')",
-            "discharge_summary": "Hospital discharge documentation and planning (e.g., 'generate discharge summary', 'discharge note')",
-            "timeline": "Chronological sequence of clinical events over time (e.g., 'when did events happen?', 'show timeline', 'history of hospitalizations')",
-            "sbar_handoff": "SBAR structured handoff communication for shift changes (e.g., 'SBAR report', 'handoff summary', 'sign-out')",
-            "lookup": "Looking up a single specific data value or measurement (e.g., 'what is blood pressure?', 'latest creatinine', 'current heart rate')",
-            "note_generation": "Creating new clinical documentation like progress notes, SOAP notes (e.g., 'write a progress note', 'create SOAP note', 'draft consultation note')",
-            "temporal-trend": "How values or conditions have changed over time, trends (e.g., 'how has creatinine changed?', 'show glucose trend', 'progression over time')",
-            "comparative": "Comparing or contrasting multiple options, treatments, medications (e.g., 'compare lisinopril vs losartan', 'difference between options', 'which is better')",
-            "reasoning": "Explaining why something occurred, cause, etiology, differential diagnosis (e.g., 'why does patient have fever?', 'what caused hyponatremia?', 'reason for elevation')",
-            "guideline": "Treatment protocols, clinical guidelines, how to manage conditions (e.g., 'how to treat hypertension?', 'guideline recommendations', 'management protocol')",
+            "lookup": "Looking up specific patient data values or measurements from the current patient's record (e.g., 'what is the patient's blood pressure?', 'latest creatinine for this patient', 'current heart rate', 'what medications are the patient on?')",
+            "general": "General medical knowledge questions not specific to the current patient - asking about medications, diseases, or medical concepts in general (e.g., 'what is metformin used for?', 'tell me about oxybutynin', 'what are the side effects of this drug?', 'what is diabetes?')",
+            "focused_summary": "Summary of a specific aspect of the current patient's condition - focusing on one organ system, disease, or clinical area from their medical record (e.g., 'summarize this patient's heart condition', 'kidney disease status for this patient', 'respiratory history')",
+            "general_summary": "Complete overview of the entire current patient's status across all conditions and systems (e.g., 'summarize this patient', 'overall patient summary', 'give me the full picture of this patient')",
+            "temporal-trend": "How the current patient's values or conditions have changed over time in their medical record (e.g., 'how has this patient's creatinine changed?', 'show glucose trend', 'progression over time for this patient')",
+            "comparative": "Comparing or contrasting multiple medical options, treatments, or medications in general (not patient-specific comparison) (e.g., 'compare lisinopril vs losartan', 'difference between ACE inhibitors and ARBs', 'which medication is better for hypertension')",
+            "guideline": "Treatment protocols, clinical guidelines, or how to manage medical conditions in general (e.g., 'how to treat hypertension?', 'guideline recommendations for diabetes', 'management protocol for sepsis')",
+            "timeline": "Chronological sequence of clinical events over time from the current patient's medical record (e.g., 'when did events happen for this patient?', 'show timeline of hospitalizations', 'chronology of this patient's treatment')",
+            "sbar_handoff": "SBAR structured handoff communication for shift changes for the current patient (e.g., 'SBAR report', 'handoff summary', 'sign-out for this patient')",
+            "note_generation": "Creating new clinical documentation like progress notes or SOAP notes for the current patient (e.g., 'write a progress note', 'create SOAP note', 'draft consultation note for this patient')",
+            "discharge_summary": "Hospital discharge documentation and planning for the current patient (e.g., 'generate discharge summary', 'discharge note', 'discharge plan for this patient')",
         }
 
         logger.info("Initialized LLM-based ZeroShot Classifier")
@@ -87,7 +87,7 @@ User Query: "{query}"
 
 Analyze the query carefully and determine which single intent category best matches it. Consider:
 - The primary goal of the query
-- Whether it asks for a summary (general vs focused), a specific value (lookup), a trend, a comparison, etc.
+- Whether it asks for a summary (general vs focused), a specific value (lookup), a trend, a comparison, a general question etc.
 - Medical context and terminology
 
 Respond with ONLY the intent label (e.g., "focused_summary"), nothing else. Do not provide explanations."""

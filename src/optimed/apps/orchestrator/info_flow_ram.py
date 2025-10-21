@@ -256,6 +256,9 @@ class FlowState(BaseModel):
     focused_aspect: Optional[str] = None  # e.g., "heart disease", "lung history"
     focused_aspect_icon: Optional[str] = None  # Icon for the aspect
 
+    # General knowledge flow fields (medical knowledge, not patient-specific)
+    is_general_knowledge_flow: bool = False
+
     # Separate fields for each focused summary component to avoid concurrent updates
     focused_diagnoses_chunks: Optional[List[Dict[str, Any]]] = None
     focused_events_chunks: Optional[List[Dict[str, Any]]] = None
@@ -4575,6 +4578,163 @@ Generate the content for "{field_label}" section now:"""
 
         # ==================== END NOTE GENERATION FLOW NODES ====================
 
+        @streaming_step("handle_general_knowledge_query")
+        async def handle_general_knowledge_query(state: FlowState) -> FlowState:
+            """
+            Handle general medical knowledge queries (not patient-specific).
+            Uses ONLY web search for information, no patient data retrieval.
+            """
+            logger.info("🌐 Starting general knowledge query handling (web-only)")
+            logger.info(f"🔍 Query: {state.user_prompt[:100]}...")
+
+            try:
+                # Force web search for general medical knowledge
+                logger.info("📡 Performing web search for general medical knowledge...")
+
+                # Detect language
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "en"
+
+                # Perform web search
+                search_response = await self._web_search.search(
+                    query=state.user_prompt,
+                    max_results=8,
+                    patient_context=None,  # No patient data for GDPR compliance
+                    search_intent="clinical_information",
+                    target_language=(active_lang if active_lang and active_lang != "en" else None)
+                )
+
+                state.web_search_response = search_response
+                state.web_search_performed = True
+
+                logger.info(f"✓ Found {len(search_response.results)} web results")
+
+                # Generate response using ONLY web sources (no patient data chunks)
+                logger.info("💬 Generating response from web sources only...")
+
+                # System message for general knowledge
+                general_knowledge_system_msg = ChatMessage(
+                    role=ChatRole.SYSTEM,
+                    content="""You are CLARA, a medical information assistant providing general medical knowledge.
+
+You are answering a GENERAL medical knowledge question (not about a specific patient). Use the provided web sources to answer accurately.
+
+**CRITICAL - RESPONSE FORMAT**:
+- Organize response with `##` headers to divide sections
+- **1-4 sections depending on need**, with **up to 10 bullet points per section**
+- **10-15 words per bullet point** - be extremely concise
+- Use bullet points (`-`) for all information, no long paragraphs
+- Each bullet must be a single, focused fact with citation
+- **DO NOT include any reasoning preamble** - provide ONLY the direct answer
+- **DO NOT explain your thinking process** - just answer the question directly
+
+**CITATION POLICY**:
+- **MANDATORY**: You MUST cite web sources using format: [Source Title](URL)
+- Include at least 2-3 web citations in your answer
+- Place citation at the end of each bullet point that uses information from that source
+- Example: "Metformin reduces HbA1c by 1-2% on average [Clinical Guidelines](https://example.com)"
+
+**CRITICAL**: Use **bold** markdown formatting to highlight important medical terms:
+- **Medications** and doses (e.g., **Metformin 500mg**, **Oxybutynin 5mg**)
+- **Diagnoses** and conditions (e.g., **Type 2 Diabetes**, **Overactive Bladder**)
+- **Indications** and uses (e.g., **blood glucose control**, **urge incontinence**)
+- **Side effects** (e.g., **dry mouth**, **constipation**, **dizziness**)
+- **Key clinical terms** (e.g., **contraindications**, **mechanism of action**)
+
+**Important**: This is a general medical knowledge question, NOT about a specific patient. Provide educational information, not patient-specific advice."""
+                )
+
+                messages = [general_knowledge_system_msg]
+
+                # Language policy
+                language_system_msg = self._get_language_policy_message(state)
+                messages.insert(0, language_system_msg)
+
+                # Add chat history if available (limited) - extract text only from JSON responses
+                current_history = state.chat_history[-5:] if state.chat_history else []
+                if current_history:
+                    for msg in current_history:
+                        if msg.content and msg.content.strip():
+                            # Extract plain text content (handle JSON responses from previous queries)
+                            content = msg.content
+                            try:
+                                # Try to parse as JSON - if it's a structured response, extract the content field
+                                import json
+                                parsed = json.loads(content)
+                                if isinstance(parsed, dict) and 'content' in parsed:
+                                    content = parsed['content']
+                                elif isinstance(parsed, dict) and 'type' in parsed:
+                                    # Skip structured responses like generated_note, timeline, etc.
+                                    logger.info(f"Skipping structured response of type: {parsed.get('type')}")
+                                    continue
+                            except (json.JSONDecodeError, TypeError):
+                                # Not JSON, use as-is
+                                pass
+
+                            # Create clean message with only text content
+                            clean_msg = ChatMessage(
+                                role=msg.role,
+                                content=str(content)[:500],  # Truncate long messages
+                                user_id=None,
+                                user_role=None,
+                                metadata={}
+                            )
+                            messages.append(clean_msg)
+
+                # Add web search results
+                if search_response and search_response.results:
+                    sources_list = []
+                    for i, result in enumerate(search_response.results[:5], 1):
+                        sources_list.append(f"{i}. [{result.title}]({result.url})\n   - {result.snippet[:200]}...")
+
+                    web_info = ChatMessage(
+                        role=ChatRole.USER,
+                        content=f"""=== WEB SEARCH RESULTS FOR: '{state.user_prompt}' ===
+
+SEARCH SUMMARY: {search_response.summary}
+
+SOURCES TO CITE IN YOUR RESPONSE:
+{chr(10).join(sources_list)}
+
+INSTRUCTION: You MUST cite these sources in your response using the format [Source Title](URL).
+- Use format: "Information here [Source Title](URL)" in each bullet point
+- Include at least 2-3 web citations in your answer
+- Remember: Maximum 10 bullet points, 10-15 words per bullet
+- This is general medical knowledge, NOT patient-specific information
+
+=== END OF WEB SEARCH RESULTS ===""")
+                    messages.append(web_info)
+
+                # Add user query
+                user_msg = ChatMessage(
+                    role=ChatRole.USER,
+                    content=state.user_prompt,
+                    user_id=state.user_id,
+                    user_role=state.user_context.role if state.user_context else None,
+                )
+                messages.append(user_msg)
+
+                # Generate response using LLM (simple non-streaming for general knowledge)
+                logger.info("🤖 Calling LLM for general knowledge response...")
+                response = await self._llm.chat(messages=messages)
+
+                state.llm_response = response
+                logger.info(f"✓ Generated response: {len(response.content)} chars")
+
+            except Exception as e:
+                log_error(logger, "handle_general_knowledge_query", e)
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                # Fallback: simple error message
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content="I encountered an error while searching for general medical information. Please try again."
+                )
+
+            return state
+
         @streaming_step("provide_information")
         async def provide_information(state: FlowState) -> FlowState:
             logger.info("🎯 Starting information provision")
@@ -5239,6 +5399,10 @@ Return ONLY the reformulated query, nothing else."""
                 state.is_focused_summary_flow = (label == "focused_summary")
                 logger.info(f"Focused summary flow (classifier): {state.is_focused_summary_flow}")
 
+                # General knowledge flow is triggered by "general" classification (medical knowledge, not patient-specific)
+                state.is_general_knowledge_flow = (label == "general")
+                logger.info(f"General knowledge flow (classifier): {state.is_general_knowledge_flow}")
+
                 # Determine if this should use Timeline flow (temporal sequence queries)
                 timeline_query_types = ["timeline", "temporal-trend"]
                 state.is_timeline_flow = label in timeline_query_types
@@ -5246,6 +5410,7 @@ Return ONLY the reformulated query, nothing else."""
                 logger.info(f"Timeline flow: {state.is_timeline_flow}")
 
                 # Override DIRECT routing if any specialized flow is detected
+                # NOTE: general_knowledge_flow is NOT included here - it should skip patient processing
                 if state.is_sbar_flow or state.is_timeline_flow or state.is_general_summary_flow or state.is_focused_summary_flow:
                     state.requires_full_processing = True
                     logger.info(f"⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, General Summary: {state.is_general_summary_flow}, Focused Summary: {state.is_focused_summary_flow}, Timeline: {state.is_timeline_flow})")
@@ -5274,6 +5439,7 @@ Return ONLY the reformulated query, nothing else."""
                 state.is_note_generation_flow = False
                 state.is_general_summary_flow = False
                 state.is_focused_summary_flow = False
+                state.is_general_knowledge_flow = False
 
             return state
 
@@ -5391,6 +5557,7 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_node("generate_note_section", generate_note_section)
         _builder.add_node("format_note_response", format_note_response)
         _builder.add_node("store_note_metadata", store_note_metadata)
+        _builder.add_node("handle_general_knowledge_query", handle_general_knowledge_query)  # General knowledge (web-only) node
         _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
         _builder.add_node("perform_web_search", perform_web_search)
         _builder.add_node("provide_information", provide_information)
@@ -5404,13 +5571,31 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_edge("contextualize_query_for_classification", "classify_query_intent")
         _builder.add_edge("classify_query_intent", "store_user_message")
         _builder.add_edge("store_user_message", "load_current_session_history")
-        # Branch based on query complexity
+
+        # Route after loading session history: check for general knowledge, full processing, or direct path
+        def route_after_session_history(state):
+            """Route based on query type: general knowledge, full processing, or direct."""
+            is_general = getattr(state, 'is_general_knowledge_flow', False)
+            needs_full = getattr(state, 'requires_full_processing', True)
+
+            if is_general:
+                logger.info("🌐 Routing to general knowledge handler (web-only)")
+                return "handle_general_knowledge_query"
+            elif needs_full:
+                logger.info("📊 Routing to full processing (patient data)")
+                return "check_patient"
+            else:
+                logger.info("⚡ Routing to direct simple answer")
+                return "provide_information"
+
+        # Branch based on query classification and complexity
         _builder.add_conditional_edges(
             "load_current_session_history",
-            requires_full_processing,
+            route_after_session_history,
             {
-                True: "check_patient",    # Full processing starts with session history
-                False: "provide_information"                        # Direct path - skip all heavy processing
+                "handle_general_knowledge_query": "handle_general_knowledge_query",  # General knowledge (web-only)
+                "check_patient": "check_patient",    # Full processing starts with patient data
+                "provide_information": "provide_information"  # Direct path - skip all heavy processing
             }
         )
 
@@ -5576,9 +5761,10 @@ Return ONLY the reformulated query, nothing else."""
         )
 
         # Agentic refinement: loop back to intelligent_retrieve_chunks if needed
-        
+
 
         _builder.add_edge("perform_web_search", "provide_information")
+        _builder.add_edge("handle_general_knowledge_query", "store_assistant_response")  # General knowledge → store response
         _builder.add_edge("provide_information", "store_assistant_response")
         _builder.add_edge("store_assistant_response", END)
 
