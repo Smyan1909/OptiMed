@@ -4440,6 +4440,8 @@ Generate content for each section separately with only the necessary clinical fa
                                 "type": "status",
                                 "step": "generate_note_section",
                                 "description": f"Generating section {i+1}/{len(fields)}: {field_label}",
+                        "status": "in_progress",
+                        "progress": 0,
                                 "status": "in_progress",
                                 "progress": state.progress_percentage,
                                 "timestamp": datetime.now().isoformat()
@@ -4592,6 +4594,19 @@ Generate the content for "{field_label}" section now:"""
                 state.current_step = "Searching Medical Sources"
                 state.step_details = "Searching trusted medical websites for current information..."
 
+                # Emit status update
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Searching Medical Sources",
+                        "description": "Searching trusted medical websites for current information...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
                 # Force web search for general medical knowledge
                 logger.info("📡 Performing web search for general medical knowledge...")
 
@@ -4601,6 +4616,17 @@ Generate the content for "{field_label}" section now:"""
                 except Exception:
                     active_lang = "en"
 
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Performing Web Search",
+                        "description": "Performing web search for trusted medical sources...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
                 # Perform web search
                 search_response = await self._web_search.search(
                     query=state.user_prompt,
@@ -4618,6 +4644,17 @@ Generate the content for "{field_label}" section now:"""
                 # Update status: Analyzing sources
                 state.current_step = "Analyzing Sources"
                 state.step_details = f"Reviewing {len(search_response.results)} medical sources for accurate information..."
+
+                # Emit status update
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Analyzing Sources",
+                        "description": f"Reviewing {len(search_response.results)} medical sources for accurate information...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
 
                 # Generate response using ONLY web sources (no patient data chunks)
                 logger.info("💬 Generating response from web sources only...")
@@ -4762,6 +4799,17 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 state.current_step = "Generating Response"
                 state.step_details = "AI synthesizing information from medical sources..."
 
+                # Emit status update
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Generating Response",
+                        "description": "AI synthesizing information from medical sources...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
                 # Check if streaming is requested
                 if getattr(state, 'should_stream_response', False):
                     logger.info("🚀 Starting simple streaming LLM call for general knowledge (no reasoning wrapper)")
@@ -4831,6 +4879,17 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
             state.current_step = "Preparing Context"
             state.step_details = "Setting up language and system instructions..."
 
+            # Emit status update
+            if hasattr(state, 'stream_callback') and state.stream_callback:
+                await state.stream_callback({
+                    "type": "status",
+                    "step": "Preparing Context",
+                    "description": "Setting up language and system instructions...",
+                    "status": "in_progress",
+                    "progress": 0,
+                    "timestamp": datetime.now().isoformat()
+                })
+
             # Use the single system message for information relay
             messages = [SYSTEM_MSG_INFO_RELAY]
 
@@ -4881,6 +4940,17 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
             # Update status: Loading conversation history
             state.current_step = "Loading History"
             state.step_details = f"Loading {len(state.chat_history)} previous messages from session..."
+
+            # Emit status update
+            if hasattr(state, 'stream_callback') and state.stream_callback:
+                await state.stream_callback({
+                    "type": "status",
+                    "step": "Loading History",
+                    "description": f"Loading {len(state.chat_history)} previous messages from session...",
+                    "status": "in_progress",
+                    "progress": 0,
+                    "timestamp": datetime.now().isoformat()
+                })
 
             current_history = state.chat_history[-15:]  # Recent current session history
             logger.info(f"💬 Chat history available: {len(state.chat_history)} total, {len(current_history)} recent")
@@ -5002,6 +5072,17 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                         state.current_step = "Retrieving Information"
                         state.step_details = "Searching patient records for relevant clinical data..."
 
+                        # Emit status update
+                        if hasattr(state, 'stream_callback') and state.stream_callback:
+                            await state.stream_callback({
+                                "type": "status",
+                                "step": "Retrieving Information",
+                                "description": "Searching patient records for relevant clinical data...",
+                                "status": "in_progress",
+                                "progress": 0,
+                                "timestamp": datetime.now().isoformat()
+                            })
+
                         logger.info("Direct path - running intelligent retrieval for patient context")
                         # Populate retrieval using the new intelligent retrieval within this node
                         await intelligent_retrieve_chunks(state)
@@ -5020,6 +5101,17 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                 # Update status: Processing clinical data
                 state.current_step = "Processing Clinical Data"
                 state.step_details = f"Analyzing {len(state.retrieved_chunks)} relevant clinical records..."
+
+                # Emit status update
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Processing Clinical Data",
+                        "description": f"Analyzing {len(state.retrieved_chunks)} relevant clinical records...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
 
                 logger.info(f"Adding {len(state.retrieved_chunks)} chunks to LLM context")
                 chunk_context = "Relevant clinical information"
@@ -5090,6 +5182,17 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                 state.current_step = "Integrating Web Sources"
                 state.step_details = f"Including {len(state.web_search_response.results)} external medical sources..."
 
+                # Emit status update
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Integrating Web Sources",
+                        "description": f"Including {len(state.web_search_response.results)} external medical sources...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
                 # Create a more detailed and instructional web search message
                 sources_list = []
                 for i, result in enumerate(state.web_search_response.results[:5], 1):
@@ -5145,6 +5248,17 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
             # Update status: Generating response
             state.current_step = "Generating Response"
             state.step_details = "AI model analyzing information and formulating answer..."
+
+            # Emit status update
+            if hasattr(state, 'stream_callback') and state.stream_callback:
+                await state.stream_callback({
+                    "type": "status",
+                    "step": "Generating Response",
+                    "description": "AI model analyzing information and formulating answer...",
+                    "status": "in_progress",
+                    "progress": 0,
+                    "timestamp": datetime.now().isoformat()
+                })
 
             if getattr(state, 'should_stream_response', False):
                 state.streaming_response = ""  # Reset streaming response
@@ -6676,6 +6790,8 @@ Content:
                                         "type": "status",
                                         "step": current_state.get("current_step", ""),
                                         "description": current_state.get("step_details", ""),  # Use auto-generated details
+                        "status": "in_progress",
+                        "progress": 0,
                                         "status": current_state.get("step_status", ""),
                                         "progress": current_state.get("progress_percentage", 0.0),
                                         "timestamp": datetime.now().isoformat()
@@ -6734,7 +6850,9 @@ Content:
                     completion_update = {
                         "type": "completion",
                         "status": "completed",
-                        "details": "Analysis complete",
+                        "description": "Analysis complete",
+                        "status": "in_progress",
+                        "progress": 0,
                         "progress": 100.0,
                         "timestamp": datetime.now().isoformat(),
                         "final_response": final_response_content
