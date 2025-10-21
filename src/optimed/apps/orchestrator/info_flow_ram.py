@@ -69,26 +69,27 @@ SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
 
                                     The primary users of this service are doctors and nurses.
 
-                                    General response guideline (apply only when helpful for the current question):
-                                    - Provide a thorough, well-developed answer while remaining concise (aim for 3–5 short sections).
+                                    **CRITICAL - RESPONSE FORMAT**:
+                                    - Organize response with `##` headers to divide sections
+                                    - **1-4 sections depending on need**, with **up to 10 bullet points per section**
+                                    - **10-15 words per bullet point** - be extremely concise
+                                    - Use bullet points (`-`) for all information, no long paragraphs
+                                    - Each bullet must be a single, focused fact with citation
+
+                                    General response guideline:
                                     - Use previous conversation history (between === lines) when relevant.
                                     - **Always output in valid GitHub-flavored Markdown** to ensure clean rendering in the application.
-                                    - **CRITICAL - DATE/TIME STAMPS**: Always include date and time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for ALL clinical information showing when data was recorded/measured/documented. This is essential for clinical decision-making.
-                                    - **CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms throughout your response:
+                                    - **DATE/TIME STAMPS**: Only include dates (YYYY-MM-DD or YYYY-MM-DD HH:MM) when referencing specific journal entries, documents, or when temporal context is essential for the query.
+                                    - **CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms:
                                         - **Diagnoses** and disease names (e.g., **Type 2 Diabetes**, **Hypertension**)
                                         - **Medications** and doses (e.g., **Metformin 1000mg**, **Enalapril 20mg**)
                                         - **Vital signs** and lab values (e.g., **BP 145/85**, **HbA1c 68 mmol/mol**, **eGFR 52**)
                                         - **Symptoms** and clinical findings (e.g., **chest pain**, **dyspnea**, **wheezing**)
                                         - **Risk levels** and severity descriptors (e.g., **moderate risk**, **stable**, **worsening**)
                                         - **Key clinical terms** that are important for decision-making
-                                        - **Dates** and temporal markers when clinically relevant (e.g., **2024-01-15**, **3 months ago**)
-                                    - Organize responses using appropriate Markdown structure:
-                                        - Use `#` for the main title, `##` for section titles, and `###` for subsections when needed.
-                                        - Use bullet points (`-`) or numbered lists (`1.`, `2.`) where appropriate.
-                                        - Use proper Markdown tables for structured data.
-                                        - Format all URLs as **clickable Markdown links** instead of showing raw URLs.
+                                    - Format all URLs as **clickable Markdown links**: [Link Text](URL)
+                                    - For web sources, use format: [Source Title](URL) immediately after the information
                                     - Do not escape Markdown unnecessarily; the final response must always render cleanly.
-                                    - When the user asks for a summary start by explaining the current situation and then provide the summary.
 
                                     Restrictions:
                                     - Provide information and education, **not** diagnostic conclusions or treatment recommendations.
@@ -792,7 +793,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 classification = getattr(state, 'query_classification', None)
 
                 # Force web search for general medical knowledge questions
-                factoid_classifications = ["guideline", "reasoning", "comparative"]
+                factoid_classifications = ["guideline", "general", "comparative"]
                 if classification in factoid_classifications:
                     logger.info(f"Factoid question detected ({classification}) - FORCING web search for credible sources")
                     state.web_search_performed = True
@@ -4593,9 +4594,16 @@ Generate the content for "{field_label}" section now:"""
             if not getattr(state, 'requires_full_processing', True):
                 simple_system_msg = ChatMessage(
                     role=ChatRole.SYSTEM,
-                    content="""You are CLARA, a helpful medical information assistant. Provide clear, accurate medical information. For general medical questions, draw on your medical knowledge. Keep responses concise and helpful.
+                    content="""You are CLARA, a helpful medical information assistant. Provide clear, accurate medical information. For general medical questions, draw on your medical knowledge.
 
-**CRITICAL - DATE/TIME STAMPS**: Always include date and time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for ALL clinical information. This is essential for doctors.
+**CRITICAL - RESPONSE FORMAT**:
+- Organize response with `##` headers to divide sections
+- **1-4 sections depending on need**, with **up to 10 bullet points per section**
+- **10-15 words per bullet point** - be extremely concise
+- Use bullet points (`-`) for all information, no long paragraphs
+- Each bullet must be a single, focused fact with citation
+
+**DATE/TIME STAMPS**: Only include dates (YYYY-MM-DD or YYYY-MM-DD HH:MM) when referencing specific journal entries, documents, or when temporal context is essential for the query.
 
 **CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms throughout your response:
 - **Diagnoses** and disease names (e.g., **Type 2 Diabetes**, **Hypertension**)
@@ -4608,6 +4616,7 @@ Generate the content for "{field_label}" section now:"""
 Link policy (STRICT for EHR): When referencing patient data from clinical information chunks, preserve the source links that are embedded in the chunk content:
 - For atomic data: Use the format "value [EHR Source](URL)" as it appears in the chunks
 - For narrative data: Include the "**Source:** [EHR Record](URL)" information from the chunks
+- For web sources: Use format [Source Title](URL) immediately after the information
 - If no source link is available, write "(from EHR, no link available)" immediately after the item
 - NEVER remove or modify existing source links - they are essential for clinical traceability
 """
@@ -4831,7 +4840,10 @@ SEARCH SUMMARY: {state.web_search_response.summary}
 SOURCES TO CITE IN YOUR RESPONSE:
 {chr(10).join(sources_list)}
 
-INSTRUCTION: You MUST cite these sources in your response using the format [Source Title](URL). Include at least 2-3 citations in your answer.
+INSTRUCTION: You MUST cite these sources in your response using the format [Source Title](URL).
+- Use format: "Information here [Source Title](URL)" in each bullet point
+- Include at least 2-3 web citations in your answer
+- Remember: Maximum 10 bullet points, 10-15 words per bullet
 
 === END OF WEB SEARCH RESULTS ===""")
                 messages.append(web_info)
@@ -5173,7 +5185,7 @@ Return ONLY the reformulated query, nothing else."""
                 # Use the LLM-based classifier (async)
                 classifier = self._zero_shot_classifier
                 label = await classifier.classify(query_to_classify, [
-                    "lookup", "temporal-trend", "comparative", "reasoning", "general_summary", "focused_summary", "sbar_handoff", "guideline", "timeline", "note_generation", "discharge_summary"
+                    "lookup", "temporal-trend", "comparative", "general", "general_summary", "focused_summary", "sbar_handoff", "guideline", "timeline", "note_generation", "discharge_summary"
                 ], llm_client=self._llm)
 
                 logger.info(f"Query classified as: {label}")
@@ -6109,8 +6121,8 @@ Content:
                 n_class = min(20, N_MAX)       # ~12–20
             elif label == "comparative":
                 n_class = min(28, N_MAX)       # ~18–28
-            elif label == "reasoning":
-                n_class = min(30, N_MAX)       # ~25–40, capped at 30
+            elif label == "general":
+                n_class = min(25, N_MAX)       # ~20–25 for general medical knowledge questions
             elif label in ("summary", "general_summary", "focused_summary"):
                 n_class = min(30, N_MAX)       # ~40–80, capped at 30
             elif label == "guideline":
