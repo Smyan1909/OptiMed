@@ -891,6 +891,37 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
   // Use propSessionId if provided, otherwise use generated sessionId
   const currentSessionId = propSessionId || sessionId;
 
+  // Load messages from localStorage on mount (GDPR-compliant client-side persistence)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && currentSessionId) {
+      const messagesKey = `chat_messages_${currentSessionId}`;
+      const storedMessages = localStorage.getItem(messagesKey);
+
+      if (storedMessages) {
+        try {
+          const parsedMessages = JSON.parse(storedMessages);
+          setMessages(parsedMessages);
+          logInfo(`[ChatBox] Loaded ${parsedMessages.length} messages from localStorage for session ${sanitizeSessionId(currentSessionId)}`);
+        } catch (error) {
+          logError('[ChatBox] Failed to parse stored messages', error as Error);
+        }
+      }
+    }
+  }, [currentSessionId]);
+
+  // Save messages to localStorage whenever they change (GDPR-compliant client-side persistence)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && currentSessionId && messages.length > 0) {
+      const messagesKey = `chat_messages_${currentSessionId}`;
+      try {
+        localStorage.setItem(messagesKey, JSON.stringify(messages));
+        logInfo(`[ChatBox] Saved ${messages.length} messages to localStorage for session ${sanitizeSessionId(currentSessionId)}`);
+      } catch (error) {
+        logError('[ChatBox] Failed to save messages to localStorage', error as Error);
+      }
+    }
+  }, [messages, currentSessionId]);
+
   // Debug effect to track PDF state changes
   useEffect(() => {
     logInfo(`[ChatBox] uploadedPDFs state changed - count: ${uploadedPDFs.length}, pdfs: ${uploadedPDFs.map(pdf => `${pdf.filename}(${pdf.status})`).join(', ')}`);
@@ -1017,11 +1048,38 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         sessionStartTime.current = now;
         localStorage.setItem(key, now.toString());
         logInfo(`[ChatBox] Created new session start time: ${new Date(now).toISOString()}`);
+
+        // NEW SESSION: Clear all documents, messages, and cleanup backend
+        logInfo('[ChatBox] New session detected - clearing all documents and messages');
+        setUploadedPDFs([]);
+        setUploadedXMLs([]);
+        setMessages([]);
+
+        // Clear messages from localStorage
+        const messagesKey = `chat_messages_${currentSessionId}`;
+        localStorage.removeItem(messagesKey);
+        logInfo('[ChatBox] Cleared messages from localStorage');
+
+        // Clean up old documents from backend auth session
+        const cleanup = async () => {
+          try {
+            logInfo('[ChatBox] Calling backend to cleanup old documents from auth session');
+            const result = await cleanupSessionDocuments();
+            logInfo(`[ChatBox] Backend cleanup complete: ${result.deleted_pdfs} PDFs, ${result.deleted_xmls} XMLs deleted`);
+          } catch (error) {
+            logError('[ChatBox] Backend cleanup failed', error as Error);
+            // Don't fail the session start if cleanup fails
+          }
+        };
+
+        cleanup();
       } else {
         // Session already exists (e.g., after page refresh), restore the time
         const storedTime = parseInt(existingTime, 10);
         sessionStartTime.current = storedTime;
         logInfo(`[ChatBox] Restored existing session start time: ${new Date(storedTime).toISOString()}`);
+        logInfo('[ChatBox] Page refresh detected - documents will be reloaded from backend');
+        // Don't clear documents - let loadPDFs/loadXMLs restore them
       }
 
       // Clean up old session start times (older than 7 days)
@@ -1036,43 +1094,28 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         }
       });
     }
-
-    setUploadedPDFs([]);
-    setUploadedXMLs([]);
-
-    // Clean up old documents from backend auth session
-    const cleanup = async () => {
-      try {
-        logInfo('[ChatBox] Calling backend to cleanup old documents from auth session');
-        const result = await cleanupSessionDocuments();
-        logInfo(`[ChatBox] Backend cleanup complete: ${result.deleted_pdfs} PDFs, ${result.deleted_xmls} XMLs deleted`);
-      } catch (error) {
-        logError('[ChatBox] Backend cleanup failed', error as Error);
-        // Don't fail the session start if cleanup fails
-      }
-    };
-
-    cleanup();
   }, [currentSessionId]);
 
-  // GDPR-compliant: No chat history loading to prevent PHI storage
+  // GDPR-compliant: Chat history now loaded from localStorage (client-side only)
+  // This useEffect loads documents but not messages (messages are loaded from localStorage above)
   useEffect(() => {
   const loadHistory = async () => {
     try {
-      logInfo(`[GDPR] Chat history loading disabled for session - sessionId: ${sanitizeSessionId(currentSessionId)}, patientId: ${sanitizePatientId(patientId || null)}`);
+      logInfo(`[GDPR] Chat history loaded from localStorage - sessionId: ${sanitizeSessionId(currentSessionId)}, patientId: ${sanitizePatientId(patientId || null)}`);
 
-      // GDPR Compliance: Do not load chat history with PHI
-      // Return empty messages array to maintain UI compatibility
-      const data = { messages: [], gdpr_compliant: true };
-      logInfo('🔍 [GDPR] No chat history loaded (compliant mode)');
+      // GDPR Compliance: Chat history is now stored in localStorage (client-side only)
+      // Messages are loaded from localStorage in a separate useEffect
+      // This function now only handles backend chat history API (which is disabled for GDPR)
 
-      // GDPR Compliance: Always use empty messages array
-      // Note: Chat history loading is disabled for GDPR compliance
-      logInfo('🔍 [GDPR] Chat history loading disabled - using empty messages array');
+      // Skip backend API call - we use localStorage instead
+      logInfo('🔍 [GDPR] Skipping backend chat history API - using localStorage instead');
+      return;
+
+      // The code below is kept for reference but never executed
       const response = await fetch('/api/chat-history', {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           patient_id: patientId,
           session_id: currentSessionId,
           mode: mode

@@ -197,14 +197,6 @@ const getSummaryConfig = (component: keyof GeneralSummaryResults, t: any) => {
       badgeColor: 'bg-green-100 text-green-800',
       description: t('cards.trends.description')
     },
-    history: {
-      title: t('cards.history.title'),
-      icon: Calendar,
-      color: 'bg-orange-50 border-orange-200',
-      iconColor: 'text-orange-600',
-      badgeColor: 'bg-orange-100 text-orange-800',
-      description: t('cards.history.description')
-    },
     risks: {
       title: t('cards.risks.title'),
       icon: AlertTriangle,
@@ -401,7 +393,7 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
 
           <CardContent className="pt-0 p-2">
             <EncountersCardContent
-              encountersData={summaryResults.encounters}
+              encountersData={summaryResults.encounters ?? ''}
               onEncounterClick={setSelectedEncounter}
               citations={citations}
             />
