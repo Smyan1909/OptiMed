@@ -258,9 +258,9 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
     return null;
   }
 
-  // Grid cards (Cards 1-5)
+  // Grid cards (Cards 1-4) - risks now full width
   const gridComponents: (keyof GeneralSummaryResults)[] = [
-    'snapshot', 'problems', 'medications', 'trends', 'risks'
+    'snapshot', 'problems', 'medications', 'trends'
   ];
 
   return (
@@ -273,7 +273,7 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
         </Badge>
       </div>
 
-      {/* Cards 1-6: Standard 2x3 grid */}
+      {/* Cards 1-4: Standard 2x2 grid */}
       <div className="grid gap-6 grid-cols-1 xl:grid-cols-2">
         {gridComponents.map((component) => {
           const config = getSummaryConfig(component, t);
@@ -339,6 +339,43 @@ export const GeneralSummaryCards: React.FC<GeneralSummaryCardsProps> = ({
           );
         })}
       </div>
+
+      {/* Card 5: Risks & Alerts (Full width) */}
+      {(() => {
+        const risks = summaryResults.risks;
+        const hasRisks = typeof risks === 'string' && risks.trim() !== '';
+        const config = getSummaryConfig('risks', t);
+        const Icon = config.icon;
+
+        return hasRisks && (
+        <Card className="border-2 bg-yellow-50 border-yellow-200 hover:shadow-lg transition-all duration-200 w-full">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-3">
+                <Icon className="h-6 w-6 text-yellow-600" />
+                <span className="font-bold text-gray-900 text-lg">{config.title}</span>
+              </div>
+              <Badge className="text-xs font-semibold bg-yellow-100 text-yellow-800">
+                {t('complete')}
+              </Badge>
+            </CardTitle>
+            <p className="text-xs text-gray-500 leading-tight">{config.description}</p>
+          </CardHeader>
+
+          <CardContent className="pt-0 p-2">
+            <SummaryCardContent
+              content={risks}
+              lookup={risksLookup}
+              isLoading={isLoading}
+              component="risks"
+              patientId={patientId}
+              sessionId={sessionId}
+              citations={citations}
+            />
+          </CardContent>
+        </Card>
+        );
+      })()}
 
       {/* Card 6: Recent Encounters (Full width, clickable) */}
       {(() => {

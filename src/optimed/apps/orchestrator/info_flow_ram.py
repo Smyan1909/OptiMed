@@ -2934,20 +2934,20 @@ CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JS
                 chunks = state.general_risks_chunks or []
 
                 prompt = f"""
-                List 5-7 critical alerts/risks - EXACTLY 6-12 words per bullet.
+                List 5-7 critical alerts/risks with CLEAR reasoning - EXACTLY 8-15 words per bullet.
 
                 USER QUERY: {state.user_prompt}
 
-                Format (SHORT phrases, 6-12 words ONLY):
-                • ⚠️ **Risk/Alert** - implication
+                Format (Use colon to separate risk from reason):
+                • ⚠️ **Risk**: Clear explanation of why this is a risk
 
-                Example (count the words - each is 6-12 words):
-                • ⚠️ **Penicillin allergy** - rash and angioedema (documented 2015-03-20) [1] (9 words)
-                • ⚠️ **Warfarin therapy** - **INR 2.5** bleeding risk (checked 2024-01-15 09:00) [2] (10 words)
-                • ⚠️ **Fall risk** - 3 falls last year uses walker (assessed 2024-01-10) [3] (12 words)
-                • ⚠️ **DNR documented** - patient wishes respected (signed 2023-11-15) [4] (8 words)
-                • ⚠️ **Renal impairment** - **eGFR 52** adjust meds (tested 2024-01-15 08:30) [5] (9 words)
-                • ⚠️ **Lives alone** - no regular support (noted 2024-01-05) [6] (9 words)
+                Example (each is 8-15 words):
+                • ⚠️ **Penicillin allergy**: History of rash and angioedema, documented 2015-03-20, avoid beta-lactams [1]
+                • ⚠️ **Warfarin therapy**: Current INR 2.5 increases bleeding risk during procedures (checked 2024-01-15 09:00) [2]
+                • ⚠️ **High fall risk**: Three falls in past year, uses walker, impaired mobility (assessed 2024-01-10) [3]
+                • ⚠️ **DNR status**: Advanced directive documented, resuscitation contraindicated (signed 2023-11-15) [4]
+                • ⚠️ **Renal impairment**: eGFR 52 mL/min requires medication dose adjustments (tested 2024-01-15 08:30) [5]
+                • ⚠️ **Lives alone**: No regular caregiver support, safety concerns for discharge planning (noted 2024-01-05) [6]
 
                 Add blank line between each bullet point for readability.
 
@@ -2955,16 +2955,18 @@ CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JS
                 "_Fråga om fler risker_" (Swedish) or "_Ask for more risks_" (English)
 
                 MANDATORY:
-                - Use **bold** markdown for risk/alert names and key values
+                - Use format: **Risk**: Reason (with colon separating risk from explanation)
+                - Use **bold** markdown for the risk name only (before the colon)
+                - Make the reason CLEAR and SPECIFIC - explain WHY it's a risk
                 - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when information was documented
-                - Each bullet MUST be between 6-12 words (excluding date and citation) - COUNT THEM
+                - Each bullet MUST be between 8-15 words (excluding citation) - COUNT THEM
                 - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-                CRITICAL: 5-7 most important alerts. 6-12 words each. Include dates. Blank lines between bullets. Use ⚠️ for visibility. Very scannable.
+                CRITICAL: 5-7 most important alerts. 8-15 words each. Clear risk-reason format. Include dates. Blank lines between bullets. Use ⚠️ for visibility. Very scannable.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 critical alerts. Use **bold** for risk/alert names and key values. Use ⚠️ marker. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 critical alerts using format **Risk**: Reason. Use **bold** only for risk name (before colon). Use ⚠️ marker. CRITICAL: Make reasoning CLEAR and SPECIFIC - explain WHY each item is a risk. Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be 8-15 words (excluding citation). Count words carefully. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
