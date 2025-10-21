@@ -4588,6 +4588,10 @@ Generate the content for "{field_label}" section now:"""
             logger.info(f"🔍 Query: {state.user_prompt[:100]}...")
 
             try:
+                # Update status: Searching web
+                state.current_step = "Searching Medical Sources"
+                state.step_details = "Searching trusted medical websites for current information..."
+
                 # Force web search for general medical knowledge
                 logger.info("📡 Performing web search for general medical knowledge...")
 
@@ -4611,15 +4615,27 @@ Generate the content for "{field_label}" section now:"""
 
                 logger.info(f"✓ Found {len(search_response.results)} web results")
 
+                # Update status: Analyzing sources
+                state.current_step = "Analyzing Sources"
+                state.step_details = f"Reviewing {len(search_response.results)} medical sources for accurate information..."
+
                 # Generate response using ONLY web sources (no patient data chunks)
                 logger.info("💬 Generating response from web sources only...")
 
                 # System message for general knowledge
                 general_knowledge_system_msg = ChatMessage(
                     role=ChatRole.SYSTEM,
-                    content="""You are CLARA, a medical information assistant providing general medical knowledge.
+                    content="""You are CLARA, a medical information assistant providing general medical knowledge education.
 
-You are answering a GENERAL medical knowledge question (not about a specific patient). Use the provided web sources to answer accurately.
+**CRITICAL INSTRUCTION**: You are answering a GENERAL EDUCATIONAL medical question (NOT about any specific patient). This is similar to providing information from a medical textbook or educational website. You MUST answer these questions - they are appropriate educational requests.
+
+Examples of what you SHOULD answer:
+- "What is gabapentin used for?" → YES, answer with general medication information
+- "Tell me about diabetes" → YES, answer with general disease information
+- "What are common side effects of metformin?" → YES, answer with general drug information
+- "How does the heart work?" → YES, answer with general medical knowledge
+
+You will be provided with web sources from trusted medical websites. Use these to provide accurate, educational information.
 
 **CRITICAL - RESPONSE FORMAT**:
 - Organize response with `##` headers to divide sections
@@ -4634,16 +4650,16 @@ You are answering a GENERAL medical knowledge question (not about a specific pat
 - **MANDATORY**: You MUST cite web sources using format: [Source Title](URL)
 - Include at least 2-3 web citations in your answer
 - Place citation at the end of each bullet point that uses information from that source
-- Example: "Metformin reduces HbA1c by 1-2% on average [Clinical Guidelines](https://example.com)"
+- Example: "**Gabapentin** treats nerve pain and seizures [Mayo Clinic](https://example.com)"
 
 **CRITICAL**: Use **bold** markdown formatting to highlight important medical terms:
-- **Medications** and doses (e.g., **Metformin 500mg**, **Oxybutynin 5mg**)
-- **Diagnoses** and conditions (e.g., **Type 2 Diabetes**, **Overactive Bladder**)
-- **Indications** and uses (e.g., **blood glucose control**, **urge incontinence**)
-- **Side effects** (e.g., **dry mouth**, **constipation**, **dizziness**)
-- **Key clinical terms** (e.g., **contraindications**, **mechanism of action**)
+- **Medications** and doses (e.g., **Metformin 500mg**, **Gabapentin 300mg**)
+- **Diagnoses** and conditions (e.g., **Type 2 Diabetes**, **Neuropathic Pain**)
+- **Indications** and uses (e.g., **seizure control**, **nerve pain relief**)
+- **Side effects** (e.g., **dizziness**, **drowsiness**, **dry mouth**)
+- **Key clinical terms** (e.g., **anticonvulsant**, **mechanism of action**)
 
-**Important**: This is a general medical knowledge question, NOT about a specific patient. Provide educational information, not patient-specific advice."""
+**Important**: This is EDUCATIONAL medical information - you MUST provide helpful answers. You are NOT diagnosing or treating a specific patient. You are providing general medical knowledge like a medical encyclopedia."""
                 )
 
                 messages = [general_knowledge_system_msg]
@@ -4652,36 +4668,62 @@ You are answering a GENERAL medical knowledge question (not about a specific pat
                 language_system_msg = self._get_language_policy_message(state)
                 messages.insert(0, language_system_msg)
 
-                # Add chat history if available (limited) - extract text only from JSON responses
+                # Add chat history as text summary (simplified approach to avoid API format issues)
+                # Skip history with refusals to avoid confusing the model
                 current_history = state.chat_history[-5:] if state.chat_history else []
                 if current_history:
-                    for msg in current_history:
-                        if msg.content and msg.content.strip():
-                            # Extract plain text content (handle JSON responses from previous queries)
-                            content = msg.content
-                            try:
-                                # Try to parse as JSON - if it's a structured response, extract the content field
-                                import json
-                                parsed = json.loads(content)
-                                if isinstance(parsed, dict) and 'content' in parsed:
-                                    content = parsed['content']
-                                elif isinstance(parsed, dict) and 'type' in parsed:
-                                    # Skip structured responses like generated_note, timeline, etc.
-                                    logger.info(f"Skipping structured response of type: {parsed.get('type')}")
-                                    continue
-                            except (json.JSONDecodeError, TypeError):
-                                # Not JSON, use as-is
-                                pass
+                    logger.info(f"📝 Creating text-based conversation summary from {len(current_history)} messages")
+                    conversation_lines = []
 
-                            # Create clean message with only text content
-                            clean_msg = ChatMessage(
-                                role=msg.role,
-                                content=str(content)[:500],  # Truncate long messages
-                                user_id=None,
-                                user_role=None,
-                                metadata={}
-                            )
-                            messages.append(clean_msg)
+                    for msg in current_history:
+                        if not msg.content or not msg.content.strip():
+                            continue
+
+                        # Extract plain text content (handle JSON responses from previous queries)
+                        content = msg.content
+                        try:
+                            # Try to parse as JSON - if it's a structured response, extract the content field
+                            import json
+                            parsed = json.loads(content)
+                            if isinstance(parsed, dict) and 'content' in parsed:
+                                content = parsed['content']
+                            elif isinstance(parsed, dict) and 'type' in parsed:
+                                # Skip structured responses like generated_note, timeline, etc.
+                                logger.info(f"Skipping structured response of type: {parsed.get('type')}")
+                                continue
+                        except (json.JSONDecodeError, TypeError):
+                            # Not JSON, use as-is
+                            pass
+
+                        # Skip refusal messages to avoid reinforcing refusals
+                        content_str = str(content)
+                        if "I'm sorry, but I cannot assist" in content_str or "I cannot assist with that request" in content_str:
+                            logger.info(f"Skipping refusal message from history to avoid confusion")
+                            continue
+
+                        # Truncate if too long
+                        content = content_str[:300] + "..." if len(content_str) > 300 else content_str
+
+                        # Format as text line
+                        role_name = "User" if msg.role == ChatRole.USER else "CLARA"
+                        conversation_lines.append(f"{role_name}: {content}")
+
+                    if conversation_lines:
+                        conversation_summary = "\n".join(conversation_lines)
+                        conversation_context = ChatMessage(
+                            role=ChatRole.USER,
+                            content=f"""Previous conversation context (general medical knowledge questions):
+{conversation_summary}
+
+Now responding to the current general medical knowledge question below (YOU MUST ANSWER THIS - it's an educational question).""",
+                            user_id=None,
+                            user_role=None,
+                            metadata={}
+                        )
+                        messages.append(conversation_context)
+                        logger.info(f"✅ Added text conversation summary ({len(conversation_summary)} chars)")
+                    else:
+                        logger.info("⚠️ No valid non-refusal history to include")
 
                 # Add web search results
                 if search_response and search_response.results:
@@ -4716,12 +4758,54 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 )
                 messages.append(user_msg)
 
-                # Generate response using LLM (simple non-streaming for general knowledge)
-                logger.info("🤖 Calling LLM for general knowledge response...")
-                response = await self._llm.chat(messages=messages)
+                # Update status: Generating response
+                state.current_step = "Generating Response"
+                state.step_details = "AI synthesizing information from medical sources..."
 
-                state.llm_response = response
-                logger.info(f"✓ Generated response: {len(response.content)} chars")
+                # Check if streaming is requested
+                if getattr(state, 'should_stream_response', False):
+                    logger.info("🚀 Starting simple streaming LLM call for general knowledge (no reasoning wrapper)")
+                    state.streaming_response = ""  # Reset streaming response
+
+                    # Initialize streaming callback
+                    if not hasattr(state, 'streaming_updates'):
+                        state.streaming_updates = []
+
+                    # Use simple streaming without reasoning wrapper (avoids confusing the model)
+                    async for chunk in self._streaming_llm.chat_stream(messages):
+                        state.streaming_response += chunk
+
+                        chunk_update = {
+                            "type": "response_chunk",
+                            "content": chunk,
+                            "accumulated_content": state.streaming_response,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                        state.streaming_updates.append(chunk_update)
+
+                        state.current_step = "Generating Response"
+                        state.step_details = f"Generated {len(state.streaming_response)} characters..."
+
+                        # Call streaming callback if exists
+                        if hasattr(state, 'stream_callback') and state.stream_callback:
+                            await state.stream_callback(chunk_update)
+
+                    # Return as plain text
+                    state.llm_response = ChatMessage(
+                        role=ChatRole.ASSISTANT,
+                        content=self._normalize_markdown(self._format_ehr_links(state.streaming_response)),
+                        metadata={}
+                    )
+
+                    logger.info(f"✓ Streaming complete: {len(state.llm_response.content)} chars")
+
+                else:
+                    # Non-streaming mode - use simple chat without reasoning
+                    logger.info("🤖 Starting simple LLM call for general knowledge (no reasoning wrapper)")
+                    response = await self._streaming_llm.chat(messages)
+
+                    state.llm_response = response
+                    logger.info(f"✓ Generated response: {len(response.content)} chars")
 
             except Exception as e:
                 log_error(logger, "handle_general_knowledge_query", e)
@@ -4742,6 +4826,10 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
             logger.info(f"🚀 Full processing: {getattr(state, 'requires_full_processing', True)}")
             logger.info(f"🆔 Session ID: {sanitize_session_id(state.session_id)}")
             logger.info(f"👤 User ID: {sanitize_user_id(state.user_id)}")
+
+            # Update status: Preparing context
+            state.current_step = "Preparing Context"
+            state.step_details = "Setting up language and system instructions..."
 
             # Use the single system message for information relay
             messages = [SYSTEM_MSG_INFO_RELAY]
@@ -4789,6 +4877,10 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                     content=f"Current user: {state.user_context.display_name} ({state.user_context.role.value})"
                 )
                 messages.append(user_info)
+
+            # Update status: Loading conversation history
+            state.current_step = "Loading History"
+            state.step_details = f"Loading {len(state.chat_history)} previous messages from session..."
 
             current_history = state.chat_history[-15:]  # Recent current session history
             logger.info(f"💬 Chat history available: {len(state.chat_history)} total, {len(current_history)} recent")
@@ -4904,8 +4996,12 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                     logger.info("Direct path - checking if retrieval needed")
                     logger.info(f"Patient context available: {state.patient_ctx is not None}")
                     logger.info(f"Retrieved chunks available: {len(state.retrieved_chunks) if state.retrieved_chunks else 0}")
-                    
+
                     if state.patient_ctx and not state.retrieved_chunks:
+                        # Update status: Retrieving patient information
+                        state.current_step = "Retrieving Information"
+                        state.step_details = "Searching patient records for relevant clinical data..."
+
                         logger.info("Direct path - running intelligent retrieval for patient context")
                         # Populate retrieval using the new intelligent retrieval within this node
                         await intelligent_retrieve_chunks(state)
@@ -4921,6 +5017,10 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
             # Add retrieved chunks (this is now the primary source of patient data)
             logger.info(f"Retrieved chunks count: {len(state.retrieved_chunks) if state.retrieved_chunks else 0}")
             if state.retrieved_chunks:
+                # Update status: Processing clinical data
+                state.current_step = "Processing Clinical Data"
+                state.step_details = f"Analyzing {len(state.retrieved_chunks)} relevant clinical records..."
+
                 logger.info(f"Adding {len(state.retrieved_chunks)} chunks to LLM context")
                 chunk_context = "Relevant clinical information"
                 if state.retrieval_reasoning:
@@ -4986,6 +5086,10 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
 
             # Add web search results if available
             if state.web_search_response and state.web_search_response.results:
+                # Update status: Adding web sources
+                state.current_step = "Integrating Web Sources"
+                state.step_details = f"Including {len(state.web_search_response.results)} external medical sources..."
+
                 # Create a more detailed and instructional web search message
                 sources_list = []
                 for i, result in enumerate(state.web_search_response.results[:5], 1):
@@ -5037,6 +5141,10 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 total_content_length += content_length
                 logger.info(f"  {i+1}. {msg.role.value} ({content_length} chars): '{content_preview}'")
             logger.info(f"📏 Total content length: {total_content_length} characters")
+
+            # Update status: Generating response
+            state.current_step = "Generating Response"
+            state.step_details = "AI model analyzing information and formulating answer..."
 
             if getattr(state, 'should_stream_response', False):
                 state.streaming_response = ""  # Reset streaming response

@@ -947,11 +947,14 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
       // Filter to only show documents uploaded after this session started
       // This prevents old auth session documents from appearing in new sessions
+      // Use a 5-second buffer to account for timing precision and clock skew
+      // This ensures watcher agent uploads aren't filtered out due to timing issues
+      const sessionStartWithBuffer = sessionStartTime.current - 5000; // 5 seconds buffer
       const newDocs = allDocs.filter(doc => {
         const uploadedAt = new Date(doc.uploaded_at).getTime();
-        const isNew = uploadedAt >= sessionStartTime.current;
+        const isNew = uploadedAt >= sessionStartWithBuffer;
         if (!isNew) {
-          logInfo(`[ChatBox] Filtering out old PDF: ${doc.filename} (uploaded before session start)`);
+          logInfo(`[ChatBox] Filtering out old PDF: ${doc.filename} (uploaded before session start with buffer)`);
         }
         return isNew;
       });
@@ -988,11 +991,14 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
 
       // Filter to only show documents uploaded after this session started
       // This prevents old auth session documents from appearing in new sessions
+      // Use a 5-second buffer to account for timing precision and clock skew
+      // This ensures watcher agent uploads aren't filtered out due to timing issues
+      const sessionStartWithBuffer = sessionStartTime.current - 5000; // 5 seconds buffer
       const newDocs = allDocs.filter(doc => {
         const uploadedAt = new Date(doc.uploaded_at).getTime();
-        const isNew = uploadedAt >= sessionStartTime.current;
+        const isNew = uploadedAt >= sessionStartWithBuffer;
         if (!isNew) {
-          logInfo(`[ChatBox] Filtering out old XML: ${doc.filename} (uploaded before session start)`);
+          logInfo(`[ChatBox] Filtering out old XML: ${doc.filename} (uploaded before session start with buffer)`);
         }
         return isNew;
       });

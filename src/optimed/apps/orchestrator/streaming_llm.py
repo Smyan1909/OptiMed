@@ -145,7 +145,7 @@ IMPORTANT: Provide ONLY the direct answer to the user's question. Do NOT include
                 yield {
                     "type": "completion",
                     "full_content": response_content,
-                    "reasoning": reasoning_content,
+                    "reasoning": reasoning_content if 'reasoning_content' in locals() else "",
                     "reasoning_steps": getattr(self, 'reasoning_steps', []),
                     "timestamp": datetime.now().isoformat()
                 }
