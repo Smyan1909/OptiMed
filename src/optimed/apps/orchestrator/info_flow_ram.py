@@ -2937,7 +2937,7 @@ CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JS
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content=f"You are CLARA. Generate structured JSON with recent encounters. Each encounter needs TWO summaries: brief (10-15 words for card display) and detailed (30-80 words for popup). Always cite sources with [1] [2] etc. Use **bold** in detailed summaries.\n\nInformation system only - NOT a medical device.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Generate structured JSON with recent encounters. Each encounter needs TWO summaries: brief (10-15 words for card display) and detailed (30-80 words for popup). Always cite sources with [1] [2] etc. Use **bold** in detailed summaries.\n\nInformation system only - NOT a medical device.")
                 ]
 
                 if chunks:
@@ -4533,8 +4533,6 @@ Generate content for each section separately with only the necessary clinical fa
                                 "type": "status",
                                 "step": "generate_note_section",
                                 "description": f"Generating section {i+1}/{len(fields)}: {field_label}",
-                        "status": "in_progress",
-                        "progress": 0,
                                 "status": "in_progress",
                                 "progress": state.progress_percentage,
                                 "timestamp": datetime.now().isoformat()
@@ -4695,8 +4693,6 @@ Generate the content for "{field_label}" section now:"""
                         "description": "Searching trusted medical websites for current information...",
                         "status": "in_progress",
                         "progress": 0,
-                        "status": "in_progress",
-                        "progress": 0,
                         "timestamp": datetime.now().isoformat()
                     })
 
@@ -4714,8 +4710,6 @@ Generate the content for "{field_label}" section now:"""
                         "type": "status",
                         "step": "Performing Web Search",
                         "description": "Performing web search for trusted medical sources...",
-                        "status": "in_progress",
-                        "progress": 0,
                         "status": "in_progress",
                         "progress": 0,
                         "timestamp": datetime.now().isoformat()
@@ -4828,7 +4822,7 @@ You will be provided with web sources from trusted medical websites. Use these t
                         # Skip refusal messages to avoid reinforcing refusals
                         content_str = str(content)
                         if "I'm sorry, but I cannot assist" in content_str or "I cannot assist with that request" in content_str:
-                            logger.info(f"Skipping refusal message from history to avoid confusion")
+                            logger.info("Skipping refusal message from history to avoid confusion")
                             continue
 
                         # Truncate if too long
@@ -6883,8 +6877,6 @@ Content:
                                         "type": "status",
                                         "step": current_state.get("current_step", ""),
                                         "description": current_state.get("step_details", ""),  # Use auto-generated details
-                        "status": "in_progress",
-                        "progress": 0,
                                         "status": current_state.get("step_status", ""),
                                         "progress": current_state.get("progress_percentage", 0.0),
                                         "timestamp": datetime.now().isoformat()
@@ -6944,8 +6936,6 @@ Content:
                         "type": "completion",
                         "status": "completed",
                         "description": "Analysis complete",
-                        "status": "in_progress",
-                        "progress": 0,
                         "progress": 100.0,
                         "timestamp": datetime.now().isoformat(),
                         "final_response": final_response_content
