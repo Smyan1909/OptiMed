@@ -431,7 +431,15 @@
       "title": "Lookup",
       "sources": "Sources",
       "error": "Lookup failed",
-      "action": "Lookup “{term}”"
+      "action": "Lookup \"{term}\""
+    },
+    "documents": {
+      "title": "Documents",
+      "ready": "ready",
+      "pdfUploaded": "PDF document \"{filename}\" uploaded successfully and processed. You can now ask questions about its content. Note: PDF is stored temporarily for this session only.",
+      "xmlUploaded": "XML document \"{filename}\"{documentType} uploaded successfully and processed. You can now ask questions about its content. Note: XML document is stored temporarily for this session only.",
+      "pdfRemoved": "PDF document \"{filename}\" has been removed.",
+      "xmlRemoved": "XML document \"{filename}\" has been removed."
     }
   },
   "diffDx": {
@@ -477,7 +485,11 @@
     "currentMedications": "Current Medications",
     "latestObjectiveData": "Latest Objective Data",
     "assessment": "Assessment",
-    "nextSteps": "Next Steps / Outstanding Issues"
+    "nextSteps": "Next Steps / Outstanding Issues",
+    "focusedView": "Focused View",
+    "generating": "Generating...",
+    "complete": "Complete",
+    "disclaimer": "Focused Summary provides an aspect-specific deep dive into {aspect}, including diagnoses, key events, medications, objective data, clinical assessment, and follow-up plans. This is an information system, not a medical device. Healthcare professionals must use their own clinical judgment and verify all information before making medical decisions."
   },
   "generalSummary": {
     "patientSummary": "Patient Summary",
@@ -511,23 +523,24 @@
         "title": "Lab & Vital Trends",
         "description": "Recent lab values and vital signs"
       },
-      "history": {
-        "title": "Past Medical History",
-        "description": "Major surgeries and hospitalizations"
+      "encounters": {
+        "title": "Recent Encounters",
+        "description": "Recent hospital visits and care encounters (major and minor). Click for details."
       },
       "risks": {
         "title": "Risks & Alerts",
         "description": "Allergies, fall risk, and clinical alerts"
-      },
-      "encounters": {
-        "title": "Recent Care",
-        "description": "Narrative summary of recent encounters"
-      },
-      "deepdive": {
-        "title": "Deep Dive",
-        "description": "Detailed clinical information: hospital admissions, imaging reports, and specialist consultations"
       }
-    }
+    },
+    "majorEncounters": "Major Encounters",
+    "minorEncounters": "Minor Encounters"
+  },
+  "encountersCard":{
+    "detailSummary": "Detailed Summary",
+    "minorEncounter": "Minor Encounter",
+    "majorEncounter": "Major Encounter",
+    "note": "Note",
+    "disclaimer": "This information is extracted from patient records. Click citations to view source documents."
   },
   "templateManagement": {
     "noteTemplates": "Note Templates",
@@ -866,6 +879,30 @@
     "noDetails": "No details available for this event",
     "viewTitle": "Timeline View",
     "viewDescription": "displays key medical events in chronological order with relevant clinical information from patient records."
+  },
+  "citation": {
+    "title": "Citation [{id}]",
+    "sourceInfo": "Source information for this clinical data",
+    "sourceDataNotAvailable": "Citation source data not available",
+    "document": "Document",
+    "pageSection": "Page/Section",
+    "sourceContent": "Source Content",
+    "copyExcerpt": "Copy Excerpt",
+    "copied": "Copied!",
+    "openInEHR": "Open in EHR",
+    "dataUnavailable": {
+      "title": "Citation Data Unavailable",
+      "message": "This citation reference [{id}] appears in the text, but the source document information was not included in the response. This may occur when:",
+      "reasons": {
+        "1": "The citation was generated but source tracking failed",
+        "2": "The source document is no longer available",
+        "3": "There was an error retrieving the citation metadata"
+      },
+      "recommendation": "Recommendation: Please verify this information independently in the patient's EHR record before making clinical decisions."
+    },
+    "note": "Note:",
+    "noteText": "This citation shows the source of clinical information used in the response. Always verify important clinical details in the original EHR record.",
+    "noteTextUnavailable": "This citation reference could not be fully resolved. Always verify clinical information independently."
   }
 }
 

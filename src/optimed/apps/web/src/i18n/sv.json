@@ -431,7 +431,15 @@
       "title": "Uppslag",
       "sources": "Källor",
       "error": "Uppslag misslyckades",
-      "action": "Slå upp ”{term}”"
+      "action": "Slå upp \"{term}\""
+    },
+    "documents": {
+      "title": "Dokument",
+      "ready": "redo",
+      "pdfUploaded": "PDF-dokument \"{filename}\" har laddats upp och bearbetats. Du kan nu ställa frågor om innehållet. Obs: PDF:en lagras tillfälligt endast för denna session.",
+      "xmlUploaded": "XML-dokument \"{filename}\"{documentType} har laddats upp och bearbetats. Du kan nu ställa frågor om innehållet. Obs: XML-dokumentet lagras tillfälligt endast för denna session.",
+      "pdfRemoved": "PDF-dokument \"{filename}\" har tagits bort.",
+      "xmlRemoved": "XML-dokument \"{filename}\" har tagits bort."
     }
   },
   "diffDx": {
@@ -477,7 +485,11 @@
     "currentMedications": "Aktuella läkemedel",
     "latestObjectiveData": "Senaste objektiva data",
     "assessment": "Bedömning",
-    "nextSteps": "Nästa steg / Öppna frågor"
+    "nextSteps": "Nästa steg / Öppna frågor",
+    "focusedView": "Fokuserad vy",
+    "generating": "Genererar...",
+    "complete": "Klar",
+    "disclaimer": "Fokuserad sammanfattning ger en aspektspecifik djupdykning i {aspect}, inklusive diagnoser, viktiga händelser, läkemedel, objektiva data, klinisk bedömning och uppföljningsplaner. Detta är ett informationssystem, inte en medicinteknisk produkt. Vårdpersonal måste använda sitt eget kliniska omdöme och verifiera all information innan medicinska beslut fattas."
   },
   "generalSummary": {
     "patientSummary": "Patientsammanfattning",
@@ -500,7 +512,7 @@
         "description": "Snabb överblick av patienten"
       },
       "problems": {
-        "title": "Aktiva problem",
+        "title": "Tidigare och nuvarande sjukdomar",
         "description": "Aktuella diagnoser och kroniska tillstånd"
       },
       "medications": {
@@ -511,23 +523,24 @@
         "title": "Lab- och vitaltrender",
         "description": "Senaste laboratorievärden och vitalparametrar"
       },
-      "history": {
-        "title": "Tidigare sjukhistoria",
-        "description": "Större operationer och sjukhusvistelser"
+      "encounters": {
+        "title": "Senaste vårdtillfällen",
+        "description": "Senaste vårdbesök och vårdkontakter (större och mindre). Klicka för detaljer."
       },
       "risks": {
         "title": "Risker och varningar",
         "description": "Allergier, fallrisk och kliniska varningar"
-      },
-      "encounters": {
-        "title": "Senaste vård",
-        "description": "Berättande sammanfattning av senaste vårdkontakter"
-      },
-      "deepdive": {
-        "title": "Djupdykning",
-        "description": "Detaljerad klinisk information: sjukhusvistelser, röntgensvar och specialistutlåtanden"
       }
-    }
+    },
+    "majorEncounters": "Större Vårdkontakter",
+    "minorEncounters": "Mindre Vårdkontakter"
+  },
+  "encountersCard":{
+    "detailSummary": "Detaljerad Sammanfattning",
+    "minorEncounter": "Mindre Vårdkontakt",
+    "majorEncounter": "Större Vårdkontakt",
+    "note": "Notera",
+    "disclaimer": "Denna information är hämtad från patientjournaler. Klicka på referenser för att visa källdokument."
   },
   "templateManagement": {
     "noteTemplates": "Anteckningsmallar",
@@ -756,7 +769,7 @@
     "Bilirubin": "Bilirubin",
 
     "Radiology report": "Röntgenutlåtande",
-    "Diagnostic imaging study": "Diagnostisk bilddiagnostik",
+    "Diagnostic imaging study": "Bilddiagnostik",
     "CT scan": "DT-undersökning",
     "Ultrasound": "Ultraljud",
     "X-ray": "Röntgen",
@@ -791,26 +804,26 @@
 
     "Allergies and adverse reactions": "Allergier och biverkningar",
     "History of allergic reaction": "Tidigare allergiska reaktioner",
-    "Propensity to adverse reactions": "Benägenhet för biverkningar",
+    "Propensity to adverse reactions": "Biverkningar och allergier",
 
     "History of past illness": "Tidigare sjukdomar",
     "Chief complaint": "Huvudsymtom",
-    "Reason for encounter": "Orsak till vårdkontakt",
+    "Reason for encounter": "Kontaktorsak",
     "Problem list": "Problemlista",
 
     "Drug treatment": "Läkemedelsbehandling",
     "Review of medication": "Genomgång av läkemedel",
-    "Administration of substance": "Administrering av substans",
+    "Administration of substance": "Administrering av läkemedel",
     "Drug therapy discontinued": "Läkemedelsbehandling avslutad",
     "Drug treatment started": "Läkemedelsbehandling påbörjad",
-    "Drug treatment stopped": "Läkemedelsbehandling stoppad",
+    "Drug treatment stopped": "Läkemedelsbehandling pausad",
 
     "Patient questionnaire": "Patientformulär",
     "General examination of patient": "Allmän undersökning",
     "Suicide risk assessment": "Suicidriskbedömning",
     "Quality of life assessment": "Livskvalitetsbedömning",
     "Pain assessment": "Smärtbedömning",
-    "Evaluation procedure": "Utvärderingsåtgärd",
+    "Evaluation procedure": "Utredningsåtgärd",
     "Assessment of anxiety": "Bedömning av ångest",
 
     "Immunization procedure": "Vaccinationsåtgärd",
@@ -830,16 +843,16 @@
     "Patient encounter procedure": "Vårdkontakt",
     "Encounter for check up": "Kontrollbesök",
     "Patient-initiated encounter": "Patientinitierad vårdkontakt",
-    "Emergency room visit": "Akutbesök",
+    "Emergency room visit": "Akutmottagning",
     "Inpatient stay": "Slutenvård",
     "Outpatient visit": "Öppenvårdsbesök"
   },
   "sbar": {
-    "sbarSummary": "SBAR-sammanfattning",
+    "sbarSummary": "SBAR",
     "healthcareModel": "Kommunikationsmodell för vården",
     "situation": "Situation",
     "background": "Bakgrund",
-    "assessment": "Bedömning",
+    "assessment": "Aktuell",
     "recommendation": "Rekommendation",
     "situationDescription": "Patientens aktuella status och omedelbara problem",
     "backgroundDescription": "Relevant patienthistoria och kontext",
@@ -866,6 +879,30 @@
     "noDetails": "Inga detaljer tillgängliga för denna händelse",
     "viewTitle": "Tidslinjevy",
     "viewDescription": "visar viktiga medicinska händelser i kronologisk ordning med relevant klinisk information från patientjournaler."
+  },
+  "citation": {
+    "title": "Referens [{id}]",
+    "sourceInfo": "Källinformation för dessa kliniska data",
+    "sourceDataNotAvailable": "Källdata för referens ej tillgänglig",
+    "document": "Dokument",
+    "pageSection": "Sida/Avsnitt",
+    "sourceContent": "Källinnehåll",
+    "copyExcerpt": "Kopiera utdrag",
+    "copied": "Kopierat!",
+    "openInEHR": "Öppna i journal",
+    "dataUnavailable": {
+      "title": "Referensdata ej tillgänglig",
+      "message": "Denna referens [{id}] finns i texten, men källdokumentinformationen inkluderades inte i svaret. Detta kan inträffa när:",
+      "reasons": {
+        "1": "Referensen genererades men källspårning misslyckades",
+        "2": "Källdokumentet är inte längre tillgängligt",
+        "3": "Ett fel uppstod vid hämtning av referensmetadata"
+      },
+      "recommendation": "Rekommendation: Vänligen verifiera denna information oberoende i patientens journal innan kliniska beslut fattas."
+    },
+    "note": "Obs:",
+    "noteText": "Denna referens visar källan till klinisk information som används i svaret. Verifiera alltid viktig klinisk information i den ursprungliga journalen.",
+    "noteTextUnavailable": "Denna referens kunde inte helt lösas. Verifiera alltid klinisk information oberoende."
   }
 }
 

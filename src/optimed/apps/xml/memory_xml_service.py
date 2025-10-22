@@ -262,12 +262,32 @@ class MemoryXMLService(XMLService):
         session_id: str,
         patient_id: Optional[str] = None
     ) -> List[XMLDocument]:
-        """Get all ready XML documents for context processing."""
-        session_data = self._get_or_create_session(user_id, session_id, patient_id)
-        return [
-            doc for doc in session_data.xml_documents.values()
-            if doc.status == ImageStatus.READY and doc.extracted_text
-        ]
+        """Get all ready XML documents for context processing.
+
+        Searches across ALL sessions for the user to ensure watcher-uploaded documents
+        are found regardless of which session they were uploaded to.
+        """
+        logger.info(f"Get documents for context - user_id: {sanitize_user_id(user_id)}, session_id: {sanitize_session_id(session_id)}, patient_id: {sanitize_patient_id(patient_id) if patient_id else 'None'}")
+
+        xml_list = []
+        # Search through all sessions for this user (matches PDF service behavior)
+        for session_key, session_data in self.sessions.items():
+            if user_id in session_key:
+                session_data.update_access_time()
+                for xml_doc in session_data.xml_documents.values():
+                    # Include documents that are ready and have text
+                    if xml_doc.status == ImageStatus.READY and xml_doc.extracted_text:
+                        # If patient_id is specified, include patient-specific docs and general docs
+                        # If patient_id is None, include only general docs
+                        if patient_id is None:
+                            if xml_doc.patient_id is None:  # General documents only
+                                xml_list.append(xml_doc)
+                        else:
+                            if xml_doc.patient_id == patient_id or xml_doc.patient_id is None:  # Patient-specific or general
+                                xml_list.append(xml_doc)
+
+        logger.info(f"Found {len(xml_list)} XML documents for context")
+        return xml_list
 
     async def cleanup_session(self, session_key: str) -> None:
         """Clean up a specific session."""

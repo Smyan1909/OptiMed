@@ -65,14 +65,14 @@ Provide only your reasoning process here - not the final answer yet."""
 
 {reasoning_prompt}
 
-Provide a clear, well-reasoned response addressing the user's question directly."""
+IMPORTANT: Provide ONLY the direct answer to the user's question. Do NOT include any reasoning preamble or explanation of your thinking process. Your reasoning was already captured separately - now just provide the final answer directly."""
                 )
             ]
         else:
             response_messages = messages + [
                 ChatMessage(
                     role=ChatRole.USER,
-                    content="""Please provide a clear, well-reasoned response to the user's question."""
+                    content="""IMPORTANT: Provide ONLY the direct answer to the user's question. Do NOT include any reasoning preamble, phrases like "Let me think through this", or explanation of your thinking process. Just provide the final answer directly."""
                 )
             ]
         
@@ -145,7 +145,7 @@ Provide a clear, well-reasoned response addressing the user's question directly.
                 yield {
                     "type": "completion",
                     "full_content": response_content,
-                    "reasoning": reasoning_content,
+                    "reasoning": reasoning_content if 'reasoning_content' in locals() else "",
                     "reasoning_steps": getattr(self, 'reasoning_steps', []),
                     "timestamp": datetime.now().isoformat()
                 }
@@ -214,14 +214,14 @@ Provide only your reasoning process here - not the final answer yet."""
 
 {reasoning_prompt}
 
-Provide a clear, well-reasoned response addressing the user's question directly."""
+IMPORTANT: Provide ONLY the direct answer to the user's question. Do NOT include any reasoning preamble or explanation of your thinking process. Your reasoning was already captured separately - now just provide the final answer directly."""
                 )
             ]
         else:
             response_messages = messages + [
                 ChatMessage(
                     role=ChatRole.USER,
-                    content="""Please provide a clear, well-reasoned response to the user's question."""
+                    content="""IMPORTANT: Provide ONLY the direct answer to the user's question. Do NOT include any reasoning preamble, phrases like "Let me think through this", or explanation of your thinking process. Just provide the final answer directly."""
                 )
             ]
 

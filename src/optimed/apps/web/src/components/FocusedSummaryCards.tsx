@@ -167,6 +167,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
   citations = {}
 }) => {
   const t = useTranslations('focusedSummary');
+
   // Create separate lookup hooks for each section
   const diagnosesLookup = useLookup({ patientId, sessionId });
   const eventsLookup = useLookup({ patientId, sessionId });
@@ -197,7 +198,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
         <Icon className="h-7 w-7 text-blue-600" />
         <h3 className="text-2xl font-bold text-gray-900">{aspect} {t('summary')}</h3>
         <Badge variant="secondary" className="text-sm px-3 py-1">
-          Focused View
+          {t('focusedView')}
         </Badge>
       </div>
 
@@ -210,7 +211,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
               <span className="font-bold text-gray-900 text-xl">{aspect}</span>
             </div>
             <Badge className="text-xs font-semibold bg-blue-200 text-blue-900">
-              {isLoading ? 'Generating...' : 'Complete'}
+              {isLoading ? t('generating') : t('complete')}
             </Badge>
           </CardTitle>
         </CardHeader>
@@ -342,12 +343,7 @@ export const FocusedSummaryCards: React.FC<FocusedSummaryCardsProps> = ({
       <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
         <p className="text-sm text-blue-700 flex items-start leading-relaxed">
           <Icon className="h-4 w-4 inline mr-3 flex-shrink-0 mt-0.5" />
-          <span>
-            <strong>Focused Summary</strong> provides an aspect-specific deep dive into {aspect},
-            including diagnoses, key events, medications, objective data, clinical assessment, and follow-up plans.
-            This is an information system, not a medical device. Healthcare professionals must use their own
-            clinical judgment and verify all information before making medical decisions.
-          </span>
+          <span>{t('disclaimer', { aspect })}</span>
         </p>
       </div>
     </div>

@@ -29,10 +29,22 @@ export const MarkdownWithCitations: React.FC<MarkdownWithCitationsProps> = ({
 
   const handleCitationClick = (citationId: string) => {
     const citation = citations[citationId];
+
+    // If citation exists, use it; otherwise create a placeholder
     if (citation) {
       setSelectedCitation(citation);
-      setIsModalOpen(true);
+    } else {
+      // Create a placeholder citation for missing data
+      setSelectedCitation({
+        id: citationId,
+        document: '',
+        excerpt: '',
+        page: null,
+        url: null
+      });
     }
+
+    setIsModalOpen(true);
   };
 
   const handleCloseModal = () => {
@@ -61,28 +73,39 @@ export const MarkdownWithCitations: React.FC<MarkdownWithCitationsProps> = ({
         parts.push(text.substring(lastIndex, matchIndex));
       }
 
-      // Add the citation as a clickable superscript
-      if (citations[citationId]) {
-        const citation = citations[citationId];
-        parts.push(
-          <sup
-            key={`cite-${citationId}-${matchIndex}`}
-            className="text-blue-600 hover:text-blue-800 cursor-pointer font-medium ml-0.5 transition-colors"
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              handleCitationClick(citationId);
-            }}
-            title={`Source: ${citation.document}${citation.page ? `, Page ${citation.page}` : ''}`}
-            style={{ cursor: 'pointer' }}
-          >
-            [{citationId}]
-          </sup>
-        );
-      } else {
-        // Keep the original if citation not found
-        parts.push(match[0]);
+      // Check if citation data exists
+      const citation = citations[citationId];
+      const hasCitationData = !!citation;
+
+      // Log missing citations for debugging
+      if (!hasCitationData) {
+        console.warn(`Citation [${citationId}] referenced in text but not found in citations object`);
       }
+
+      // Always make citations clickable (even if data is missing)
+      parts.push(
+        <sup
+          key={`cite-${citationId}-${matchIndex}`}
+          className={`${
+            hasCitationData
+              ? 'text-blue-600 hover:text-blue-800'
+              : 'text-gray-500 hover:text-gray-700'
+          } cursor-pointer font-medium ml-0.5 transition-colors`}
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            handleCitationClick(citationId);
+          }}
+          title={
+            hasCitationData
+              ? `Source: ${citation.document}${citation.page ? `, Page ${citation.page}` : ''}`
+              : `Citation [${citationId}] - Source data not available`
+          }
+          style={{ cursor: 'pointer' }}
+        >
+          [{citationId}]
+        </sup>
+      );
 
       lastIndex = matchIndex + match[0].length;
     }
