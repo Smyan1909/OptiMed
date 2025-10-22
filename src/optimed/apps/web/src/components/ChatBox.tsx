@@ -1686,7 +1686,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           ...prev,
           {
             sender: 'system',
-            text: `PDF document "${file.name}" uploaded successfully and processed. You can now ask questions about its content. Note: PDF is stored temporarily for this session only.`,
+            text: t('documents.pdfUploaded', { filename: file.name }),
             timestamp: new Date().toLocaleTimeString()
           }
         ]);
@@ -1768,7 +1768,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
           ...prev,
           {
             sender: 'system',
-            text: `XML document "${file.name}"${documentTypeText} uploaded successfully and processed. You can now ask questions about its content. Note: XML document is stored temporarily for this session only.`,
+            text: t('documents.xmlUploaded', { filename: file.name, documentType: documentTypeText }),
             timestamp: new Date().toLocaleTimeString()
           }
         ]);
@@ -1823,7 +1823,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         ...prev,
         {
           sender: 'system',
-          text: `PDF document "${filename}" has been removed.`,
+          text: t('documents.pdfRemoved', { filename }),
           timestamp: new Date().toLocaleTimeString()
         }
       ]);
@@ -1873,7 +1873,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         ...prev,
         {
           sender: 'system',
-          text: `XML document "${filename}" has been removed.`,
+          text: t('documents.xmlRemoved', { filename }),
           timestamp: new Date().toLocaleTimeString()
         }
       ]);
@@ -2279,11 +2279,11 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
               <div className="flex items-center justify-between">
                 <div className="text-xs font-medium text-gray-700 flex items-center gap-1">
                   <FileText className="h-3 w-3 text-blue-600" />
-                  Documents ({uploadedPDFs.length + uploadedXMLs.length})
+                  {t('documents.title')} ({uploadedPDFs.length + uploadedXMLs.length})
                 </div>
                 {(uploadedPDFs.length + uploadedXMLs.length) > 0 && (
                   <div className="text-xs text-gray-500">
-                    {uploadedPDFs.filter(pdf => pdf.status === 'READY').length + uploadedXMLs.filter(xml => xml.status === 'READY').length} ready
+                    {uploadedPDFs.filter(pdf => pdf.status === 'READY').length + uploadedXMLs.filter(xml => xml.status === 'READY').length} {t('documents.ready')}
                   </div>
                 )}
               </div>

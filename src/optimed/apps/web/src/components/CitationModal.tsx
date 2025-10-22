@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { FileText, ExternalLink, Copy, Check, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useTranslations } from 'next-intl';
 
 export interface Citation {
   id: string;
@@ -30,6 +31,7 @@ export const CitationModal: React.FC<CitationModalProps> = ({
   isOpen,
   onClose,
 }) => {
+  const t = useTranslations('citation');
   const [copied, setCopied] = React.useState(false);
 
   const handleCopy = () => {
@@ -59,10 +61,10 @@ export const CitationModal: React.FC<CitationModalProps> = ({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg font-semibold">
             <FileText className={`h-5 w-5 ${isMissingData ? 'text-gray-500' : 'text-blue-600'}`} />
-            Citation [{citation.id}]
+            {t('title', { id: citation.id })}
           </DialogTitle>
           <DialogDescription>
-            {isMissingData ? 'Citation source data not available' : 'Source information for this clinical data'}
+            {isMissingData ? t('sourceDataNotAvailable') : t('sourceInfo')}
           </DialogDescription>
         </DialogHeader>
 
@@ -73,19 +75,17 @@ export const CitationModal: React.FC<CitationModalProps> = ({
               <div className="flex items-start gap-3">
                 <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
                 <div>
-                  <h4 className="font-semibold text-yellow-900 mb-1">Citation Data Unavailable</h4>
+                  <h4 className="font-semibold text-yellow-900 mb-1">{t('dataUnavailable.title')}</h4>
                   <p className="text-sm text-yellow-800">
-                    This citation reference [{citation.id}] appears in the text, but the source document
-                    information was not included in the response. This may occur when:
+                    {t('dataUnavailable.message', { id: citation.id })}
                   </p>
                   <ul className="list-disc list-inside text-sm text-yellow-800 mt-2 space-y-1">
-                    <li>The citation was generated but source tracking failed</li>
-                    <li>The source document is no longer available</li>
-                    <li>There was an error retrieving the citation metadata</li>
+                    <li>{t('dataUnavailable.reasons.1')}</li>
+                    <li>{t('dataUnavailable.reasons.2')}</li>
+                    <li>{t('dataUnavailable.reasons.3')}</li>
                   </ul>
                   <p className="text-sm text-yellow-800 mt-3">
-                    <strong>Recommendation:</strong> Please verify this information independently in the patient's
-                    EHR record before making clinical decisions.
+                    <strong>{t('dataUnavailable.recommendation')}</strong>
                   </p>
                 </div>
               </div>
@@ -96,7 +96,7 @@ export const CitationModal: React.FC<CitationModalProps> = ({
           <div className="space-y-4 py-4">
             {/* Document Name */}
             <div>
-              <div className="text-sm font-medium text-gray-700 mb-1">Document</div>
+              <div className="text-sm font-medium text-gray-700 mb-1">{t('document')}</div>
               <div className="text-base text-gray-900 bg-gray-50 px-3 py-2 rounded border border-gray-200">
                 {citation.document}
               </div>
@@ -105,7 +105,7 @@ export const CitationModal: React.FC<CitationModalProps> = ({
             {/* Page Number (if available) */}
             {citation.page && (
               <div>
-                <div className="text-sm font-medium text-gray-700 mb-1">Page/Section</div>
+                <div className="text-sm font-medium text-gray-700 mb-1">{t('pageSection')}</div>
                 <div className="text-base text-gray-900 bg-gray-50 px-3 py-2 rounded border border-gray-200">
                   {citation.page}
                 </div>
@@ -114,7 +114,7 @@ export const CitationModal: React.FC<CitationModalProps> = ({
 
             {/* Full Content */}
             <div>
-              <div className="text-sm font-medium text-gray-700 mb-1">Source Content</div>
+              <div className="text-sm font-medium text-gray-700 mb-1">{t('sourceContent')}</div>
               <div className="text-sm text-gray-900 bg-gray-50 px-4 py-3 rounded border border-gray-200 leading-relaxed max-h-96 overflow-y-auto whitespace-pre-wrap">
                 {citation.excerpt}
               </div>
@@ -131,12 +131,12 @@ export const CitationModal: React.FC<CitationModalProps> = ({
                 {copied ? (
                   <>
                     <Check className="h-4 w-4 text-green-600" />
-                    Copied!
+                    {t('copied')}
                   </>
                 ) : (
                   <>
                     <Copy className="h-4 w-4" />
-                    Copy Excerpt
+                    {t('copyExcerpt')}
                   </>
                 )}
               </Button>
@@ -149,7 +149,7 @@ export const CitationModal: React.FC<CitationModalProps> = ({
                   className="flex items-center gap-2"
                 >
                   <ExternalLink className="h-4 w-4" />
-                  Open in EHR
+                  {t('openInEHR')}
                 </Button>
               )}
             </div>
@@ -158,9 +158,7 @@ export const CitationModal: React.FC<CitationModalProps> = ({
 
         {/* Footer Note */}
         <div className={`text-xs text-gray-500 ${isMissingData ? 'bg-yellow-50 border-yellow-100' : 'bg-blue-50 border-blue-100'} px-3 py-2 rounded border`}>
-          <strong>Note:</strong> {isMissingData
-            ? 'This citation reference could not be fully resolved. Always verify clinical information independently.'
-            : 'This citation shows the source of clinical information used in the response. Always verify important clinical details in the original EHR record.'}
+          <strong>{t('note')}</strong> {isMissingData ? t('noteTextUnavailable') : t('noteText')}
         </div>
       </DialogContent>
     </Dialog>

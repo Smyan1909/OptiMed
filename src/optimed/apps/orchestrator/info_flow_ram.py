@@ -350,6 +350,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             content=(
                 f"Language policy: Respond in '{active_lang}'. Use clinically appropriate terminology in this language. "
                 f"If citing or quoting sources in another language, translate faithfully and include the original term in parentheses if relevant."
+                f"DO NOT state this is in your response 'Information system only - NOT a medical device'"
             )
         )
 
@@ -1704,7 +1705,7 @@ For example:
 - "Summarize the diabetes management" → "Diabetes"
 - "What's going on with the kidneys?" → "Kidney Health"
 
-Return ONLY the aspect name (2-4 words maximum), nothing else.
+Return ONLY the aspect name (2-4 words maximum) in the same language as the user query, nothing else.
 Make it clear, concise, and clinically appropriate.
 """
 
@@ -2187,25 +2188,34 @@ Keep queries concise and medically precise.
 
                 USER QUERY: {state.user_prompt}
 
-                Format as 5-7 bullet points covering:
-                • **Chief complaint**: [concise description with key symptoms]
-                • **Current presentation**: [current status and vital signs]
-                • **Acute symptoms**: [most pressing symptoms/concerns]
-                • **Pain/distress level**: [if applicable]
-                • **Recent changes**: [any deterioration or improvement]
-                • **Immediate concerns**: [urgent issues requiring attention]
-                • **Patient awareness**: [patient's understanding/concern level]
+                CRITICAL: Translate ALL bold headers to the target language. Examples:
+                - Swedish: **Huvudklagomål**, **Nuvarande presentation**, **Akuta symtom**, **Smärtnivå**, **Senaste förändringar**, **Omedelbara bekymmer**, **Patientmedvetenhet**
+                - English: **Chief complaint**, **Current presentation**, **Acute symptoms**, **Pain/distress level**, **Recent changes**, **Immediate concerns**, **Patient awareness**
 
-                Example:
-                • **Chief complaint**: Patient presenting with **chest pain** radiating to left arm, started 2 hours ago [1]
-                • **Current presentation**: **BP 145/90**, HR 92, **diaphoretic**, appears anxious [2]
-                • **Acute symptoms**: **Crushing substernal pain** 7/10, worse with exertion, not relieved by rest [1]
-                • **Recent changes**: Pain intensity **increased** from 5/10 to 7/10 in last hour [3]
-                • **Immediate concerns**: **Possible ACS**, needs urgent ECG and troponin [2]
+                Format as 5-7 bullet points covering:
+                • **[Chief complaint header in target language]**: [concise description with key symptoms]
+                • **[Current presentation header in target language]**: [current status and vital signs]
+                • **[Acute symptoms header in target language]**: [most pressing symptoms/concerns]
+                • **[Pain/distress level header in target language]**: [if applicable]
+                • **[Recent changes header in target language]**: [any deterioration or improvement]
+                • **[Immediate concerns header in target language]**: [urgent issues requiring attention]
+                • **[Patient awareness header in target language]**: [patient's understanding/concern level]
+
+                Example (Swedish):
+                • **Huvudklagomål**: Patient presenting with **chest pain** radiating to left arm, started 2 hours ago [1]
+
+                • **Nuvarande presentation**: **BP 145/90**, HR 92, **diaphoretic**, appears anxious [2]
+
+                • **Akuta symtom**: **Crushing substernal pain** 7/10, worse with exertion, not relieved by rest [1]
+
+                • **Senaste förändringar**: Pain intensity **increased** from 5/10 to 7/10 in last hour [3]
+
+                • **Omedelbara bekymmer**: **Possible ACS**, needs urgent ECG and troponin [2]
 
                 Add blank line between each bullet point for readability.
 
                 MANDATORY:
+                - TRANSLATE all bold headers to the target language
                 - Use **bold** markdown for symptoms, vital signs, and key clinical terms
                 - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 concise bullet points. Keep focused on current situation only.
@@ -2213,7 +2223,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR situation summaries with 5-7 bullet points. Use **bold** for symptoms, vital signs, and key clinical terms.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR situation summaries with 5-7 bullet points. TRANSLATE all bold headers to the user's language. Use **bold** for symptoms, vital signs, and key clinical terms.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2277,27 +2287,38 @@ Keep queries concise and medically precise.
 
                 USER QUERY: {state.user_prompt}
 
-                Format as 5-7 bullet points covering:
-                • **Patient demographics**: [age, sex, living situation]
-                • **Major diagnoses**: [key chronic conditions with dates]
-                • **Critical medications**: [important meds especially high-risk ones]
-                • **Important allergies**: [drug allergies and reactions]
-                • **Past procedures/surgeries**: [relevant surgical history]
-                • **Recent admissions**: [hospitalizations in last 6-12 months]
-                • **Baseline function**: [usual activity level and independence]
+                CRITICAL: Translate ALL bold headers to the target language. Examples:
+                - Swedish: **Patientdemografi**, **Stora diagnoser**, **Kritiska läkemedel**, **Viktiga allergier**, **Tidigare ingrepp/operationer**, **Senaste inläggningar**, **Baslinjefunktion**
+                - English: **Patient demographics**, **Major diagnoses**, **Critical medications**, **Important allergies**, **Past procedures/surgeries**, **Recent admissions**, **Baseline function**
 
-                Example:
-                • **Patient demographics**: **73M**, lives alone, retired, has home care 2x/week [1]
-                • **Major diagnoses**: **T2DM** (2010), **HTN** (2005), **CKD Stage 3a** (2018), **COPD GOLD II** (2015) [2]
-                • **Critical medications**: **Warfarin 5mg** (INR target 2-3), **Metformin 1000mg 2x/day**, **Enalapril 20mg** [3]
-                • **Important allergies**: **Penicillin** (rash and angioedema 2008) [4]
-                • **Past procedures**: **Hip replacement** (2015), **Cholecystectomy** (2001) [5]
-                • **Recent admissions**: **COPD exacerbation** (3 months ago), treated with antibiotics and steroids [6]
-                • **Baseline function**: **Independent** with ADLs, uses walker for mobility, cognitively intact [1]
+                Format as 5-7 bullet points covering:
+                • **[Patient demographics header in target language]**: [age, sex, living situation]
+                • **[Major diagnoses header in target language]**: [key chronic conditions with dates]
+                • **[Critical medications header in target language]**: [important meds especially high-risk ones]
+                • **[Important allergies header in target language]**: [drug allergies and reactions]
+                • **[Past procedures/surgeries header in target language]**: [relevant surgical history]
+                • **[Recent admissions header in target language]**: [hospitalizations in last 6-12 months]
+                • **[Baseline function header in target language]**: [usual activity level and independence]
+
+                Example (Swedish):
+                • **Patientdemografi**: **73M**, lives alone, retired, has home care 2x/week [1]
+
+                • **Stora diagnoser**: **T2DM** (2010), **HTN** (2005), **CKD Stage 3a** (2018), **COPD GOLD II** (2015) [2]
+
+                • **Kritiska läkemedel**: **Warfarin 5mg** (INR target 2-3), **Metformin 1000mg 2x/day**, **Enalapril 20mg** [3]
+
+                • **Viktiga allergier**: **Penicillin** (rash and angioedema 2008) [4]
+
+                • **Tidigare ingrepp**: **Hip replacement** (2015), **Cholecystectomy** (2001) [5]
+
+                • **Senaste inläggningar**: **COPD exacerbation** (3 months ago), treated with antibiotics and steroids [6]
+
+                • **Baslinjefunktion**: **Independent** with ADLs, uses walker for mobility, cognitively intact [1]
 
                 Add blank line between each bullet point for readability.
 
                 MANDATORY:
+                - TRANSLATE all bold headers to the target language
                 - Use **bold** markdown for key diagnoses, medications, allergies, and functional descriptors
                 - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 concise bullet points. Focus on context relevant to current situation.
@@ -2305,7 +2326,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR background summaries with 5-7 bullet points. Use **bold** for diagnoses, medications, allergies, and key descriptors.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise and contextually relevant.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR background summaries with 5-7 bullet points. TRANSLATE all bold headers to the user's language. Use **bold** for diagnoses, medications, allergies, and key descriptors.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise and contextually relevant.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2368,25 +2389,34 @@ Keep queries concise and medically precise.
 
                 USER QUERY: {state.user_prompt}
 
-                Format as 5-7 bullet points with free-text narrative descriptions:
-                • **Clinical impression**: [narrative description with key observations]
-                • **Current status**: [narrative summary of patient's condition]
-                • **Key findings**: [narrative of significant clinical findings]
-                • **Trend analysis**: [narrative of improvement/deterioration]
-                • **Risk assessment**: [narrative of current risk level and factors]
-                • **Stability**: [narrative of patient stability and prognosis]
-                • **Critical concerns**: [narrative of urgent issues if any]
+                CRITICAL: Translate ALL bold headers to the target language. Examples:
+                - Swedish: **Kliniskt intryck**, **Nuvarande status**, **Viktiga fynd**, **Trendanalys**, **Riskbedömning**, **Stabilitet**, **Kritiska bekymmer**
+                - English: **Clinical impression**, **Current status**, **Key findings**, **Trend analysis**, **Risk assessment**, **Stability**, **Critical concerns**
 
-                Example:
-                • **Clinical impression**: Patient with **multimorbidity** showing signs of **worsening diabetic control** with HbA1c rising from 62 to 68 mmol/mol over 6 months [1]
-                • **Current status**: Generally **stable** but requires medication adjustment and closer monitoring of renal function given declining eGFR [2]
-                • **Key findings**: **Declining kidney function** (eGFR 64→52), **elevated blood pressure** (145/85), and **worsening glycemic control** suggest need for therapeutic review [1]
-                • **Risk assessment**: **Moderate-to-high risk** for cardiovascular events given uncontrolled HTN, T2DM, and CKD Stage 3a [3]
-                • **Critical concerns**: Patient on **warfarin** with recent **INR fluctuations**, requires close monitoring to prevent bleeding complications [4]
+                Format as 5-7 bullet points with free-text narrative descriptions:
+                • **[Clinical impression header in target language]**: [narrative description with key observations]
+                • **[Current status header in target language]**: [narrative summary of patient's condition]
+                • **[Key findings header in target language]**: [narrative of significant clinical findings]
+                • **[Trend analysis header in target language]**: [narrative of improvement/deterioration]
+                • **[Risk assessment header in target language]**: [narrative of current risk level and factors]
+                • **[Stability header in target language]**: [narrative of patient stability and prognosis]
+                • **[Critical concerns header in target language]**: [narrative of urgent issues if any]
+
+                Example (Swedish):
+                • **Kliniskt intryck**: Patient with **multimorbidity** showing signs of **worsening diabetic control** with HbA1c rising from 62 to 68 mmol/mol over 6 months [1]
+
+                • **Nuvarande status**: Generally **stable** but requires medication adjustment and closer monitoring of renal function given declining eGFR [2]
+
+                • **Viktiga fynd**: **Declining kidney function** (eGFR 64→52), **elevated blood pressure** (145/85), and **worsening glycemic control** suggest need for therapeutic review [1]
+
+                • **Riskbedömning**: **Moderate-to-high risk** for cardiovascular events given uncontrolled HTN, T2DM, and CKD Stage 3a [3]
+
+                • **Kritiska bekymmer**: Patient on **warfarin** with recent **INR fluctuations**, requires close monitoring to prevent bleeding complications [4]
 
                 Add blank line between each bullet point for readability.
 
                 MANDATORY:
+                - TRANSLATE all bold headers to the target language
                 - Use **bold** markdown for important clinical terms, values, and risk levels
                 - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 - Write in narrative free-text style within each bullet point
@@ -2395,7 +2425,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR assessment summaries with 5-7 bullet points in narrative style. Use **bold** for important clinical terms and values. Write flowing sentences within each bullet point.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise but informative.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR assessment summaries with 5-7 bullet points in narrative style. TRANSLATE all bold headers to the user's language. Use **bold** for important clinical terms and values. Write flowing sentences within each bullet point.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise but informative.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2458,27 +2488,38 @@ Keep queries concise and medically precise.
 
                 USER QUERY: {state.user_prompt}
 
-                Format as 5-7 bullet points covering:
-                • **Urgent interventions**: [immediate actions needed]
-                • **Diagnostic workup**: [tests/imaging required]
-                • **Treatment adjustments**: [medication/therapy changes]
-                • **Monitoring plan**: [what to watch and frequency]
-                • **Consultation needs**: [specialists to involve]
-                • **Follow-up timing**: [when to reassess]
-                • **Safety measures**: [precautions and risk mitigation]
+                CRITICAL: Translate ALL bold headers to the target language. Examples:
+                - Swedish: **Brådskande åtgärder**, **Diagnostisk utredning**, **Behandlingsjusteringar**, **Övervakningsplan**, **Konsultationsbehov**, **Uppföljningstid**, **Säkerhetsåtgärder**
+                - English: **Urgent interventions**, **Diagnostic workup**, **Treatment adjustments**, **Monitoring plan**, **Consultation needs**, **Follow-up timing**, **Safety measures**
 
-                Example:
-                • **Urgent interventions**: Obtain **12-lead ECG** immediately, establish **IV access**, give **aspirin 300mg** if not contraindicated [1]
-                • **Diagnostic workup**: **Troponin** at 0 and 3 hours, **chest X-ray**, continuous **cardiac monitoring** [2]
-                • **Treatment adjustments**: Consider **nitroglycerin SL** for chest pain, hold **metformin** if contrast study needed [3]
-                • **Monitoring plan**: **Vital signs q15min**, monitor for **arrhythmias**, assess **pain response** to treatment [4]
-                • **Consultation needs**: **Cardiology** consult for possible ACS, consider **interventional** if STEMI criteria met [5]
-                • **Follow-up timing**: Reassess after **troponin results**, plan disposition based on findings [6]
-                • **Safety measures**: Keep patient **NPO**, ensure **resuscitation equipment** at bedside, discuss **code status** if not documented [7]
+                Format as 5-7 bullet points covering:
+                • **[Urgent interventions header in target language]**: [immediate actions needed]
+                • **[Diagnostic workup header in target language]**: [tests/imaging required]
+                • **[Treatment adjustments header in target language]**: [medication/therapy changes]
+                • **[Monitoring plan header in target language]**: [what to watch and frequency]
+                • **[Consultation needs header in target language]**: [specialists to involve]
+                • **[Follow-up timing header in target language]**: [when to reassess]
+                • **[Safety measures header in target language]**: [precautions and risk mitigation]
+
+                Example (Swedish):
+                • **Brådskande åtgärder**: Obtain **12-lead ECG** immediately, establish **IV access**, give **aspirin 300mg** if not contraindicated [1]
+
+                • **Diagnostisk utredning**: **Troponin** at 0 and 3 hours, **chest X-ray**, continuous **cardiac monitoring** [2]
+
+                • **Behandlingsjusteringar**: Consider **nitroglycerin SL** for chest pain, hold **metformin** if contrast study needed [3]
+
+                • **Övervakningsplan**: **Vital signs q15min**, monitor for **arrhythmias**, assess **pain response** to treatment [4]
+
+                • **Konsultationsbehov**: **Cardiology** consult for possible ACS, consider **interventional** if STEMI criteria met [5]
+
+                • **Uppföljningstid**: Reassess after **troponin results**, plan disposition based on findings [6]
+
+                • **Säkerhetsåtgärder**: Keep patient **NPO**, ensure **resuscitation equipment** at bedside, discuss **code status** if not documented [7]
 
                 Add blank line between each bullet point for readability.
 
                 MANDATORY:
+                - TRANSLATE all bold headers to the target language
                 - Use **bold** markdown for interventions, tests, medications, and key actions
                 - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 CRITICAL: 5-7 concise bullet points. Educational information only - refer complex decisions to healthcare providers. Keep actionable.
@@ -2486,7 +2527,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR recommendation summaries with 5-7 bullet points. Use **bold** for interventions, tests, medications, and key actions.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise and actionable.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR recommendation summaries with 5-7 bullet points. TRANSLATE all bold headers to the user's language. Use **bold** for interventions, tests, medications, and key actions.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise and actionable.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2547,21 +2588,30 @@ Keep queries concise and medically precise.
 
                 USER QUERY: {state.user_prompt}
 
-                Format as 5 bullet points with the following bold headers:
-                • **Demographics:** [Age, sex]
-                • **Living Situation:** [Living arrangement, occupation/status]
-                • **Functional Status:** [Mobility and independence level]
-                • **Social Support:** [Care situation]
-                • **Lifestyle Factors:** [Smoking, alcohol, substance use, diet, exercise]
+                CRITICAL: Translate ALL bold headers to the target language. Examples:
+                - Swedish: **Demografi:**, **Boendesituation:**, **Funktionsstatus:**, **Socialt stöd:**, **Livsstilsfaktorer:**
+                - English: **Demographics:**, **Living Situation:**, **Functional Status:**, **Social Support:**, **Lifestyle Factors:**
 
-                Example:
-                • **Demographics:** **73 Male** (recorded 2024-01-15) [1]
-                • **Living Situation:** Lives alone, **retired teacher** (recorded 2023-12-10) [2]
-                • **Functional Status:** **Independent** with ADLs, uses walker (assessed 2023-11-20) [3]
-                • **Social Support:** **Home care** 2x/week (started 2023-10-01) [4]
-                • **Lifestyle Factors:** **Ex-smoker**, quit 2010; **occasional alcohol**; low exercise (2024-01-10) [5]
+                Format as 5 bullet points with the following bold headers:
+                • **[Demographics header in target language]:** [Age, sex]
+                • **[Living Situation header in target language]:** [Living arrangement, occupation/status]
+                • **[Functional Status header in target language]:** [Mobility and independence level]
+                • **[Social Support header in target language]:** [Care situation]
+                • **[Lifestyle Factors header in target language]:** [Smoking, alcohol, substance use, diet, exercise]
+
+                Example (Swedish):
+                • **Demografi:** **73 Male** (recorded 2024-01-15) [1]
+
+                • **Boendesituation:** Lives alone, **retired teacher** (recorded 2023-12-10) [2]
+
+                • **Funktionsstatus:** **Independent** with ADLs, uses walker (assessed 2023-11-20) [3]
+
+                • **Socialt stöd:** **Home care** 2x/week (started 2023-10-01) [4]
+
+                • **Livsstilsfaktorer:** **Ex-smoker**, quit 2010; **occasional alcohol**; low exercise (2024-01-10) [5]
 
                 MANDATORY:
+                - TRANSLATE all bold headers to the target language
                 - Each bullet must have a bold header followed by colon
                 - Use **bold** markdown for important clinical terms, values, and key phrases
                 - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when the information was recorded
@@ -2572,7 +2622,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Create concise snapshots with 5-7 bullet points, each with a bold header. Use **bold** for important clinical terms and values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for when each piece of information was recorded. One line per bullet point. No explanations.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Add blank lines between bullets. Always include dates.\n\nInformation system only - NOT a medical device.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Create concise snapshots with 5-7 bullet points, each with a bold header. TRANSLATE all bold headers to the user's language. Use **bold** for important clinical terms and values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for when each piece of information was recorded. One line per bullet point. No explanations.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Add blank lines between bullets. Always include dates.\n\nInformation system only - NOT a medical device.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2629,34 +2679,40 @@ Keep queries concise and medically precise.
 
                 USER QUERY: {state.user_prompt}
 
-                Format with TWO subsections (most relevant and frequently mentioned at the top of each list):
+                Format with TWO subsections (most relevant and frequently mentioned at the top of each list).
 
-                # Current Conditions
+                CRITICAL: The section headers MUST be translated to the target language:
+                - For Swedish: "Aktuella tillstånd" (current) and "Tidigare tillstånd" (previous)
+                - For English: "Current Conditions" (current) and "Previous Conditions" (previous)
+                - For other languages: Use appropriate translations
+
+                Structure:
+                # [Header for current/active conditions in target language]
                 • **Disease name** (year) - status
 
-                # Previous Conditions
+                # [Header for previous/resolved conditions in target language]
                 • **Disease name** (year) - status
 
                 Example (count the words - each is 6-12 words):
-                # Current Conditions
+                # Aktuella tillstånd
                 • **T2DM** (diagnosed 2012) **HbA1c 68** moderate control (2024-01-15) [1]
 
-                • **HTN** (since 2005) **BP 145/85** on treatment (2024-01-15 09:00) [2] 
+                • **HTN** (since 2005) **BP 145/85** on treatment (2024-01-15 09:00) [2]
 
                 • **CKD Stage 3a** (2020) **eGFR 52** monitored (2024-01-15 08:30) [3]
 
-                # Previous Conditions
+                # Tidigare tillstånd
                 • **COPD GOLD II** (2018) stable uses inhaler (reviewed 2024-01-10) [4]
 
-                • **Osteoarthritis** bilateral knees uses walker (assessed 2023-12-20) [5] 
+                • **Osteoarthritis** bilateral knees uses walker (assessed 2023-12-20) [5]
 
                 Add blank line between each bullet point for readability.
 
-                If there are MORE problems in the data (beyond 5-7), add at the end:
-                "_Fråga om fler diagnoser_" (Swedish) or "_Ask for more diagnoses_" (English)
+                If there are MORE problems in the data (beyond 5-7), add a hint at the end in the target language.
 
                 MANDATORY:
-                - Divide into **Current Conditions** (active/ongoing) and **Previous Conditions** (resolved/historical)
+                - TRANSLATE section headers to the target language (current/active conditions vs previous/resolved conditions)
+                - Divide into active/ongoing conditions and resolved/historical conditions
                 - Sort by relevance and frequency - most mentioned/relevant at the top of each subsection
                 - Use **bold** markdown for disease names and key values
                 - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when the information was recorded/updated
@@ -2667,7 +2723,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List top 5-7 problems divided into two subsections: **Current Conditions** and **Previous Conditions**. Sort by relevance and frequency within each subsection. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List top 5-7 problems divided into two subsections with TRANSLATED headers (e.g., for Swedish: 'Aktuella tillstånd' and 'Tidigare tillstånd'). Sort by relevance and frequency within each subsection. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: TRANSLATE section headers to match user's language. Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2702,19 +2758,25 @@ Keep queries concise and medically precise.
 
                 USER QUERY: {state.user_prompt}
 
-                Format with TWO subsections (most relevant at the top of each list):
+                Format with TWO subsections (most relevant at the top of each list).
 
-                # Current Medications
+                CRITICAL: The section headers MUST be translated to the target language:
+                - For Swedish: "Aktuella läkemedel" (current) and "Tidigare läkemedel" (prior)
+                - For English: "Current Medications" (current) and "Prior Medications" (prior)
+                - For other languages: Use appropriate translations
+
+                Structure:
+                # [Header for current/active medications in target language]
                 • **Drug name dose** (started YYYY-MM-DD) - purpose
                 • **Drug 250mg→500mg** ↑ (increased YYYY-MM-DD) - purpose/reason for change
                 • 🔺 **Drug dose** (dates) - purpose ALLERGY NOTED  ← Add 🔺 if patient has documented allergy
                 • ⚠️ **High-risk drug dose** (dates) - purpose  ← Mark anticoagulants, opioids, insulin with ⚠️
 
-                # Prior Medications
+                # [Header for prior/discontinued medications in target language]
                 • **Drug dose** (started YYYY-MM-DD, stopped YYYY-MM-DD) - reason for discontinuation
 
                 Example (count the words - each is 6-12 words):
-                # Current Medications
+                # Aktuella läkemedel
                 • **Metformin 1000mg 2x/day** (started 2024-01-10) - diabetes control **HbA1c 68** [1] (10 words)
 
                 • **Enalapril 5mg→10mg** ↑ (increased 2024-01-15) - BP control dose adjustment [2] (10 words)
@@ -2723,16 +2785,16 @@ Keep queries concise and medically precise.
 
                 • ⚠️ **Warfarin 5mg** (started 2023-11-01) - anticoagulation **INR 2.5** [4] (9 words)
 
-                # Prior Medications
+                # Tidigare läkemedel
                 • **Simvastatin 20mg** (2020-05-15 to 2023-12-20) - switched to atorvastatin [5] (10 words)
 
                 Add blank line between each bullet point for readability.
 
-                If there are MORE medications (beyond 5-7), add at the end:
-                "_Fråga om fler läkemedel_" (Swedish) or "_Ask for more medications_" (English)
+                If there are MORE medications (beyond 5-7), add a hint at the end in the target language.
 
                 MANDATORY:
-                - Divide into **Current Medications** (active) and **Prior Medications** (discontinued, only if relevant to user query)
+                - TRANSLATE section headers to the target language (current/active medications vs prior/discontinued medications)
+                - Divide into active medications and discontinued medications (only if relevant to user query)
                 - Sort by relevance - most relevant at the top of each subsection
                 - Use **bold** markdown for drug names, doses, and key values
                 - Show dose changes as **OldDose→NewDose** with ↑ (increase) or ↓ (decrease) arrows
@@ -2746,7 +2808,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 most important medications divided into two subsections: **Current Medications** (active) and **Prior Medications** (discontinued, only if relevant to user query). Sort by relevance within each subsection. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. Add 🔺 if patient has documented allergy to the medication (check allergy mentions in data). Show dose changes as **OldDose→NewDose** with ↑/↓ arrows. CRITICAL: Include start dates for all medications, end dates for discontinued ones, and change dates for dose adjustments. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Explain why doses or medications were changed.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates. Prior medications only if relevant to query.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 most important medications divided into two subsections with TRANSLATED headers (e.g., for Swedish: 'Aktuella läkemedel' and 'Tidigare läkemedel'). Sort by relevance within each subsection. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. Add 🔺 if patient has documented allergy to the medication (check allergy mentions in data). Show dose changes as **OldDose→NewDose** with ↑/↓ arrows. CRITICAL: Include start dates for all medications, end dates for discontinued ones, and change dates for dose adjustments. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Explain why doses or medications were changed.\n\nMANDATORY: TRANSLATE section headers to match user's language. Include citations after each statement - NOT verbose citations. Always include dates. Prior medications only if relevant to query.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2793,8 +2855,7 @@ Keep queries concise and medically precise.
 
                 Add blank line between each bullet point for readability.
 
-                If there are MORE lab values/trends available, add at the end:
-                "_Fråga om fler trender_" (Swedish) or "_Ask for more trends_" (English)
+                If there are MORE lab values/trends available, add a hint at the end in the target language.
 
                 MANDATORY:
                 - Use **bold** markdown for parameter names and current values
@@ -2806,7 +2867,7 @@ Keep queries concise and medically precise.
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Show 5-7 key trends. Use **bold** for parameter names and current values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Add 'ask for more' if additional trends exist.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Show 5-7 key trends. Use **bold** for parameter names and current values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. If additional trends exist, add a hint in the user's language.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2942,8 +3003,10 @@ CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JS
 
                 USER QUERY: {state.user_prompt}
 
+                CRITICAL: Translate risk names to the target language (e.g., "Penicillin allergy" → "Penicillinallergi" in Swedish).
+
                 Format (Use colon to separate risk from reason):
-                • ⚠️ **Risk**: Clear explanation of why this is a risk
+                • ⚠️ **[Risk name in target language]**: Clear explanation of why this is a risk
 
                 Example (each is 8-15 words):
                 • ⚠️ **Penicillin allergy**: History of rash and angioedema, documented 2015-03-20, avoid beta-lactams [1]
@@ -2955,8 +3018,7 @@ CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JS
 
                 Add blank line between each bullet point for readability.
 
-                If there are MORE risks/alerts, add at the end:
-                "_Fråga om fler risker_" (Swedish) or "_Ask for more risks_" (English)
+                If there are MORE risks/alerts, add a hint at the end in the target language.
 
                 MANDATORY:
                 - Use format: **Risk**: Reason (with colon separating risk from explanation)
@@ -2970,7 +3032,7 @@ CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JS
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 critical alerts using format **Risk**: Reason. Use **bold** only for risk name (before colon). Use ⚠️ marker. CRITICAL: Make reasoning CLEAR and SPECIFIC - explain WHY each item is a risk. Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be 8-15 words (excluding citation). Count words carefully. Add 'ask for more' if additional risks exist.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 critical alerts using format **Risk**: Reason. TRANSLATE risk names to the user's language. Use **bold** only for risk name (before colon). Use ⚠️ marker. CRITICAL: Make reasoning CLEAR and SPECIFIC - explain WHY each item is a risk. Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be 8-15 words (excluding citation). Count words carefully. If additional risks exist, add a hint in the user's language.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3402,7 +3464,7 @@ RULES:
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused diagnoses section. Use **bold** for diagnosis names and key terms. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused diagnoses section. Translate ALL content to the user's language. Use **bold** for diagnosis names and key terms. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3477,7 +3539,7 @@ RULES:
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused events timeline. Use **bold** for dates and key clinical terms. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused events timeline. Translate ALL content to the user's language. Use **bold** for dates and key clinical terms. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3558,7 +3620,7 @@ RULES:
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused medications list. Use **bold** for medication names and key terms. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused medications list. Translate ALL content to the user's language. Use **bold** for medication names and key terms. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3611,28 +3673,37 @@ Generate CONCISE objective data for: {state.focused_aspect}
 
 USER QUERY: {state.user_prompt}
 
+CRITICAL: Translate table headers to the target language.
+- Swedish: | Mätning | Värde | Enhet | Datum |
+- English: | Metric | Value | Unit | Date |
+
 Format as a proper Markdown table with **bold** highlighting for abnormal values:
 
-| Metric | Value | Unit | Date |
+| [Metric header in target language] | [Value header in target language] | [Unit header in target language] | [Date header in target language] |
 |--------|-------|------|------|
 | **HbA1c** | **7.2** | % | 2024-01-15 |
 | Fasting Glucose | 145 | mg/dL | 2024-01-15 |
 | **LVEF (Echo)** | **55** | % | 2023-12-20 |
 
+Example (Swedish):
+| Mätning | Värde | Enhet | Datum |
+|--------|-------|------|------|
+| **HbA1c** | **7.2** | % | 2024-01-15 |
+
 RULES:
+- TRANSLATE all table headers to the target language
 - List ONLY data relevant to {state.focused_aspect}
 - Use **bold** markdown for abnormal/critical values and important metrics
 - Use proper Markdown table format with header row and alignment row
-- Include columns: Metric, Value, Unit, Date
 - Maximum 5 rows of data
 - For imaging/test summaries, use Metric column for test name, Value column for result
 - MANDATORY: Include citations after the table - DO NOT use verbose citations like "According to..." or "from EHR..."
-- If no data found, state "No recent objective data documented for {state.focused_aspect}"
+- If no data found, state message in target language
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating focused objective data. Use **bold** for abnormal/critical values and important metrics. MANDATORY: Include citations after the table - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating focused objective data. TRANSLATE table headers to the user's language (e.g., Metric→Mätning, Value→Värde for Swedish). Use **bold** for abnormal/critical values and important metrics. MANDATORY: Include citations after the table - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3685,20 +3756,27 @@ Generate a CONCISE clinical assessment for: {state.focused_aspect}
 
 USER QUERY: {state.user_prompt}
 
+CRITICAL: Translate headers to the target language.
+- Swedish: **Nuvarande status:**, **Trend:**, **Prognos:**
+- English: **Current Status:**, **Trend:**, **Prognosis:**
+
 Format exactly as markdown bullet points with **bold** highlighting:
 
-• **Current Status:** [Disease control/status summary with key clinical terms in **bold**]
+• **[Current Status header in target language]:** [Disease control/status summary with key clinical terms in **bold**]
 
-• **Trend:** [Progression, stability, or improvement with key findings in **bold**]
+• **[Trend header in target language]:** [Progression, stability, or improvement with key findings in **bold**]
 
-• **Prognosis:** [Overall outlook with risk factors in **bold**]
+• **[Prognosis header in target language]:** [Overall outlook with risk factors in **bold**]
 
-Example:
-• **Current Status:** Diabetes **moderately controlled** with HbA1c **68 mmol/mol**, above target [1]
+Example (Swedish):
+• **Nuvarande status:** Diabetes **moderately controlled** with HbA1c **68 mmol/mol**, above target [1]
+
 • **Trend:** **Worsening glycemic control** over past 6 months (HbA1c 62→68), suggests **treatment intensification** needed [2]
-• **Prognosis:** **Moderate risk** of complications given current control, requires **medication adjustment** and closer monitoring [3]
+
+• **Prognos:** **Moderate risk** of complications given current control, requires **medication adjustment** and closer monitoring [3]
 
 RULES:
+- TRANSLATE the three bullet point headers to the target language
 - Use 3 bullet points as shown above
 - Use **bold** markdown for key clinical terms, status descriptors, and risk levels
 - Focus ONLY on {state.focused_aspect}
@@ -3706,12 +3784,12 @@ RULES:
 - Add a blank line between each bullet point for readability
 - Each bullet should be one concise line
 - MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-- If insufficient data, state "Limited clinical assessment available for {state.focused_aspect}"
+- If insufficient data, state message in target language
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused clinical assessment. Use **bold** for key clinical terms, status descriptors, and risk levels. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused clinical assessment. TRANSLATE all headers to the user's language (e.g., Current Status→Nuvarande status, Prognosis→Prognos for Swedish). Use **bold** for key clinical terms, status descriptors, and risk levels. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3788,7 +3866,7 @@ RULES:
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating focused next steps. Use **bold** for action types, key interventions, and timing. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating focused next steps. Translate ALL content to the user's language. Use **bold** for action types, key interventions, and timing. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3862,6 +3940,10 @@ RULES:
                 logger.info(f"Focused Summary citations: {len(all_cited_chunk_ids)} cited out of {len(state.citations) if state.citations else 0} total")
 
                 # Model already outputs numbered citations [1], [2], [3] - no conversion needed!
+
+                # translated_aspect = await self._llm.chat(ChatMessage(role=ChatRole.USER, content=f"Translate the following medical aspect to {state.user_language}:\n\n{state.focused_aspect}\n\nRespond with only the translated aspect"))
+                
+                # translated_aspect = translated_aspect.content.strip() if translated_aspect else state.focused_aspect
 
                 # Add conversation context metadata
                 conversation_context = {
@@ -4101,7 +4183,7 @@ Return ONLY the JSON array, no additional text.
                     history_text = "\n".join([f"{msg.role.value}: {msg.content[:200]}" for msg in recent_history]) if recent_history else ""
 
                     prompt = f"""
-Generate a concise explanation (5-7 bullet points) for this timeline event.
+Generate a concise explanation (4-5 bullet points) for this timeline event.
 
 Event: {title}
 Time Period: {time_period}
@@ -4113,23 +4195,30 @@ Clinical Information:
 Previous conversation (for context):
 {history_text}
 
-Format as 5-7 bullet points covering:
-• **What happened**: [brief description of the event]
-• **Clinical findings**: [key observations, test results, symptoms]
-• **Treatments/interventions**: [medications, procedures performed]
-• **Outcome**: [immediate results or response]
-• **Significance**: [why this event matters in patient's timeline]
-• **Follow-up**: [any subsequent actions or plans]
-• **Provider notes**: [relevant clinician observations]
+CRITICAL: Translate ALL bullet point descriptors to the target language.
+- Swedish: **Vad hände**, **Kliniska fynd**, **Behandlingar**, **Utfall/Betydelse**, **Uppföljning**
+- English: **What happened**, **Clinical findings**, **Treatments**, **Outcome/Significance**, **Follow-up**
 
-Example:
-• **What happened**: Patient admitted to **ER** with **chest pain** and **shortness of breath** [1]
-• **Clinical findings**: **ECG** showed ST elevations in leads II, III, aVF, **troponin** elevated at 450 ng/L [2]
-• **Treatments**: Given **aspirin 300mg**, **heparin** infusion started, **morphine** 5mg for pain [3]
-• **Outcome**: Pain reduced to **3/10**, hemodynamically **stable**, monitored in CCU [4]
-• **Significance**: First **acute MI** event, indicates need for aggressive cardiovascular risk management [5]
+Format as 4-5 bullet points covering:
+• **[What happened in target language]**: [brief description of the event]
+• **[Clinical findings in target language]**: [key observations or test results]
+• **[Treatments in target language]**: [medications or procedures if applicable]
+• **[Outcome/Significance in target language]**: [results and clinical importance]
+• **[Follow-up in target language]**: [any subsequent actions if applicable]
+
+Example (Swedish):
+• **Vad hände**: Patient admitted to **ER** with **chest pain** and **shortness of breath** [1]
+
+• **Kliniska fynd**: **ECG** showed ST elevations, **troponin** elevated at 450 ng/L [2]
+
+• **Behandlingar**: Given **aspirin 300mg**, **heparin** infusion, **morphine** 5mg for pain [3]
+
+• **Utfall**: Pain reduced to **3/10**, hemodynamically **stable**, monitored in CCU [4]
+
+Add blank line between each bullet point for readability.
 
 IMPORTANT:
+- TRANSLATE all bullet point descriptors (the bold headers like "What happened") to the target language
 - Use **bold** markdown for key clinical terms, findings, medications, and important descriptors
 - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
 - Preserve any EHR source links from the clinical information
@@ -4141,7 +4230,7 @@ Return only the content in markdown format, no preamble.
 
                     messages = [
                         self._get_language_policy_message(state),
-                        ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create timeline explanations with 5-7 concise bullet points. Use **bold** for key clinical terms, findings, and medications.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise but informative."),
+                        ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create timeline explanations with 4-5 concise bullet points. TRANSLATE all bullet point descriptors to the user's language (e.g., What happened→Vad hände, Clinical findings→Kliniska fynd for Swedish). Use **bold** for key clinical terms, findings, and medications.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise but informative. Add blank line between each bullet point for readability."),
                         ChatMessage(role=ChatRole.USER, content=prompt)
                     ]
 
@@ -4398,12 +4487,16 @@ Type: {template.template_type.value}
 
 Your task is to fill in the template sections based on the provided clinical information.
 
+CRITICAL LANGUAGE POLICY:
+- TRANSLATE ALL content to {lang_name} - section titles, headers, medical terms, and all text
+- Use medical terminology appropriate for {lang_name}
+- If information is not available for a section, write "Information not available" in {lang_name}
+- Do NOT mix languages - everything must be in {lang_name}
+
 CRITICAL GUIDELINES:
 - Be CONCISE and FOCUSED - include only essential clinical information
 - Use **bold** markdown to highlight important clinical terms, diagnoses, medications, vital signs, and key findings
 - Do NOT include source references, citations, or document names (write directly from the information)
-- Use medical terminology appropriate for {lang_name}
-- If information is not available for a section, write "Information not available" in {lang_name}
 - Maintain professional medical documentation style
 - Include relevant timestamps when available
 - Avoid unnecessary elaboration or repetition between sections
