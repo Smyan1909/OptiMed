@@ -80,6 +80,11 @@ interface TimelineResults {
   events: TimelineEvent[];
 }
 
+interface EncountersData {
+  content: string;
+  structured_data: any[];
+}
+
 interface GeneralSummaryResults {
   snapshot?: string;
   problems?: string;
@@ -87,7 +92,7 @@ interface GeneralSummaryResults {
   trends?: string;
   history?: string;
   risks?: string;
-  encounters?: string;
+  encounters?: string | EncountersData;
   deepdive?: string;
 }
 

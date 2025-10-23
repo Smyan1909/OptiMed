@@ -259,6 +259,10 @@ class FlowState(BaseModel):
     # General knowledge flow fields (medical knowledge, not patient-specific)
     is_general_knowledge_flow: bool = False
 
+    # Guideline flow fields (clinical guideline search on viss.nu)
+    is_guideline_flow: bool = False
+    paraphrased_guideline_query: Optional[str] = None  # De-identified query for viss.nu search
+
     # Separate fields for each focused summary component to avoid concurrent updates
     focused_diagnoses_chunks: Optional[List[Dict[str, Any]]] = None
     focused_events_chunks: Optional[List[Dict[str, Any]]] = None
@@ -4671,6 +4675,423 @@ Generate the content for "{field_label}" section now:"""
 
         # ==================== END NOTE GENERATION FLOW NODES ====================
 
+        @streaming_step("paraphrase_query_for_guideline")
+        async def paraphrase_query_for_guideline(state: FlowState) -> FlowState:
+            """
+            Paraphrase the user query using retrieved chunks to include clinical context.
+            Removes all PHI (patient names, dates, specific identifiers) but keeps clinical concepts.
+            This paraphrased query will be used to search viss.nu without exposing patient data.
+            """
+            logger.info("🔄 Starting query paraphrasing for guideline search")
+            logger.info(f"📋 Original query: {state.user_prompt[:100]}...")
+            logger.info(f"📊 Available chunks: {len(state.retrieved_chunks)}")
+
+            try:
+                # Update status
+                state.current_step = "Analyserar patientdata"
+                state.step_details = "Extraherar klinisk kontext från patientjournaler..."
+
+                # Emit status update
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Analyserar patientdata",
+                        "description": "Extraherar klinisk kontext från patientjournaler...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Build chunks context (use top 10-15 chunks for context)
+                chunks_for_context = state.retrieved_chunks[:15] if state.retrieved_chunks else []
+
+                if not chunks_for_context:
+                    logger.info("⚠️ No chunks available, using original query")
+                    state.paraphrased_guideline_query = state.user_prompt
+                    return state
+
+                # Combine chunk content
+                chunk_contents = []
+                for idx, chunk in enumerate(chunks_for_context, 1):
+                    content = chunk.get('content', '')
+                    if content:
+                        # Limit each chunk to 200 chars for context
+                        chunk_contents.append(f"Chunk {idx}: {content[:200]}...")
+
+                chunks_text = "\n".join(chunk_contents)
+
+                # Create paraphrasing prompt
+                paraphrase_prompt = f"""You are a medical query paraphrasing assistant. Your task is to reformulate a user's query to make it more specific and clinically relevant for searching medical guidelines, while REMOVING all patient-identifying information (PHI).
+
+**ORIGINAL QUERY**: {state.user_prompt}
+
+**PATIENT CONTEXT** (contains PHI - use this ONLY to understand clinical concepts):
+{chunks_text}
+
+**YOUR TASK**:
+1. Analyze the patient context to understand:
+   - Clinical conditions mentioned (e.g., diabetes, hypertension, COPD)
+   - Medications or treatments involved
+   - Relevant symptoms or findings
+   - Clinical situation or context
+
+2. Reformulate the query to include these clinical concepts BUT:
+   - **REMOVE all patient names, personal identifiers**
+   - **REMOVE specific dates, ages, locations**
+   - **REMOVE hospital/clinic names**
+   - **KEEP general clinical concepts** (diagnoses, symptoms, medication classes)
+   - **KEEP general timeframes** (e.g., "elderly patient" instead of "72-year-old", "recent" instead of "January 2024")
+
+3. Make the query clinically specific and suitable for guideline search
+
+**EXAMPLES**:
+
+Example 1:
+Original: "What treatment should I use?"
+Context mentions: diabetes, metformin, A1C 8.5%
+Paraphrased: "Treatment guidelines for type 2 diabetes patient with inadequate glycemic control on metformin"
+
+Example 2:
+Original: "Does he need antibiotics?"
+Context mentions: pneumonia symptoms, cough, fever
+Paraphrased: "Antibiotic indication guidelines for community-acquired pneumonia with respiratory symptoms"
+
+Example 3:
+Original: "What does the guideline say?"
+Context mentions: atrial fibrillation, anticoagulation, stroke risk
+Paraphrased: "Anticoagulation guidelines for atrial fibrillation patient with stroke risk"
+
+**NOW PARAPHRASE THE QUERY**:
+Provide ONLY the paraphrased query (one sentence), no explanation or preamble."""
+
+                # Call LLM to paraphrase
+                paraphrase_messages = [
+                    ChatMessage(
+                        role=ChatRole.SYSTEM,
+                        content="You are a medical query paraphrasing assistant. Extract clinical concepts from context and reformulate queries while removing all PHI."
+                    ),
+                    ChatMessage(
+                        role=ChatRole.USER,
+                        content=paraphrase_prompt
+                    )
+                ]
+
+                logger.info("🤖 Calling LLM to paraphrase query...")
+                response = await self._llm.chat(paraphrase_messages)
+
+                paraphrased = response.content.strip()
+
+                # Store paraphrased query
+                state.paraphrased_guideline_query = paraphrased
+
+                logger.info(f"✅ Paraphrased query: {paraphrased}")
+                logger.info(f"🔒 PHI removed, clinical context preserved")
+
+            except Exception as e:
+                log_error(logger, "paraphrase_query_for_guideline", e)
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                # Fallback: use original query
+                logger.info("⚠️ Paraphrasing failed, using original query")
+                state.paraphrased_guideline_query = state.user_prompt
+
+            return state
+
+        @streaming_step("handle_guideline_query")
+        async def handle_guideline_query(state: FlowState) -> FlowState:
+            """
+            Handle guideline queries (clinical guideline search on viss.nu).
+            Uses ONLY web search restricted to viss.nu domain.
+            Uses chat history for context but no patient data retrieval.
+            """
+            logger.info("📋 Starting guideline query handling (viss.nu only)")
+            logger.info(f"🔍 Query: {state.user_prompt[:100]}...")
+
+            try:
+                # Update status: Searching guidelines
+                state.current_step = "Söker i riktlinjer"
+                state.step_details = "Söker på viss.nu efter kliniska riktlinjer..."
+
+                # Emit status update
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Söker i riktlinjer",
+                        "description": "Söker på viss.nu efter kliniska riktlinjer...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Force web search for guideline information
+                logger.info("📡 Performing web search on viss.nu for clinical guidelines...")
+
+                # Use paraphrased query if available (from chunk-based context), otherwise use original
+                if state.paraphrased_guideline_query:
+                    search_query = state.paraphrased_guideline_query
+                    logger.info(f"🔄 Using paraphrased query (PHI removed): {search_query[:100]}...")
+                else:
+                    search_query = state.user_prompt
+                    logger.info(f"📝 Using original query: {search_query[:100]}...")
+
+                    # If no paraphrased query, use chat history to enrich context
+                    if state.chat_history:
+                        logger.info(f"📝 Using chat history to build guideline search context")
+                        recent_messages = state.chat_history[-5:]  # Last 5 messages
+                        history_context = []
+
+                        for msg in recent_messages:
+                            if msg.role == ChatRole.USER and msg.content:
+                                # Extract key medical terms from previous user messages
+                                history_context.append(msg.content[:100])
+
+                        if history_context:
+                            logger.info(f"✓ Found {len(history_context)} previous messages for context")
+
+                # Detect language
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "sv"  # Default to Swedish for viss.nu
+
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Söker på viss.nu",
+                        "description": "Frågar klinisk riktlinjedatabas...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Perform web search ONLY on viss.nu domain
+                # Note: We need to modify the search call to include_domains parameter
+                # This requires updating the TavilyWebSearchService.search method
+
+                # For now, we'll use the existing search method and add domain filtering
+                # by creating a custom search query that includes site:viss.nu
+                enhanced_query = f"site:viss.nu {search_query}"
+
+                search_response = await self._web_search.search(
+                    query=enhanced_query,
+                    max_results=8,
+                    patient_context=None,  # No patient data for GDPR compliance
+                    search_intent="guideline_search",
+                    target_language=(active_lang if active_lang else None)
+                )
+
+                state.web_search_response = search_response
+                state.web_search_performed = True
+
+                logger.info(f"✓ Found {len(search_response.results)} guideline results from viss.nu")
+
+                # Update status: Analyzing guidelines
+                state.current_step = "Analyserar riktlinjer"
+                state.step_details = f"Granskar {len(search_response.results)} riktlinjekällor..."
+
+                # Emit status update
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Analyserar riktlinjer",
+                        "description": f"Granskar {len(search_response.results)} riktlinjekällor...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Generate response using ONLY viss.nu sources (no patient data chunks)
+                logger.info("💬 Generating response from viss.nu guidelines only...")
+
+                # System message for guideline search
+                guideline_system_msg = ChatMessage(
+                    role=ChatRole.SYSTEM,
+                    content="""You are CLARA, a medical information assistant providing clinical guideline information from viss.nu.
+
+**YOUR TASK**: Provide a comprehensive summary of the clinical guideline information from viss.nu for the user's query.
+
+**CRITICAL - RESPONSE FORMAT**:
+- Provide a DETAILED summary of the guideline with comprehensive information
+- Organize response with `##` headers to divide sections (e.g., ## Indikationer, ## Behandling, ## Dosering, ## Kontraindikationer, ## Uppföljning)
+- **MAXIMUM 5 HEADERS** - Choose the 5 most important sections for the query
+- **Use bullet points (`-`) for all information**
+- **Be thorough**: Include all relevant details from the guideline (10-20 bullet points or more if needed)
+- **15-25 words per bullet point** to provide adequate detail
+- **DO NOT include any reasoning preamble** - provide ONLY the direct answer
+- **DO NOT explain your thinking process** - just answer the question directly
+
+**CITATION POLICY**:
+- **MANDATORY**: You MUST cite viss.nu sources using format: [Source Title](URL)
+- Include citation at the end of each section or key bullet point that uses information from that source
+- Example: "**Antibiotika** should be used only when bacterial infection is confirmed [VISS.nu - Luftvägsinfektioner](https://example.com)"
+
+**CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms:
+- **Guidelines** and recommendations
+- **Medications** and doses
+- **Diagnoses** and conditions
+- **Key clinical criteria**
+- **Treatment protocols** and procedures
+
+**Important**: Focus on providing clear, comprehensive, actionable guideline information. Include all relevant clinical details from the guideline."""
+                )
+
+                messages = [guideline_system_msg]
+
+                # Language policy
+                language_system_msg = self._get_language_policy_message(state)
+                messages.insert(0, language_system_msg)
+
+                # Add chat history context
+                current_history = state.chat_history[-5:] if state.chat_history else []
+                if current_history:
+                    logger.info(f"📝 Creating conversation context from {len(current_history)} messages")
+                    conversation_lines = []
+
+                    for msg in current_history:
+                        if not msg.content or not msg.content.strip():
+                            continue
+
+                        # Extract plain text content
+                        content = msg.content
+                        try:
+                            import json
+                            parsed = json.loads(content)
+                            if isinstance(parsed, dict) and 'content' in parsed:
+                                content = parsed['content']
+                            elif isinstance(parsed, dict) and 'type' in parsed:
+                                logger.info(f"Skipping structured response of type: {parsed.get('type')}")
+                                continue
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+                        # Truncate if too long
+                        content_str = str(content)
+                        content = content_str[:300] + "..." if len(content_str) > 300 else content_str
+
+                        # Format as text line
+                        role_name = "User" if msg.role == ChatRole.USER else "CLARA"
+                        conversation_lines.append(f"{role_name}: {content}")
+
+                    if conversation_lines:
+                        conversation_summary = "\n".join(conversation_lines)
+                        conversation_context = ChatMessage(
+                            role=ChatRole.USER,
+                            content=f"""Previous conversation context:
+{conversation_summary}
+
+Now responding to the current guideline question below.""",
+                            user_id=None,
+                            user_role=None,
+                            metadata={}
+                        )
+                        messages.append(conversation_context)
+                        logger.info(f"✅ Added conversation summary ({len(conversation_summary)} chars)")
+
+                # Add web search results from viss.nu
+                if search_response and search_response.results:
+                    sources_list = []
+                    for i, result in enumerate(search_response.results[:8], 1):
+                        sources_list.append(f"{i}. [{result.title}]({result.url})\n   - {result.snippet[:300]}...")
+
+                    web_info = ChatMessage(
+                        role=ChatRole.USER,
+                        content=f"""=== VISS.NU GUIDELINE SEARCH RESULTS FOR: '{state.user_prompt}' ===
+
+SEARCH SUMMARY: {search_response.summary}
+
+GUIDELINE SOURCES TO CITE IN YOUR RESPONSE:
+{chr(10).join(sources_list)}
+
+INSTRUCTION: You MUST cite these viss.nu sources in your response using the format [Source Title](URL).
+- Use format: "Information here [Source Title](URL)" in sections or key bullet points
+- Include citations for all key guideline sections
+- Provide comprehensive coverage: 10-20+ bullet points with 15-25 words per bullet
+- This is clinical guideline information from viss.nu
+
+=== END OF GUIDELINE SEARCH RESULTS ===""")
+                    messages.append(web_info)
+
+                # Add user query
+                user_msg = ChatMessage(
+                    role=ChatRole.USER,
+                    content=state.user_prompt,
+                    user_id=state.user_id,
+                    user_role=state.user_context.role if state.user_context else None,
+                )
+                messages.append(user_msg)
+
+                # Update status: Generating response
+                state.current_step = "Genererar sammanfattning"
+                state.step_details = "AI syntetiserar riktlinjeinformation..."
+
+                # Emit status update
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Genererar sammanfattning",
+                        "description": "AI syntetiserar riktlinjeinformation...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Check if streaming is requested
+                if getattr(state, 'should_stream_response', False):
+                    logger.info("🚀 Starting streaming LLM call for guideline query")
+                    state.streaming_response = ""  # Reset streaming response
+
+                    # Initialize streaming callback
+                    if not hasattr(state, 'streaming_updates'):
+                        state.streaming_updates = []
+
+                    # Use streaming
+                    async for chunk in self._streaming_llm.chat_stream(messages):
+                        state.streaming_response += chunk
+
+                        chunk_update = {
+                            "type": "response_chunk",
+                            "content": chunk,
+                            "accumulated_content": state.streaming_response,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                        state.streaming_updates.append(chunk_update)
+
+                        state.current_step = "Genererar sammanfattning"
+                        state.step_details = f"Genererat {len(state.streaming_response)} tecken..."
+
+                        # Call streaming callback if exists
+                        if hasattr(state, 'stream_callback') and state.stream_callback:
+                            await state.stream_callback(chunk_update)
+
+                    # Return as plain text
+                    state.llm_response = ChatMessage(
+                        role=ChatRole.ASSISTANT,
+                        content=self._normalize_markdown(self._format_ehr_links(state.streaming_response)),
+                        metadata={}
+                    )
+
+                    logger.info(f"✓ Streaming complete: {len(state.llm_response.content)} chars")
+
+                else:
+                    # Non-streaming mode
+                    logger.info("🤖 Starting LLM call for guideline query")
+                    response = await self._streaming_llm.chat(messages)
+
+                    state.llm_response = response
+                    logger.info(f"✓ Generated response: {len(response.content)} chars")
+
+            except Exception as e:
+                log_error(logger, "handle_guideline_query", e)
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                # Fallback: simple error message
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content="I encountered an error while searching for guideline information on viss.nu. Please try again."
+                )
+
+            return state
+
         @streaming_step("handle_general_knowledge_query")
         async def handle_general_knowledge_query(state: FlowState) -> FlowState:
             """
@@ -5712,6 +6133,10 @@ Return ONLY the reformulated query, nothing else."""
                 state.is_general_knowledge_flow = (label == "general")
                 logger.info(f"General knowledge flow (classifier): {state.is_general_knowledge_flow}")
 
+                # Guideline flow is triggered by "guideline" classification (clinical guideline search on viss.nu)
+                state.is_guideline_flow = (label == "guideline")
+                logger.info(f"Guideline flow (classifier): {state.is_guideline_flow}")
+
                 # Determine if this should use Timeline flow (temporal sequence queries)
                 timeline_query_types = ["timeline", "temporal-trend"]
                 state.is_timeline_flow = label in timeline_query_types
@@ -5720,9 +6145,11 @@ Return ONLY the reformulated query, nothing else."""
 
                 # Override DIRECT routing if any specialized flow is detected
                 # NOTE: general_knowledge_flow is NOT included here - it should skip patient processing
-                if state.is_sbar_flow or state.is_timeline_flow or state.is_general_summary_flow or state.is_focused_summary_flow:
+                # NOTE: guideline_flow ALWAYS requires full processing to check for patient data
+                #       (if no patient exists, chunks will be empty and paraphrasing will use original query)
+                if state.is_sbar_flow or state.is_timeline_flow or state.is_general_summary_flow or state.is_focused_summary_flow or state.is_guideline_flow:
                     state.requires_full_processing = True
-                    logger.info(f"⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, General Summary: {state.is_general_summary_flow}, Focused Summary: {state.is_focused_summary_flow}, Timeline: {state.is_timeline_flow})")
+                    logger.info(f"⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, General Summary: {state.is_general_summary_flow}, Focused Summary: {state.is_focused_summary_flow}, Timeline: {state.is_timeline_flow}, Guideline: {state.is_guideline_flow})")
 
                 # Initialize SBAR cache if using SBAR flow
                 if state.is_sbar_flow:
@@ -5749,6 +6176,7 @@ Return ONLY the reformulated query, nothing else."""
                 state.is_general_summary_flow = False
                 state.is_focused_summary_flow = False
                 state.is_general_knowledge_flow = False
+                state.is_guideline_flow = False
 
             return state
 
@@ -5866,6 +6294,8 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_node("generate_note_section", generate_note_section)
         _builder.add_node("format_note_response", format_note_response)
         _builder.add_node("store_note_metadata", store_note_metadata)
+        _builder.add_node("paraphrase_query_for_guideline", paraphrase_query_for_guideline)  # Guideline query paraphrasing (PHI removal)
+        _builder.add_node("handle_guideline_query", handle_guideline_query)  # Guideline search (viss.nu only) node
         _builder.add_node("handle_general_knowledge_query", handle_general_knowledge_query)  # General knowledge (web-only) node
         _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
         _builder.add_node("perform_web_search", perform_web_search)
@@ -5881,17 +6311,24 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_edge("classify_query_intent", "store_user_message")
         _builder.add_edge("store_user_message", "load_current_session_history")
 
-        # Route after loading session history: check for general knowledge, full processing, or direct path
+        # Route after loading session history: check for guideline, general knowledge, full processing, or direct path
         def route_after_session_history(state):
-            """Route based on query type: general knowledge, full processing, or direct."""
+            """Route based on query type: guideline, general knowledge, full processing, or direct."""
+            is_guideline = getattr(state, 'is_guideline_flow', False)
             is_general = getattr(state, 'is_general_knowledge_flow', False)
             needs_full = getattr(state, 'requires_full_processing', True)
 
             if is_general:
                 logger.info("🌐 Routing to general knowledge handler (web-only)")
                 return "handle_general_knowledge_query"
-            elif needs_full:
-                logger.info("📊 Routing to full processing (patient data)")
+            elif is_guideline or needs_full:
+                # Guideline flow always goes through check_patient to attempt chunk retrieval
+                # If patient exists, chunks will be retrieved and used for paraphrasing
+                # If no patient, chunks will be empty and original query will be used
+                if is_guideline:
+                    logger.info("📋 Routing guideline flow through patient data path (will retrieve chunks if available)")
+                else:
+                    logger.info("📊 Routing to full processing (patient data)")
                 return "check_patient"
             else:
                 logger.info("⚡ Routing to direct simple answer")
@@ -5903,7 +6340,7 @@ Return ONLY the reformulated query, nothing else."""
             route_after_session_history,
             {
                 "handle_general_knowledge_query": "handle_general_knowledge_query",  # General knowledge (web-only)
-                "check_patient": "check_patient",    # Full processing starts with patient data
+                "check_patient": "check_patient",    # Full processing (including guideline flow) starts with patient data
                 "provide_information": "provide_information"  # Direct path - skip all heavy processing
             }
         )
@@ -6017,12 +6454,15 @@ Return ONLY the reformulated query, nothing else."""
 
         # Route after chunk retrieval: check flow type
         def route_after_chunks(state):
-            logger.info(f"🔀 route_after_chunks called - is_general_summary_flow: {getattr(state, 'is_general_summary_flow', False)}, is_focused_summary_flow: {getattr(state, 'is_focused_summary_flow', False)}, is_sbar_flow: {getattr(state, 'is_sbar_flow', False)}, is_timeline_flow: {getattr(state, 'is_timeline_flow', False)}, needs_refinement: {getattr(state, 'needs_refinement', False)}")
+            logger.info(f"🔀 route_after_chunks called - is_general_summary_flow: {getattr(state, 'is_general_summary_flow', False)}, is_focused_summary_flow: {getattr(state, 'is_focused_summary_flow', False)}, is_sbar_flow: {getattr(state, 'is_sbar_flow', False)}, is_timeline_flow: {getattr(state, 'is_timeline_flow', False)}, is_guideline_flow: {getattr(state, 'is_guideline_flow', False)}, needs_refinement: {getattr(state, 'needs_refinement', False)}")
 
             # Check special flows FIRST (they have priority and don't need refinement)
             if hasattr(state, 'is_note_generation_flow') and state.is_note_generation_flow:
                 logger.info("📝 Routing to note generation flow")
                 return "load_note_template"
+            elif hasattr(state, 'is_guideline_flow') and state.is_guideline_flow:
+                logger.info("📋 Routing to guideline query paraphrasing (will use chunks to create de-identified query)")
+                return "paraphrase_query_for_guideline"
             elif hasattr(state, 'is_timeline_flow') and state.is_timeline_flow:
                 logger.info("📅 Routing to timeline flow")
                 return "extract_timeline_events"
@@ -6052,6 +6492,7 @@ Return ONLY the reformulated query, nothing else."""
             route_after_chunks,
             {
                 "load_note_template": "load_note_template",
+                "paraphrase_query_for_guideline": "paraphrase_query_for_guideline",
                 "extract_timeline_events": "extract_timeline_events",
                 "sbar_parallel_dispatcher": "sbar_parallel_dispatcher",
                 "general_summary_parallel_dispatcher": "general_summary_parallel_dispatcher",
@@ -6073,6 +6514,8 @@ Return ONLY the reformulated query, nothing else."""
 
 
         _builder.add_edge("perform_web_search", "provide_information")
+        _builder.add_edge("paraphrase_query_for_guideline", "handle_guideline_query")  # Paraphrase → guideline search
+        _builder.add_edge("handle_guideline_query", "store_assistant_response")  # Guideline search → store response
         _builder.add_edge("handle_general_knowledge_query", "store_assistant_response")  # General knowledge → store response
         _builder.add_edge("provide_information", "store_assistant_response")
         _builder.add_edge("store_assistant_response", END)
