@@ -768,10 +768,10 @@ async def get_session_participants(
     user_ctx: dict = Depends(get_user_context)
 ):
     """Get all participants of a session."""
-    
+
     try:
         participants = await _engine.vector_store.get_session_participants(session_id)
-        
+
         return {
             "session_id": session_id,
             "participants": [
@@ -788,6 +788,131 @@ async def get_session_participants(
     except Exception as e:
         log_error(logger, "Get session participants", e)
         raise HTTPException(status_code=500, detail="Could not get session participants")
+
+@app.delete("/chat/sessions/{session_id}")
+async def clear_chat_session(session_id: str):
+    """Clear chat session memory to start fresh conversation (no auth required for cleanup)."""
+    logger.info(f"[SESSION-CLEAR] Request to clear session: {session_id}")
+
+    try:
+        # Import session memory from info_flow_ram
+        from optimed.apps.orchestrator.info_flow_ram import _GLOBAL_SESSION_MEMORY, _GLOBAL_CHUNK_CACHE
+
+        # Log current state
+        logger.info(f"[SESSION-CLEAR] Total sessions in memory: {len(_GLOBAL_SESSION_MEMORY)}")
+        logger.info(f"[SESSION-CLEAR] Total chunk caches: {len(_GLOBAL_CHUNK_CACHE)}")
+        logger.info(f"[SESSION-CLEAR] All session keys in memory: {list(_GLOBAL_SESSION_MEMORY.keys())}")
+        logger.info(f"[SESSION-CLEAR] All cache keys: {list(_GLOBAL_CHUNK_CACHE.keys())}")
+
+        cleared_memory = False
+        cleared_cache = False
+        cleared_count = 0
+
+        # Try to find and clear ALL matching sessions (handle ID variations)
+        # The session_id might be stored with different prefixes or formats
+        sessions_to_clear = []
+
+        # Direct match
+        if session_id in _GLOBAL_SESSION_MEMORY:
+            sessions_to_clear.append(session_id)
+
+        # Also check for partial matches (e.g., chat_general_XXX might be stored as session_XXX)
+        for key in list(_GLOBAL_SESSION_MEMORY.keys()):
+            if session_id in key or key in session_id:
+                if key not in sessions_to_clear:
+                    sessions_to_clear.append(key)
+
+        logger.info(f"[SESSION-CLEAR] Found {len(sessions_to_clear)} sessions to clear: {sessions_to_clear}")
+
+        # Clear all matching sessions
+        for key in sessions_to_clear:
+            if key in _GLOBAL_SESSION_MEMORY:
+                message_count = len(_GLOBAL_SESSION_MEMORY[key])
+                del _GLOBAL_SESSION_MEMORY[key]
+                logger.info(f"[SESSION-CLEAR] ✓ Cleared {message_count} messages from session {key}")
+                cleared_memory = True
+                cleared_count += 1
+
+        if not sessions_to_clear:
+            logger.info(f"[SESSION-CLEAR] ⚠ Session not found in memory: {session_id}")
+
+        # Clear chunk cache (try all variations)
+        caches_to_clear = []
+        if session_id in _GLOBAL_CHUNK_CACHE:
+            caches_to_clear.append(session_id)
+
+        for key in list(_GLOBAL_CHUNK_CACHE.keys()):
+            if session_id in key or key in session_id:
+                if key not in caches_to_clear:
+                    caches_to_clear.append(key)
+
+        for key in caches_to_clear:
+            if key in _GLOBAL_CHUNK_CACHE:
+                chunk_info = _GLOBAL_CHUNK_CACHE[key]
+                chunk_count = len(chunk_info.get('chunks', []))
+                del _GLOBAL_CHUNK_CACHE[key]
+                logger.info(f"[SESSION-CLEAR] ✓ Cleared {chunk_count} chunks from cache {key}")
+                cleared_cache = True
+
+        if not caches_to_clear:
+            logger.info(f"[SESSION-CLEAR] ⚠ Session not found in cache: {session_id}")
+
+        logger.info(f"[SESSION-CLEAR] Remaining sessions in memory: {len(_GLOBAL_SESSION_MEMORY)}")
+        logger.info(f"[SESSION-CLEAR] Remaining chunk caches: {len(_GLOBAL_CHUNK_CACHE)}")
+
+        # ALSO clear documents from PDF and XML services
+        from optimed.apps.pdf.memory_pdf_service import MemoryPDFService
+        from optimed.apps.xml.memory_xml_service import MemoryXMLService
+
+        pdf_service = MemoryPDFService()
+        xml_service = MemoryXMLService()
+
+        # Try to get all possible user IDs (we don't have user_id here, so clear for ALL users with this session)
+        # This is a bit aggressive but necessary for proper cleanup
+        pdf_cleared = 0
+        xml_cleared = 0
+
+        try:
+            # Clear from PDF service - iterate through all stored documents
+            if hasattr(pdf_service, '_documents'):
+                for key in list(pdf_service._documents.keys()):
+                    doc_session = getattr(pdf_service._documents[key], 'session_id', None)
+                    if doc_session and (session_id in str(doc_session) or str(doc_session) in session_id):
+                        del pdf_service._documents[key]
+                        pdf_cleared += 1
+                        logger.info(f"[SESSION-CLEAR] Cleared PDF document from session")
+        except Exception as e:
+            logger.warning(f"[SESSION-CLEAR] Error clearing PDFs: {e}")
+
+        try:
+            # Clear from XML service
+            if hasattr(xml_service, '_documents'):
+                for key in list(xml_service._documents.keys()):
+                    doc_session = getattr(xml_service._documents[key], 'session_id', None)
+                    if doc_session and (session_id in str(doc_session) or str(doc_session) in session_id):
+                        del xml_service._documents[key]
+                        xml_cleared += 1
+                        logger.info(f"[SESSION-CLEAR] Cleared XML document from session")
+        except Exception as e:
+            logger.warning(f"[SESSION-CLEAR] Error clearing XMLs: {e}")
+
+        logger.info(f"[SESSION-CLEAR] Cleared {pdf_cleared} PDFs and {xml_cleared} XMLs")
+
+        return {
+            "session_id": session_id,
+            "status": "cleared",
+            "cleared_memory": cleared_memory,
+            "cleared_cache": cleared_cache,
+            "sessions_cleared": cleared_count,
+            "pdfs_cleared": pdf_cleared,
+            "xmls_cleared": xml_cleared,
+            "message": f"Cleared {cleared_count} session(s), {pdf_cleared} PDFs, {xml_cleared} XMLs"
+        }
+
+    except Exception as e:
+        log_error(logger, "Clear chat session", e)
+        logger.error(f"[SESSION-CLEAR] ✗ Error clearing session {session_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Could not clear session")
 
 
 # Encryption and Key Exchange Endpoints
@@ -3873,15 +3998,22 @@ async def delete_pdf_document(
         raise HTTPException(status_code=500, detail="Failed to delete PDF document")
 
 
+class CleanupSessionRequest(BaseModel):
+    old_chat_session_id: Optional[str] = None
+
+
 @app.post("/documents/cleanup-session")
 async def cleanup_session_documents(
-    request: Request,
+    cleanup_request: CleanupSessionRequest = Body(default=CleanupSessionRequest()),
     user_ctx: dict = Depends(get_user_context)
 ):
-    """Clean up old documents from auth session when starting a new chat session.
+    """Clean up old documents from auth session and old chat session when starting a new chat session.
 
     This endpoint is called by the frontend when creating a new session to prevent
     old watcher uploads from accumulating in memory.
+
+    Args:
+        cleanup_request: Request containing optional old_chat_session_id
     """
     session_id = user_ctx.get("session_id")
     if not session_id:
@@ -3892,49 +4024,182 @@ async def cleanup_session_documents(
         raise HTTPException(status_code=401, detail="User not found")
 
     try:
-        logger.info(f"[Cleanup] Starting cleanup for auth session: {sanitize_session_id(session_id)}, user: {sanitize_user_id(user.user_id)}")
+        old_chat_session_id = cleanup_request.old_chat_session_id
+
+        logger.info(f"[Cleanup] Starting cleanup - auth session: {sanitize_session_id(session_id)}, old chat session: {sanitize_session_id(old_chat_session_id) if old_chat_session_id else "none"}, user: {sanitize_user_id(user.user_id)}")
+
+        total_deleted_pdfs = 0
+        total_deleted_xmls = 0
+
+        # Clean up old chat session first (if provided and different from auth session)
+        if old_chat_session_id and old_chat_session_id != session_id:
+            logger.info(f"[Cleanup] ===== CLEANING OLD CHAT SESSION: {sanitize_session_id(old_chat_session_id)} =====")
+
+            # Get all documents from old chat session
+            old_chat_pdfs = await _pdf_service.list_documents(
+                user_id=user.user_id,
+                session_id=old_chat_session_id,
+                patient_id=None
+            )
+            logger.info(f"[Cleanup] Found {len(old_chat_pdfs)} PDFs in old chat session")
+            for pdf in old_chat_pdfs:
+                logger.info(f"[Cleanup]   - PDF: {sanitize_document_id(pdf.document_id)}, filename: {pdf.filename}")
+
+            old_chat_xmls = await _xml_service.list_documents(
+                user_id=user.user_id,
+                session_id=old_chat_session_id,
+                patient_id=None
+            )
+            logger.info(f"[Cleanup] Found {len(old_chat_xmls)} XMLs in old chat session")
+            for xml in old_chat_xmls:
+                logger.info(f"[Cleanup]   - XML: {sanitize_document_id(xml.document_id)}, filename: {xml.filename}")
+
+            # Delete documents from old chat session
+            for doc in old_chat_pdfs:
+                try:
+                    success = await _pdf_service.delete_document(doc.document_id, user.user_id, old_chat_session_id)
+                    if success:
+                        total_deleted_pdfs += 1
+                        logger.info(f"[Cleanup] ✓ Deleted PDF {sanitize_document_id(doc.document_id)}")
+                    else:
+                        logger.warning(f"[Cleanup] ✗ Failed to delete PDF {sanitize_document_id(doc.document_id)} (not found)")
+                except Exception as e:
+                    logger.error(f"[Cleanup] ✗ Exception deleting PDF {sanitize_document_id(doc.document_id)}: {str(e)}")
+
+            for doc in old_chat_xmls:
+                try:
+                    success = await _xml_service.delete_document(doc.document_id, user.user_id, old_chat_session_id)
+                    if success:
+                        total_deleted_xmls += 1
+                        logger.info(f"[Cleanup] ✓ Deleted XML {sanitize_document_id(doc.document_id)}")
+                    else:
+                        logger.warning(f"[Cleanup] ✗ Failed to delete XML {sanitize_document_id(doc.document_id)} (not found)")
+                except Exception as e:
+                    logger.error(f"[Cleanup] ✗ Exception deleting XML {sanitize_document_id(doc.document_id)}: {str(e)}")
+
+            logger.info(f"[Cleanup] ===== OLD CHAT SESSION CLEANUP COMPLETE: {total_deleted_pdfs}/{len(old_chat_pdfs)} PDFs, {total_deleted_xmls - (total_deleted_pdfs - len(old_chat_pdfs))}/{len(old_chat_xmls)} XMLs deleted =====")
+
+        # Clean up auth session (where watcher agent uploads)
+        logger.info(f"[Cleanup] ===== CLEANING AUTH SESSION: {sanitize_session_id(session_id)} =====")
 
         # Get all documents from auth session
-        pdf_docs = await _pdf_service.list_documents(
+        auth_pdfs = await _pdf_service.list_documents(
             user_id=user.user_id,
             session_id=session_id,
             patient_id=None
         )
+        logger.info(f"[Cleanup] Found {len(auth_pdfs)} PDFs in auth session")
+        for pdf in auth_pdfs:
+            logger.info(f"[Cleanup]   - PDF: {sanitize_document_id(pdf.document_id)}, filename: {pdf.filename}")
 
-        xml_docs = await _xml_service.list_documents(
+        auth_xmls = await _xml_service.list_documents(
             user_id=user.user_id,
             session_id=session_id,
             patient_id=None
         )
+        logger.info(f"[Cleanup] Found {len(auth_xmls)} XMLs in auth session")
+        for xml in auth_xmls:
+            logger.info(f"[Cleanup]   - XML: {sanitize_document_id(xml.document_id)}, filename: {xml.filename}")
 
         # Delete all documents from auth session
-        deleted_pdfs = 0
-        for doc in pdf_docs:
+        auth_pdfs_deleted = 0
+        for doc in auth_pdfs:
             try:
-                await _pdf_service.delete_document(doc.document_id, user.user_id, session_id)
-                deleted_pdfs += 1
-            except Exception:
-                logger.error(f"[Cleanup] Failed to delete PDF {sanitize_document_id(doc.document_id)}")
+                success = await _pdf_service.delete_document(doc.document_id, user.user_id, session_id)
+                if success:
+                    auth_pdfs_deleted += 1
+                    total_deleted_pdfs += 1
+                    logger.info(f"[Cleanup] ✓ Deleted PDF {sanitize_document_id(doc.document_id)}")
+                else:
+                    logger.warning(f"[Cleanup] ✗ Failed to delete PDF {sanitize_document_id(doc.document_id)} (not found)")
+            except Exception as e:
+                logger.error(f"[Cleanup] ✗ Exception deleting PDF {sanitize_document_id(doc.document_id)}: {str(e)}")
 
-        deleted_xmls = 0
-        for doc in xml_docs:
+        auth_xmls_deleted = 0
+        for doc in auth_xmls:
             try:
-                await _xml_service.delete_document(doc.document_id, user.user_id, session_id)
-                deleted_xmls += 1
-            except Exception:
-                logger.error(f"[Cleanup] Failed to delete XML {sanitize_document_id(doc.document_id)}")
+                success = await _xml_service.delete_document(doc.document_id, user.user_id, session_id)
+                if success:
+                    auth_xmls_deleted += 1
+                    total_deleted_xmls += 1
+                    logger.info(f"[Cleanup] ✓ Deleted XML {sanitize_document_id(doc.document_id)}")
+                else:
+                    logger.warning(f"[Cleanup] ✗ Failed to delete XML {sanitize_document_id(doc.document_id)} (not found)")
+            except Exception as e:
+                logger.error(f"[Cleanup] ✗ Exception deleting XML {sanitize_document_id(doc.document_id)}: {str(e)}")
 
-        logger.info(f"[Cleanup] Cleaned up {deleted_pdfs} PDFs and {deleted_xmls} XMLs from auth session")
+        logger.info(f"[Cleanup] ===== AUTH SESSION CLEANUP COMPLETE: {auth_pdfs_deleted}/{len(auth_pdfs)} PDFs, {auth_xmls_deleted}/{len(auth_xmls)} XMLs deleted =====")
+        logger.info(f"[Cleanup] ===== TOTAL CLEANUP: {total_deleted_pdfs} PDFs and {total_deleted_xmls} XMLs deleted =====")
 
         return {
             "message": "Session cleaned up successfully",
-            "deleted_pdfs": deleted_pdfs,
-            "deleted_xmls": deleted_xmls
+            "deleted_pdfs": total_deleted_pdfs,
+            "deleted_xmls": total_deleted_xmls
         }
 
     except Exception as e:
         log_error(logger, "Cleanup", e)
         raise HTTPException(status_code=500, detail="Failed to cleanup session")
+
+
+@app.get("/documents/debug-sessions")
+async def debug_sessions(
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Debug endpoint to show all documents in all sessions (for troubleshooting)."""
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    try:
+        # Get all PDF sessions
+        pdf_sessions = {}
+        if hasattr(_pdf_service, 'sessions'):
+            for session_key, session_data in _pdf_service.sessions.items():
+                if user.user_id in session_key:
+                    pdf_sessions[session_key] = {
+                        "pdf_count": len(session_data.pdfs),
+                        "pdfs": [
+                            {
+                                "document_id": pdf.document_id,
+                                "filename": pdf.filename,
+                                "patient_id": pdf.patient_id
+                            }
+                            for pdf in session_data.pdfs.values()
+                        ]
+                    }
+
+        # Get all XML sessions
+        xml_sessions = {}
+        if hasattr(_xml_service, 'sessions'):
+            for session_key, session_data in _xml_service.sessions.items():
+                if user.user_id in session_key:
+                    xml_sessions[session_key] = {
+                        "xml_count": len(session_data.xml_documents),
+                        "xmls": [
+                            {
+                                "document_id": xml.document_id,
+                                "filename": xml.filename,
+                                "patient_id": xml.patient_id
+                            }
+                            for xml in session_data.xml_documents.values()
+                        ]
+                    }
+
+        return {
+            "user_id": user.user_id,
+            "auth_session_id": user_ctx.get("session_id"),
+            "pdf_sessions": pdf_sessions,
+            "xml_sessions": xml_sessions,
+            "total_pdf_sessions": len(pdf_sessions),
+            "total_xml_sessions": len(xml_sessions),
+            "total_pdfs": sum(s["pdf_count"] for s in pdf_sessions.values()),
+            "total_xmls": sum(s["xml_count"] for s in xml_sessions.values())
+        }
+
+    except Exception as e:
+        log_error(logger, "Debug sessions", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # XML Document Upload and Management Endpoints

@@ -51,6 +51,31 @@ function PatientDetailContent() {
   };
 
   const handleNewSession = () => {
+    // Store old session ID for ChatBox to clean up when it remounts
+    // This is critical because changing chatKey unmounts/remounts ChatBox, resetting all refs
+    if (typeof window !== 'undefined') {
+      const sessionKey = `chat_session_diagnose_${patientId}`;
+      const oldSessionId = localStorage.getItem(sessionKey);
+
+      if (oldSessionId) {
+        const cleanupKey = `cleanup_old_session_diagnose_${patientId}`;
+        localStorage.setItem(cleanupKey, oldSessionId);
+        console.log('[PatientDetail] Stored old session ID for cleanup:', oldSessionId);
+      }
+
+      // Clear the old session
+      localStorage.removeItem(sessionKey);
+
+      // Also clear session start time and messages for the old session
+      if (oldSessionId) {
+        const startTimeKey = `session_start_time_${oldSessionId}`;
+        const messagesKey = `chat_messages_${oldSessionId}`;
+        localStorage.removeItem(startTimeKey);
+        localStorage.removeItem(messagesKey);
+        console.log('[PatientDetail] Cleared old session data from localStorage');
+      }
+    }
+
     setSelectedSessionId(undefined);
     setChatKey(prev => prev + 1);
     setSessionsKey(prev => prev + 1);

@@ -1033,15 +1033,21 @@ export async function deleteXMLDocument(documentId: string, patientId?: string, 
   return responseData;
 }
 
-export async function cleanupSessionDocuments(): Promise<{ message: string; deleted_pdfs: number; deleted_xmls: number }> {
-  logInfo('[API] cleanupSessionDocuments called');
+export async function cleanupSessionDocuments(oldChatSessionId?: string): Promise<{ message: string; deleted_pdfs: number; deleted_xmls: number }> {
+  logInfo('[API] cleanupSessionDocuments called', {
+    oldChatSessionId: oldChatSessionId ? sanitizeSessionId(oldChatSessionId) : 'none'
+  });
 
   const headers = getSessionHeaders();
+  headers['Content-Type'] = 'application/json';
   logInfo('[API] Cleanup request headers prepared');
 
   const res = await fetch('/api/documents/cleanup-session', {
     method: 'POST',
     headers: headers,
+    body: JSON.stringify({
+      old_chat_session_id: oldChatSessionId
+    }),
   });
 
   logInfo(`[API] Cleanup response status: ${res.status}`);
@@ -1053,7 +1059,10 @@ export async function cleanupSessionDocuments(): Promise<{ message: string; dele
   }
 
   const responseData = await res.json();
-  logInfo('[API] Cleanup successful');
+  logInfo('[API] Cleanup successful', {
+    deletedPdfs: responseData.deleted_pdfs,
+    deletedXmls: responseData.deleted_xmls
+  });
   return responseData;
 }
 
