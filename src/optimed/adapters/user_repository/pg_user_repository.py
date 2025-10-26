@@ -299,17 +299,17 @@ class PGUserRepository(UserRepository):
             await conn.execute("""
                 INSERT INTO user_sessions (
                     session_id, user_id, login_time, last_activity,
-                    ip_address, user_agent, is_active
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ip_address, user_agent, is_active, grandid_sessionid
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             """,
                 session.session_id, session.user_id, session.login_time,
                 session.last_activity, session.ip_address, session.user_agent,
-                session.is_active
+                session.is_active, session.grandid_sessionid
             )
-            
+
             # Create GDPR-compliant session record
             await self._create_gdpr_session(session.user_id, session.session_id)
-            
+
             return session
     
     async def _create_gdpr_session(self, user_id: str, session_id: str) -> None:
@@ -675,7 +675,8 @@ class PGUserRepository(UserRepository):
             last_activity=row['last_activity'],
             ip_address=str(row['ip_address']) if row['ip_address'] else None,
             user_agent=row['user_agent'],
-            is_active=row['is_active']
+            is_active=row['is_active'],
+            grandid_sessionid=row.get('grandid_sessionid')  # Use .get() for backward compatibility
         )
     
     def _row_to_action(self, row) -> UserAction:

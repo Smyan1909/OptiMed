@@ -2200,17 +2200,18 @@ async def complete_siths_login(
             except Exception:
                 pass  # Continue even if cleanup fails
 
-        # Create user session
+        # Create user session with GrandID sessionid for later logout
         session = UserSession(
             session_id=str(uuid.uuid4()),
             user_id=updated_user.user_id,
             login_time=datetime.now(timezone.utc),
             last_activity=datetime.now(timezone.utc),
-            is_active=True
+            is_active=True,
+            grandid_sessionid=session_id_param  # Store GrandID sessionid for logout
         )
         await _user_repo.create_session(session)
 
-        logger.info(f"[INFO] SITHS login successful for user '{updated_user.username}' with HSA ID '{hsa_id}'")
+        logger.info(f"[INFO] SITHS login successful for user '{updated_user.username}' with HSA ID '{hsa_id}', GrandID session: {session_id_param}")
 
         # Redirect to frontend success page with session info
         frontend_url = f"{frontend_base}/auth/siths-success?session_id={session.session_id}"
@@ -2266,15 +2267,53 @@ async def get_current_user_info(user_ctx: dict = Depends(get_user_context)):
     )
 
 @app.post("/auth/logout")
-async def logout(user_ctx: dict = Depends(get_user_context)):
-    """Logout user and invalidate session."""
-    current_user = user_ctx.get("user")
-    if current_user:
-        # Get session ID from header
-        # You might need to modify this based on how you store session ID
-        pass
-    
-    return {"message": "Logout successful"}
+async def logout(
+    request: Request,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Logout user and invalidate session. Calls GrandID logout for SITHS users."""
+    try:
+        current_user = user_ctx.get("user")
+        session_id = user_ctx.get("session_id")
+
+        if not current_user or not session_id:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+        logger.info(f"[Logout] User '{current_user.username}' (ID: {sanitize_user_id(current_user.user_id)}) logging out from session: {sanitize_session_id(session_id)}")
+
+        # Get the session to check if it has a GrandID sessionid
+        session = await _user_repo.get_active_session(session_id)
+
+        if session and session.grandid_sessionid:
+            # This is a SITHS session - call GrandID logout
+            logger.info(f"[Logout] SITHS session detected, calling GrandID logout for sessionid: {session.grandid_sessionid}")
+
+            try:
+                success = await _siths_provider.logout_siths(session.grandid_sessionid)
+                if success:
+                    logger.info(f"[Logout] Successfully logged out from GrandID for session: {session.grandid_sessionid}")
+                else:
+                    logger.warning(f"[Logout] GrandID logout failed for session: {session.grandid_sessionid}")
+            except Exception as e:
+                # Log but don't fail logout if GrandID logout fails
+                logger.error(f"[Logout] Error calling GrandID logout: {str(e)}")
+        else:
+            logger.info("[Logout] Non-SITHS session, skipping GrandID logout")
+
+        # Deactivate the session in our database
+        await _user_repo.deactivate_session(session_id)
+        logger.info(f"[Logout] Session {sanitize_session_id(session_id)} deactivated")
+
+        return {
+            "message": "Logout successful",
+            "session_id": session_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(logger, "Logout", e)
+        raise HTTPException(status_code=500, detail=f"Logout failed: {str(e)}")
    
 
 ### Image endpoints

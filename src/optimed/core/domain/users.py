@@ -53,6 +53,7 @@ class UserSession(FrozenModel):
     ip_address: Optional[str] = None
     user_agent: Optional[str] = None
     is_active: bool = True
+    grandid_sessionid: Optional[str] = None  # GrandID sessionid for SITHS logout
 
 
 class UserAction(FrozenModel):
