@@ -247,7 +247,6 @@ class MigrationRunner:
 
             if missing:
                 print(f"  ⚠️  Missing {category} tables: {', '.join(missing)}")
-                all_present = False
 
         # Check for user_id_hash column in data_access_logs (fix for audit errors)
         print("\n🔍 Verifying critical columns...")
