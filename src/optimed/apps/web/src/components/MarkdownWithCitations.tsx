@@ -127,18 +127,20 @@ export const MarkdownWithCitations: React.FC<MarkdownWithCitationsProps> = ({
         if (typeof child === 'string') {
           return <React.Fragment key={idx}>{processCitations(child)}</React.Fragment>;
         } else if (React.isValidElement(child)) {
+          const props = child.props as Record<string, any>;
           return React.cloneElement(child, {
-            ...child.props,
-            children: processChildren(child.props.children),
+            ...props,
+            children: processChildren(props.children),
             key: idx,
           } as any);
         }
         return child;
       });
     } else if (React.isValidElement(children)) {
+      const props = children.props as Record<string, any>;
       return React.cloneElement(children, {
-        ...children.props,
-        children: processChildren(children.props.children),
+        ...props,
+        children: processChildren(props.children),
       } as any);
     }
     return children;

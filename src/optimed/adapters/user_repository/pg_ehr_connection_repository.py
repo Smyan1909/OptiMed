@@ -64,6 +64,27 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
                             expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '1 hour')
                         )
                     """)
+
+                # Check if SITHS login sessions table exists
+                siths_sessions_exist = await conn.fetchval("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'siths_login_sessions'
+                    )
+                """)
+
+                if not siths_sessions_exist:
+                    # Create temporary SITHS login sessions table
+                    await conn.execute("""
+                        CREATE TABLE siths_login_sessions (
+                            session_id VARCHAR(255) PRIMARY KEY,
+                            state VARCHAR(255) UNIQUE NOT NULL,
+                            grandid_sessionid VARCHAR(255),
+                            callback_url TEXT NOT NULL,
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                            expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '1 hour')
+                        )
+                    """)
                 
                 # Check if user_ehr_connections table exists
                 connections_exist = await conn.fetchval("""
@@ -101,6 +122,8 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_ehr_connections_active ON user_ehr_connections(is_active)")
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_ehr_login_sessions_expires ON ehr_login_sessions(expires_at)")
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_ehr_login_sessions_connection ON ehr_login_sessions(connection_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_siths_login_sessions_expires ON siths_login_sessions(expires_at)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_siths_login_sessions_state ON siths_login_sessions(state)")
                 
             except Exception as e:
                 log_error(logger, "Error creating tables", e)
@@ -171,6 +194,66 @@ class PGUserEHRConnectionRepository(UserEHRConnectionRepository):
         async with pool.acquire() as conn:
             result = await conn.execute("""
                 DELETE FROM ehr_login_sessions WHERE expires_at <= NOW()
+            """)
+            return int(result.split()[-1]) if result else 0
+
+    # SITHS Login Session Methods
+    async def create_siths_login_session(self, session_data: dict) -> str:
+        """Create a temporary SITHS login session."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            session_id = session_data["session_id"]
+            await conn.execute("""
+                INSERT INTO siths_login_sessions (
+                    session_id, state, grandid_sessionid, callback_url, created_at, expires_at
+                ) VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+                session_id,
+                session_data["state"],
+                session_data.get("grandid_sessionid"),
+                session_data["callback_url"],
+                session_data["created_at"],
+                session_data["expires_at"]
+            )
+            return session_id
+
+    async def get_siths_login_session(self, state: str) -> Optional[dict]:
+        """Get SITHS login session by state parameter."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT session_id, state, grandid_sessionid, callback_url, created_at, expires_at
+                FROM siths_login_sessions
+                WHERE state = $1 AND expires_at > NOW()
+            """, state)
+
+            if not row:
+                return None
+
+            return {
+                "session_id": row["session_id"],
+                "state": row["state"],
+                "grandid_sessionid": row["grandid_sessionid"],
+                "callback_url": row["callback_url"],
+                "created_at": row["created_at"],
+                "expires_at": row["expires_at"]
+            }
+
+    async def delete_siths_login_session(self, state: str) -> bool:
+        """Delete SITHS login session."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute("""
+                DELETE FROM siths_login_sessions WHERE state = $1
+            """, state)
+            return result == "DELETE 1"
+
+    async def cleanup_expired_siths_sessions(self) -> int:
+        """Clean up expired SITHS login sessions."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute("""
+                DELETE FROM siths_login_sessions WHERE expires_at <= NOW()
             """)
             return int(result.split()[-1]) if result else 0
     

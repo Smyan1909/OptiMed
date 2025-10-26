@@ -10,8 +10,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, User, Lock, Stethoscope, Hospital, Shield } from 'lucide-react';
-import { initiateEHRLogin } from '@/lib/api';
+import { Loader2, User, Lock, Stethoscope, Hospital, Shield, ShieldCheck } from 'lucide-react';
+import { initiateEHRLogin, initiateSITHSLogin } from '@/lib/api';
 import { useTranslations } from 'next-intl';
 
 
@@ -48,7 +48,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      router.push('/patients');
+      router.push('/chat');
     }
   }, [isAuthenticated, router]);
 
@@ -60,11 +60,29 @@ export default function LoginPage() {
     setAuthError(null); // Clear any previous EHR errors
     try {
       await login(username, password);
-      router.push('/patients');
+      router.push('/chat');
     } catch (err) {
       // Error handled by context
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleSithsLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+
+    try {
+      const result = await initiateSITHSLogin();
+
+      // Store state for validation (optional)
+      localStorage.setItem('siths_state', result.state);
+
+      // Redirect to GrandID for authentication
+      window.location.href = result.redirect_url;
+    } catch (err: any) {
+      logError('Login Page: SITHS login error', err);
+      setAuthError('Failed to initiate SITHS login: ' + err.message);
     }
   };
 
@@ -138,7 +156,7 @@ export default function LoginPage() {
         
         <CardContent>
           <Tabs defaultValue="regular" className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="regular" className="flex items-center gap-2">
                 <Shield className="h-4 w-4" />
                 {t('tabs.regular')}
@@ -146,6 +164,10 @@ export default function LoginPage() {
               <TabsTrigger value="ehr" className="flex items-center gap-2">
                 <Hospital className="h-4 w-4" />
                 {t('tabs.ehr')}
+              </TabsTrigger>
+              <TabsTrigger value="siths" className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4" />
+                SITHS NetID
               </TabsTrigger>
             </TabsList>
             
@@ -294,6 +316,39 @@ export default function LoginPage() {
                   ))}
                 </div>
               </div>
+            </TabsContent>
+
+            <TabsContent value="siths" className="space-y-4 mt-6">
+              <div className="text-center mb-4">
+                <h3 className="text-lg font-semibold text-gray-900">SITHS NetID Enterprise</h3>
+                <p className="text-sm text-gray-600">Authenticate with your SITHS card</p>
+              </div>
+
+              <form onSubmit={handleSithsLogin} className="space-y-4">
+                <div className="text-center text-sm text-gray-600 mb-4 p-4 bg-blue-50 rounded-lg">
+                  <ShieldCheck className="h-12 w-12 mx-auto mb-2 text-blue-600" />
+                  <p className="font-medium mb-2">Secure SITHS Authentication</p>
+                  <p className="text-xs">You will be redirected to authenticate with your SITHS card</p>
+                </div>
+
+                <Button
+                  type="submit"
+                  className="w-full bg-blue-600 hover:bg-blue-700"
+                  size="lg"
+                >
+                  <ShieldCheck className="mr-2 h-5 w-5" />
+                  Login with SITHS Card
+                </Button>
+
+                <div className="mt-4 text-xs text-gray-500 text-center p-3 bg-gray-50 rounded">
+                  <p className="font-medium mb-1">Requirements:</p>
+                  <ul className="space-y-1 text-left ml-4">
+                    <li>• A valid SITHS card or SITHS-compatible authentication</li>
+                    <li>• Pre-authorized HSA ID in the system</li>
+                    <li>• Contact your administrator to get access</li>
+                  </ul>
+                </div>
+              </form>
             </TabsContent>
           </Tabs>
         </CardContent>

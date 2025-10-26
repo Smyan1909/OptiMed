@@ -3,6 +3,7 @@
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { Header } from '@/components/Header';
 import { useEffect, useState } from "react";
+import { useRouter } from 'next/navigation';
 import Link from "next/link";
 import { fetchPatients, Patient } from "@/lib/api";
 import { useUser } from '@/contexts/UserContext';
@@ -12,11 +13,17 @@ import { getSexKey } from '@/lib/codeMapping';
 
 function PatientsPageContent() {
   const t = useTranslations();
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { user } = useUser();
+
+  // Redirect to chat page - patients page is hidden
+  useEffect(() => {
+    router.push('/chat');
+  }, [router]);
 
   const doSearch = async (e?: React.FormEvent) => {
     e?.preventDefault();

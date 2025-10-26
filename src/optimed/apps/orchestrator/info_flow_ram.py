@@ -259,6 +259,10 @@ class FlowState(BaseModel):
     # General knowledge flow fields (medical knowledge, not patient-specific)
     is_general_knowledge_flow: bool = False
 
+    # Guideline flow fields (clinical guideline search on viss.nu)
+    is_guideline_flow: bool = False
+    paraphrased_guideline_query: Optional[str] = None  # De-identified query for viss.nu search
+
     # Separate fields for each focused summary component to avoid concurrent updates
     focused_diagnoses_chunks: Optional[List[Dict[str, Any]]] = None
     focused_events_chunks: Optional[List[Dict[str, Any]]] = None
@@ -1558,6 +1562,16 @@ Keep queries concise and medical terminology appropriate.
             major = [e for e in encounters if e.get("category") == "major"]
             minor = [e for e in encounters if e.get("category") == "minor"]
 
+            # Localized fallback text
+            if is_swedish:
+                unknown_type = "Okänd"
+                unknown_date = "Datum okänt"
+                no_summary = "Ingen sammanfattning"
+            else:
+                unknown_type = "Unknown"
+                unknown_date = "Date unknown"
+                no_summary = "No summary"
+
             lines = []
 
             if major:
@@ -1565,14 +1579,14 @@ Keep queries concise and medical terminology appropriate.
                 lines.append(major_header)
                 for enc in major:
                     # Format: • **Type** (date) - brief
-                    lines.append(f"• **{enc.get('encounter_type', 'Unknown')}** ({enc.get('date', 'Date unknown')}) - {enc.get('brief', 'No summary')}\n")
+                    lines.append(f"• **{enc.get('encounter_type', unknown_type)}** ({enc.get('date', unknown_date)}) - {enc.get('brief', no_summary)}\n")
                 lines.append("")  # Blank line between sections
 
             if minor:
                 minor_header = "**Mindre vårdtillfällen**\n" if is_swedish else "**Minor Encounters**\n"
                 lines.append(minor_header)
                 for enc in minor:
-                    lines.append(f"• **{enc.get('encounter_type', 'Unknown')}** ({enc.get('date', 'Date unknown')}) - {enc.get('brief', 'No summary')}\n")
+                    lines.append(f"• **{enc.get('encounter_type', unknown_type)}** ({enc.get('date', unknown_date)}) - {enc.get('brief', no_summary)}\n")
 
             return "\n".join(lines)
 
@@ -2588,27 +2602,29 @@ Keep queries concise and medically precise.
 
                 USER QUERY: {state.user_prompt}
 
-                CRITICAL: Translate ALL bold headers to the target language. Examples:
-                - Swedish: **Demografi:**, **Boendesituation:**, **Funktionsstatus:**, **Socialt stöd:**, **Livsstilsfaktorer:**
-                - English: **Demographics:**, **Living Situation:**, **Functional Status:**, **Social Support:**, **Lifestyle Factors:**
+                CRITICAL: Translate ALL bold headers to the SAME language as the user's query.
+                - If user asks in English, headers must be in English
+                - If user asks in Swedish, headers must be in Swedish
 
-                Format as 5 bullet points with the following bold headers:
-                • **[Demographics header in target language]:** [Age, sex]
-                • **[Living Situation header in target language]:** [Living arrangement, occupation/status]
-                • **[Functional Status header in target language]:** [Mobility and independence level]
-                • **[Social Support header in target language]:** [Care situation]
-                • **[Lifestyle Factors header in target language]:** [Smoking, alcohol, substance use, diet, exercise]
+                Format as 5 bullet points with the following categories (headers in target language):
+                • **[Demographics]:** Age, sex
+                • **[Living Situation]:** Living arrangement, occupation/status
+                • **[Functional Status]:** Mobility and independence level
+                • **[Social Support]:** Care situation
+                • **[Lifestyle Factors]:** Smoking, alcohol, substance use, diet, exercise
 
-                Example (Swedish):
-                • **Demografi:** **73 Male** (recorded 2024-01-15) [1]
+                Example format:
+                • **[Header in target language]:** **Key info** (recorded YYYY-MM-DD) [citation]
 
-                • **Boendesituation:** Lives alone, **retired teacher** (recorded 2023-12-10) [2]
-
-                • **Funktionsstatus:** **Independent** with ADLs, uses walker (assessed 2023-11-20) [3]
-
-                • **Socialt stöd:** **Home care** 2x/week (started 2023-10-01) [4]
-
-                • **Livsstilsfaktorer:** **Ex-smoker**, quit 2010; **occasional alcohol**; low exercise (2024-01-10) [5]
+                ⚠️ **ANTI-HALLUCINATION RULES** ⚠️:
+                - If NO information exists for a category, write in user's language:
+                  * English: "Information not documented"
+                  * Swedish: "Information ej dokumenterad"
+                - DO NOT make up, infer, or assume ANY clinical data
+                - ONLY use information explicitly stated in the provided chunks
+                - If uncertain about a detail, omit it or write in user's language:
+                  * English: "Not specified"
+                  * Swedish: "Ej specificerat"
 
                 MANDATORY:
                 - TRANSLATE all bold headers to the target language
@@ -2617,12 +2633,12 @@ Keep queries concise and medically precise.
                 - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when the information was recorded
                 - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
                 - Add blank line between each bullet point for readability
-                CRITICAL: 5 bullet points with headers. 6-12 words each. Each bullet point one line. Include dates. Keep very concise and scannable.
+                CRITICAL: 5 bullet points with headers. 6-12 words each. Each bullet point one line. Include dates. Keep very concise and scannable. NO hallucinations.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Create concise snapshots with 5-7 bullet points, each with a bold header. TRANSLATE all bold headers to the user's language. Use **bold** for important clinical terms and values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for when each piece of information was recorded. One line per bullet point. No explanations.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Add blank lines between bullets. Always include dates.\n\nInformation system only - NOT a medical device.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Answer in the same language as the user's query. Format output as markdown. Include citations [1] [2] after statements. ONLY use information from provided chunks - NO hallucinations. Information system only - NOT a medical device.")
                 ]
 
                 # Add conversation history for context (excluding current message)
@@ -2681,34 +2697,29 @@ Keep queries concise and medically precise.
 
                 Format with TWO subsections (most relevant and frequently mentioned at the top of each list).
 
-                CRITICAL: The section headers MUST be translated to the target language:
-                - For Swedish: "Aktuella tillstånd" (current) and "Tidigare tillstånd" (previous)
-                - For English: "Current Conditions" (current) and "Previous Conditions" (previous)
-                - For other languages: Use appropriate translations
+                CRITICAL: The section headers MUST be translated to the SAME language as the user's query.
+                - If user asks in English, use English headers ("Current Conditions" and "Previous Conditions")
+                - If user asks in Swedish, use Swedish headers ("Aktuella tillstånd" and "Tidigare tillstånd")
 
                 Structure:
                 # [Header for current/active conditions in target language]
-                • **Disease name** (year) - status
+                • **Disease name** (year) - status with dates
 
                 # [Header for previous/resolved conditions in target language]
-                • **Disease name** (year) - status
+                • **Disease name** (year) - status with dates
 
-                Example (count the words - each is 6-12 words):
-                # Aktuella tillstånd
-                • **T2DM** (diagnosed 2012) **HbA1c 68** moderate control (2024-01-15) [1]
-
-                • **HTN** (since 2005) **BP 145/85** on treatment (2024-01-15 09:00) [2]
-
-                • **CKD Stage 3a** (2020) **eGFR 52** monitored (2024-01-15 08:30) [3]
-
-                # Tidigare tillstånd
-                • **COPD GOLD II** (2018) stable uses inhaler (reviewed 2024-01-10) [4]
-
-                • **Osteoarthritis** bilateral knees uses walker (assessed 2023-12-20) [5]
+                Example format (6-12 words each):
+                • **Disease** (diagnosed YYYY) **key value** status detail (date) [citation]
 
                 Add blank line between each bullet point for readability.
 
-                If there are MORE problems in the data (beyond 5-7), add a hint at the end in the target language.
+                ⚠️ **ANTI-HALLUCINATION RULES** ⚠️:
+                - If NO problems/conditions exist for a section, write in user's language:
+                  * English: "No active problems documented" or "No previous conditions documented"
+                  * Swedish: "Inga aktiva problem dokumenterade" or "Inga tidigare tillstånd dokumenterade"
+                - DO NOT make up, infer, or assume ANY diagnoses or conditions
+                - ONLY list problems explicitly documented in the provided chunks
+                - DO NOT add problems based on symptoms or lab values alone - only documented diagnoses
 
                 MANDATORY:
                 - TRANSLATE section headers to the target language (current/active conditions vs previous/resolved conditions)
@@ -2718,12 +2729,13 @@ Keep queries concise and medically precise.
                 - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when the information was recorded/updated
                 - Each bullet MUST be between 6-12 words (excluding date and citation) - COUNT THEM
                 - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-                CRITICAL: 5-7 problems total across both subsections. 6-12 words each. Include dates. Blank lines between bullets. Very scannable.
+                - DO NOT add hints or extra text after the problems list
+                CRITICAL: 5-7 problems total across both subsections. 6-12 words each. Include dates. Blank lines between bullets. Very scannable. NO hallucinations or inferred diagnoses.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List top 5-7 problems divided into two subsections with TRANSLATED headers (e.g., for Swedish: 'Aktuella tillstånd' and 'Tidigare tillstånd'). Sort by relevance and frequency within each subsection. Use **bold** for disease names and key values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses. Each bullet point must be EXACTLY 6-12 words (excluding date and citation). Count words carefully. Add 'ask for more' hint if additional problems exist.\n\nMANDATORY: TRANSLATE section headers to match user's language. Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Answer in the same language as the user's query. Format output as markdown. Include citations [1] [2] after statements. ONLY use information from provided chunks - NO hallucinations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2760,37 +2772,33 @@ Keep queries concise and medically precise.
 
                 Format with TWO subsections (most relevant at the top of each list).
 
-                CRITICAL: The section headers MUST be translated to the target language:
-                - For Swedish: "Aktuella läkemedel" (current) and "Tidigare läkemedel" (prior)
-                - For English: "Current Medications" (current) and "Prior Medications" (prior)
-                - For other languages: Use appropriate translations
+                CRITICAL: The section headers MUST be translated to the SAME language as the user's query.
+                - If user asks in English, use "Current Medications" and "Prior Medications"
+                - If user asks in Swedish, use "Aktuella läkemedel" and "Tidigare läkemedel"
 
                 Structure:
                 # [Header for current/active medications in target language]
                 • **Drug name dose** (started YYYY-MM-DD) - purpose
-                • **Drug 250mg→500mg** ↑ (increased YYYY-MM-DD) - purpose/reason for change
+                • **Drug old→new** ↑ (increased YYYY-MM-DD) - reason for change
                 • 🔺 **Drug dose** (dates) - purpose ALLERGY NOTED  ← Add 🔺 if patient has documented allergy
                 • ⚠️ **High-risk drug dose** (dates) - purpose  ← Mark anticoagulants, opioids, insulin with ⚠️
 
                 # [Header for prior/discontinued medications in target language]
-                • **Drug dose** (started YYYY-MM-DD, stopped YYYY-MM-DD) - reason for discontinuation
+                • **Drug dose** (started YYYY-MM-DD, stopped YYYY-MM-DD) - reason
 
-                Example (count the words - each is 6-12 words):
-                # Aktuella läkemedel
-                • **Metformin 1000mg 2x/day** (started 2024-01-10) - diabetes control **HbA1c 68** [1] (10 words)
-
-                • **Enalapril 5mg→10mg** ↑ (increased 2024-01-15) - BP control dose adjustment [2] (10 words)
-
-                • 🔺 **Penicillin 250mg→500mg** ↑ (increased 2024-01-05) - infection worsened ALLERGY NOTED [3] (11 words)
-
-                • ⚠️ **Warfarin 5mg** (started 2023-11-01) - anticoagulation **INR 2.5** [4] (9 words)
-
-                # Tidigare läkemedel
-                • **Simvastatin 20mg** (2020-05-15 to 2023-12-20) - switched to atorvastatin [5] (10 words)
+                Example format (6-12 words each):
+                • **Drug dose** (started date) - purpose **value** [citation]
 
                 Add blank line between each bullet point for readability.
 
-                If there are MORE medications (beyond 5-7), add a hint at the end in the target language.
+                ⚠️ **ANTI-HALLUCINATION RULES** ⚠️:
+                - If NO medications exist for a section, write in user's language:
+                  * English: "No medications documented" or "No prior medications documented"
+                  * Swedish: "Inga läkemedel dokumenterade" or "Inga tidigare läkemedel dokumenterade"
+                - DO NOT make up, infer, or assume ANY medications or doses
+                - ONLY list medications explicitly documented in the provided chunks
+                - DO NOT add medications based on conditions alone - only documented prescriptions
+                - DO NOT assume dose changes unless explicitly stated in the chunks
 
                 MANDATORY:
                 - TRANSLATE section headers to the target language (current/active medications vs prior/discontinued medications)
@@ -2803,12 +2811,13 @@ Keep queries concise and medically precise.
                 - For dose changes, include the date of change and brief explanation
                 - Each bullet MUST be between 6-12 words (excluding dates and citation) - COUNT THEM
                 - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-                CRITICAL: 5-7 most important meds total. 6-12 words each. Include dates. Blank lines between bullets. Prior medications only if relevant. Very scannable.
+                - DO NOT add hints or extra text after the medications list
+                CRITICAL: 5-7 most important meds total. 6-12 words each. Include dates. Blank lines between bullets. Prior medications only if relevant. Very scannable. NO hallucinations.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 most important medications divided into two subsections with TRANSLATED headers (e.g., for Swedish: 'Aktuella läkemedel' and 'Tidigare läkemedel'). Sort by relevance within each subsection. Use **bold** for drug names, doses, and key values. Mark high-risk with ⚠️. Add 🔺 if patient has documented allergy to the medication (check allergy mentions in data). Show dose changes as **OldDose→NewDose** with ↑/↓ arrows. CRITICAL: Include start dates for all medications, end dates for discontinued ones, and change dates for dose adjustments. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. Explain why doses or medications were changed.\n\nMANDATORY: TRANSLATE section headers to match user's language. Include citations after each statement - NOT verbose citations. Always include dates. Prior medications only if relevant to query.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Answer in the same language as the user's query. Format output as markdown. Include citations [1] [2] after statements. ONLY use information from provided chunks - NO hallucinations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2843,31 +2852,39 @@ Keep queries concise and medically precise.
 
                 USER QUERY: {state.user_prompt}
 
-                Format (ONE line per value, 6-12 words ONLY):
-                • **Lab/Vital**: old → **new** (arrow) note
+                Format (ONE line per value):
+                • **Lab/Vital**: old (date) → **new** (date) (arrow) note [citation]
 
-                Example (count the words - each is 6-12 words):
-                • **HbA1c**: 62 (2023-07-10) → **68 mmol/mol** (2024-01-15) (↑) worsening control [1] (12 words)
-                • **eGFR**: 64 (2023-06-15) → **52** (2024-01-15 08:30) (↓) declining kidney function [2] (12 words)
-                • **Weight**: 98 (2023-12-01) → **96 kg** (2024-01-15 09:00) (↓) intentional loss [3] (12 words)
-                • **BP**: 135/80 (2023-11-10) → **145/85** (2024-01-15 09:00) (↑) target 140/90 [4] (12 words)
-                • **INR**: 2.8 (2024-01-08) → **2.5** (2024-01-15 09:00) (↓) now in range [5] (12 words)
+                Example format:
+                • **HbA1c**: 62 (2023-07-10) → **68 mmol/mol** (2024-01-15) (↑) worsening control [1]
+                • **eGFR**: 64 (2023-06-15) → **52** (2024-01-15 08:30) (↓) declining kidney function [2]
+                • **Weight**: 98 (2023-12-01) → **96 kg** (2024-01-15 09:00) (↓) intentional loss [3]
+                • **BP**: 135/80 (2023-11-10) → **145/85** (2024-01-15 09:00) (↑) target 140/90 [4]
+                • **INR**: 2.8 (2024-01-08) → **2.5** (2024-01-15 09:00) (↓) now in range [5]
 
                 Add blank line between each bullet point for readability.
 
-                If there are MORE lab values/trends available, add a hint at the end in the target language.
+                ⚠️ **ANTI-HALLUCINATION RULES** ⚠️:
+                - If NO lab/vital trends exist, write in user's language:
+                  * English: "No lab/vital trends documented"
+                  * Swedish: "Inga lab/vitalparameter-trender dokumenterade"
+                - DO NOT make up, infer, or assume ANY lab values or vital signs
+                - ONLY list trends explicitly documented in the provided chunks
+                - DO NOT fabricate dates, values, or trends
+                - If only one value exists (no trend), list it as a single measurement, not a trend
 
                 MANDATORY:
                 - Use **bold** markdown for parameter names and current values
-                - CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values
-                - Each bullet MUST be between 6-12 words (excluding dates and citation) - COUNT THEM
+                - Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values
+                - Each bullet MUST be between 6-12 words (excluding dates and citation)
                 - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-                CRITICAL: 5-7 most important trends. 6-12 words each. Include dates for both values. Blank lines between bullets. Very scannable.
+                - DO NOT add any extra text, hints, or notes after the bullet points
+                CRITICAL: 5-7 most important trends. 6-12 words each. Include dates for both values. Blank lines between bullets. Very scannable. NO hallucinations.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Show 5-7 key trends. Use **bold** for parameter names and current values. CRITICAL: Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses for BOTH old and new values. Each bullet point must be EXACTLY 6-12 words (excluding dates and citation). Count words carefully. If additional trends exist, add a hint in the user's language.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Answer in the same language as the user's query. Format output as markdown. Include citations [1] [2] after statements. ONLY use information from provided chunks - NO hallucinations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -2905,13 +2922,17 @@ Generate a JSON response with recent encounters. Classify each as MAJOR or MINOR
 
 USER QUERY: {state.user_prompt}
 
+CRITICAL: The "encounter_type" field MUST be translated to match the user's query language.
+- If user asks in English → use "Hospitalization", "ER visit", "GP visit", etc.
+- If user asks in Swedish → use "Slutenvård", "Akutbesök", "Vårdcentralbesök", etc.
+
 Output VALID JSON with this exact structure:
 {{
   "encounters": [
     {{
       "id": "enc-001",
       "date": "YYYY-MM-DD HH:MM",
-      "encounter_type": "Hospitalization | ER visit | GP visit | etc",
+      "encounter_type": "[Encounter type in user's language]",
       "category": "major",
       "brief": "One-line summary (10-15 words) with citations [1] [2]",
       "detailed": "Detailed summary (30-80 words) with presenting complaint, key findings, interventions, medications, outcome. Use **bold** for clinical terms. Citations [1] [2]"
@@ -2923,7 +2944,15 @@ CATEGORIES:
 - MAJOR: Hospitalizations, ER visits, surgeries, ICU stays, specialist procedures, significant imaging
 - MINOR: GP visits, phone consults, lab draws, routine follow-ups, medication refills, minor procedures
 
-RULES:
+⚠️ **ANTI-HALLUCINATION RULES** ⚠️:
+- If NO encounters exist in the chunks, output: {{"encounters": []}}
+- DO NOT make up, infer, or assume ANY encounter information
+- ONLY include encounters explicitly documented in the provided chunks
+- DO NOT fabricate dates, encounter types, or clinical details
+- If encounter details are unclear, DO NOT include that encounter
+
+MANDATORY:
+- TRANSLATE the encounter_type field to match the user's query language
 - Include 5-7 most recent encounters (newest first)
 - Brief: 10-15 words maximum, for display in the card
 - Detailed: 30-80 words with full clinical context for popup modal
@@ -2931,13 +2960,12 @@ RULES:
 - Use **bold** markdown in detailed summaries for clinical terms
 - Include exact date/time when available (YYYY-MM-DD HH:MM format)
 - Each encounter must have a unique id
-
-CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JSON object.
+CRITICAL: Output ONLY valid JSON. Translate encounter_type to user's language. NO hallucinations - only documented encounters.
 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. Generate structured JSON with recent encounters. Each encounter needs TWO summaries: brief (10-15 words for card display) and detailed (30-80 words for popup). Always cite sources with [1] [2] etc. Use **bold** in detailed summaries.\n\nInformation system only - NOT a medical device.")
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Answer in the same language as the user's query. Format output as markdown. Include citations [1] [2] after statements. ONLY use information from provided chunks - NO hallucinations. Information system only - NOT a medical device.")
                 ]
 
                 if chunks:
@@ -2958,9 +2986,14 @@ CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JS
                     encounters_data = json.loads(response.content.strip())
                     state.general_encounters_structured = encounters_data.get("encounters", [])
 
-                    # Also create markdown version for card display
-                    markdown_brief = _format_encounters_as_markdown(encounters_data, is_swedish)
-                    state.general_history_result = markdown_brief
+                    # Ensure we have valid encounters data
+                    if not state.general_encounters_structured:
+                        logger.info("LLM returned empty encounters list")
+                        state.general_history_result = "Inga senaste vårdtillfällen dokumenterade" if is_swedish else "No recent encounters documented"
+                    else:
+                        # Also create markdown version for card display
+                        markdown_brief = _format_encounters_as_markdown(encounters_data, is_swedish)
+                        state.general_history_result = markdown_brief
 
                     # Extract citation IDs from the JSON content (look for [1] [2] etc)
                     cited_ids = set()
@@ -2979,13 +3012,15 @@ CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JS
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse encounters JSON: {e}")
                     logger.error(f"LLM response: {response.content[:500]}")
-                    state.general_history_result = "Error parsing encounters data - invalid JSON format"
+                    state.general_history_result = "Inga senaste vårdtillfällen dokumenterade" if is_swedish else "No recent encounters documented"
                     state.general_encounters_structured = []
                     state.general_history_cited_ids = []
 
             except Exception as e:
-                logger.info(f"Error: {e}")
-                state.general_history_result = f"Error generating encounters: {str(e)}"
+                logger.error(f"Error generating encounters: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                state.general_history_result = "Inga senaste vårdtillfällen dokumenterade" if is_swedish else "No recent encounters documented"
                 state.general_encounters_structured = []
 
             return state
@@ -2999,40 +3034,44 @@ CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JS
                 chunks = state.general_risks_chunks or []
 
                 prompt = f"""
-                List 5-7 critical alerts/risks with CLEAR reasoning - EXACTLY 8-15 words per bullet.
+                List 5-7 critical RISKS/ALERTS - EXACTLY 8-15 words per bullet. Each risk must be a specific safety concern, NOT a patient description.
 
                 USER QUERY: {state.user_prompt}
 
-                CRITICAL: Translate risk names to the target language (e.g., "Penicillin allergy" → "Penicillinallergi" in Swedish).
-
                 Format (Use colon to separate risk from reason):
-                • ⚠️ **[Risk name in target language]**: Clear explanation of why this is a risk
+                • ⚠️ **Risk name**: Explanation of why this is dangerous (documented date) [citation]
 
-                Example (each is 8-15 words):
-                • ⚠️ **Penicillin allergy**: History of rash and angioedema, documented 2015-03-20, avoid beta-lactams [1]
-                • ⚠️ **Warfarin therapy**: Current INR 2.5 increases bleeding risk during procedures (checked 2024-01-15 09:00) [2]
-                • ⚠️ **High fall risk**: Three falls in past year, uses walker, impaired mobility (assessed 2024-01-10) [3]
-                • ⚠️ **DNR status**: Advanced directive documented, resuscitation contraindicated (signed 2023-11-15) [4]
-                • ⚠️ **Renal impairment**: eGFR 52 mL/min requires medication dose adjustments (tested 2024-01-15 08:30) [5]
-                • ⚠️ **Lives alone**: No regular caregiver support, safety concerns for discharge planning (noted 2024-01-05) [6]
+                Example format:
+                • ⚠️ **Fall risk**: Three documented falls, uses walker, impaired mobility (assessed 2024-01-10) [3]
+                • ⚠️ **Penicillin allergy**: History of rash and angioedema, avoid beta-lactams (documented 2015-03-20) [1]
+                • ⚠️ **Lives alone**: No caregiver support, safety concerns for discharge (noted 2024-01-05) [6]
+                • ⚠️ **DNR order**: Do not resuscitate, comfort care only (established 2024-01-12) [2]
 
                 Add blank line between each bullet point for readability.
 
-                If there are MORE risks/alerts, add a hint at the end in the target language.
+                ⚠️ **ANTI-HALLUCINATION RULES** ⚠️:
+                - If NO risks/alerts exist, write in user's language:
+                  * English: "No critical risks/alerts documented"
+                  * Swedish: "Inga kritiska risker/varningar dokumenterade"
+                - DO NOT make up, infer, or assume ANY risks
+                - ONLY list risks explicitly documented in chunks
+                - DO NOT add risks based on conditions alone - only documented SAFETY CONCERNS
+                - DO NOT write patient descriptions like "Patient is 87-year-old female with..." - this is NOT a risk
 
                 MANDATORY:
+                - TRANSLATE the risk name (before colon) to match the user's query language
                 - Use format: **Risk**: Reason (with colon separating risk from explanation)
                 - Use **bold** markdown for the risk name only (before the colon)
-                - Make the reason CLEAR and SPECIFIC - explain WHY it's a risk
-                - CRITICAL: Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when information was documented
-                - Each bullet MUST be between 8-15 words (excluding citation) - COUNT THEM
+                - Each bullet MUST be between 8-15 words (excluding citation)
+                - Include date/time stamp in parentheses (YYYY-MM-DD or YYYY-MM-DD HH:MM) showing when documented
                 - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-                CRITICAL: 5-7 most important alerts. 8-15 words each. Clear risk-reason format. Include dates. Blank lines between bullets. Use ⚠️ for visibility. Very scannable.
+                - DO NOT add hints or extra text after the risks list
+                CRITICAL: 5-7 most important alerts. 8-15 words each. Include dates. Blank lines between bullets. TRANSLATE risk names to user's language. NO hallucinations.
                 """
 
                 messages = [
                     self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA. List 5-7 critical alerts using format **Risk**: Reason. TRANSLATE risk names to the user's language. Use **bold** only for risk name (before colon). Use ⚠️ marker. CRITICAL: Make reasoning CLEAR and SPECIFIC - explain WHY each item is a risk. Include date/time stamps (YYYY-MM-DD or YYYY-MM-DD HH:MM) in parentheses showing when information was documented. Each bullet point must be 8-15 words (excluding citation). Count words carefully. If additional risks exist, add a hint in the user's language.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Always include dates.\n\nInformation system only - NOT a medical device."),
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Answer in the same language as the user's query. Format output as markdown. Include citations [1] [2] after statements. ONLY use information from provided chunks - NO hallucinations. Information system only - NOT a medical device."),
                     ChatMessage(role=ChatRole.USER, content=prompt)
                 ]
 
@@ -3112,6 +3151,10 @@ CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JS
                 # Model already outputs numbered citations [1], [2], [3]
                 # Citations dict is already keyed by numbers - no conversion needed!
 
+                # Language-aware fallback message
+                is_swedish = state.user_language == "sv"
+                fallback_failed = "Innehållsgenerering misslyckades" if is_swedish else "Content generation failed"
+
                 structured_sbar = {
                     "type": "sbar_cards",
                     "context": conversation_context,
@@ -3119,25 +3162,25 @@ CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JS
                     "components": {
                         "situation": {
                             "title": "Situation",
-                            "content": (sbar_results.get("situation") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (sbar_results.get("situation") or fallback_failed).strip() or fallback_failed,
                             "icon": "info-circle",
                             "color": "blue"
                         },
                         "background": {
                             "title": "Background",
-                            "content": (sbar_results.get("background") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (sbar_results.get("background") or fallback_failed).strip() or fallback_failed,
                             "icon": "history",
                             "color": "green"
                         },
                         "assessment": {
                             "title": "Assessment",
-                            "content": (sbar_results.get("assessment") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (sbar_results.get("assessment") or fallback_failed).strip() or fallback_failed,
                             "icon": "stethoscope",
                             "color": "orange"
                         },
                         "recommendation": {
                             "title": "Recommendation",
-                            "content": (sbar_results.get("recommendation") or "Content generation failed").strip() or "Content generation failed",
+                            "content": (sbar_results.get("recommendation") or fallback_failed).strip() or fallback_failed,
                             "icon": "lightbulb",
                             "color": "purple"
                         }
@@ -3258,45 +3301,50 @@ CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JS
                     "has_history": bool(state.chat_history)
                 }
 
+                # Language-aware titles and fallback messages
+                is_swedish = state.user_language == "sv"
+                fallback_failed = "Innehållsgenerering misslyckades" if is_swedish else "Content generation failed"
+                fallback_encounters = "Inga vårdtillfällen dokumenterade" if is_swedish else "No encounters documented"
+
                 structured_summary = {
                     "type": "general_summary_cards",
                     "context": conversation_context,
                     "citations": filtered_citations,
                     "components": {
                         "snapshot": {
-                            "title": "Patient Snapshot",
-                            "content": (general_results.get("snapshot") or "Content generation failed").strip() or "Content generation failed",
+                            "title": "Patientöversikt" if is_swedish else "Patient Snapshot",
+                            "content": (general_results.get("snapshot") or fallback_failed).strip() or fallback_failed,
                             "icon": "user",
                             "color": "blue"
                         },
                         "problems": {
-                            "title": "Active Problems",
-                            "content": (general_results.get("problems") or "Content generation failed").strip() or "Content generation failed",
+                            "title": "Tidigare och Nuvarande Sjukdomar" if is_swedish else "Active Problems",
+                            "content": (general_results.get("problems") or fallback_failed).strip() or fallback_failed,
                             "icon": "alert-circle",
                             "color": "red"
                         },
                         "medications": {
-                            "title": "Medications",
-                            "content": (general_results.get("medications") or "Content generation failed").strip() or "Content generation failed",
+                            "title": "Läkemedel" if is_swedish else "Medications",
+                            "content": (general_results.get("medications") or fallback_failed).strip() or fallback_failed,
                             "icon": "pill",
                             "color": "purple"
                         },
                         "trends": {
-                            "title": "Lab & Vital Trends",
-                            "content": (general_results.get("trends") or "Content generation failed").strip() or "Content generation failed",
+                            "title": "Lab- & vitaltrender" if is_swedish else "Lab & Vital Trends",
+                            "content": (general_results.get("trends") or fallback_failed).strip() or fallback_failed,
                             "icon": "trending-up",
                             "color": "green"
                         },
                         "encounters": {
-                            "title": "Senaste vårdtillfällen" if state.user_language == "sv" else "Recent Encounters",
-                            "content": (general_results.get("encounters") or "No encounters documented").strip() or "No encounters documented",
+                            "title": "Senaste vårdtillfällen" if is_swedish else "Recent Encounters",
+                            "content": (general_results.get("encounters") or fallback_encounters).strip() or fallback_encounters,
                             "structured_data": state.general_encounters_structured or [],
                             "icon": "file-text",
                             "color": "indigo"
                         },
                         "risks": {
-                            "title": "Risks & Alerts",
-                            "content": (general_results.get("risks") or "Content generation failed").strip() or "Content generation failed",
+                            "title": "Risker & varningar" if is_swedish else "Risks & Alerts",
+                            "content": (general_results.get("risks") or fallback_failed).strip() or fallback_failed,
                             "icon": "alert-triangle",
                             "color": "yellow"
                         }
@@ -3316,18 +3364,19 @@ CRITICAL: Output ONLY valid JSON. Do not include any text before or after the JS
 
             except Exception as e:
                 log_error(logger, "merge_general_summary_results", e)
-                # Fallback response
+                # Fallback response with language-aware titles
                 import json
+                is_swedish = state.user_language == "sv"
                 fallback_summary = {
                     "type": "general_summary_cards",
                     "error": str(e),
                     "components": {
-                        "snapshot": {"title": "Patient Snapshot", "content": "Error generating content", "icon": "user", "color": "blue"},
-                        "problems": {"title": "Active Problems", "content": "Error generating content", "icon": "alert-circle", "color": "red"},
-                        "medications": {"title": "Medications", "content": "Error generating content", "icon": "pill", "color": "purple"},
-                        "trends": {"title": "Lab & Vital Trends", "content": "Error generating content", "icon": "trending-up", "color": "green"},
-                        "encounters": {"title": "Senaste vårdtillfällen" if state.user_language == "sv" else "Recent Encounters", "content": "Error generating content", "structured_data": [], "icon": "file-text", "color": "indigo"},
-                        "risks": {"title": "Risks & Alerts", "content": "Error generating content", "icon": "alert-triangle", "color": "yellow"}
+                        "snapshot": {"title": "Patientöversikt" if is_swedish else "Patient Snapshot", "content": "Error generating content", "icon": "user", "color": "blue"},
+                        "problems": {"title": "Aktiva problem" if is_swedish else "Active Problems", "content": "Error generating content", "icon": "alert-circle", "color": "red"},
+                        "medications": {"title": "Läkemedel" if is_swedish else "Medications", "content": "Error generating content", "icon": "pill", "color": "purple"},
+                        "trends": {"title": "Lab- & vitaltrender" if is_swedish else "Lab & Vital Trends", "content": "Error generating content", "icon": "trending-up", "color": "green"},
+                        "encounters": {"title": "Senaste vårdtillfällen" if is_swedish else "Recent Encounters", "content": "Error generating content", "structured_data": [], "icon": "file-text", "color": "indigo"},
+                        "risks": {"title": "Risker & varningar" if is_swedish else "Risks & Alerts", "content": "Error generating content", "icon": "alert-triangle", "color": "yellow"}
                     }
                 }
                 state.llm_response = ChatMessage(
@@ -3459,7 +3508,9 @@ RULES:
 - Add a blank line between each bullet point for readability
 - Be concise - one line per diagnosis
 - MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-- If no diagnoses found, state "No formal diagnoses documented for {state.focused_aspect}"
+- If no diagnoses found, write in user's language:
+  * English: "No formal diagnoses documented for {state.focused_aspect}"
+  * Swedish: "Inga formella diagnoser dokumenterade för {state.focused_aspect}"
 """
 
                 messages = [
@@ -3534,7 +3585,9 @@ RULES:
 - Be specific but concise - one line per event after the date
 - Chronological order (oldest to newest)
 - MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-- If no events found, state "No significant clinical events documented for {state.focused_aspect}"
+- If no events found, write in user's language:
+  * English: "No significant clinical events documented for {state.focused_aspect}"
+  * Swedish: "Inga signifikanta kliniska händelser dokumenterade för {state.focused_aspect}"
 """
 
                 messages = [
@@ -3615,7 +3668,9 @@ RULES:
 - Maximum 5 medications
 - Include duration if relevant
 - MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-- If no medications found, state "No medications documented for {state.focused_aspect}"
+- If no medications found, write in user's language:
+  * English: "No medications documented for {state.focused_aspect}"
+  * Swedish: "Inga läkemedel dokumenterade för {state.focused_aspect}"
 """
 
                 messages = [
@@ -3861,7 +3916,9 @@ RULES:
 - Include: pending tests, follow-ups, medication reviews, referrals, outstanding issues
 - Include specific timing if available
 - MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-- If no next steps found, state "No pending follow-up documented for {state.focused_aspect}"
+- If no next steps found, write in user's language:
+  * English: "No pending follow-up documented for {state.focused_aspect}"
+  * Swedish: "Ingen väntande uppföljning dokumenterad för {state.focused_aspect}"
 """
 
                 messages = [
@@ -3953,6 +4010,15 @@ RULES:
                     "has_history": bool(state.chat_history)
                 }
 
+                # Language-aware fallback messages
+                is_swedish = state.user_language == "sv"
+                fallback_diagnoses = "Inga diagnoser dokumenterade" if is_swedish else "No diagnoses documented"
+                fallback_events = "Inga händelser dokumenterade" if is_swedish else "No events documented"
+                fallback_medications = "Inga läkemedel dokumenterade" if is_swedish else "No medications documented"
+                fallback_objective = "Inga objektiva data tillgängliga" if is_swedish else "No objective data available"
+                fallback_assessment = "Ingen bedömning tillgänglig" if is_swedish else "No assessment available"
+                fallback_next_steps = "Inga nästa steg dokumenterade" if is_swedish else "No next steps documented"
+
                 structured_summary = {
                     "type": "focused_summary",
                     "aspect": state.focused_aspect or "Medical Condition",
@@ -3961,22 +4027,22 @@ RULES:
                     "citations": filtered_citations,
                     "sections": {
                         "diagnoses": {
-                            "content": (focused_results.get("diagnoses") or "No diagnoses documented").strip() or "No diagnoses documented"
+                            "content": (focused_results.get("diagnoses") or fallback_diagnoses).strip() or fallback_diagnoses
                         },
                         "events": {
-                            "content": (focused_results.get("events") or "No events documented").strip() or "No events documented"
+                            "content": (focused_results.get("events") or fallback_events).strip() or fallback_events
                         },
                         "medications": {
-                            "content": (focused_results.get("medications") or "No medications documented").strip() or "No medications documented"
+                            "content": (focused_results.get("medications") or fallback_medications).strip() or fallback_medications
                         },
                         "objective_data": {
-                            "content": (focused_results.get("objective_data") or "No objective data available").strip() or "No objective data available"
+                            "content": (focused_results.get("objective_data") or fallback_objective).strip() or fallback_objective
                         },
                         "assessment": {
-                            "content": (focused_results.get("assessment") or "No assessment available").strip() or "No assessment available"
+                            "content": (focused_results.get("assessment") or fallback_assessment).strip() or fallback_assessment
                         },
                         "next_steps": {
-                            "content": (focused_results.get("next_steps") or "No next steps documented").strip() or "No next steps documented"
+                            "content": (focused_results.get("next_steps") or fallback_next_steps).strip() or fallback_next_steps
                         }
                     }
                 }
@@ -4670,6 +4736,423 @@ Generate the content for "{field_label}" section now:"""
                 return state
 
         # ==================== END NOTE GENERATION FLOW NODES ====================
+
+        @streaming_step("paraphrase_query_for_guideline")
+        async def paraphrase_query_for_guideline(state: FlowState) -> FlowState:
+            """
+            Paraphrase the user query using retrieved chunks to include clinical context.
+            Removes all PHI (patient names, dates, specific identifiers) but keeps clinical concepts.
+            This paraphrased query will be used to search viss.nu without exposing patient data.
+            """
+            logger.info("🔄 Starting query paraphrasing for guideline search")
+            logger.info(f"📋 Original query: {state.user_prompt[:100]}...")
+            logger.info(f"📊 Available chunks: {len(state.retrieved_chunks)}")
+
+            try:
+                # Update status
+                state.current_step = "Analyserar patientdata"
+                state.step_details = "Extraherar klinisk kontext från patientjournaler..."
+
+                # Emit status update
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Analyserar patientdata",
+                        "description": "Extraherar klinisk kontext från patientjournaler...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Build chunks context (use top 10-15 chunks for context)
+                chunks_for_context = state.retrieved_chunks[:15] if state.retrieved_chunks else []
+
+                if not chunks_for_context:
+                    logger.info("⚠️ No chunks available, using original query")
+                    state.paraphrased_guideline_query = state.user_prompt
+                    return state
+
+                # Combine chunk content
+                chunk_contents = []
+                for idx, chunk in enumerate(chunks_for_context, 1):
+                    content = chunk.get('content', '')
+                    if content:
+                        # Limit each chunk to 200 chars for context
+                        chunk_contents.append(f"Chunk {idx}: {content[:200]}...")
+
+                chunks_text = "\n".join(chunk_contents)
+
+                # Create paraphrasing prompt
+                paraphrase_prompt = f"""You are a medical query paraphrasing assistant. Your task is to reformulate a user's query to make it more specific and clinically relevant for searching medical guidelines, while REMOVING all patient-identifying information (PHI).
+
+**ORIGINAL QUERY**: {state.user_prompt}
+
+**PATIENT CONTEXT** (contains PHI - use this ONLY to understand clinical concepts):
+{chunks_text}
+
+**YOUR TASK**:
+1. Analyze the patient context to understand:
+   - Clinical conditions mentioned (e.g., diabetes, hypertension, COPD)
+   - Medications or treatments involved
+   - Relevant symptoms or findings
+   - Clinical situation or context
+
+2. Reformulate the query to include these clinical concepts BUT:
+   - **REMOVE all patient names, personal identifiers**
+   - **REMOVE specific dates, ages, locations**
+   - **REMOVE hospital/clinic names**
+   - **KEEP general clinical concepts** (diagnoses, symptoms, medication classes)
+   - **KEEP general timeframes** (e.g., "elderly patient" instead of "72-year-old", "recent" instead of "January 2024")
+
+3. Make the query clinically specific and suitable for guideline search
+
+**EXAMPLES**:
+
+Example 1:
+Original: "What treatment should I use?"
+Context mentions: diabetes, metformin, A1C 8.5%
+Paraphrased: "Treatment guidelines for type 2 diabetes patient with inadequate glycemic control on metformin"
+
+Example 2:
+Original: "Does he need antibiotics?"
+Context mentions: pneumonia symptoms, cough, fever
+Paraphrased: "Antibiotic indication guidelines for community-acquired pneumonia with respiratory symptoms"
+
+Example 3:
+Original: "What does the guideline say?"
+Context mentions: atrial fibrillation, anticoagulation, stroke risk
+Paraphrased: "Anticoagulation guidelines for atrial fibrillation patient with stroke risk"
+
+**NOW PARAPHRASE THE QUERY**:
+Provide ONLY the paraphrased query (one sentence), no explanation or preamble."""
+
+                # Call LLM to paraphrase
+                paraphrase_messages = [
+                    ChatMessage(
+                        role=ChatRole.SYSTEM,
+                        content="You are a medical query paraphrasing assistant. Extract clinical concepts from context and reformulate queries while removing all PHI."
+                    ),
+                    ChatMessage(
+                        role=ChatRole.USER,
+                        content=paraphrase_prompt
+                    )
+                ]
+
+                logger.info("🤖 Calling LLM to paraphrase query...")
+                response = await self._llm.chat(paraphrase_messages)
+
+                paraphrased = response.content.strip()
+
+                # Store paraphrased query
+                state.paraphrased_guideline_query = paraphrased
+
+                logger.info(f"✅ Paraphrased query: {paraphrased}")
+                logger.info("🔒 PHI removed, clinical context preserved")
+
+            except Exception as e:
+                log_error(logger, "paraphrase_query_for_guideline", e)
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                # Fallback: use original query
+                logger.info("⚠️ Paraphrasing failed, using original query")
+                state.paraphrased_guideline_query = state.user_prompt
+
+            return state
+
+        @streaming_step("handle_guideline_query")
+        async def handle_guideline_query(state: FlowState) -> FlowState:
+            """
+            Handle guideline queries (clinical guideline search on viss.nu).
+            Uses ONLY web search restricted to viss.nu domain.
+            Uses chat history for context but no patient data retrieval.
+            """
+            logger.info("📋 Starting guideline query handling (viss.nu only)")
+            logger.info(f"🔍 Query: {state.user_prompt[:100]}...")
+
+            try:
+                # Update status: Searching guidelines
+                state.current_step = "Söker i riktlinjer"
+                state.step_details = "Söker på viss.nu efter kliniska riktlinjer..."
+
+                # Emit status update
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Söker i riktlinjer",
+                        "description": "Söker på viss.nu efter kliniska riktlinjer...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Force web search for guideline information
+                logger.info("📡 Performing web search on viss.nu for clinical guidelines...")
+
+                # Use paraphrased query if available (from chunk-based context), otherwise use original
+                if state.paraphrased_guideline_query:
+                    search_query = state.paraphrased_guideline_query
+                    logger.info(f"🔄 Using paraphrased query (PHI removed): {search_query[:100]}...")
+                else:
+                    search_query = state.user_prompt
+                    logger.info(f"📝 Using original query: {search_query[:100]}...")
+
+                    # If no paraphrased query, use chat history to enrich context
+                    if state.chat_history:
+                        logger.info("📝 Using chat history to build guideline search context")
+                        recent_messages = state.chat_history[-5:]  # Last 5 messages
+                        history_context = []
+
+                        for msg in recent_messages:
+                            if msg.role == ChatRole.USER and msg.content:
+                                # Extract key medical terms from previous user messages
+                                history_context.append(msg.content[:100])
+
+                        if history_context:
+                            logger.info(f"✓ Found {len(history_context)} previous messages for context")
+
+                # Detect language
+                try:
+                    active_lang = detect_language_code(state.user_prompt or "")
+                except Exception:
+                    active_lang = "sv"  # Default to Swedish for viss.nu
+
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Söker på viss.nu",
+                        "description": "Frågar klinisk riktlinjedatabas...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Perform web search ONLY on viss.nu domain
+                # Note: We need to modify the search call to include_domains parameter
+                # This requires updating the TavilyWebSearchService.search method
+
+                # For now, we'll use the existing search method and add domain filtering
+                # by creating a custom search query that includes site:viss.nu
+                enhanced_query = f"site:viss.nu {search_query}"
+
+                search_response = await self._web_search.search(
+                    query=enhanced_query,
+                    max_results=8,
+                    patient_context=None,  # No patient data for GDPR compliance
+                    search_intent="guideline_search",
+                    target_language=(active_lang if active_lang else None)
+                )
+
+                state.web_search_response = search_response
+                state.web_search_performed = True
+
+                logger.info(f"✓ Found {len(search_response.results)} guideline results from viss.nu")
+
+                # Update status: Analyzing guidelines
+                state.current_step = "Analyserar riktlinjer"
+                state.step_details = f"Granskar {len(search_response.results)} riktlinjekällor..."
+
+                # Emit status update
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Analyserar riktlinjer",
+                        "description": f"Granskar {len(search_response.results)} riktlinjekällor...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Generate response using ONLY viss.nu sources (no patient data chunks)
+                logger.info("💬 Generating response from viss.nu guidelines only...")
+
+                # System message for guideline search
+                guideline_system_msg = ChatMessage(
+                    role=ChatRole.SYSTEM,
+                    content="""You are CLARA, a medical information assistant providing clinical guideline information from viss.nu.
+
+**YOUR TASK**: Provide a comprehensive summary of the clinical guideline information from viss.nu for the user's query.
+
+**CRITICAL - RESPONSE FORMAT**:
+- Provide a DETAILED summary of the guideline with comprehensive information
+- Organize response with `##` headers to divide sections (e.g., ## Indikationer, ## Behandling, ## Dosering, ## Kontraindikationer, ## Uppföljning)
+- **MAXIMUM 5 HEADERS** - Choose the 5 most important sections for the query
+- **Use bullet points (`-`) for all information**
+- **Be thorough**: Include all relevant details from the guideline (10-20 bullet points or more if needed)
+- **15-25 words per bullet point** to provide adequate detail
+- **DO NOT include any reasoning preamble** - provide ONLY the direct answer
+- **DO NOT explain your thinking process** - just answer the question directly
+
+**CITATION POLICY**:
+- **MANDATORY**: You MUST cite viss.nu sources using format: [Source Title](URL)
+- Include citation at the end of each section or key bullet point that uses information from that source
+- Example: "**Antibiotika** should be used only when bacterial infection is confirmed [VISS.nu - Luftvägsinfektioner](https://example.com)"
+
+**CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms:
+- **Guidelines** and recommendations
+- **Medications** and doses
+- **Diagnoses** and conditions
+- **Key clinical criteria**
+- **Treatment protocols** and procedures
+
+**Important**: Focus on providing clear, comprehensive, actionable guideline information. Include all relevant clinical details from the guideline."""
+                )
+
+                messages = [guideline_system_msg]
+
+                # Language policy
+                language_system_msg = self._get_language_policy_message(state)
+                messages.insert(0, language_system_msg)
+
+                # Add chat history context
+                current_history = state.chat_history[-5:] if state.chat_history else []
+                if current_history:
+                    logger.info(f"📝 Creating conversation context from {len(current_history)} messages")
+                    conversation_lines = []
+
+                    for msg in current_history:
+                        if not msg.content or not msg.content.strip():
+                            continue
+
+                        # Extract plain text content
+                        content = msg.content
+                        try:
+                            import json
+                            parsed = json.loads(content)
+                            if isinstance(parsed, dict) and 'content' in parsed:
+                                content = parsed['content']
+                            elif isinstance(parsed, dict) and 'type' in parsed:
+                                logger.info(f"Skipping structured response of type: {parsed.get('type')}")
+                                continue
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+                        # Truncate if too long
+                        content_str = str(content)
+                        content = content_str[:300] + "..." if len(content_str) > 300 else content_str
+
+                        # Format as text line
+                        role_name = "User" if msg.role == ChatRole.USER else "CLARA"
+                        conversation_lines.append(f"{role_name}: {content}")
+
+                    if conversation_lines:
+                        conversation_summary = "\n".join(conversation_lines)
+                        conversation_context = ChatMessage(
+                            role=ChatRole.USER,
+                            content=f"""Previous conversation context:
+{conversation_summary}
+
+Now responding to the current guideline question below.""",
+                            user_id=None,
+                            user_role=None,
+                            metadata={}
+                        )
+                        messages.append(conversation_context)
+                        logger.info(f"✅ Added conversation summary ({len(conversation_summary)} chars)")
+
+                # Add web search results from viss.nu
+                if search_response and search_response.results:
+                    sources_list = []
+                    for i, result in enumerate(search_response.results[:8], 1):
+                        sources_list.append(f"{i}. [{result.title}]({result.url})\n   - {result.snippet[:300]}...")
+
+                    web_info = ChatMessage(
+                        role=ChatRole.USER,
+                        content=f"""=== VISS.NU GUIDELINE SEARCH RESULTS FOR: '{state.user_prompt}' ===
+
+SEARCH SUMMARY: {search_response.summary}
+
+GUIDELINE SOURCES TO CITE IN YOUR RESPONSE:
+{chr(10).join(sources_list)}
+
+INSTRUCTION: You MUST cite these viss.nu sources in your response using the format [Source Title](URL).
+- Use format: "Information here [Source Title](URL)" in sections or key bullet points
+- Include citations for all key guideline sections
+- Provide comprehensive coverage: 10-20+ bullet points with 15-25 words per bullet
+- This is clinical guideline information from viss.nu
+
+=== END OF GUIDELINE SEARCH RESULTS ===""")
+                    messages.append(web_info)
+
+                # Add user query
+                user_msg = ChatMessage(
+                    role=ChatRole.USER,
+                    content=state.user_prompt,
+                    user_id=state.user_id,
+                    user_role=state.user_context.role if state.user_context else None,
+                )
+                messages.append(user_msg)
+
+                # Update status: Generating response
+                state.current_step = "Genererar sammanfattning"
+                state.step_details = "AI syntetiserar riktlinjeinformation..."
+
+                # Emit status update
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "Genererar sammanfattning",
+                        "description": "AI syntetiserar riktlinjeinformation...",
+                        "status": "in_progress",
+                        "progress": 0,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Check if streaming is requested
+                if getattr(state, 'should_stream_response', False):
+                    logger.info("🚀 Starting streaming LLM call for guideline query")
+                    state.streaming_response = ""  # Reset streaming response
+
+                    # Initialize streaming callback
+                    if not hasattr(state, 'streaming_updates'):
+                        state.streaming_updates = []
+
+                    # Use streaming
+                    async for chunk in self._streaming_llm.chat_stream(messages):
+                        state.streaming_response += chunk
+
+                        chunk_update = {
+                            "type": "response_chunk",
+                            "content": chunk,
+                            "accumulated_content": state.streaming_response,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                        state.streaming_updates.append(chunk_update)
+
+                        state.current_step = "Genererar sammanfattning"
+                        state.step_details = f"Genererat {len(state.streaming_response)} tecken..."
+
+                        # Call streaming callback if exists
+                        if hasattr(state, 'stream_callback') and state.stream_callback:
+                            await state.stream_callback(chunk_update)
+
+                    # Return as plain text
+                    state.llm_response = ChatMessage(
+                        role=ChatRole.ASSISTANT,
+                        content=self._normalize_markdown(self._format_ehr_links(state.streaming_response)),
+                        metadata={}
+                    )
+
+                    logger.info(f"✓ Streaming complete: {len(state.llm_response.content)} chars")
+
+                else:
+                    # Non-streaming mode
+                    logger.info("🤖 Starting LLM call for guideline query")
+                    response = await self._streaming_llm.chat(messages)
+
+                    state.llm_response = response
+                    logger.info(f"✓ Generated response: {len(response.content)} chars")
+
+            except Exception as e:
+                log_error(logger, "handle_guideline_query", e)
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                # Fallback: simple error message
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content="I encountered an error while searching for guideline information on viss.nu. Please try again."
+                )
+
+            return state
 
         @streaming_step("handle_general_knowledge_query")
         async def handle_general_knowledge_query(state: FlowState) -> FlowState:
@@ -5515,6 +5998,17 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                 )
                 await self._user_repo.log_action(action)
 
+            # Check if LLM refused to answer (common when no patient data is available)
+            if state.llm_response and state.llm_response.content:
+                response_lower = state.llm_response.content.lower()
+                if "i'm sorry" in response_lower and "cannot assist" in response_lower:
+                    logger.info("⚠️ LLM refused to answer - likely due to insufficient patient context")
+                    # Provide a more helpful error message
+                    state.llm_response = ChatMessage(
+                        role=ChatRole.ASSISTANT,
+                        content="I need more specific patient information to answer this question. Please ensure:\n\n• The patient has relevant clinical data recorded\n• You're asking about documented information\n• The question is specific enough to search for\n\nTry rephrasing your question or ask about a different aspect of the patient's care."
+                    )
+
             return state
 
 
@@ -5712,6 +6206,10 @@ Return ONLY the reformulated query, nothing else."""
                 state.is_general_knowledge_flow = (label == "general")
                 logger.info(f"General knowledge flow (classifier): {state.is_general_knowledge_flow}")
 
+                # Guideline flow is triggered by "guideline" classification (clinical guideline search on viss.nu)
+                state.is_guideline_flow = (label == "guideline")
+                logger.info(f"Guideline flow (classifier): {state.is_guideline_flow}")
+
                 # Determine if this should use Timeline flow (temporal sequence queries)
                 timeline_query_types = ["timeline", "temporal-trend"]
                 state.is_timeline_flow = label in timeline_query_types
@@ -5720,9 +6218,11 @@ Return ONLY the reformulated query, nothing else."""
 
                 # Override DIRECT routing if any specialized flow is detected
                 # NOTE: general_knowledge_flow is NOT included here - it should skip patient processing
-                if state.is_sbar_flow or state.is_timeline_flow or state.is_general_summary_flow or state.is_focused_summary_flow:
+                # NOTE: guideline_flow ALWAYS requires full processing to check for patient data
+                #       (if no patient exists, chunks will be empty and paraphrasing will use original query)
+                if state.is_sbar_flow or state.is_timeline_flow or state.is_general_summary_flow or state.is_focused_summary_flow or state.is_guideline_flow:
                     state.requires_full_processing = True
-                    logger.info(f"⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, General Summary: {state.is_general_summary_flow}, Focused Summary: {state.is_focused_summary_flow}, Timeline: {state.is_timeline_flow})")
+                    logger.info(f"⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, General Summary: {state.is_general_summary_flow}, Focused Summary: {state.is_focused_summary_flow}, Timeline: {state.is_timeline_flow}, Guideline: {state.is_guideline_flow})")
 
                 # Initialize SBAR cache if using SBAR flow
                 if state.is_sbar_flow:
@@ -5749,6 +6249,7 @@ Return ONLY the reformulated query, nothing else."""
                 state.is_general_summary_flow = False
                 state.is_focused_summary_flow = False
                 state.is_general_knowledge_flow = False
+                state.is_guideline_flow = False
 
             return state
 
@@ -5866,6 +6367,8 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_node("generate_note_section", generate_note_section)
         _builder.add_node("format_note_response", format_note_response)
         _builder.add_node("store_note_metadata", store_note_metadata)
+        _builder.add_node("paraphrase_query_for_guideline", paraphrase_query_for_guideline)  # Guideline query paraphrasing (PHI removal)
+        _builder.add_node("handle_guideline_query", handle_guideline_query)  # Guideline search (viss.nu only) node
         _builder.add_node("handle_general_knowledge_query", handle_general_knowledge_query)  # General knowledge (web-only) node
         _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
         _builder.add_node("perform_web_search", perform_web_search)
@@ -5881,17 +6384,24 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_edge("classify_query_intent", "store_user_message")
         _builder.add_edge("store_user_message", "load_current_session_history")
 
-        # Route after loading session history: check for general knowledge, full processing, or direct path
+        # Route after loading session history: check for guideline, general knowledge, full processing, or direct path
         def route_after_session_history(state):
-            """Route based on query type: general knowledge, full processing, or direct."""
+            """Route based on query type: guideline, general knowledge, full processing, or direct."""
+            is_guideline = getattr(state, 'is_guideline_flow', False)
             is_general = getattr(state, 'is_general_knowledge_flow', False)
             needs_full = getattr(state, 'requires_full_processing', True)
 
             if is_general:
                 logger.info("🌐 Routing to general knowledge handler (web-only)")
                 return "handle_general_knowledge_query"
-            elif needs_full:
-                logger.info("📊 Routing to full processing (patient data)")
+            elif is_guideline or needs_full:
+                # Guideline flow always goes through check_patient to attempt chunk retrieval
+                # If patient exists, chunks will be retrieved and used for paraphrasing
+                # If no patient, chunks will be empty and original query will be used
+                if is_guideline:
+                    logger.info("📋 Routing guideline flow through patient data path (will retrieve chunks if available)")
+                else:
+                    logger.info("📊 Routing to full processing (patient data)")
                 return "check_patient"
             else:
                 logger.info("⚡ Routing to direct simple answer")
@@ -5903,7 +6413,7 @@ Return ONLY the reformulated query, nothing else."""
             route_after_session_history,
             {
                 "handle_general_knowledge_query": "handle_general_knowledge_query",  # General knowledge (web-only)
-                "check_patient": "check_patient",    # Full processing starts with patient data
+                "check_patient": "check_patient",    # Full processing (including guideline flow) starts with patient data
                 "provide_information": "provide_information"  # Direct path - skip all heavy processing
             }
         )
@@ -6017,12 +6527,15 @@ Return ONLY the reformulated query, nothing else."""
 
         # Route after chunk retrieval: check flow type
         def route_after_chunks(state):
-            logger.info(f"🔀 route_after_chunks called - is_general_summary_flow: {getattr(state, 'is_general_summary_flow', False)}, is_focused_summary_flow: {getattr(state, 'is_focused_summary_flow', False)}, is_sbar_flow: {getattr(state, 'is_sbar_flow', False)}, is_timeline_flow: {getattr(state, 'is_timeline_flow', False)}, needs_refinement: {getattr(state, 'needs_refinement', False)}")
+            logger.info(f"🔀 route_after_chunks called - is_general_summary_flow: {getattr(state, 'is_general_summary_flow', False)}, is_focused_summary_flow: {getattr(state, 'is_focused_summary_flow', False)}, is_sbar_flow: {getattr(state, 'is_sbar_flow', False)}, is_timeline_flow: {getattr(state, 'is_timeline_flow', False)}, is_guideline_flow: {getattr(state, 'is_guideline_flow', False)}, needs_refinement: {getattr(state, 'needs_refinement', False)}")
 
             # Check special flows FIRST (they have priority and don't need refinement)
             if hasattr(state, 'is_note_generation_flow') and state.is_note_generation_flow:
                 logger.info("📝 Routing to note generation flow")
                 return "load_note_template"
+            elif hasattr(state, 'is_guideline_flow') and state.is_guideline_flow:
+                logger.info("📋 Routing to guideline query paraphrasing (will use chunks to create de-identified query)")
+                return "paraphrase_query_for_guideline"
             elif hasattr(state, 'is_timeline_flow') and state.is_timeline_flow:
                 logger.info("📅 Routing to timeline flow")
                 return "extract_timeline_events"
@@ -6052,6 +6565,7 @@ Return ONLY the reformulated query, nothing else."""
             route_after_chunks,
             {
                 "load_note_template": "load_note_template",
+                "paraphrase_query_for_guideline": "paraphrase_query_for_guideline",
                 "extract_timeline_events": "extract_timeline_events",
                 "sbar_parallel_dispatcher": "sbar_parallel_dispatcher",
                 "general_summary_parallel_dispatcher": "general_summary_parallel_dispatcher",
@@ -6073,6 +6587,8 @@ Return ONLY the reformulated query, nothing else."""
 
 
         _builder.add_edge("perform_web_search", "provide_information")
+        _builder.add_edge("paraphrase_query_for_guideline", "handle_guideline_query")  # Paraphrase → guideline search
+        _builder.add_edge("handle_guideline_query", "store_assistant_response")  # Guideline search → store response
         _builder.add_edge("handle_general_knowledge_query", "store_assistant_response")  # General knowledge → store response
         _builder.add_edge("provide_information", "store_assistant_response")
         _builder.add_edge("store_assistant_response", END)

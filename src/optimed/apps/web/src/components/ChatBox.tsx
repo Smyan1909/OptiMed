@@ -80,6 +80,11 @@ interface TimelineResults {
   events: TimelineEvent[];
 }
 
+interface EncountersData {
+  content: string;
+  structured_data: any[];
+}
+
 interface GeneralSummaryResults {
   snapshot?: string;
   problems?: string;
@@ -87,7 +92,7 @@ interface GeneralSummaryResults {
   trends?: string;
   history?: string;
   risks?: string;
-  encounters?: string;
+  encounters?: string | EncountersData;
   deepdive?: string;
 }
 
@@ -1048,6 +1053,10 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
       const key = `session_start_time_${currentSessionId}`;
       const existingTime = localStorage.getItem(key);
 
+      // Check for old session ID to cleanup (stored by parent when creating new session)
+      const oldSessionCleanupKey = `cleanup_old_session_${mode}_${patientId || 'general'}`;
+      const oldSessionToCleanup = localStorage.getItem(oldSessionCleanupKey);
+
       // Only set new time if this is a new session (no existing time)
       if (!existingTime) {
         const now = Date.now();
@@ -1066,12 +1075,18 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         localStorage.removeItem(messagesKey);
         logInfo('[ChatBox] Cleared messages from localStorage');
 
-        // Clean up old documents from backend auth session
+        // Clean up old documents from backend (both old chat session and auth session)
         const cleanup = async () => {
           try {
-            logInfo('[ChatBox] Calling backend to cleanup old documents from auth session');
-            const result = await cleanupSessionDocuments();
+            logInfo(`[ChatBox] Calling backend to cleanup old documents - old chat session: ${oldSessionToCleanup ? sanitizeSessionId(oldSessionToCleanup) : 'none'}`);
+            const result = await cleanupSessionDocuments(oldSessionToCleanup || undefined);
             logInfo(`[ChatBox] Backend cleanup complete: ${result.deleted_pdfs} PDFs, ${result.deleted_xmls} XMLs deleted`);
+
+            // Clear the cleanup marker now that we've cleaned up
+            if (oldSessionToCleanup) {
+              localStorage.removeItem(oldSessionCleanupKey);
+              logInfo('[ChatBox] Cleared old session cleanup marker from localStorage');
+            }
           } catch (error) {
             logError('[ChatBox] Backend cleanup failed', error as Error);
             // Don't fail the session start if cleanup fails
@@ -1086,6 +1101,11 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         logInfo(`[ChatBox] Restored existing session start time: ${new Date(storedTime).toISOString()}`);
         logInfo('[ChatBox] Page refresh detected - documents will be reloaded from backend');
         // Don't clear documents - let loadPDFs/loadXMLs restore them
+
+        // Also clear any lingering cleanup marker (shouldn't happen but be safe)
+        if (oldSessionToCleanup) {
+          localStorage.removeItem(oldSessionCleanupKey);
+        }
       }
 
       // Clean up old session start times (older than 7 days)
@@ -1100,7 +1120,7 @@ export function ChatBox({ mode, patientId, sessionId: propSessionId }: ChatBoxPr
         }
       });
     }
-  }, [currentSessionId]);
+  }, [currentSessionId, mode, patientId]);
 
   // GDPR-compliant: Chat history now loaded from localStorage (client-side only)
   // This useEffect loads documents but not messages (messages are loaded from localStorage above)

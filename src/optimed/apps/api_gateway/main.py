@@ -29,6 +29,7 @@ from optimed.adapters.security.rls_middleware import RLSMiddleware
 from optimed.adapters.middleware.audit_logger import AuditLoggingMiddleware
 from optimed.apps.api_gateway.gdpr_endpoints import gdpr_router
 from optimed.apps.api_gateway.document_events import get_broadcaster, DocumentEvent, format_sse_event
+from optimed.adapters.siths_grandid import SITHSAuthProvider
 from optimed.core.logging_utils import (
     get_logger,
     sanitize_user_id,
@@ -62,13 +63,14 @@ _template_repo: _Any = None
 _template_service: _Any = None
 _note_generator: _Any = None
 _audit_repo: _Any = None
+_siths_provider: _Any = None
 
 
 _dependencies_ready: asyncio.Event = asyncio.Event()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service, _template_repo, _template_service, _note_generator, _audit_repo
+    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service, _template_repo, _template_service, _note_generator, _audit_repo, _siths_provider
     try:
         (
             _engine,
@@ -94,6 +96,14 @@ async def lifespan(app: FastAPI):
         # Store repositories in app state for middleware access
         app.state._user_repo = _user_repo
         app.state._audit_repo = _audit_repo
+
+        # Initialize SITHS provider
+        try:
+            _siths_provider = SITHSAuthProvider()
+            logger.info("[startup] SITHS provider initialized")
+        except ValueError as e:
+            logger.warning(f"[startup] SITHS provider not initialized: {str(e)}")
+            _siths_provider = None
 
         _dependencies_ready.set()
         logger.info("[startup] Dependencies initialized")
@@ -341,6 +351,11 @@ class EHRLoginResponse(BaseModel):
     authorization_url: str
     connection_id: str
     state: str
+
+class SITHSLoginResponse(BaseModel):
+    redirect_url: str
+    state: str
+    message: str
 
 
 class DICOMImageResponse(BaseModel):
@@ -753,10 +768,10 @@ async def get_session_participants(
     user_ctx: dict = Depends(get_user_context)
 ):
     """Get all participants of a session."""
-    
+
     try:
         participants = await _engine.vector_store.get_session_participants(session_id)
-        
+
         return {
             "session_id": session_id,
             "participants": [
@@ -773,6 +788,133 @@ async def get_session_participants(
     except Exception as e:
         log_error(logger, "Get session participants", e)
         raise HTTPException(status_code=500, detail="Could not get session participants")
+
+@app.delete("/chat/sessions/{session_id}")
+async def clear_chat_session(session_id: str):
+    """Clear chat session memory to start fresh conversation (no auth required for cleanup)."""
+    logger.info(f"[SESSION-CLEAR] Request to clear session: {session_id}")
+
+    try:
+        # Import session memory from info_flow_ram
+        from optimed.apps.orchestrator.info_flow_ram import _GLOBAL_SESSION_MEMORY, _GLOBAL_CHUNK_CACHE
+
+        # Log current state
+        logger.info(f"[SESSION-CLEAR] Total sessions in memory: {len(_GLOBAL_SESSION_MEMORY)}")
+        logger.info(f"[SESSION-CLEAR] Total chunk caches: {len(_GLOBAL_CHUNK_CACHE)}")
+        logger.info(f"[SESSION-CLEAR] All session keys in memory: {list(_GLOBAL_SESSION_MEMORY.keys())}")
+        logger.info(f"[SESSION-CLEAR] All cache keys: {list(_GLOBAL_CHUNK_CACHE.keys())}")
+
+        cleared_memory = False
+        cleared_cache = False
+        cleared_count = 0
+
+        # Try to find and clear ALL matching sessions (handle ID variations)
+        # The session_id might be stored with different prefixes or formats
+        sessions_to_clear = []
+
+        # Direct match
+        if session_id in _GLOBAL_SESSION_MEMORY:
+            sessions_to_clear.append(session_id)
+
+        # Also check for partial matches (e.g., chat_general_XXX might be stored as session_XXX)
+        for key in list(_GLOBAL_SESSION_MEMORY.keys()):
+            if session_id in key or key in session_id:
+                if key not in sessions_to_clear:
+                    sessions_to_clear.append(key)
+
+        logger.info(f"[SESSION-CLEAR] Found {len(sessions_to_clear)} sessions to clear: {sessions_to_clear}")
+
+        # Clear all matching sessions
+        for key in sessions_to_clear:
+            if key in _GLOBAL_SESSION_MEMORY:
+                message_count = len(_GLOBAL_SESSION_MEMORY[key])
+                del _GLOBAL_SESSION_MEMORY[key]
+                logger.info(f"[SESSION-CLEAR] ✓ Cleared {message_count} messages from session {key}")
+                cleared_memory = True
+                cleared_count += 1
+
+        if not sessions_to_clear:
+            logger.info(f"[SESSION-CLEAR] ⚠ Session not found in memory: {session_id}")
+
+        # Clear chunk cache (try all variations)
+        caches_to_clear = []
+        if session_id in _GLOBAL_CHUNK_CACHE:
+            caches_to_clear.append(session_id)
+
+        for key in list(_GLOBAL_CHUNK_CACHE.keys()):
+            if session_id in key or key in session_id:
+                if key not in caches_to_clear:
+                    caches_to_clear.append(key)
+
+        for key in caches_to_clear:
+            if key in _GLOBAL_CHUNK_CACHE:
+                chunk_info = _GLOBAL_CHUNK_CACHE[key]
+                chunk_count = len(chunk_info.get('chunks', []))
+                del _GLOBAL_CHUNK_CACHE[key]
+                logger.info(f"[SESSION-CLEAR] ✓ Cleared {chunk_count} chunks from cache {key}")
+                cleared_cache = True
+
+        if not caches_to_clear:
+            logger.info(f"[SESSION-CLEAR] ⚠ Session not found in cache: {session_id}")
+
+        logger.info(f"[SESSION-CLEAR] Remaining sessions in memory: {len(_GLOBAL_SESSION_MEMORY)}")
+        logger.info(f"[SESSION-CLEAR] Remaining chunk caches: {len(_GLOBAL_CHUNK_CACHE)}")
+
+        # ALSO clear documents from PDF and XML services
+        from optimed.apps.pdf.memory_pdf_service import MemoryPDFService
+        from optimed.apps.xml.memory_xml_service import MemoryXMLService
+        from optimed.adapters.pdf.pdf_processor import PyMuPDFProcessor
+        from optimed.adapters.xml.xml_processor import LibXML2Processor
+
+        pdf_service = MemoryPDFService(pdf_processor=PyMuPDFProcessor())
+        xml_service = MemoryXMLService(xml_processor=LibXML2Processor())
+
+        # Try to get all possible user IDs (we don't have user_id here, so clear for ALL users with this session)
+        # This is a bit aggressive but necessary for proper cleanup
+        pdf_cleared = 0
+        xml_cleared = 0
+
+        try:
+            # Clear from PDF service - iterate through all stored documents
+            if hasattr(pdf_service, '_documents'):
+                for key in list(pdf_service._documents.keys()):
+                    doc_session = getattr(pdf_service._documents[key], 'session_id', None)
+                    if doc_session and (session_id in str(doc_session) or str(doc_session) in session_id):
+                        del pdf_service._documents[key]
+                        pdf_cleared += 1
+                        logger.info("[SESSION-CLEAR] Cleared PDF document from session")
+        except Exception as e:
+            logger.warning(f"[SESSION-CLEAR] Error clearing PDFs: {e}")
+
+        try:
+            # Clear from XML service
+            if hasattr(xml_service, '_documents'):
+                for key in list(xml_service._documents.keys()):
+                    doc_session = getattr(xml_service._documents[key], 'session_id', None)
+                    if doc_session and (session_id in str(doc_session) or str(doc_session) in session_id):
+                        del xml_service._documents[key]
+                        xml_cleared += 1
+                        logger.info("[SESSION-CLEAR] Cleared XML document from session")
+        except Exception as e:
+            logger.warning(f"[SESSION-CLEAR] Error clearing XMLs: {e}")
+
+        logger.info(f"[SESSION-CLEAR] Cleared {pdf_cleared} PDFs and {xml_cleared} XMLs")
+
+        return {
+            "session_id": session_id,
+            "status": "cleared",
+            "cleared_memory": cleared_memory,
+            "cleared_cache": cleared_cache,
+            "sessions_cleared": cleared_count,
+            "pdfs_cleared": pdf_cleared,
+            "xmls_cleared": xml_cleared,
+            "message": f"Cleared {cleared_count} session(s), {pdf_cleared} PDFs, {xml_cleared} XMLs"
+        }
+
+    except Exception as e:
+        log_error(logger, "Clear chat session", e)
+        logger.error(f"[SESSION-CLEAR] ✗ Error clearing session {session_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Could not clear session")
 
 
 # Encryption and Key Exchange Endpoints
@@ -1875,7 +2017,7 @@ async def login(req: LoginRequest):
     user = await _user_repo.get_user_by_username(req.username)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
+
     session = UserSession(
         session_id=str(uuid.uuid4()),
         user_id=user.user_id,
@@ -1883,9 +2025,9 @@ async def login(req: LoginRequest):
         last_activity=datetime.now(),
         is_active=True
     )
-    
+
     await _user_repo.create_session(session)
-    
+
     return LoginResponse(
         user=UserOut(
             user_id=user.user_id,
@@ -1902,6 +2044,185 @@ async def login(req: LoginRequest):
         session_id=session.session_id,
         message="Login successful"
     )
+
+@app.get("/auth/siths-test-config")
+async def test_siths_config():
+    """
+    Test SITHS configuration without actually initiating authentication.
+    Useful for verifying API keys and connection to GrandID.
+    """
+    if not _siths_provider:
+        return {
+            "configured": False,
+            "error": "SITHS authentication not configured. Missing environment variables.",
+            "required_vars": ["GRANDID_API_KEY", "GRANDID_SERVICE_KEY"],
+            "grandid_api_key_set": bool(os.getenv("GRANDID_API_KEY")),
+            "grandid_service_key_set": bool(os.getenv("GRANDID_SERVICE_KEY")),
+            "grandid_base_url": os.getenv("GRANDID_BASE_URL", "Not set")
+        }
+
+    return {
+        "configured": True,
+        "grandid_base_url": _siths_provider.base_url,
+        "api_key_prefix": _siths_provider.api_key[:10] + "..." if _siths_provider.api_key else "Not set",
+        "service_key_prefix": _siths_provider.service_key[:10] + "..." if _siths_provider.service_key else "Not set",
+        "message": "SITHS authentication is configured. Ready to initiate authentication."
+    }
+
+@app.post("/auth/siths-login", response_model=SITHSLoginResponse)
+async def initiate_siths_login():
+    """
+    Initiate SITHS NetID Enterprise authentication using redirect flow.
+    Similar to EHR login - redirects user to GrandID for authentication.
+    """
+    logger.info("=" * 80)
+    logger.info("[SITHS DEBUG] /auth/siths-login endpoint called")
+    logger.info("=" * 80)
+
+    if not _siths_provider:
+        raise HTTPException(
+            status_code=503,
+            detail="SITHS authentication not configured. Please set GRANDID_API_KEY, GRANDID_SERVICE_KEY, and GRANDID_BASE_URL."
+        )
+
+    try:
+        # Generate unique session ID and state parameter
+        session_id = f"siths_sess_{uuid.uuid4()}"
+        state = base64.urlsafe_b64encode(json.dumps({
+            "session_id": session_id,
+            "nonce": str(uuid.uuid4())
+        }).encode()).decode()
+
+        # Callback URL - where GrandID will redirect after authentication
+        backend_base = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip('/')
+        callback_url = f"{backend_base}/auth/siths-callback"
+
+        # Initiate SITHS authentication with GrandID
+        result = await _siths_provider.initiate_siths_auth(callback_url)
+
+        # Store temporary session data
+        session_data = {
+            "session_id": session_id,
+            "state": state,
+            "grandid_sessionid": result.get("sessionid"),
+            "callback_url": callback_url,
+            "created_at": datetime.now(timezone.utc),
+            "expires_at": datetime.now(timezone.utc) + timedelta(hours=1)
+        }
+
+        await _connection_repo.create_siths_login_session(session_data)
+
+        logger.info("[INFO] SITHS authentication initiated successfully")
+
+        return SITHSLoginResponse(
+            redirect_url=result["redirectUrl"],
+            state=state,
+            message="Redirect to GrandID for SITHS authentication"
+        )
+    except Exception as e:
+        logger.error(f"Failed to initiate SITHS login: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to initiate SITHS authentication: {str(e)}")
+
+@app.get("/auth/siths-callback", response_model=LoginResponse)
+async def complete_siths_login(
+    request: Request,
+    grandidsession: str = Query(None, description="GrandID session ID"),
+    sessionid: str = Query(None, description="Alternative session ID parameter"),
+    state: str = Query(None, description="State parameter"),
+    error: Optional[str] = Query(None, description="Error code if any"),
+    error_description: Optional[str] = Query(None, description="Error description if any")
+):
+    """
+    Complete SITHS authentication and create/update user.
+    GrandID redirects here after authentication with grandidsession or sessionid parameter.
+    """
+    logger.info("=" * 80)
+    logger.info("[SITHS DEBUG] CALLBACK ENDPOINT CALLED")
+    logger.info(f"[SITHS DEBUG] Full URL: {request.url}")
+    logger.info(f"[SITHS DEBUG] Query params: {dict(request.query_params)}")
+    logger.info(f"[SITHS DEBUG] grandidsession: {grandidsession}")
+    logger.info(f"[SITHS DEBUG] sessionid: {sessionid}")
+    logger.info(f"[SITHS DEBUG] state: {state}")
+    logger.info(f"[SITHS DEBUG] error: {error}")
+    logger.info(f"[SITHS DEBUG] error_description: {error_description}")
+    logger.info("=" * 80)
+
+    frontend_base = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+    if error:
+        logger.error(f"[SITHS ERROR] SITHS authentication error: {error} - {error_description}")
+        error_msg = error_description or error or "SITHS authentication failed"
+        frontend_url = f"{frontend_base}/login?error={error_msg}"
+        return RedirectResponse(url=frontend_url, status_code=302)
+
+    # GrandID might use 'grandidsession' or 'sessionid' parameter
+    session_id_param = grandidsession or sessionid
+
+    # Check for missing required parameters
+    if not session_id_param:
+        logger.error("[SITHS ERROR] Missing session parameter (neither grandidsession nor sessionid found)")
+        logger.error(f"[SITHS ERROR] Available query params: {dict(request.query_params)}")
+        frontend_url = f"{frontend_base}/login?error=Missing authentication session"
+        return RedirectResponse(url=frontend_url, status_code=302)
+
+    try:
+        # Get session data from GrandID using the sessionid
+        logger.info(f"[SITHS DEBUG] Using session ID: {session_id_param}")
+        user_info = await _siths_provider.get_session_data(session_id_param)
+
+        # Extract and validate HSA ID
+        hsa_id = _siths_provider.extract_hsa_id(user_info)
+        if not hsa_id:
+            logger.warning("[WARNING] No valid HSA ID found in SITHS certificate")
+            frontend_url = f"{frontend_base}/login?error=No valid HSA ID found in certificate"
+            return RedirectResponse(url=frontend_url, status_code=302)
+
+        # Check if HSA ID is whitelisted in database
+        user = await _user_repo.get_user_by_hsa_id(hsa_id)
+        if not user:
+            logger.warning(f"[WARNING] Access denied: HSA ID '{hsa_id}' not authorized")
+            frontend_url = f"{frontend_base}/login?error=Access denied. HSA ID not authorized for this application."
+            return RedirectResponse(url=frontend_url, status_code=302)
+
+        # Update user info from SITHS certificate
+        siths_metadata = _siths_provider.get_siths_metadata(user_info)
+        updated_user = user.model_copy(update={
+            'first_name': user_info.get('given_name') or user.first_name,
+            'last_name': user_info.get('surname') or user.last_name,
+            'email': user_info.get('email') or user.email,
+            'department': user_info.get('organizational_unit') or user.department,
+            'siths_metadata': siths_metadata
+        })
+        await _user_repo.update_user(updated_user)
+
+        # Clean up temporary session if state was provided
+        if state:
+            try:
+                await _connection_repo.delete_siths_login_session(state)
+            except Exception:
+                pass  # Continue even if cleanup fails
+
+        # Create user session with GrandID sessionid for later logout
+        session = UserSession(
+            session_id=str(uuid.uuid4()),
+            user_id=updated_user.user_id,
+            login_time=datetime.now(timezone.utc),
+            last_activity=datetime.now(timezone.utc),
+            is_active=True,
+            grandid_sessionid=session_id_param  # Store GrandID sessionid for logout
+        )
+        await _user_repo.create_session(session)
+
+        logger.info(f"[INFO] SITHS login successful for user '{updated_user.username}' with HSA ID '{hsa_id}', GrandID session: {session_id_param}")
+
+        # Redirect to frontend success page with session info
+        frontend_url = f"{frontend_base}/auth/siths-success?session_id={session.session_id}"
+        return RedirectResponse(url=frontend_url, status_code=302)
+
+    except Exception as e:
+        log_error(logger, "SITHS callback error", e)
+        frontend_url = f"{frontend_base}/login?error=Authentication failed: {str(e)}"
+        return RedirectResponse(url=frontend_url, status_code=302)
 
 @app.get("/users/by-role/{role}", response_model=list[UserOut])
 async def get_users_by_role(role: str, user_ctx: dict = Depends(get_user_context)):
@@ -1948,15 +2269,53 @@ async def get_current_user_info(user_ctx: dict = Depends(get_user_context)):
     )
 
 @app.post("/auth/logout")
-async def logout(user_ctx: dict = Depends(get_user_context)):
-    """Logout user and invalidate session."""
-    current_user = user_ctx.get("user")
-    if current_user:
-        # Get session ID from header
-        # You might need to modify this based on how you store session ID
-        pass
-    
-    return {"message": "Logout successful"}
+async def logout(
+    request: Request,
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Logout user and invalidate session. Calls GrandID logout for SITHS users."""
+    try:
+        current_user = user_ctx.get("user")
+        session_id = user_ctx.get("session_id")
+
+        if not current_user or not session_id:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+        logger.info(f"[Logout] User '{current_user.username}' (ID: {sanitize_user_id(current_user.user_id)}) logging out from session: {sanitize_session_id(session_id)}")
+
+        # Get the session to check if it has a GrandID sessionid
+        session = await _user_repo.get_active_session(session_id)
+
+        if session and session.grandid_sessionid:
+            # This is a SITHS session - call GrandID logout
+            logger.info(f"[Logout] SITHS session detected, calling GrandID logout for sessionid: {session.grandid_sessionid}")
+
+            try:
+                success = await _siths_provider.logout_siths(session.grandid_sessionid)
+                if success:
+                    logger.info(f"[Logout] Successfully logged out from GrandID for session: {session.grandid_sessionid}")
+                else:
+                    logger.warning(f"[Logout] GrandID logout failed for session: {session.grandid_sessionid}")
+            except Exception as e:
+                # Log but don't fail logout if GrandID logout fails
+                logger.error(f"[Logout] Error calling GrandID logout: {str(e)}")
+        else:
+            logger.info("[Logout] Non-SITHS session, skipping GrandID logout")
+
+        # Deactivate the session in our database
+        await _user_repo.deactivate_session(session_id)
+        logger.info(f"[Logout] Session {sanitize_session_id(session_id)} deactivated")
+
+        return {
+            "message": "Logout successful",
+            "session_id": session_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(logger, "Logout", e)
+        raise HTTPException(status_code=500, detail=f"Logout failed: {str(e)}")
    
 
 ### Image endpoints
@@ -3680,15 +4039,22 @@ async def delete_pdf_document(
         raise HTTPException(status_code=500, detail="Failed to delete PDF document")
 
 
+class CleanupSessionRequest(BaseModel):
+    old_chat_session_id: Optional[str] = None
+
+
 @app.post("/documents/cleanup-session")
 async def cleanup_session_documents(
-    request: Request,
+    cleanup_request: CleanupSessionRequest = Body(default=CleanupSessionRequest()),
     user_ctx: dict = Depends(get_user_context)
 ):
-    """Clean up old documents from auth session when starting a new chat session.
+    """Clean up old documents from auth session and old chat session when starting a new chat session.
 
     This endpoint is called by the frontend when creating a new session to prevent
     old watcher uploads from accumulating in memory.
+
+    Args:
+        cleanup_request: Request containing optional old_chat_session_id
     """
     session_id = user_ctx.get("session_id")
     if not session_id:
@@ -3699,49 +4065,182 @@ async def cleanup_session_documents(
         raise HTTPException(status_code=401, detail="User not found")
 
     try:
-        logger.info(f"[Cleanup] Starting cleanup for auth session: {sanitize_session_id(session_id)}, user: {sanitize_user_id(user.user_id)}")
+        old_chat_session_id = cleanup_request.old_chat_session_id
+
+        logger.info(f"[Cleanup] Starting cleanup - auth session: {sanitize_session_id(session_id)}, old chat session: {sanitize_session_id(old_chat_session_id) if old_chat_session_id else "none"}, user: {sanitize_user_id(user.user_id)}")
+
+        total_deleted_pdfs = 0
+        total_deleted_xmls = 0
+
+        # Clean up old chat session first (if provided and different from auth session)
+        if old_chat_session_id and old_chat_session_id != session_id:
+            logger.info(f"[Cleanup] ===== CLEANING OLD CHAT SESSION: {sanitize_session_id(old_chat_session_id)} =====")
+
+            # Get all documents from old chat session
+            old_chat_pdfs = await _pdf_service.list_documents(
+                user_id=user.user_id,
+                session_id=old_chat_session_id,
+                patient_id=None
+            )
+            logger.info(f"[Cleanup] Found {len(old_chat_pdfs)} PDFs in old chat session")
+            for pdf in old_chat_pdfs:
+                logger.info(f"[Cleanup]   - PDF: {sanitize_document_id(pdf.document_id)}, filename: {pdf.filename}")
+
+            old_chat_xmls = await _xml_service.list_documents(
+                user_id=user.user_id,
+                session_id=old_chat_session_id,
+                patient_id=None
+            )
+            logger.info(f"[Cleanup] Found {len(old_chat_xmls)} XMLs in old chat session")
+            for xml in old_chat_xmls:
+                logger.info(f"[Cleanup]   - XML: {sanitize_document_id(xml.document_id)}, filename: {xml.filename}")
+
+            # Delete documents from old chat session
+            for doc in old_chat_pdfs:
+                try:
+                    success = await _pdf_service.delete_document(doc.document_id, user.user_id, old_chat_session_id)
+                    if success:
+                        total_deleted_pdfs += 1
+                        logger.info(f"[Cleanup] ✓ Deleted PDF {sanitize_document_id(doc.document_id)}")
+                    else:
+                        logger.warning(f"[Cleanup] ✗ Failed to delete PDF {sanitize_document_id(doc.document_id)} (not found)")
+                except Exception as e:
+                    logger.error(f"[Cleanup] ✗ Exception deleting PDF {sanitize_document_id(doc.document_id)}: {str(e)}")
+
+            for doc in old_chat_xmls:
+                try:
+                    success = await _xml_service.delete_document(doc.document_id, user.user_id, old_chat_session_id)
+                    if success:
+                        total_deleted_xmls += 1
+                        logger.info(f"[Cleanup] ✓ Deleted XML {sanitize_document_id(doc.document_id)}")
+                    else:
+                        logger.warning(f"[Cleanup] ✗ Failed to delete XML {sanitize_document_id(doc.document_id)} (not found)")
+                except Exception as e:
+                    logger.error(f"[Cleanup] ✗ Exception deleting XML {sanitize_document_id(doc.document_id)}: {str(e)}")
+
+            logger.info(f"[Cleanup] ===== OLD CHAT SESSION CLEANUP COMPLETE: {total_deleted_pdfs}/{len(old_chat_pdfs)} PDFs, {total_deleted_xmls - (total_deleted_pdfs - len(old_chat_pdfs))}/{len(old_chat_xmls)} XMLs deleted =====")
+
+        # Clean up auth session (where watcher agent uploads)
+        logger.info(f"[Cleanup] ===== CLEANING AUTH SESSION: {sanitize_session_id(session_id)} =====")
 
         # Get all documents from auth session
-        pdf_docs = await _pdf_service.list_documents(
+        auth_pdfs = await _pdf_service.list_documents(
             user_id=user.user_id,
             session_id=session_id,
             patient_id=None
         )
+        logger.info(f"[Cleanup] Found {len(auth_pdfs)} PDFs in auth session")
+        for pdf in auth_pdfs:
+            logger.info(f"[Cleanup]   - PDF: {sanitize_document_id(pdf.document_id)}, filename: {pdf.filename}")
 
-        xml_docs = await _xml_service.list_documents(
+        auth_xmls = await _xml_service.list_documents(
             user_id=user.user_id,
             session_id=session_id,
             patient_id=None
         )
+        logger.info(f"[Cleanup] Found {len(auth_xmls)} XMLs in auth session")
+        for xml in auth_xmls:
+            logger.info(f"[Cleanup]   - XML: {sanitize_document_id(xml.document_id)}, filename: {xml.filename}")
 
         # Delete all documents from auth session
-        deleted_pdfs = 0
-        for doc in pdf_docs:
+        auth_pdfs_deleted = 0
+        for doc in auth_pdfs:
             try:
-                await _pdf_service.delete_document(doc.document_id, user.user_id, session_id)
-                deleted_pdfs += 1
-            except Exception:
-                logger.error(f"[Cleanup] Failed to delete PDF {sanitize_document_id(doc.document_id)}")
+                success = await _pdf_service.delete_document(doc.document_id, user.user_id, session_id)
+                if success:
+                    auth_pdfs_deleted += 1
+                    total_deleted_pdfs += 1
+                    logger.info(f"[Cleanup] ✓ Deleted PDF {sanitize_document_id(doc.document_id)}")
+                else:
+                    logger.warning(f"[Cleanup] ✗ Failed to delete PDF {sanitize_document_id(doc.document_id)} (not found)")
+            except Exception as e:
+                logger.error(f"[Cleanup] ✗ Exception deleting PDF {sanitize_document_id(doc.document_id)}: {str(e)}")
 
-        deleted_xmls = 0
-        for doc in xml_docs:
+        auth_xmls_deleted = 0
+        for doc in auth_xmls:
             try:
-                await _xml_service.delete_document(doc.document_id, user.user_id, session_id)
-                deleted_xmls += 1
-            except Exception:
-                logger.error(f"[Cleanup] Failed to delete XML {sanitize_document_id(doc.document_id)}")
+                success = await _xml_service.delete_document(doc.document_id, user.user_id, session_id)
+                if success:
+                    auth_xmls_deleted += 1
+                    total_deleted_xmls += 1
+                    logger.info(f"[Cleanup] ✓ Deleted XML {sanitize_document_id(doc.document_id)}")
+                else:
+                    logger.warning(f"[Cleanup] ✗ Failed to delete XML {sanitize_document_id(doc.document_id)} (not found)")
+            except Exception as e:
+                logger.error(f"[Cleanup] ✗ Exception deleting XML {sanitize_document_id(doc.document_id)}: {str(e)}")
 
-        logger.info(f"[Cleanup] Cleaned up {deleted_pdfs} PDFs and {deleted_xmls} XMLs from auth session")
+        logger.info(f"[Cleanup] ===== AUTH SESSION CLEANUP COMPLETE: {auth_pdfs_deleted}/{len(auth_pdfs)} PDFs, {auth_xmls_deleted}/{len(auth_xmls)} XMLs deleted =====")
+        logger.info(f"[Cleanup] ===== TOTAL CLEANUP: {total_deleted_pdfs} PDFs and {total_deleted_xmls} XMLs deleted =====")
 
         return {
             "message": "Session cleaned up successfully",
-            "deleted_pdfs": deleted_pdfs,
-            "deleted_xmls": deleted_xmls
+            "deleted_pdfs": total_deleted_pdfs,
+            "deleted_xmls": total_deleted_xmls
         }
 
     except Exception as e:
         log_error(logger, "Cleanup", e)
         raise HTTPException(status_code=500, detail="Failed to cleanup session")
+
+
+@app.get("/documents/debug-sessions")
+async def debug_sessions(
+    user_ctx: dict = Depends(get_user_context)
+):
+    """Debug endpoint to show all documents in all sessions (for troubleshooting)."""
+    user = user_ctx.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    try:
+        # Get all PDF sessions
+        pdf_sessions = {}
+        if hasattr(_pdf_service, 'sessions'):
+            for session_key, session_data in _pdf_service.sessions.items():
+                if user.user_id in session_key:
+                    pdf_sessions[session_key] = {
+                        "pdf_count": len(session_data.pdfs),
+                        "pdfs": [
+                            {
+                                "document_id": pdf.document_id,
+                                "filename": pdf.filename,
+                                "patient_id": pdf.patient_id
+                            }
+                            for pdf in session_data.pdfs.values()
+                        ]
+                    }
+
+        # Get all XML sessions
+        xml_sessions = {}
+        if hasattr(_xml_service, 'sessions'):
+            for session_key, session_data in _xml_service.sessions.items():
+                if user.user_id in session_key:
+                    xml_sessions[session_key] = {
+                        "xml_count": len(session_data.xml_documents),
+                        "xmls": [
+                            {
+                                "document_id": xml.document_id,
+                                "filename": xml.filename,
+                                "patient_id": xml.patient_id
+                            }
+                            for xml in session_data.xml_documents.values()
+                        ]
+                    }
+
+        return {
+            "user_id": user.user_id,
+            "auth_session_id": user_ctx.get("session_id"),
+            "pdf_sessions": pdf_sessions,
+            "xml_sessions": xml_sessions,
+            "total_pdf_sessions": len(pdf_sessions),
+            "total_xml_sessions": len(xml_sessions),
+            "total_pdfs": sum(s["pdf_count"] for s in pdf_sessions.values()),
+            "total_xmls": sum(s["xml_count"] for s in xml_sessions.values())
+        }
+
+    except Exception as e:
+        log_error(logger, "Debug sessions", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # XML Document Upload and Management Endpoints

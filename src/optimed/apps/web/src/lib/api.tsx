@@ -431,10 +431,36 @@ export async function loginUser(username: string, password: string): Promise<{ u
 }
 
 export async function logoutUser(): Promise<void> {
-  await fetch('/api/auth/logout', { 
+  await fetch('/api/auth/logout', {
     method: 'POST',
     headers: getSessionHeaders()
   });
+}
+
+// SITHS NetID Enterprise authentication
+export async function initiateSITHSLogin(): Promise<{
+  redirect_url: string;
+  state: string;
+  message: string;
+}> {
+  const res = await fetch('/api/auth/siths-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  });
+  if (!res.ok) {
+    const error = await res.text();
+    throw new Error(`Failed to initiate SITHS login: ${error}`);
+  }
+  return res.json();
+}
+
+export async function completeSITHSLogin(sessionId: string): Promise<{ user: User; session: { session_id: string } }> {
+  // This function is called from the success page after redirect
+  // Session info is already in URL params
+  return {
+    user: {} as User,  // Will be fetched from /auth/me
+    session: { session_id: sessionId }
+  };
 }
 
 // New user-aware functions
@@ -1007,15 +1033,21 @@ export async function deleteXMLDocument(documentId: string, patientId?: string, 
   return responseData;
 }
 
-export async function cleanupSessionDocuments(): Promise<{ message: string; deleted_pdfs: number; deleted_xmls: number }> {
-  logInfo('[API] cleanupSessionDocuments called');
+export async function cleanupSessionDocuments(oldChatSessionId?: string): Promise<{ message: string; deleted_pdfs: number; deleted_xmls: number }> {
+  logInfo('[API] cleanupSessionDocuments called', {
+    oldChatSessionId: oldChatSessionId ? sanitizeSessionId(oldChatSessionId) : 'none'
+  });
 
   const headers = getSessionHeaders();
+  headers['Content-Type'] = 'application/json';
   logInfo('[API] Cleanup request headers prepared');
 
   const res = await fetch('/api/documents/cleanup-session', {
     method: 'POST',
     headers: headers,
+    body: JSON.stringify({
+      old_chat_session_id: oldChatSessionId
+    }),
   });
 
   logInfo(`[API] Cleanup response status: ${res.status}`);
@@ -1027,7 +1059,10 @@ export async function cleanupSessionDocuments(): Promise<{ message: string; dele
   }
 
   const responseData = await res.json();
-  logInfo('[API] Cleanup successful');
+  logInfo('[API] Cleanup successful', {
+    deletedPdfs: responseData.deleted_pdfs,
+    deletedXmls: responseData.deleted_xmls
+  });
   return responseData;
 }
 
