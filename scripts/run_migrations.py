@@ -235,7 +235,6 @@ class MigrationRunner:
         }
 
         results = {}
-        all_present = True
 
         for category, expected in categories.items():
             present = [t for t in expected if t in table_names]
