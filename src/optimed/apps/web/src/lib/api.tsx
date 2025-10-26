@@ -431,10 +431,36 @@ export async function loginUser(username: string, password: string): Promise<{ u
 }
 
 export async function logoutUser(): Promise<void> {
-  await fetch('/api/auth/logout', { 
+  await fetch('/api/auth/logout', {
     method: 'POST',
     headers: getSessionHeaders()
   });
+}
+
+// SITHS NetID Enterprise authentication
+export async function initiateSITHSLogin(): Promise<{
+  redirect_url: string;
+  state: string;
+  message: string;
+}> {
+  const res = await fetch('/api/auth/siths-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  });
+  if (!res.ok) {
+    const error = await res.text();
+    throw new Error(`Failed to initiate SITHS login: ${error}`);
+  }
+  return res.json();
+}
+
+export async function completeSITHSLogin(sessionId: string): Promise<{ user: User; session: { session_id: string } }> {
+  // This function is called from the success page after redirect
+  // Session info is already in URL params
+  return {
+    user: {} as User,  // Will be fetched from /auth/me
+    session: { session_id: sessionId }
+  };
 }
 
 // New user-aware functions

@@ -29,6 +29,7 @@ from optimed.adapters.security.rls_middleware import RLSMiddleware
 from optimed.adapters.middleware.audit_logger import AuditLoggingMiddleware
 from optimed.apps.api_gateway.gdpr_endpoints import gdpr_router
 from optimed.apps.api_gateway.document_events import get_broadcaster, DocumentEvent, format_sse_event
+from optimed.adapters.siths_grandid import SITHSAuthProvider
 from optimed.core.logging_utils import (
     get_logger,
     sanitize_user_id,
@@ -62,13 +63,14 @@ _template_repo: _Any = None
 _template_service: _Any = None
 _note_generator: _Any = None
 _audit_repo: _Any = None
+_siths_provider: _Any = None
 
 
 _dependencies_ready: asyncio.Event = asyncio.Event()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service, _template_repo, _template_service, _note_generator, _audit_repo
+    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service, _template_repo, _template_service, _note_generator, _audit_repo, _siths_provider
     try:
         (
             _engine,
@@ -94,6 +96,14 @@ async def lifespan(app: FastAPI):
         # Store repositories in app state for middleware access
         app.state._user_repo = _user_repo
         app.state._audit_repo = _audit_repo
+
+        # Initialize SITHS provider
+        try:
+            _siths_provider = SITHSAuthProvider()
+            logger.info("[startup] SITHS provider initialized")
+        except ValueError as e:
+            logger.warning(f"[startup] SITHS provider not initialized: {str(e)}")
+            _siths_provider = None
 
         _dependencies_ready.set()
         logger.info("[startup] Dependencies initialized")
@@ -341,6 +351,11 @@ class EHRLoginResponse(BaseModel):
     authorization_url: str
     connection_id: str
     state: str
+
+class SITHSLoginResponse(BaseModel):
+    redirect_url: str
+    state: str
+    message: str
 
 
 class DICOMImageResponse(BaseModel):
@@ -1875,7 +1890,7 @@ async def login(req: LoginRequest):
     user = await _user_repo.get_user_by_username(req.username)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
+
     session = UserSession(
         session_id=str(uuid.uuid4()),
         user_id=user.user_id,
@@ -1883,9 +1898,9 @@ async def login(req: LoginRequest):
         last_activity=datetime.now(),
         is_active=True
     )
-    
+
     await _user_repo.create_session(session)
-    
+
     return LoginResponse(
         user=UserOut(
             user_id=user.user_id,
@@ -1902,6 +1917,184 @@ async def login(req: LoginRequest):
         session_id=session.session_id,
         message="Login successful"
     )
+
+@app.get("/auth/siths-test-config")
+async def test_siths_config():
+    """
+    Test SITHS configuration without actually initiating authentication.
+    Useful for verifying API keys and connection to GrandID.
+    """
+    if not _siths_provider:
+        return {
+            "configured": False,
+            "error": "SITHS authentication not configured. Missing environment variables.",
+            "required_vars": ["GRANDID_API_KEY", "GRANDID_SERVICE_KEY"],
+            "grandid_api_key_set": bool(os.getenv("GRANDID_API_KEY")),
+            "grandid_service_key_set": bool(os.getenv("GRANDID_SERVICE_KEY")),
+            "grandid_base_url": os.getenv("GRANDID_BASE_URL", "Not set")
+        }
+
+    return {
+        "configured": True,
+        "grandid_base_url": _siths_provider.base_url,
+        "api_key_prefix": _siths_provider.api_key[:10] + "..." if _siths_provider.api_key else "Not set",
+        "service_key_prefix": _siths_provider.service_key[:10] + "..." if _siths_provider.service_key else "Not set",
+        "message": "SITHS authentication is configured. Ready to initiate authentication."
+    }
+
+@app.post("/auth/siths-login", response_model=SITHSLoginResponse)
+async def initiate_siths_login():
+    """
+    Initiate SITHS NetID Enterprise authentication using redirect flow.
+    Similar to EHR login - redirects user to GrandID for authentication.
+    """
+    logger.info("=" * 80)
+    logger.info("[SITHS DEBUG] /auth/siths-login endpoint called")
+    logger.info("=" * 80)
+
+    if not _siths_provider:
+        raise HTTPException(
+            status_code=503,
+            detail="SITHS authentication not configured. Please set GRANDID_API_KEY, GRANDID_SERVICE_KEY, and GRANDID_BASE_URL."
+        )
+
+    try:
+        # Generate unique session ID and state parameter
+        session_id = f"siths_sess_{uuid.uuid4()}"
+        state = base64.urlsafe_b64encode(json.dumps({
+            "session_id": session_id,
+            "nonce": str(uuid.uuid4())
+        }).encode()).decode()
+
+        # Callback URL - where GrandID will redirect after authentication
+        backend_base = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip('/')
+        callback_url = f"{backend_base}/auth/siths-callback"
+
+        # Initiate SITHS authentication with GrandID
+        result = await _siths_provider.initiate_siths_auth(callback_url)
+
+        # Store temporary session data
+        session_data = {
+            "session_id": session_id,
+            "state": state,
+            "grandid_sessionid": result.get("sessionid"),
+            "callback_url": callback_url,
+            "created_at": datetime.now(timezone.utc),
+            "expires_at": datetime.now(timezone.utc) + timedelta(hours=1)
+        }
+
+        await _connection_repo.create_siths_login_session(session_data)
+
+        logger.info("[INFO] SITHS authentication initiated successfully")
+
+        return SITHSLoginResponse(
+            redirect_url=result["redirectUrl"],
+            state=state,
+            message="Redirect to GrandID for SITHS authentication"
+        )
+    except Exception as e:
+        logger.error(f"Failed to initiate SITHS login: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to initiate SITHS authentication: {str(e)}")
+
+@app.get("/auth/siths-callback", response_model=LoginResponse)
+async def complete_siths_login(
+    request: Request,
+    grandidsession: str = Query(None, description="GrandID session ID"),
+    sessionid: str = Query(None, description="Alternative session ID parameter"),
+    state: str = Query(None, description="State parameter"),
+    error: Optional[str] = Query(None, description="Error code if any"),
+    error_description: Optional[str] = Query(None, description="Error description if any")
+):
+    """
+    Complete SITHS authentication and create/update user.
+    GrandID redirects here after authentication with grandidsession or sessionid parameter.
+    """
+    logger.info("=" * 80)
+    logger.info("[SITHS DEBUG] CALLBACK ENDPOINT CALLED")
+    logger.info(f"[SITHS DEBUG] Full URL: {request.url}")
+    logger.info(f"[SITHS DEBUG] Query params: {dict(request.query_params)}")
+    logger.info(f"[SITHS DEBUG] grandidsession: {grandidsession}")
+    logger.info(f"[SITHS DEBUG] sessionid: {sessionid}")
+    logger.info(f"[SITHS DEBUG] state: {state}")
+    logger.info(f"[SITHS DEBUG] error: {error}")
+    logger.info(f"[SITHS DEBUG] error_description: {error_description}")
+    logger.info("=" * 80)
+
+    frontend_base = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+    if error:
+        logger.error(f"[SITHS ERROR] SITHS authentication error: {error} - {error_description}")
+        error_msg = error_description or error or "SITHS authentication failed"
+        frontend_url = f"{frontend_base}/login?error={error_msg}"
+        return RedirectResponse(url=frontend_url, status_code=302)
+
+    # GrandID might use 'grandidsession' or 'sessionid' parameter
+    session_id_param = grandidsession or sessionid
+
+    # Check for missing required parameters
+    if not session_id_param:
+        logger.error("[SITHS ERROR] Missing session parameter (neither grandidsession nor sessionid found)")
+        logger.error(f"[SITHS ERROR] Available query params: {dict(request.query_params)}")
+        frontend_url = f"{frontend_base}/login?error=Missing authentication session"
+        return RedirectResponse(url=frontend_url, status_code=302)
+
+    try:
+        # Get session data from GrandID using the sessionid
+        logger.info(f"[SITHS DEBUG] Using session ID: {session_id_param}")
+        user_info = await _siths_provider.get_session_data(session_id_param)
+
+        # Extract and validate HSA ID
+        hsa_id = _siths_provider.extract_hsa_id(user_info)
+        if not hsa_id:
+            logger.warning("[WARNING] No valid HSA ID found in SITHS certificate")
+            frontend_url = f"{frontend_base}/login?error=No valid HSA ID found in certificate"
+            return RedirectResponse(url=frontend_url, status_code=302)
+
+        # Check if HSA ID is whitelisted in database
+        user = await _user_repo.get_user_by_hsa_id(hsa_id)
+        if not user:
+            logger.warning(f"[WARNING] Access denied: HSA ID '{hsa_id}' not authorized")
+            frontend_url = f"{frontend_base}/login?error=Access denied. HSA ID not authorized for this application."
+            return RedirectResponse(url=frontend_url, status_code=302)
+
+        # Update user info from SITHS certificate
+        siths_metadata = _siths_provider.get_siths_metadata(user_info)
+        updated_user = user.model_copy(update={
+            'first_name': user_info.get('given_name') or user.first_name,
+            'last_name': user_info.get('surname') or user.last_name,
+            'email': user_info.get('email') or user.email,
+            'department': user_info.get('organizational_unit') or user.department,
+            'siths_metadata': siths_metadata
+        })
+        await _user_repo.update_user(updated_user)
+
+        # Clean up temporary session if state was provided
+        if state:
+            try:
+                await _connection_repo.delete_siths_login_session(state)
+            except Exception:
+                pass  # Continue even if cleanup fails
+
+        # Create user session
+        session = UserSession(
+            session_id=str(uuid.uuid4()),
+            user_id=updated_user.user_id,
+            login_time=datetime.now(timezone.utc),
+            last_activity=datetime.now(timezone.utc),
+            is_active=True
+        )
+        await _user_repo.create_session(session)
+
+        logger.info(f"[INFO] SITHS login successful for user '{updated_user.username}' with HSA ID '{hsa_id}'")
+
+        # Redirect to frontend success page with session info
+        frontend_url = f"{frontend_base}/auth/siths-success?session_id={session.session_id}"
+        return RedirectResponse(url=frontend_url, status_code=302)
+
+    except Exception as e:
+        log_error(logger, "SITHS callback error", e)
+        frontend_url = f"{frontend_base}/login?error=Authentication failed: {str(e)}"
+        return RedirectResponse(url=frontend_url, status_code=302)
 
 @app.get("/users/by-role/{role}", response_model=list[UserOut])
 async def get_users_by_role(role: str, user_ctx: dict = Depends(get_user_context)):

@@ -53,6 +53,8 @@ class PGUserRepository(UserRepository):
                 department VARCHAR(255),
                 license_number VARCHAR(255),
                 phone VARCHAR(50),
+                hsa_id VARCHAR(255) UNIQUE,
+                siths_metadata JSONB DEFAULT '{}',
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             )
@@ -90,6 +92,7 @@ class PGUserRepository(UserRepository):
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_hsa_id ON users(hsa_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON user_sessions(user_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_active ON user_sessions(is_active)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_actions_user_id ON user_actions(user_id)")
@@ -211,6 +214,16 @@ class PGUserRepository(UserRepository):
                 email
             )
             return self._row_to_user(row) if row else None
+
+    async def get_user_by_hsa_id(self, hsa_id: str) -> Optional[User]:
+        """Get user by HSA ID (for SITHS authentication)."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM users WHERE hsa_id = $1",
+                hsa_id
+            )
+            return self._row_to_user(row) if row else None
         
     async def create_user(self, user: User) -> User:
         """Create a new user with hashed PII."""
@@ -225,13 +238,14 @@ class PGUserRepository(UserRepository):
                 INSERT INTO users (
                     user_id, username, email, first_name, last_name,
                     email_hash, phone_hash, name_hash,
-                    role, status, department, license_number
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    role, status, department, license_number, hsa_id, siths_metadata
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             """,
                 user.user_id, user.username, user.email, user.first_name,
                 user.last_name, email_hash, phone_hash, name_hash,
                 user.role.value, user.status.value,
-                user.department, user.license_number
+                user.department, user.license_number, user.hsa_id,
+                json.dumps(user.siths_metadata)
             )
             return user
 
@@ -249,13 +263,14 @@ class PGUserRepository(UserRepository):
                     username = $2, email = $3, first_name = $4, last_name = $5,
                     email_hash = $6, phone_hash = $7, name_hash = $8,
                     role = $9, status = $10, department = $11, license_number = $12,
-                    phone = $13, updated_at = NOW()
+                    phone = $13, hsa_id = $14, siths_metadata = $15, updated_at = NOW()
                 WHERE user_id = $1
             """,
                 user.user_id, user.username, user.email, user.first_name,
                 user.last_name, email_hash, phone_hash, name_hash,
                 user.role.value, user.status.value,
-                user.department, user.license_number, user.phone
+                user.department, user.license_number, user.phone,
+                user.hsa_id, json.dumps(user.siths_metadata)
             )
             return user
 
@@ -627,6 +642,14 @@ class PGUserRepository(UserRepository):
 
     def _row_to_user(self, row) -> User:
         """Convert database row to User domain object."""
+        # Parse siths_metadata from JSON if it's a string, otherwise use as-is
+        siths_metadata = row.get('siths_metadata', {})
+        if isinstance(siths_metadata, str):
+            try:
+                siths_metadata = json.loads(siths_metadata) if siths_metadata else {}
+            except (json.JSONDecodeError, TypeError):
+                siths_metadata = {}
+
         return User(
             user_id=row['user_id'],
             username=row['username'],
@@ -638,8 +661,9 @@ class PGUserRepository(UserRepository):
             department=row['department'],
             license_number=row['license_number'],
             phone=row['phone'],
-            # Remove created_at and updated_at since they're not in the User model
-            last_login=row.get('last_login')  # Use get() in case this field is nullable
+            hsa_id=row.get('hsa_id'),  # May be NULL for non-SITHS users
+            siths_metadata=siths_metadata  # Properly parsed JSON dict
+            # Note: last_login is tracked in user_sessions table for GDPR compliance
         )
 
     def _row_to_session(self, row) -> UserSession:

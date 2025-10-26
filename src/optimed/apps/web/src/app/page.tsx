@@ -12,7 +12,7 @@ export default function Home() {
   useEffect(() => {
     if (!isLoading) {
       if (isAuthenticated) {
-        router.push('/patients');
+        router.push('/chat');
       } else {
         router.push('/login');
       }

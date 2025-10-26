@@ -19,8 +19,10 @@ class User(FrozenModel):
     department: Optional[str] = None
     license_number: Optional[str] = None
     phone: Optional[str] = None
-    last_login: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
-    
+    hsa_id: Optional[str] = None  # HSA ID for SITHS authentication whitelist
+    siths_metadata: dict = Field(default_factory=dict)  # SITHS certificate metadata
+    # Note: last_login is tracked in UserSession table for proper audit logging
+
     @property
     def full_name(self) -> str:
         """Returns the full name of the user."""
