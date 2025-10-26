@@ -863,9 +863,11 @@ async def clear_chat_session(session_id: str):
         # ALSO clear documents from PDF and XML services
         from optimed.apps.pdf.memory_pdf_service import MemoryPDFService
         from optimed.apps.xml.memory_xml_service import MemoryXMLService
+        from optimed.adapters.pdf.pdf_processor import PyMuPDFProcessor
+        from optimed.adapters.xml.xml_processor import LibXML2Processor
 
-        pdf_service = MemoryPDFService()
-        xml_service = MemoryXMLService()
+        pdf_service = MemoryPDFService(pdf_processor=PyMuPDFProcessor())
+        xml_service = MemoryXMLService(xml_processor=LibXML2Processor())
 
         # Try to get all possible user IDs (we don't have user_id here, so clear for ALL users with this session)
         # This is a bit aggressive but necessary for proper cleanup

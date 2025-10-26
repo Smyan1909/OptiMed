@@ -40,8 +40,8 @@ class SITHSAuthProvider:
     ):
         self.api_key = api_key or os.getenv('GRANDID_API_KEY')
         self.service_key = service_key or os.getenv('GRANDID_SERVICE_KEY')
-        self.base_url = (base_url or os.getenv('GRANDID_BASE_URL',
-                        'https://client-test.grandid.com')).rstrip('/')
+        base_url_value = base_url or os.getenv('GRANDID_BASE_URL', 'https://client-test.grandid.com')
+        self.base_url = base_url_value.rstrip('/') if base_url_value else 'https://client-test.grandid.com'
 
         if not self.api_key:
             raise ValueError("GRANDID_API_KEY not set")
@@ -64,6 +64,10 @@ class SITHSAuthProvider:
             SITHSAuthException: If authentication initiation fails
         """
         try:
+            # Type narrowing: api_key and service_key are guaranteed to be str at this point
+            assert self.api_key is not None
+            assert self.service_key is not None
+
             logger.info("=" * 80)
             logger.info("[SITHS DEBUG] Initiating SITHS authentication")
             logger.info(f"[SITHS DEBUG] Base URL: {self.base_url}")
@@ -112,8 +116,13 @@ class SITHSAuthProvider:
 
         except httpx.HTTPError as e:
             logger.error(f"[SITHS ERROR] HTTP Error during initiation: {str(e)}")
-            logger.error(f"[SITHS ERROR] Response status: {getattr(e.response, 'status_code', 'N/A')}")
-            logger.error(f"[SITHS ERROR] Response body: {getattr(e.response, 'text', 'N/A')}")
+            # HTTPError may or may not have a response attribute
+            response = getattr(e, 'response', None)
+            if response is not None:
+                logger.error(f"[SITHS ERROR] Response status: {response.status_code}")
+                logger.error(f"[SITHS ERROR] Response body: {response.text}")
+            else:
+                logger.error("[SITHS ERROR] No response available")
             raise SITHSAuthException(f"Failed to initiate SITHS authentication: {str(e)}")
         except Exception as e:
             logger.error(f"[SITHS ERROR] Unexpected error during SITHS authentication: {str(e)}")
@@ -135,6 +144,10 @@ class SITHSAuthProvider:
             SITHSAuthException: If GetSession fails
         """
         try:
+            # Type narrowing: api_key and service_key are guaranteed to be str at this point
+            assert self.api_key is not None
+            assert self.service_key is not None
+
             logger.info("=" * 80)
             logger.info(f"[SITHS DEBUG] Getting session data for sessionid: {sessionid}")
 
@@ -174,8 +187,13 @@ class SITHSAuthProvider:
 
         except httpx.HTTPError as e:
             logger.error(f"[SITHS ERROR] HTTP Error getting session data: {str(e)}")
-            logger.error(f"[SITHS ERROR] Response status: {getattr(e.response, 'status_code', 'N/A')}")
-            logger.error(f"[SITHS ERROR] Response body: {getattr(e.response, 'text', 'N/A')}")
+            # HTTPError may or may not have a response attribute
+            response = getattr(e, 'response', None)
+            if response is not None:
+                logger.error(f"[SITHS ERROR] Response status: {response.status_code}")
+                logger.error(f"[SITHS ERROR] Response body: {response.text}")
+            else:
+                logger.error("[SITHS ERROR] No response available")
             raise SITHSAuthException(f"Failed to get session data: {str(e)}")
         except Exception as e:
             logger.error(f"[SITHS ERROR] Unexpected error getting SITHS session: {str(e)}")
