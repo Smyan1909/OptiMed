@@ -117,10 +117,10 @@ class SITHSAuthProvider:
         except httpx.HTTPError as e:
             logger.error(f"[SITHS ERROR] HTTP Error during initiation: {str(e)}")
             # HTTPError may or may not have a response attribute
-            response = getattr(e, 'response', None)
-            if response is not None:
-                logger.error(f"[SITHS ERROR] Response status: {response.status_code}")
-                logger.error(f"[SITHS ERROR] Response body: {response.text}")
+            error_response: Optional[httpx.Response] = getattr(e, 'response', None)
+            if error_response is not None:
+                logger.error(f"[SITHS ERROR] Response status: {error_response.status_code}")
+                logger.error(f"[SITHS ERROR] Response body: {error_response.text}")
             else:
                 logger.error("[SITHS ERROR] No response available")
             raise SITHSAuthException(f"Failed to initiate SITHS authentication: {str(e)}")
@@ -188,10 +188,10 @@ class SITHSAuthProvider:
         except httpx.HTTPError as e:
             logger.error(f"[SITHS ERROR] HTTP Error getting session data: {str(e)}")
             # HTTPError may or may not have a response attribute
-            response = getattr(e, 'response', None)
-            if response is not None:
-                logger.error(f"[SITHS ERROR] Response status: {response.status_code}")
-                logger.error(f"[SITHS ERROR] Response body: {response.text}")
+            error_response: Optional[httpx.Response] = getattr(e, 'response', None)
+            if error_response is not None:
+                logger.error(f"[SITHS ERROR] Response status: {error_response.status_code}")
+                logger.error(f"[SITHS ERROR] Response body: {error_response.text}")
             else:
                 logger.error("[SITHS ERROR] No response available")
             raise SITHSAuthException(f"Failed to get session data: {str(e)}")
