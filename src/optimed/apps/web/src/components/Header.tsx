@@ -12,7 +12,7 @@ import { useRouter } from 'next/navigation'; // Import useRouter for navigation
 import { useTranslations } from 'next-intl';
 
 const navigation = [
-  { nameKey: 'nav.patients', href: '/patients', icon: Users },
+  // { nameKey: 'nav.patients', href: '/patients', icon: Users },
   { nameKey: 'nav.chat', href: '/chat', icon: MessageSquare },
   // { nameKey: 'nav.dicom', href: '/dicom', icon: Images },
   { nameKey: 'nav.admin', href: '/admin', icon: Settings, adminOnly: true },
@@ -33,7 +33,7 @@ export function Header() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           <div className="flex items-center space-x-4">
-            <Link href="/patients" className="flex items-center space-x-2">
+            <Link href="/chat" className="flex items-center space-x-2">
               <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center">
                 <Stethoscope className="h-5 w-5 text-white" />
               </div>

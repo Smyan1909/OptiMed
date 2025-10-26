@@ -9,7 +9,6 @@ import asyncpg
 import sys
 import os
 import uuid
-from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -78,13 +77,13 @@ async def authorize_hsa_id(hsa_id: str, role: str = "doctor"):
         )
 
         print("✅ HSA ID authorized successfully!")
-        print(f"\n📋 User Details:")
+        print("\n📋 User Details:")
         print(f"   HSA ID: {hsa_id}")
         print(f"   User ID: {user_id}")
         print(f"   Role: {role}")
-        print(f"   Status: active")
-        print(f"\n📝 Note: Name and email will be automatically filled in from")
-        print(f"   SITHS certificate when the user logs in for the first time.")
+        print("   Status: active")
+        print("\n📝 Note: Name and email will be automatically filled in from")
+        print("   SITHS certificate when the user logs in for the first time.")
 
         return True
 
@@ -166,9 +165,9 @@ async def revoke_hsa_id(hsa_id: str):
             return False
 
         print(f"✅ Access revoked for HSA ID: {hsa_id}")
-        print(f"   User status set to: inactive")
-        print(f"\n   Note: User record still exists but cannot login.")
-        print(f"   Use 'reactivate' command to restore access.")
+        print("   User status set to: inactive")
+        print("\n   Note: User record still exists but cannot login.")
+        print("   Use 'reactivate' command to restore access.")
 
         return True
 
@@ -200,7 +199,7 @@ async def reactivate_hsa_id(hsa_id: str):
             return False
 
         print(f"✅ Access reactivated for HSA ID: {hsa_id}")
-        print(f"   User can now login again.")
+        print("   User can now login again.")
 
         return True
 

@@ -6,10 +6,8 @@ Automatically discovers and runs SQL migrations with proper tracking.
 import asyncio
 import os
 import sys
-import re
 from pathlib import Path
 from typing import List, Dict, Tuple
-from datetime import datetime
 import asyncpg
 from dotenv import load_dotenv
 
@@ -113,7 +111,7 @@ class MigrationRunner:
             return False
         else:
             print(f"  ⚠️  Previous attempt failed: {result['error_message']}")
-            print(f"  🔄 Will retry this migration")
+            print("  🔄 Will retry this migration")
             return True
 
     async def run_migration(self, migration_name: str, migration_path: Path) -> bool:
@@ -137,7 +135,7 @@ class MigrationRunner:
 
             # Execute migration in a transaction
             async with self.conn.transaction():
-                print(f"  ⚙️  Executing SQL...")
+                print("  ⚙️  Executing SQL...")
 
                 try:
                     # Execute the migration SQL
@@ -156,7 +154,7 @@ class MigrationRunner:
                             error_message = NULL
                     """, migration_name, checksum)
 
-                    print(f"  ✅ Completed successfully")
+                    print("  ✅ Completed successfully")
                     return True
 
                 except asyncpg.exceptions.PostgresError as e:
@@ -164,7 +162,7 @@ class MigrationRunner:
                     error_msg = str(e)
                     if any(keyword in error_msg.lower() for keyword in
                            ['already exists', 'duplicate', 'exists']):
-                        print(f"  ⚠️  Some objects already exist (safe to ignore)")
+                        print("  ⚠️  Some objects already exist (safe to ignore)")
 
                         # Record as successful since it's idempotent
                         await self.conn.execute("""
@@ -199,7 +197,7 @@ class MigrationRunner:
                         applied_at = NOW(),
                         error_message = $2
                 """, migration_name, error_msg[:1000])  # Limit error message length
-            except:
+            except Exception:
                 pass  # If we can't record the error, that's okay
 
             return False
@@ -268,7 +266,6 @@ class MigrationRunner:
             print("  ✅ data_access_logs.user_id_hash column exists")
         else:
             print("  ❌ data_access_logs.user_id_hash column missing (audit logging will fail)")
-            all_present = False
 
         return results
 
@@ -369,7 +366,7 @@ class MigrationRunner:
             applied = await self.get_applied_migrations()
             pending = [m for m in migrations if m[0] not in applied]
 
-            print(f"\n📈 Migration Status:")
+            print("\n📈 Migration Status:")
             print(f"  Total: {len(migrations)}")
             print(f"  Applied: {len(applied)}")
             print(f"  Pending: {len(pending)}")
@@ -430,7 +427,7 @@ async def test_database_connection(dsn: str):
             try:
                 count = await conn.fetchval(f"SELECT COUNT(*) FROM {table}")
                 print(f"  ✅ {table}: {count} records")
-            except Exception as e:
+            except Exception:
                 print(f"  ❌ {table}: Not accessible")
 
         await conn.close()

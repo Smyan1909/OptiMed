@@ -880,7 +880,7 @@ async def clear_chat_session(session_id: str):
                     if doc_session and (session_id in str(doc_session) or str(doc_session) in session_id):
                         del pdf_service._documents[key]
                         pdf_cleared += 1
-                        logger.info(f"[SESSION-CLEAR] Cleared PDF document from session")
+                        logger.info("[SESSION-CLEAR] Cleared PDF document from session")
         except Exception as e:
             logger.warning(f"[SESSION-CLEAR] Error clearing PDFs: {e}")
 
@@ -892,7 +892,7 @@ async def clear_chat_session(session_id: str):
                     if doc_session and (session_id in str(doc_session) or str(doc_session) in session_id):
                         del xml_service._documents[key]
                         xml_cleared += 1
-                        logger.info(f"[SESSION-CLEAR] Cleared XML document from session")
+                        logger.info("[SESSION-CLEAR] Cleared XML document from session")
         except Exception as e:
             logger.warning(f"[SESSION-CLEAR] Error clearing XMLs: {e}")
 

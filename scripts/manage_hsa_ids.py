@@ -22,7 +22,6 @@ import argparse
 import csv
 import os
 import sys
-from typing import Optional
 import uuid
 
 # Add src to path
@@ -197,7 +196,7 @@ async def remove_hsa_id(args):
         await repo.update_user(updated_user)
 
         print(f"✓ Successfully removed HSA ID from user '{user.username}'")
-        print(f"  User will no longer be able to login via SITHS")
+        print("  User will no longer be able to login via SITHS")
 
     finally:
         await repo.close()
@@ -280,7 +279,7 @@ async def import_from_csv(args):
                 errors += 1
 
         print("\n" + "=" * 60)
-        print(f"Import complete:")
+        print("Import complete:")
         print(f"  Created: {created}")
         print(f"  Updated: {updated}")
         print(f"  Errors: {errors}")
@@ -317,7 +316,7 @@ def main():
     create_parser.add_argument('--license-number', help='Medical license number')
 
     # List command
-    list_parser = subparsers.add_parser('list', help='List all users with HSA IDs')
+    subparsers.add_parser('list', help='List all users with HSA IDs')
 
     # Remove command
     remove_parser = subparsers.add_parser('remove', help='Remove HSA ID from user')

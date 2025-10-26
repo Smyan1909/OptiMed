@@ -4847,7 +4847,7 @@ Provide ONLY the paraphrased query (one sentence), no explanation or preamble.""
                 state.paraphrased_guideline_query = paraphrased
 
                 logger.info(f"✅ Paraphrased query: {paraphrased}")
-                logger.info(f"🔒 PHI removed, clinical context preserved")
+                logger.info("🔒 PHI removed, clinical context preserved")
 
             except Exception as e:
                 log_error(logger, "paraphrase_query_for_guideline", e)
@@ -4898,7 +4898,7 @@ Provide ONLY the paraphrased query (one sentence), no explanation or preamble.""
 
                     # If no paraphrased query, use chat history to enrich context
                     if state.chat_history:
-                        logger.info(f"📝 Using chat history to build guideline search context")
+                        logger.info("📝 Using chat history to build guideline search context")
                         recent_messages = state.chat_history[-5:]  # Last 5 messages
                         history_context = []
 
