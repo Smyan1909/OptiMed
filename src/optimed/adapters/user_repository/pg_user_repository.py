@@ -310,6 +310,14 @@ class PGUserRepository(UserRepository):
             # Create GDPR-compliant session record
             await self._create_gdpr_session(session.user_id, session.session_id)
 
+            # Initialize session analytics tracking
+            try:
+                await self.initialize_session_analytics(session.session_id, session.user_id)
+                logger.info(f"Session analytics initialized for session {session.session_id}")
+            except Exception as e:
+                log_error(logger, "Failed to initialize session analytics", e)
+                # Continue even if analytics initialization fails
+
             return session
     
     async def _create_gdpr_session(self, user_id: str, session_id: str) -> None:
@@ -612,7 +620,7 @@ class PGUserRepository(UserRepository):
                     uuid.UUID(session_id)
                 )
 
-    async def expire_old_sessions(self, max_session_hours: int = 8) -> int:
+    async def expire_old_sessions(self, max_session_hours: int = 8) -> tuple[int, list[str]]:
         """
         Expire sessions older than max_session_hours and finalize their analytics.
 
@@ -620,7 +628,7 @@ class PGUserRepository(UserRepository):
             max_session_hours: Maximum session duration in hours (default: 8)
 
         Returns:
-            Number of sessions expired
+            Tuple of (number of sessions expired, list of expired session IDs)
         """
         pool = await self._get_pool()
         async with pool.acquire() as conn:
@@ -633,17 +641,19 @@ class PGUserRepository(UserRepository):
             """.format(max_session_hours))
 
             expired_count = 0
+            expired_session_ids = []
             for session_row in expired_sessions:
                 session_id = str(session_row['session_id'])
                 try:
                     await self.finalize_session_analytics(session_id)
                     expired_count += 1
+                    expired_session_ids.append(session_id)
                 except Exception as e:
                     import logging
                     logger = logging.getLogger(__name__)
                     logger.error(f"Failed to expire session {session_id}: {e}")
 
-            return expired_count
+            return expired_count, expired_session_ids
 
     async def check_session_timeout(self, session_id: str, max_session_hours: int = 8) -> bool:
         """

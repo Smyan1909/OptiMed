@@ -64,13 +64,14 @@ _template_service: _Any = None
 _note_generator: _Any = None
 _audit_repo: _Any = None
 _siths_provider: _Any = None
+_cleanup_service: _Any = None
 
 
 _dependencies_ready: asyncio.Event = asyncio.Event()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service, _template_repo, _template_service, _note_generator, _audit_repo, _siths_provider
+    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service, _template_repo, _template_service, _note_generator, _audit_repo, _siths_provider, _cleanup_service
     try:
         (
             _engine,
@@ -105,6 +106,16 @@ async def lifespan(app: FastAPI):
             logger.warning(f"[startup] SITHS provider not initialized: {str(e)}")
             _siths_provider = None
 
+        # Initialize SessionCleanupService for GDPR-compliant session management
+        try:
+            from optimed.adapters.security.session_cleanup import initialize_cleanup_service
+            _cleanup_service = initialize_cleanup_service(_vector_store, _user_repo)
+            await _cleanup_service.start_cleanup_service()
+            logger.info(f"[startup] SessionCleanupService initialized (TTL: {_cleanup_service.session_ttl_minutes}min, interval: {_cleanup_service.cleanup_interval_minutes}min)")
+        except Exception as e:
+            logger.warning(f"[startup] SessionCleanupService not initialized: {str(e)}")
+            _cleanup_service = None
+
         _dependencies_ready.set()
         logger.info("[startup] Dependencies initialized")
 
@@ -114,9 +125,34 @@ async def lifespan(app: FastAPI):
                 try:
                     await asyncio.sleep(3600)  # Run every hour
                     if _user_repo:
-                        expired_count = await _user_repo.expire_old_sessions(max_session_hours=8)
+                        # Expire old sessions and get their IDs
+                        expired_count, expired_session_ids = await _user_repo.expire_old_sessions(max_session_hours=8)
+
                         if expired_count > 0:
                             logger.info(f"[cleanup] Expired {expired_count} sessions older than 8 hours")
+
+                            # Clean RAM data for each expired session
+                            ram_cleaned = 0
+                            for session_id in expired_session_ids:
+                                try:
+                                    # Clear session memory, cache, and documents
+                                    await clear_chat_session(session_id)
+
+                                    # Clear encryption keys
+                                    from optimed.adapters.security.e2e_encryption_middleware import get_session_encryption_manager
+                                    manager = get_session_encryption_manager()
+                                    manager.clear_session_key(session_id)
+
+                                    # Clear vector store
+                                    if _vector_store and hasattr(_vector_store, 'clear_session'):
+                                        await _vector_store.clear_session(session_id)
+
+                                    ram_cleaned += 1
+                                    logger.info(f"[cleanup] RAM cleaned for expired session {sanitize_session_id(session_id)}")
+                                except Exception as cleanup_error:
+                                    logger.error(f"[cleanup] Failed to clean RAM for session {sanitize_session_id(session_id)}: {cleanup_error}")
+
+                            logger.info(f"[cleanup] ✓ Cleaned RAM for {ram_cleaned}/{expired_count} expired sessions")
                 except Exception as e:
                     logger.error(f"[cleanup] Periodic session cleanup failed: {e}")
 
@@ -130,6 +166,14 @@ async def lifespan(app: FastAPI):
             await cleanup_task
         except asyncio.CancelledError:
             pass
+
+        # Stop SessionCleanupService
+        if _cleanup_service:
+            try:
+                await _cleanup_service.stop_cleanup_service()
+                logger.info("[shutdown] SessionCleanupService stopped")
+            except Exception as e:
+                logger.error(f"[shutdown] Error stopping SessionCleanupService: {e}")
     except Exception as e:
         import traceback
         log_error(logger, "startup - Dependency initialization", e)
@@ -2445,12 +2489,50 @@ async def logout(
         else:
             logger.info("[Logout] Non-SITHS session, skipping GrandID logout")
 
-        # Deactivate the session in our database
+        # Perform complete session cleanup (GDPR compliance)
+        logger.info(f"[Logout] Starting complete session cleanup for {sanitize_session_id(session_id)}")
+
+        # 1. Clear RAM memory (chat history, chunk cache, documents)
+        try:
+            cleanup_result = await clear_chat_session(session_id)
+            logger.info(f"[Logout] RAM cleanup: {cleanup_result.get('message', 'completed')}")
+        except Exception as e:
+            log_error(logger, "Logout - RAM cleanup", e)
+            # Continue with logout even if RAM cleanup fails
+
+        # 2. Clear encryption keys
+        try:
+            from optimed.adapters.security.e2e_encryption_middleware import get_session_encryption_manager
+            manager = get_session_encryption_manager()
+            manager.clear_session_key(session_id)
+            logger.info(f"[Logout] Encryption keys cleared for session {sanitize_session_id(session_id)}")
+        except Exception as e:
+            log_error(logger, "Logout - encryption key cleanup", e)
+
+        # 3. Clear vector store session data
+        try:
+            if _vector_store and hasattr(_vector_store, 'clear_session'):
+                await _vector_store.clear_session(session_id)
+                logger.info(f"[Logout] Vector store cleared for session {sanitize_session_id(session_id)}")
+        except Exception as e:
+            log_error(logger, "Logout - vector store cleanup", e)
+
+        # 4. Finalize session analytics
+        try:
+            if hasattr(_user_repo, 'finalize_session_analytics'):
+                await _user_repo.finalize_session_analytics(session_id)
+                logger.info(f"[Logout] Session analytics finalized for {sanitize_session_id(session_id)}")
+        except Exception as e:
+            log_error(logger, "Logout - finalize analytics", e)
+
+        # 5. Deactivate the session in our database
         await _user_repo.deactivate_session(session_id)
-        logger.info(f"[Logout] Session {sanitize_session_id(session_id)} deactivated")
+        logger.info(f"[Logout] Session {sanitize_session_id(session_id)} deactivated in database")
+
+        logger.info(f"[Logout] ✓ Complete session cleanup finished for {sanitize_session_id(session_id)}")
 
         return {
-            "message": "Logout successful",
+            "message": "Logout successful - all session data cleared",
             "session_id": session_id
         }
 

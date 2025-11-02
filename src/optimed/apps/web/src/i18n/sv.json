@@ -94,7 +94,8 @@
     "subtitle": "Välj önskad inloggningsmetod",
     "tabs": {
       "regular": "Systeminloggning",
-      "ehr": "EHR-inloggning"
+      "ehr": "EHR-inloggning",
+      "siths": "SITHS NetID"
     },
     "regular": {
       "title": "Systemuppgifter",
@@ -129,8 +130,35 @@
         "Inga uppgifter lagras lokalt"
       ]
     },
+    "siths": {
+      "title": "SITHS NetID Enterprise",
+      "subtitle": "Autentisera med ditt SITHS-kort",
+      "description": "Säker SITHS-autentisering",
+      "instructions": "Du kommer att omdirigeras för att autentisera med ditt SITHS-kort",
+      "loginButton": "Logga in med SITHS-kort",
+      "requirements": {
+        "title": "Krav:",
+        "validCard": "Ett giltigt SITHS-kort eller SITHS-kompatibel autentisering",
+        "hsaId": "Förauktoriserat HSA-ID i systemet",
+        "contact": "Kontakta din administratör för att få åtkomst"
+      }
+    },
     "errors": {
       "ehrInitFailed": "Misslyckades att initiera EHR-inloggning: {message}"
+    }
+  },
+  "sithsSuccess": {
+    "loading": {
+      "title": "Slutför SITHS-autentisering...",
+      "subtitle": "Vänligen vänta medan vi konfigurerar din session"
+    },
+    "success": {
+      "title": "Autentisering lyckades!",
+      "subtitle": "Omdirigerar till chatt..."
+    },
+    "error": {
+      "title": "Autentisering misslyckades",
+      "subtitle": "Omdirigerar till inloggning..."
     }
   },
   "patientsPage": {
