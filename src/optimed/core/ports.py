@@ -1106,6 +1106,52 @@ class AuditRepository(Protocol):
         """Log system usage metric."""
         ...
 
+    async def log_audit_event(
+        self,
+        session_id: Optional[str],
+        action: str,
+        resource_type: str,
+        resource_id: Optional[str] = None,
+        outcome: str = "success",
+        latency_ms: Optional[int] = None,
+        user_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Log audit event for every data operation (GDPR Article 30 compliance)."""
+        ...
+
+    async def log_evidence_set(
+        self,
+        session_id: str,
+        question_id: str,
+        rank: int,
+        resource_type: str,
+        resource_id: Optional[str] = None,
+        section: Optional[str] = None,
+        rerank_score: Optional[float] = None,
+        reason: Optional[str] = None,
+        chunk_text_preview: Optional[str] = None
+    ) -> None:
+        """Log evidence set for retrieval provenance tracking."""
+        ...
+
+    async def log_performance_metric(
+        self,
+        metric_category: str,
+        metric_name: str,
+        value: float,
+        unit: str = "milliseconds",
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        endpoint: Optional[str] = None,
+        model_used: Optional[str] = None,
+        processing_stage: Optional[str] = None,
+        patient_context_size: Optional[int] = None,
+        additional_context: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Log performance metric for monitoring and optimization."""
+        ...
+
     async def get_user_audit_trail(
         self,
         user_id: str,

@@ -1407,8 +1407,8 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     # Log evidence sets for each selected chunk
                     question_id = str(uuid.uuid4())  # Unique ID for this query
                     for rank, idx in enumerate(final_selected, start=1):
-                        chunk = chunks[idx]
-                        chunk_preview = chunk.get("content", "")[:200] if isinstance(chunk.get("content"), str) else ""
+                        chunk_dict: dict[str, Any] = chunks[idx]
+                        chunk_preview = chunk_dict.get("content", "")[:200] if isinstance(chunk_dict.get("content"), str) else ""
                         rerank_score = next((score for r_idx, score in reranked if r_idx == idx), None)
 
                         create_background_task(
@@ -1416,8 +1416,8 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                                 session_id=state.session_id,
                                 question_id=question_id,
                                 rank=rank,
-                                resource_type=chunk.get("data_type", "chunk"),
-                                resource_id=chunk.get("chunk_id"),
+                                resource_type=chunk_dict.get("data_type", "chunk"),
+                                resource_id=chunk_dict.get("chunk_id"),
                                 rerank_score=rerank_score,
                                 reason="cross_encoder_reranked_mmr_diversified",
                                 chunk_text_preview=chunk_preview
