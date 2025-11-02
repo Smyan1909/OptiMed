@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useUser } from '@/contexts/UserContext';
 import { UserProfile } from '@/components/UserProfile';
+import { RPAControlDropdown } from '@/components/RPAControlDropdown';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Users, MessageSquare, Settings, Images} from 'lucide-react';
@@ -73,6 +74,7 @@ export function Header() {
           </nav>
 
           <div className="flex items-center space-x-4">
+            {user && <RPAControlDropdown />}
             {user && (
               <div className="hidden sm:flex flex-col items-end text-sm">
                 <span className="font-medium text-gray-900">{user.display_name}</span>
