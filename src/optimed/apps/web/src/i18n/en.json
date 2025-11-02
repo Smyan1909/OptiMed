@@ -931,6 +931,36 @@
     "note": "Note:",
     "noteText": "This citation shows the source of clinical information used in the response. Always verify important clinical details in the original EHR record.",
     "noteTextUnavailable": "This citation reference could not be fully resolved. Always verify clinical information independently."
+  },
+  "rpa": {
+    "title": "CLARA Watcher",
+    "status": {
+      "offline": "Offline",
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "ready": "Ready",
+      "noSession": "No Session"
+    },
+    "session": {
+      "connected": "Connected",
+      "notLoggedIn": "Not logged in",
+      "label": "Session:"
+    },
+    "extraction": {
+      "inProgress": "Extraction in progress...",
+      "completedSuccess": "Last extraction completed successfully"
+    },
+    "watcher": {
+      "notRunning": "Watcher client not running"
+    },
+    "actions": {
+      "startExtraction": "Start Extraction",
+      "starting": "Starting...",
+      "stopExtraction": "Stop Extraction",
+      "stopping": "Stopping..."
+    }
   }
 }
 

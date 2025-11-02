@@ -26,6 +26,7 @@ import {
   stopRPAExtraction,
 } from '@/lib/watcherService';
 import { logInfo, logError } from '@/lib/logger';
+import { useTranslations } from 'next-intl';
 
 interface WatcherStatus {
   isAvailable: boolean;
@@ -36,6 +37,7 @@ interface WatcherStatus {
 }
 
 export function RPAControlDropdown() {
+  const t = useTranslations();
   const [status, setStatus] = useState<WatcherStatus>({
     isAvailable: false,
     hasSession: false,
@@ -109,13 +111,13 @@ export function RPAControlDropdown() {
   };
 
   const getStatusText = () => {
-    if (!status.isAvailable) return 'Offline';
-    if (status.isExecuting) return 'Running';
-    if (status.executionStatus === 'completed') return 'Completed';
-    if (status.executionStatus === 'failed') return 'Failed';
-    if (status.executionStatus === 'cancelled') return 'Cancelled';
-    if (status.hasSession) return 'Ready';
-    return 'No Session';
+    if (!status.isAvailable) return t('rpa.status.offline');
+    if (status.isExecuting) return t('rpa.status.running');
+    if (status.executionStatus === 'completed') return t('rpa.status.completed');
+    if (status.executionStatus === 'failed') return t('rpa.status.failed');
+    if (status.executionStatus === 'cancelled') return t('rpa.status.cancelled');
+    if (status.hasSession) return t('rpa.status.ready');
+    return t('rpa.status.noSession');
   };
 
   const getStatusBadgeVariant = () => {
@@ -219,7 +221,7 @@ export function RPAControlDropdown() {
         <DropdownMenuLabel className="font-normal">
           <div className="flex flex-col space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">CLARA Watcher</span>
+              <span className="text-sm font-medium">{t('rpa.title')}</span>
               <Badge variant={getStatusBadgeVariant()}>{getStatusText()}</Badge>
             </div>
 
@@ -231,18 +233,18 @@ export function RPAControlDropdown() {
                       status.hasSession ? 'text-green-500' : 'text-orange-500'
                     }`}
                   />
-                  <span>Session: {status.hasSession ? 'Connected' : 'Not logged in'}</span>
+                  <span>{t('rpa.session.label')} {status.hasSession ? t('rpa.session.connected') : t('rpa.session.notLoggedIn')}</span>
                 </div>
                 {status.isExecuting && (
                   <div className="flex items-center gap-2">
                     <PulsingDots />
-                    <span>Extraction in progress...</span>
+                    <span>{t('rpa.extraction.inProgress')}</span>
                   </div>
                 )}
                 {status.executionStatus === 'completed' && (
                   <div className="flex items-center gap-2 text-green-600">
                     <CheckCircle className="h-3 w-3" />
-                    <span>Last extraction completed successfully</span>
+                    <span>{t('rpa.extraction.completedSuccess')}</span>
                   </div>
                 )}
               </div>
@@ -252,7 +254,7 @@ export function RPAControlDropdown() {
               <div className="text-xs text-muted-foreground">
                 <div className="flex items-center gap-2">
                   <Circle className="h-2 w-2 fill-current text-gray-400" />
-                  <span>Watcher client not running</span>
+                  <span>{t('rpa.watcher.notRunning')}</span>
                 </div>
               </div>
             )}
@@ -267,7 +269,7 @@ export function RPAControlDropdown() {
           disabled={!canStartExtraction}
         >
           <PlayCircle className="mr-2 h-4 w-4" />
-          <span>{isStarting ? 'Starting...' : 'Start Extraction'}</span>
+          <span>{isStarting ? t('rpa.actions.starting') : t('rpa.actions.startExtraction')}</span>
         </DropdownMenuItem>
 
         {status.isExecuting && (
@@ -277,7 +279,7 @@ export function RPAControlDropdown() {
             disabled={!canStopExtraction}
           >
             <StopCircle className="mr-2 h-4 w-4" />
-            <span>{isStopping ? 'Stopping...' : 'Stop Extraction'}</span>
+            <span>{isStopping ? t('rpa.actions.stopping') : t('rpa.actions.stopExtraction')}</span>
           </DropdownMenuItem>
         )}
 
