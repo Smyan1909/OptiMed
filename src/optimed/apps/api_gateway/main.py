@@ -64,13 +64,14 @@ _template_service: _Any = None
 _note_generator: _Any = None
 _audit_repo: _Any = None
 _siths_provider: _Any = None
+_cleanup_service: _Any = None
 
 
 _dependencies_ready: asyncio.Event = asyncio.Event()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service, _template_repo, _template_service, _note_generator, _audit_repo, _siths_provider
+    global _engine, _fhir, _vector_store, _user_repo, _connection_repo, _connection_service, _create_image_service, _image_analysis_engine, _image_generation_service, _generated_image_repo, _journal_llm_service, _web_search_service, _pdf_service, _xml_service, _template_repo, _template_service, _note_generator, _audit_repo, _siths_provider, _cleanup_service
     try:
         (
             _engine,
@@ -105,9 +106,74 @@ async def lifespan(app: FastAPI):
             logger.warning(f"[startup] SITHS provider not initialized: {str(e)}")
             _siths_provider = None
 
+        # Initialize SessionCleanupService for GDPR-compliant session management
+        try:
+            from optimed.adapters.security.session_cleanup import initialize_cleanup_service
+            _cleanup_service = initialize_cleanup_service(_vector_store, _user_repo)
+            await _cleanup_service.start_cleanup_service()
+            logger.info(f"[startup] SessionCleanupService initialized (TTL: {_cleanup_service.session_ttl_minutes}min, interval: {_cleanup_service.cleanup_interval_minutes}min)")
+        except Exception as e:
+            logger.warning(f"[startup] SessionCleanupService not initialized: {str(e)}")
+            _cleanup_service = None
+
         _dependencies_ready.set()
         logger.info("[startup] Dependencies initialized")
+
+        # Start periodic session cleanup task (runs every hour)
+        async def periodic_session_cleanup():
+            while True:
+                try:
+                    await asyncio.sleep(3600)  # Run every hour
+                    if _user_repo:
+                        # Expire old sessions and get their IDs
+                        expired_count, expired_session_ids = await _user_repo.expire_old_sessions(max_session_hours=8)
+
+                        if expired_count > 0:
+                            logger.info(f"[cleanup] Expired {expired_count} sessions older than 8 hours")
+
+                            # Clean RAM data for each expired session
+                            ram_cleaned = 0
+                            for session_id in expired_session_ids:
+                                try:
+                                    # Clear session memory, cache, and documents
+                                    await clear_chat_session(session_id)
+
+                                    # Clear encryption keys
+                                    from optimed.adapters.security.e2e_encryption_middleware import get_session_encryption_manager
+                                    manager = get_session_encryption_manager()
+                                    manager.clear_session_key(session_id)
+
+                                    # Clear vector store
+                                    if _vector_store and hasattr(_vector_store, 'clear_session'):
+                                        await _vector_store.clear_session(session_id)
+
+                                    ram_cleaned += 1
+                                    logger.info(f"[cleanup] RAM cleaned for expired session {sanitize_session_id(session_id)}")
+                                except Exception as cleanup_error:
+                                    logger.error(f"[cleanup] Failed to clean RAM for session {sanitize_session_id(session_id)}: {cleanup_error}")
+
+                            logger.info(f"[cleanup] ✓ Cleaned RAM for {ram_cleaned}/{expired_count} expired sessions")
+                except Exception as e:
+                    logger.error(f"[cleanup] Periodic session cleanup failed: {e}")
+
+        cleanup_task = asyncio.create_task(periodic_session_cleanup())
+
         yield
+
+        # Cancel cleanup task on shutdown
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+
+        # Stop SessionCleanupService
+        if _cleanup_service:
+            try:
+                await _cleanup_service.stop_cleanup_service()
+                logger.info("[shutdown] SessionCleanupService stopped")
+            except Exception as e:
+                logger.error(f"[shutdown] Error stopping SessionCleanupService: {e}")
     except Exception as e:
         import traceback
         log_error(logger, "startup - Dependency initialization", e)
@@ -115,8 +181,37 @@ async def lifespan(app: FastAPI):
         # Fail fast: prevent the app from serving if dependencies cannot initialize
         raise
     finally:
-        # Optional: add shutdown/cleanup here if needed
-        pass
+        # Shutdown cleanup: finalize all active sessions
+        logger.info("[shutdown] Starting cleanup...")
+        if _user_repo:
+            try:
+                # Get all active sessions
+                from optimed.adapters.user_repository.pg_user_repository import PGUserRepository
+                if isinstance(_user_repo, PGUserRepository):
+                    pool = await _user_repo._get_pool()
+                    async with pool.acquire() as conn:
+                        # Get all active sessions
+                        active_sessions = await conn.fetch("""
+                            SELECT session_id FROM sessions
+                            WHERE is_active = TRUE AND ended_at IS NULL
+                        """)
+
+                        logger.info(f"[shutdown] Finalizing {len(active_sessions)} active sessions...")
+
+                        # Finalize each session
+                        for session_row in active_sessions:
+                            session_id = str(session_row['session_id'])
+                            try:
+                                await _user_repo.finalize_session_analytics(session_id)
+                                logger.debug(f"[shutdown] Finalized session {session_id}")
+                            except Exception as e:
+                                logger.error(f"[shutdown] Failed to finalize session {session_id}: {e}")
+
+                        logger.info("[shutdown] Session cleanup complete")
+            except Exception as e:
+                logger.error(f"[shutdown] Session cleanup failed: {e}")
+
+        logger.info("[shutdown] Cleanup complete")
 
 app = FastAPI(title="OptiMed API Gateway", version="0.1.0", debug=True, lifespan=lifespan)
 
@@ -158,15 +253,61 @@ async def gdpr_logging_middleware(request: Request, call_next):
     safe_query = phi_redactor.redact_text(str(request.query_params))
 
     logger.info(f"[GDPR] Request: {request.method} {safe_path} - Query: {safe_query}")
-    
+
     # Process request
     response = await call_next(request)
-    
+
     # Add GDPR compliance headers
     response.headers["X-GDPR-Compliant"] = "true"
     response.headers["X-PHI-Storage"] = "disabled"
     response.headers["X-Data-Retention"] = "session-only"
-    
+
+    return response
+
+# Session Analytics Middleware
+@app.middleware("http")
+async def session_analytics_middleware(request: Request, call_next):
+    """Middleware to track total requests per session and check for session timeout."""
+    # Get session ID from headers or cookies
+    session_id = request.headers.get("X-Session-ID") or request.cookies.get("session_id")
+
+    # Check session timeout before processing request
+    if session_id and _user_repo:
+        try:
+            is_valid = await _user_repo.check_session_timeout(session_id, max_session_hours=8)
+            if not is_valid:
+                logger.warning(f"[session-timeout] Session {session_id} has expired (>8 hours)")
+                # Return 401 Unauthorized for expired sessions
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Session expired. Please log in again."}
+                )
+        except Exception as e:
+            logger.error(f"[session-timeout] Session timeout check failed: {e}")
+
+    # Process request
+    response = await call_next(request)
+
+    # Track request in session analytics (background task to avoid latency)
+    if session_id and _user_repo:
+        # Only track for API endpoints (not static files, health checks, etc.)
+        if request.url.path.startswith(("/chat", "/diagnose", "/patients", "/journal", "/dicom", "/pdf", "/xml")):
+            try:
+                from optimed.utils.background_tasks import create_background_task
+                logger.debug(f"[session-analytics] Tracking request for session {session_id}, path: {request.url.path}")
+                create_background_task(
+                    _user_repo.update_session_analytics(
+                        session_id=session_id,
+                        requests=1
+                    ),
+                    "session_analytics_middleware",
+                    session_id=session_id
+                )
+            except Exception as e:
+                # Don't fail request if analytics update fails
+                logger.warning(f"[session-analytics] Middleware update failed: {e}")
+
     return response
 class JournalEntryRequest(BaseModel):
     patient_id: str
@@ -1392,9 +1533,15 @@ async def complete_ehr_login(
             last_activity=datetime.now(timezone.utc),
             is_active=True
         )
-        
+
         await _user_repo.create_session(session)
-        
+
+        # Initialize session analytics
+        try:
+            await _user_repo.initialize_session_analytics(session.session_id, final_user.user_id)
+        except Exception as e:
+            logger.error(f"Failed to initialize session analytics: {e}")
+
         # Redirect to frontend with success and session info
         frontend_url = f"{frontend_base}/auth/ehr-success?session_id={session.session_id}&user_id={final_user.user_id}"
         return RedirectResponse(url=frontend_url)
@@ -1854,6 +2001,20 @@ async def diagnose_stream(
 
             return response
 
+    # Update session analytics
+    session_id = req.session_id or user_ctx.get("session_id")
+    if session_id:
+        try:
+            logger.info(f"[session-analytics] Updating diagnostic request for session {session_id}")
+            await _user_repo.update_session_analytics(
+                session_id=session_id,
+                requests=1,
+                diagnostic_requests=1
+            )
+            logger.debug("[session-analytics] Successfully updated diagnostic request")
+        except Exception as e:
+            logger.error(f"[session-analytics] Failed to update session analytics: {e}", exc_info=True)
+
     # GDPR compliance event logging (Article 30 - Records of Processing Activities)
     try:
         import hashlib
@@ -1919,13 +2080,27 @@ async def chat_stream(
         except Exception as e:
             log_error(logger, "Fetch patient for chat", e, patient_id=req.patient_id)
 
+    # Update session analytics
+    session_id = req.session_id or user_ctx.get("session_id")
+    if session_id:
+        try:
+            logger.info(f"[session-analytics] Updating chat request for session {session_id}")
+            await _user_repo.update_session_analytics(
+                session_id=session_id,
+                requests=1,
+                chat_requests=1
+            )
+            logger.debug("[session-analytics] Successfully updated chat request")
+        except Exception as e:
+            logger.error(f"[session-analytics] Failed to update session analytics: {e}", exc_info=True)
+
     # GDPR compliance event logging (Article 30 - Records of Processing Activities)
     try:
         import hashlib
         await _audit_repo.log_compliance_event(
             event_type="ai_chat_stream",
             compliance_framework="GDPR",
-            session_id=req.session_id or user_ctx.get("session_id"),
+            session_id=session_id,
             user_id=user_id,
             patient_id_hash=hashlib.sha256(str(req.patient_id).encode()).hexdigest() if req.patient_id else None,
             data_categories=["health_data", "ai_generated_content"] if patient_ctx else ["ai_generated_content"],
@@ -2027,6 +2202,12 @@ async def login(req: LoginRequest):
     )
 
     await _user_repo.create_session(session)
+
+    # Initialize session analytics
+    try:
+        await _user_repo.initialize_session_analytics(session.session_id, user.user_id)
+    except Exception as e:
+        logger.error(f"Failed to initialize session analytics: {e}")
 
     return LoginResponse(
         user=UserOut(
@@ -2213,6 +2394,12 @@ async def complete_siths_login(
         )
         await _user_repo.create_session(session)
 
+        # Initialize session analytics
+        try:
+            await _user_repo.initialize_session_analytics(session.session_id, updated_user.user_id)
+        except Exception as e:
+            logger.error(f"Failed to initialize session analytics: {e}")
+
         logger.info(f"[INFO] SITHS login successful for user '{updated_user.username}' with HSA ID '{hsa_id}', GrandID session: {session_id_param}")
 
         # Redirect to frontend success page with session info
@@ -2302,12 +2489,50 @@ async def logout(
         else:
             logger.info("[Logout] Non-SITHS session, skipping GrandID logout")
 
-        # Deactivate the session in our database
+        # Perform complete session cleanup (GDPR compliance)
+        logger.info(f"[Logout] Starting complete session cleanup for {sanitize_session_id(session_id)}")
+
+        # 1. Clear RAM memory (chat history, chunk cache, documents)
+        try:
+            cleanup_result = await clear_chat_session(session_id)
+            logger.info(f"[Logout] RAM cleanup: {cleanup_result.get('message', 'completed')}")
+        except Exception as e:
+            log_error(logger, "Logout - RAM cleanup", e)
+            # Continue with logout even if RAM cleanup fails
+
+        # 2. Clear encryption keys
+        try:
+            from optimed.adapters.security.e2e_encryption_middleware import get_session_encryption_manager
+            manager = get_session_encryption_manager()
+            manager.clear_session_key(session_id)
+            logger.info(f"[Logout] Encryption keys cleared for session {sanitize_session_id(session_id)}")
+        except Exception as e:
+            log_error(logger, "Logout - encryption key cleanup", e)
+
+        # 3. Clear vector store session data
+        try:
+            if _vector_store and hasattr(_vector_store, 'clear_session'):
+                await _vector_store.clear_session(session_id)
+                logger.info(f"[Logout] Vector store cleared for session {sanitize_session_id(session_id)}")
+        except Exception as e:
+            log_error(logger, "Logout - vector store cleanup", e)
+
+        # 4. Finalize session analytics
+        try:
+            if hasattr(_user_repo, 'finalize_session_analytics'):
+                await _user_repo.finalize_session_analytics(session_id)
+                logger.info(f"[Logout] Session analytics finalized for {sanitize_session_id(session_id)}")
+        except Exception as e:
+            log_error(logger, "Logout - finalize analytics", e)
+
+        # 5. Deactivate the session in our database
         await _user_repo.deactivate_session(session_id)
-        logger.info(f"[Logout] Session {sanitize_session_id(session_id)} deactivated")
+        logger.info(f"[Logout] Session {sanitize_session_id(session_id)} deactivated in database")
+
+        logger.info(f"[Logout] ✓ Complete session cleanup finished for {sanitize_session_id(session_id)}")
 
         return {
-            "message": "Logout successful",
+            "message": "Logout successful - all session data cleared",
             "session_id": session_id
         }
 
@@ -2339,6 +2564,16 @@ async def upload_dicom_image(
     user = await _user_repo.get_user_by_id(session.user_id)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+
+    # Update session analytics
+    try:
+        await _user_repo.update_session_analytics(
+            session_id=session_id,
+            requests=1,
+            image_uploads=1
+        )
+    except Exception as e:
+        logger.error(f"Failed to update session analytics: {e}")
 
     try:
         # Read file content
@@ -2858,7 +3093,19 @@ async def generate_journal_entry(
         
         if not prompt.strip():
             raise HTTPException(status_code=400, detail="Prompt is required")
-        
+
+        # Update session analytics
+        session_id = request.get("session_id") or user_ctx.get("session_id")
+        if session_id:
+            try:
+                await _user_repo.update_session_analytics(
+                    session_id=session_id,
+                    requests=1,
+                    journal_generations=1
+                )
+            except Exception as e:
+                logger.error(f"Failed to update session analytics: {e}")
+
         # Get patient context if provided
         patient_context = ""
         if patient_id:

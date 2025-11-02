@@ -5,8 +5,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@/contexts/UserContext';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { logError } from '@/lib/logger';
+import { useTranslations } from 'next-intl';
 
 export default function SITHSSuccessPage() {
+  const t = useTranslations('sithsSuccess');
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setUser } = useUser();
@@ -62,8 +64,8 @@ export default function SITHSSuccessPage() {
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-white">
         <div className="text-center space-y-4">
           <Loader2 className="h-12 w-12 animate-spin mx-auto text-blue-600" />
-          <p className="text-lg font-medium text-gray-900">Completing SITHS authentication...</p>
-          <p className="text-sm text-gray-600">Please wait while we set up your session</p>
+          <p className="text-lg font-medium text-gray-900">{t('loading.title')}</p>
+          <p className="text-sm text-gray-600">{t('loading.subtitle')}</p>
         </div>
       </div>
     );
@@ -74,8 +76,8 @@ export default function SITHSSuccessPage() {
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-white">
         <div className="text-center space-y-4">
           <CheckCircle2 className="h-12 w-12 mx-auto text-green-600" />
-          <p className="text-lg font-medium text-green-900">Authentication successful!</p>
-          <p className="text-sm text-gray-600">Redirecting to chat...</p>
+          <p className="text-lg font-medium text-green-900">{t('success.title')}</p>
+          <p className="text-sm text-gray-600">{t('success.subtitle')}</p>
         </div>
       </div>
     );
@@ -84,8 +86,8 @@ export default function SITHSSuccessPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-red-50 to-white">
       <div className="text-center space-y-4">
-        <p className="text-lg font-medium text-red-900">Authentication failed</p>
-        <p className="text-sm text-gray-600">Redirecting to login...</p>
+        <p className="text-lg font-medium text-red-900">{t('error.title')}</p>
+        <p className="text-sm text-gray-600">{t('error.subtitle')}</p>
       </div>
     </div>
   );

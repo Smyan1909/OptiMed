@@ -31,6 +31,7 @@ from optimed.apps.orchestrator.chunking_orchestrator import ChunkingOrchestrator
 from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY as CHUNK_STRATEGY_REGISTRY, POLICY_PRESETS as CHUNK_POLICY_PRESETS
 from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
 from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, sanitize_session_id, log_error
+from optimed.utils.background_tasks import create_background_task
 
 logger = get_logger(__name__)
 
@@ -944,6 +945,29 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
         async def intelligent_retrieve_chunks(state: FlowState) -> FlowState:
             """In-RAM retrieval: chunk, embed, paraphrase, bi-encoder, cross-encoder rerank, dynamic-N MMR, gate, retry."""
+            retrieval_start_time = time.time()
+
+            # Log audit event: START retrieval
+            if self._audit_repo and state.session_id:
+                logger.info(f"[audit] Logging FETCH_CHUNKS_START for session {state.session_id}")
+                create_background_task(
+                    self._audit_repo.log_audit_event(
+                        session_id=state.session_id,
+                        action="FETCH_CHUNKS_START",
+                        resource_type="chunk",
+                        outcome="in_progress",
+                        user_id=state.user_id
+                    ),
+                    "log_audit_event_fetch_start",
+                    session_id=state.session_id,
+                    user_id=state.user_id
+                )
+            else:
+                if not self._audit_repo:
+                    logger.warning("[audit] Audit repo is None - cannot log events")
+                if not state.session_id:
+                    logger.warning("[audit] Session ID is None - cannot log events")
+
             try:
                 logger.info(f"Starting retrieval for patient_id: {sanitize_patient_id(str(state.patient_id))}")
                 logger.info(f"User prompt length: {len(state.user_prompt)} chars")
@@ -1324,9 +1348,85 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     "chunks_after_gating": len(final_selected)
                 }
                 state.retrieval_reasoning = "Paraphrases + bi-encoder, cross-encoder rerank, MMR diversity, binary gating"
-                
+
                 logger.info(f"Retrieval complete: {len(state.retrieved_chunks)} chunks selected")
                 logger.info(f"Chunk analysis: {state.chunk_analysis}")
+
+                # Log successful retrieval completion
+                retrieval_duration_ms = int((time.time() - retrieval_start_time) * 1000)
+                if self._audit_repo and state.session_id:
+                    # Log audit event: COMPLETE retrieval
+                    create_background_task(
+                        self._audit_repo.log_audit_event(
+                            session_id=state.session_id,
+                            action="FETCH_CHUNKS_COMPLETE",
+                            resource_type="chunk",
+                            outcome="success",
+                            latency_ms=retrieval_duration_ms,
+                            user_id=state.user_id,
+                            metadata={"chunks_retrieved": len(final_selected), "total_chunks": len(chunks)}
+                        ),
+                        "log_audit_event_fetch_complete",
+                        session_id=state.session_id,
+                        user_id=state.user_id
+                    )
+
+                    # Log performance metric: total retrieval time
+                    create_background_task(
+                        self._audit_repo.log_performance_metric(
+                            metric_category="retrieval",
+                            metric_name="total_retrieval_time",
+                            value=float(retrieval_duration_ms),
+                            unit="milliseconds",
+                            session_id=state.session_id,
+                            user_id=state.user_id,
+                            processing_stage="intelligent_retrieve_chunks",
+                            patient_context_size=len(final_selected)
+                        ),
+                        "log_performance_total_retrieval",
+                        session_id=state.session_id,
+                        user_id=state.user_id
+                    )
+
+                    # Log performance metric: chunks retrieved count
+                    create_background_task(
+                        self._audit_repo.log_performance_metric(
+                            metric_category="retrieval",
+                            metric_name="chunks_retrieved_count",
+                            value=float(len(final_selected)),
+                            unit="count",
+                            session_id=state.session_id,
+                            user_id=state.user_id,
+                            processing_stage="intelligent_retrieve_chunks"
+                        ),
+                        "log_performance_chunk_count",
+                        session_id=state.session_id,
+                        user_id=state.user_id
+                    )
+
+                    # Log evidence sets for each selected chunk
+                    question_id = str(uuid.uuid4())  # Unique ID for this query
+                    for rank, idx in enumerate(final_selected, start=1):
+                        chunk_dict: dict[str, Any] = chunks[idx]
+                        chunk_preview = chunk_dict.get("content", "")[:200] if isinstance(chunk_dict.get("content"), str) else ""
+                        rerank_score = next((score for r_idx, score in reranked if r_idx == idx), None)
+
+                        create_background_task(
+                            self._audit_repo.log_evidence_set(
+                                session_id=state.session_id,
+                                question_id=question_id,
+                                rank=rank,
+                                resource_type=chunk_dict.get("data_type", "chunk"),
+                                resource_id=chunk_dict.get("chunk_id"),
+                                rerank_score=rerank_score,
+                                reason="cross_encoder_reranked_mmr_diversified",
+                                chunk_text_preview=chunk_preview
+                            ),
+                            f"log_evidence_set_rank_{rank}",
+                            session_id=state.session_id,
+                            user_id=state.user_id
+                        )
+
             except Exception as e:
                 logger.info(f"Error: {e}")
                 state.retrieved_chunks = []
@@ -4272,14 +4372,14 @@ Format as 4-5 bullet points covering:
 • **[Outcome/Significance in target language]**: [results and clinical importance]
 • **[Follow-up in target language]**: [any subsequent actions if applicable]
 
-Example (Swedish):
-• **Vad hände**: Patient admitted to **ER** with **chest pain** and **shortness of breath** [1]
+Example (English):
+• **What happened**: Patient admitted to **ER** with **chest pain** and **shortness of breath** [1]
 
-• **Kliniska fynd**: **ECG** showed ST elevations, **troponin** elevated at 450 ng/L [2]
+• **Clinical findings**: **ECG** showed ST elevations, **troponin** elevated at 450 ng/L [2]
 
-• **Behandlingar**: Given **aspirin 300mg**, **heparin** infusion, **morphine** 5mg for pain [3]
+• **Treatments**: Given **aspirin 300mg**, **heparin** infusion, **morphine** 5mg for pain [3]
 
-• **Utfall**: Pain reduced to **3/10**, hemodynamically **stable**, monitored in CCU [4]
+• **Outcome/Significance**: Pain reduced to **3/10**, hemodynamically **stable**, monitored in CCU [4]
 
 Add blank line between each bullet point for readability.
 
@@ -4973,28 +5073,30 @@ Provide ONLY the paraphrased query (one sentence), no explanation or preamble.""
 **YOUR TASK**: Provide a comprehensive summary of the clinical guideline information from viss.nu for the user's query.
 
 **CRITICAL - RESPONSE FORMAT**:
-- Provide a DETAILED summary of the guideline with comprehensive information
+- Provide a DETAILED summary of the guideline with comprehensive information in PARAGRAPH format
 - Organize response with `##` headers to divide sections (e.g., ## Indikationer, ## Behandling, ## Dosering, ## Kontraindikationer, ## Uppföljning)
 - **MAXIMUM 5 HEADERS** - Choose the 5 most important sections for the query
-- **Use bullet points (`-`) for all information**
-- **Be thorough**: Include all relevant details from the guideline (10-20 bullet points or more if needed)
-- **15-25 words per bullet point** to provide adequate detail
+- **Write in flowing paragraphs** - NOT bullet points
+- **Be thorough and comprehensive**: Each paragraph should contain 5-8 sentences with detailed clinical information
+- Include ALL relevant details from the guideline in a narrative format that's easy to read and understand
+- The user should be able to fully understand the guideline content just by reading your summary
 - **DO NOT include any reasoning preamble** - provide ONLY the direct answer
 - **DO NOT explain your thinking process** - just answer the question directly
 
 **CITATION POLICY**:
 - **MANDATORY**: You MUST cite viss.nu sources using format: [Source Title](URL)
-- Include citation at the end of each section or key bullet point that uses information from that source
-- Example: "**Antibiotika** should be used only when bacterial infection is confirmed [VISS.nu - Luftvägsinfektioner](https://example.com)"
+- Include citations naturally within paragraphs, after the information from that source
+- Example: "Antibiotika should be used only when bacterial infection is confirmed based on clinical presentation and laboratory findings. [VISS.nu - Luftvägsinfektioner](https://example.com)"
+- Cite sources for each major piece of information presented
 
-**CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms:
+**CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms within the paragraphs:
 - **Guidelines** and recommendations
 - **Medications** and doses
 - **Diagnoses** and conditions
 - **Key clinical criteria**
 - **Treatment protocols** and procedures
 
-**Important**: Focus on providing clear, comprehensive, actionable guideline information. Include all relevant clinical details from the guideline."""
+**Important**: Focus on providing clear, comprehensive, actionable guideline information in well-structured paragraphs. Include all relevant clinical details from the guideline so the user can fully understand the content without needing to reference the original sources."""
                 )
 
                 messages = [guideline_system_msg]
@@ -5065,9 +5167,11 @@ GUIDELINE SOURCES TO CITE IN YOUR RESPONSE:
 {chr(10).join(sources_list)}
 
 INSTRUCTION: You MUST cite these viss.nu sources in your response using the format [Source Title](URL).
-- Use format: "Information here [Source Title](URL)" in sections or key bullet points
+- Use format: "Information here [Source Title](URL)" naturally within your paragraphs
 - Include citations for all key guideline sections
-- Provide comprehensive coverage: 10-20+ bullet points with 15-25 words per bullet
+- Provide comprehensive coverage: Write detailed paragraphs (5-8 sentences each) covering all aspects of the guideline
+- Use paragraph format, NOT bullet points
+- Ensure the user can fully understand all guideline content from your summary
 - This is clinical guideline information from viss.nu
 
 === END OF GUIDELINE SEARCH RESULTS ===""")
@@ -6132,6 +6236,23 @@ Return ONLY the reformulated query, nothing else."""
         @streaming_step("classify_query_intent")
         async def classify_query_intent(state: FlowState) -> FlowState:
             """Classify the query to determine flow type including note generation."""
+            classify_start_time = time.time()
+
+            # Log audit event: START classification
+            if self._audit_repo and state.session_id:
+                create_background_task(
+                    self._audit_repo.log_audit_event(
+                        session_id=state.session_id,
+                        action="CLASSIFY_QUERY",
+                        resource_type="query",
+                        outcome="in_progress",
+                        user_id=state.user_id
+                    ),
+                    "log_audit_event_classify_start",
+                    session_id=state.session_id,
+                    user_id=state.user_id
+                )
+
             try:
                 logger.info(f"Classifying query (length={len(state.user_prompt)} chars)")
 
@@ -6250,6 +6371,25 @@ Return ONLY the reformulated query, nothing else."""
                 state.is_focused_summary_flow = False
                 state.is_general_knowledge_flow = False
                 state.is_guideline_flow = False
+
+            # Log classification completion
+            classify_duration_ms = int((time.time() - classify_start_time) * 1000)
+            if self._audit_repo and state.session_id:
+                classification_result = getattr(state, 'query_classification', 'unknown')
+                create_background_task(
+                    self._audit_repo.log_audit_event(
+                        session_id=state.session_id,
+                        action="CLASSIFY_QUERY_COMPLETE",
+                        resource_type="query",
+                        outcome="success",
+                        latency_ms=classify_duration_ms,
+                        user_id=state.user_id,
+                        metadata={"classification": classification_result}
+                    ),
+                    "log_audit_event_classify_complete",
+                    session_id=state.session_id,
+                    user_id=state.user_id
+                )
 
             return state
 

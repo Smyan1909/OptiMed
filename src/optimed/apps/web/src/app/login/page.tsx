@@ -10,9 +10,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, User, Lock, Stethoscope, Hospital, Shield, ShieldCheck } from 'lucide-react';
+import { Loader2, User, Lock, Hospital, Shield, ShieldCheck } from 'lucide-react';
 import { initiateEHRLogin, initiateSITHSLogin } from '@/lib/api';
 import { useTranslations } from 'next-intl';
+import Image from 'next/image';
 
 
 export default function LoginPage() {
@@ -21,15 +22,18 @@ export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  
+
   // EHR login state - FIXED: Use space-separated scopes (no commas!)
   const [ehrServerUrl, setEhrServerUrl] = useState(process.env.NEXT_PUBLIC_DEFAULT_FHIR_SERVER || 'https://launch.smarthealthit.org/v/r4/fhir');
   const [ehrClientId, setEhrClientId] = useState(process.env.NEXT_PUBLIC_DEFAULT_CLIENT_ID || 'optimed');
   const [ehrScope, setEhrScope] = useState(process.env.NEXT_PUBLIC_DEFAULT_EHR_SCOPE || 'user/*.cruds');
   const [isEhrConnecting, setIsEhrConnecting] = useState(false);
-  
+
   const [authError, setAuthError] = useState<string | null>(null);
-  
+
+  // Check if standard login methods are enabled (default: true)
+  const enableStandardLogin = process.env.NEXT_PUBLIC_ENABLE_STANDARD_LOGIN !== 'false';
+
   const { login, isAuthenticated, error, isLoading } = useUser();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -135,8 +139,14 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center space-y-4">
           <div className="flex justify-center">
-            <div className="h-12 w-12 bg-blue-600 rounded-full flex items-center justify-center">
-              <Stethoscope className="h-6 w-6 text-white" />
+            <div className="relative h-24 w-24">
+              <Image
+                src="/favicon.svg"
+                alt="CLARA Logo"
+                fill
+                className="object-contain"
+                priority
+              />
             </div>
           </div>
           <div>
@@ -155,23 +165,28 @@ export default function LoginPage() {
         </CardHeader>
         
         <CardContent>
-          <Tabs defaultValue="regular" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="regular" className="flex items-center gap-2">
-                <Shield className="h-4 w-4" />
-                {t('tabs.regular')}
-              </TabsTrigger>
-              <TabsTrigger value="ehr" className="flex items-center gap-2">
-                <Hospital className="h-4 w-4" />
-                {t('tabs.ehr')}
-              </TabsTrigger>
+          <Tabs defaultValue={enableStandardLogin ? "regular" : "siths"} className="w-full">
+            <TabsList className={`grid w-full ${enableStandardLogin ? 'grid-cols-3' : 'grid-cols-1'}`}>
+              {enableStandardLogin && (
+                <>
+                  <TabsTrigger value="regular" className="flex items-center gap-2">
+                    <Shield className="h-4 w-4" />
+                    {t('tabs.regular')}
+                  </TabsTrigger>
+                  <TabsTrigger value="ehr" className="flex items-center gap-2">
+                    <Hospital className="h-4 w-4" />
+                    {t('tabs.ehr')}
+                  </TabsTrigger>
+                </>
+              )}
               <TabsTrigger value="siths" className="flex items-center gap-2">
                 <ShieldCheck className="h-4 w-4" />
-                SITHS NetID
+                {t('tabs.siths')}
               </TabsTrigger>
             </TabsList>
-            
-            <TabsContent value="regular" className="space-y-4 mt-6">
+
+            {enableStandardLogin && (
+              <TabsContent value="regular" className="space-y-4 mt-6">
               <div className="text-center mb-4">
                 <h3 className="text-lg font-semibold text-gray-900">{t('regular.title')}</h3>
                 <p className="text-sm text-gray-600">{t('regular.subtitle')}</p>
@@ -241,8 +256,10 @@ export default function LoginPage() {
                 </div>
               </div>
             </TabsContent>
-            
-            <TabsContent value="ehr" className="space-y-4 mt-6">
+            )}
+
+            {enableStandardLogin && (
+              <TabsContent value="ehr" className="space-y-4 mt-6">
               <div className="text-center mb-4">
                 <h3 className="text-lg font-semibold text-gray-900">{t('ehr.title')}</h3>
                 <p className="text-sm text-gray-600">{t('ehr.subtitle')}</p>
@@ -317,18 +334,19 @@ export default function LoginPage() {
                 </div>
               </div>
             </TabsContent>
+            )}
 
             <TabsContent value="siths" className="space-y-4 mt-6">
               <div className="text-center mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">SITHS NetID Enterprise</h3>
-                <p className="text-sm text-gray-600">Authenticate with your SITHS card</p>
+                <h3 className="text-lg font-semibold text-gray-900">{t('siths.title')}</h3>
+                <p className="text-sm text-gray-600">{t('siths.subtitle')}</p>
               </div>
 
               <form onSubmit={handleSithsLogin} className="space-y-4">
                 <div className="text-center text-sm text-gray-600 mb-4 p-4 bg-blue-50 rounded-lg">
                   <ShieldCheck className="h-12 w-12 mx-auto mb-2 text-blue-600" />
-                  <p className="font-medium mb-2">Secure SITHS Authentication</p>
-                  <p className="text-xs">You will be redirected to authenticate with your SITHS card</p>
+                  <p className="font-medium mb-2">{t('siths.description')}</p>
+                  <p className="text-xs">{t('siths.instructions')}</p>
                 </div>
 
                 <Button
@@ -337,15 +355,15 @@ export default function LoginPage() {
                   size="lg"
                 >
                   <ShieldCheck className="mr-2 h-5 w-5" />
-                  Login with SITHS Card
+                  {t('siths.loginButton')}
                 </Button>
 
                 <div className="mt-4 text-xs text-gray-500 text-center p-3 bg-gray-50 rounded">
-                  <p className="font-medium mb-1">Requirements:</p>
+                  <p className="font-medium mb-1">{t('siths.requirements.title')}</p>
                   <ul className="space-y-1 text-left ml-4">
-                    <li>• A valid SITHS card or SITHS-compatible authentication</li>
-                    <li>• Pre-authorized HSA ID in the system</li>
-                    <li>• Contact your administrator to get access</li>
+                    <li>• {t('siths.requirements.validCard')}</li>
+                    <li>• {t('siths.requirements.hsaId')}</li>
+                    <li>• {t('siths.requirements.contact')}</li>
                   </ul>
                 </div>
               </form>

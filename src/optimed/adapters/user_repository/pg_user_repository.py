@@ -310,6 +310,14 @@ class PGUserRepository(UserRepository):
             # Create GDPR-compliant session record
             await self._create_gdpr_session(session.user_id, session.session_id)
 
+            # Initialize session analytics tracking
+            try:
+                await self.initialize_session_analytics(session.session_id, session.user_id)
+                logger.info(f"Session analytics initialized for session {session.session_id}")
+            except Exception as e:
+                log_error(logger, "Failed to initialize session analytics", e)
+                # Continue even if analytics initialization fails
+
             return session
     
     async def _create_gdpr_session(self, user_id: str, session_id: str) -> None:
@@ -496,7 +504,11 @@ class PGUserRepository(UserRepository):
                 json.dumps(kwargs.get('risk_assessment', {})), kwargs.get('mitigation_measures'))
 
     async def update_session_analytics(self, session_id: str, **metrics) -> None:
-        """Update session analytics with new metrics."""
+        """
+        Update session analytics with new metrics.
+
+        NOTE: Numeric values are INCREMENTED, not set.
+        """
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             # Build dynamic update query based on provided metrics
@@ -518,7 +530,9 @@ class PGUserRepository(UserRepository):
 
             for key, value in metrics.items():
                 if key in metric_mappings:
-                    updates.append(f"{metric_mappings[key]} = ${param_count}")
+                    # INCREMENT values instead of setting them
+                    column = metric_mappings[key]
+                    updates.append(f"{column} = COALESCE({column}, 0) + ${param_count}")
                     values.append(value)
                     param_count += 1
                 elif key == 'performance_metrics':
@@ -538,7 +552,141 @@ class PGUserRepository(UserRepository):
                     WHERE session_id = ${param_count}
                 """
                 values.append(uuid.UUID(session_id))
-                await conn.execute(query, *values)
+                result = await conn.execute(query, *values)
+
+                # Log if no rows were updated (session_analytics doesn't exist)
+                if result == "UPDATE 0":
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Session analytics not found for session_id: {session_id}. Call initialize_session_analytics() first.")
+
+    async def initialize_session_analytics(self, session_id: str, user_id: str) -> None:
+        """
+        Initialize session analytics row when session starts.
+
+        Args:
+            session_id: Session ID
+            user_id: User ID
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO session_analytics (
+                    session_id, user_id, total_requests, total_responses,
+                    patient_contexts_accessed, web_searches_performed,
+                    diagnostic_requests, chat_requests, image_uploads,
+                    journal_generations, error_count, session_duration_minutes,
+                    performance_metrics, data_sources_accessed
+                ) VALUES ($1, $2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '{}', '{}')
+                ON CONFLICT (session_id) DO NOTHING
+            """,
+                uuid.UUID(session_id),
+                uuid.UUID(user_id)
+            )
+
+    async def finalize_session_analytics(self, session_id: str) -> None:
+        """
+        Finalize session analytics by calculating duration and updating sessions table.
+
+        Call this when a session ends (user logout, timeout, or app shutdown).
+
+        Args:
+            session_id: Session ID
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            # Calculate session duration and update sessions.ended_at
+            session_info = await conn.fetchrow("""
+                UPDATE sessions
+                SET ended_at = NOW(), is_active = FALSE
+                WHERE session_id = $1 AND ended_at IS NULL
+                RETURNING started_at, ended_at
+            """, uuid.UUID(session_id))
+
+            if session_info:
+                # Calculate duration in minutes
+                started_at = session_info['started_at']
+                ended_at = session_info['ended_at']
+                duration_minutes = (ended_at - started_at).total_seconds() / 60.0
+
+                # Update session_analytics with duration
+                await conn.execute("""
+                    UPDATE session_analytics
+                    SET session_duration_minutes = $1,
+                        last_updated = NOW()
+                    WHERE session_id = $2
+                """,
+                    duration_minutes,
+                    uuid.UUID(session_id)
+                )
+
+    async def expire_old_sessions(self, max_session_hours: int = 8) -> tuple[int, list[str]]:
+        """
+        Expire sessions older than max_session_hours and finalize their analytics.
+
+        Args:
+            max_session_hours: Maximum session duration in hours (default: 8)
+
+        Returns:
+            Tuple of (number of sessions expired, list of expired session IDs)
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            # Find sessions older than max_session_hours
+            expired_sessions = await conn.fetch("""
+                SELECT session_id FROM sessions
+                WHERE is_active = TRUE
+                AND ended_at IS NULL
+                AND started_at < NOW() - INTERVAL '{} hours'
+            """.format(max_session_hours))
+
+            expired_count = 0
+            expired_session_ids = []
+            for session_row in expired_sessions:
+                session_id = str(session_row['session_id'])
+                try:
+                    await self.finalize_session_analytics(session_id)
+                    expired_count += 1
+                    expired_session_ids.append(session_id)
+                except Exception as e:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Failed to expire session {session_id}: {e}")
+
+            return expired_count, expired_session_ids
+
+    async def check_session_timeout(self, session_id: str, max_session_hours: int = 8) -> bool:
+        """
+        Check if a session has exceeded the maximum duration and expire it if so.
+
+        Args:
+            session_id: Session ID to check
+            max_session_hours: Maximum session duration in hours (default: 8)
+
+        Returns:
+            True if session is still valid, False if expired
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            session = await conn.fetchrow("""
+                SELECT started_at, ended_at, is_active FROM sessions
+                WHERE session_id = $1
+            """, uuid.UUID(session_id))
+
+            if not session or not session['is_active'] or session['ended_at']:
+                return False  # Session doesn't exist or already ended
+
+            # Check if session has exceeded max duration
+            from datetime import datetime, timezone, timedelta
+            started_at = session['started_at']
+            max_age = timedelta(hours=max_session_hours)
+
+            if datetime.now(timezone.utc) - started_at > max_age:
+                # Session has expired - finalize it
+                await self.finalize_session_analytics(session_id)
+                return False
+
+            return True
 
     async def get_enhanced_user_metrics(self, user_id: str, days: int = 30) -> dict:
         """Get comprehensive user metrics including new tracking data."""

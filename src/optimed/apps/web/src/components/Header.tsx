@@ -6,10 +6,11 @@ import { useUser } from '@/contexts/UserContext';
 import { UserProfile } from '@/components/UserProfile';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Stethoscope, Users, MessageSquare, Settings, Images} from 'lucide-react';
+import { Users, MessageSquare, Settings, Images} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useRouter } from 'next/navigation'; // Import useRouter for navigation
 import { useTranslations } from 'next-intl';
+import Image from 'next/image';
 
 const navigation = [
   // { nameKey: 'nav.patients', href: '/patients', icon: Users },
@@ -34,8 +35,13 @@ export function Header() {
         <div className="flex justify-between items-center h-16">
           <div className="flex items-center space-x-4">
             <Link href="/chat" className="flex items-center space-x-2">
-              <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                <Stethoscope className="h-5 w-5 text-white" />
+              <div className="relative h-16 w-16">
+                <Image
+                  src="/favicon.svg"
+                  alt="CLARA Logo"
+                  fill
+                  className="object-contain"
+                />
               </div>
               <span className="text-xl font-bold text-gray-900">CLARA</span>
             </Link>

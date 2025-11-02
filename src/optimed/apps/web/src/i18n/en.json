@@ -94,7 +94,8 @@
     "subtitle": "Choose your preferred sign-in method",
     "tabs": {
       "regular": "System Login",
-      "ehr": "EHR Login"
+      "ehr": "EHR Login",
+      "siths": "SITHS NetID"
     },
     "regular": {
       "title": "System Credentials",
@@ -129,8 +130,35 @@
         "No credentials stored locally"
       ]
     },
+    "siths": {
+      "title": "SITHS NetID Enterprise",
+      "subtitle": "Authenticate with your SITHS card",
+      "description": "Secure SITHS Authentication",
+      "instructions": "You will be redirected to authenticate with your SITHS card",
+      "loginButton": "Login with SITHS Card",
+      "requirements": {
+        "title": "Requirements:",
+        "validCard": "A valid SITHS card or SITHS-compatible authentication",
+        "hsaId": "Pre-authorized HSA ID in the system",
+        "contact": "Contact your administrator to get access"
+      }
+    },
     "errors": {
       "ehrInitFailed": "Failed to initiate EHR login: {message}"
+    }
+  },
+  "sithsSuccess": {
+    "loading": {
+      "title": "Completing SITHS authentication...",
+      "subtitle": "Please wait while we set up your session"
+    },
+    "success": {
+      "title": "Authentication successful!",
+      "subtitle": "Redirecting to chat..."
+    },
+    "error": {
+      "title": "Authentication failed",
+      "subtitle": "Redirecting to login..."
     }
   },
   "patientsPage": {
