@@ -395,6 +395,171 @@ class PGAuditRepository:
         except Exception as e:
             log_error(logger, "Error logging usage metric", e)
 
+    async def log_audit_event(
+        self,
+        session_id: Optional[str],
+        action: str,
+        resource_type: str,
+        resource_id: Optional[str] = None,
+        outcome: str = "success",
+        latency_ms: Optional[int] = None,
+        user_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Log audit event for every data operation (GDPR Article 30 compliance).
+
+        Tracks actions like FETCH, RANK, SYNTHESIZE, CLASSIFY, etc.
+
+        Args:
+            session_id: Session ID
+            action: Action performed (FETCH_CHUNKS, CLASSIFY_QUERY, SYNTHESIZE_SBAR, etc.)
+            resource_type: Type of resource (chunk, patient, observation, etc.)
+            resource_id: ID of resource (optional)
+            outcome: Outcome of action (success, failure, partial)
+            latency_ms: Duration of action in milliseconds
+            user_id: User ID (optional)
+            metadata: Additional metadata (PHI redacted)
+        """
+        pool = await self._get_pool()
+
+        try:
+            safe_metadata = self._redact_phi(metadata) if metadata else {}
+
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO audit_events (
+                        session_id, user_id, action, resource_type, resource_id,
+                        outcome, latency_ms, metadata, occurred_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                """,
+                    self._to_uuid(session_id),
+                    user_id,
+                    action,
+                    resource_type,
+                    resource_id,
+                    outcome,
+                    latency_ms,
+                    json.dumps(safe_metadata)
+                )
+
+        except Exception as e:
+            log_error(logger, f"Error logging audit event '{action}'", e)
+
+    async def log_evidence_set(
+        self,
+        session_id: str,
+        question_id: str,
+        rank: int,
+        resource_type: str,
+        resource_id: Optional[str] = None,
+        section: Optional[str] = None,
+        rerank_score: Optional[float] = None,
+        reason: Optional[str] = None,
+        chunk_text_preview: Optional[str] = None
+    ) -> None:
+        """
+        Log evidence set for retrieval provenance tracking.
+
+        Tracks which chunks/resources were used as evidence for each query.
+
+        Args:
+            session_id: Session ID
+            question_id: Unique ID for this query
+            rank: Rank of this evidence in results (1-based)
+            resource_type: Type of resource (chunk, document, observation)
+            resource_id: ID of resource
+            section: Section of document (if applicable)
+            rerank_score: Cross-encoder rerank score
+            reason: Reason for selection (e.g., "cross_encoder_reranked")
+            chunk_text_preview: Preview of chunk text (first 200 chars, PHI redacted)
+        """
+        pool = await self._get_pool()
+
+        try:
+            # Redact PHI from chunk preview
+            safe_preview = self._redact_phi(chunk_text_preview) if chunk_text_preview else None
+
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO evidence_sets (
+                        session_id, question_id, rank, resource_type, resource_id,
+                        section, rerank_score, reason, chunk_text_preview, created_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+                """,
+                    self._to_uuid(session_id),
+                    self._to_uuid(question_id),
+                    rank,
+                    resource_type,
+                    resource_id,
+                    section,
+                    rerank_score,
+                    reason,
+                    safe_preview
+                )
+
+        except Exception as e:
+            log_error(logger, f"Error logging evidence set for question {question_id}", e)
+
+    async def log_performance_metric(
+        self,
+        metric_category: str,
+        metric_name: str,
+        value: float,
+        unit: str = "milliseconds",
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        endpoint: Optional[str] = None,
+        model_used: Optional[str] = None,
+        processing_stage: Optional[str] = None,
+        patient_context_size: Optional[int] = None,
+        additional_context: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Log performance metric for monitoring and optimization.
+
+        Args:
+            metric_category: Category (retrieval, synthesis, llm_call, api)
+            metric_name: Metric name (chunk_retrieval_time, llm_generation_time, etc.)
+            value: Metric value
+            unit: Unit (milliseconds, count, bytes, etc.)
+            session_id: Session ID
+            user_id: User ID
+            endpoint: API endpoint
+            model_used: AI model used
+            processing_stage: Processing stage (intelligent_retrieve, generate_response, etc.)
+            patient_context_size: Number of chunks/resources in context
+            additional_context: Additional context (PHI redacted)
+        """
+        pool = await self._get_pool()
+
+        try:
+            safe_context = self._redact_phi(additional_context) if additional_context else {}
+
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO performance_metrics (
+                        metric_category, metric_name, value, unit, endpoint,
+                        user_id, session_id, patient_context_size, model_used,
+                        processing_stage, additional_context, measured_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+                """,
+                    metric_category,
+                    metric_name,
+                    value,
+                    unit,
+                    endpoint,
+                    self._to_uuid(user_id) if user_id else None,
+                    self._to_uuid(session_id) if session_id else None,
+                    patient_context_size,
+                    model_used,
+                    processing_stage,
+                    json.dumps(safe_context)
+                )
+
+        except Exception as e:
+            log_error(logger, f"Error logging performance metric '{metric_name}'", e)
+
     async def get_user_audit_trail(
         self,
         user_id: str,
