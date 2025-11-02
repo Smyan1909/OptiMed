@@ -7,7 +7,6 @@ import pytest
 import uuid
 from datetime import datetime, timezone
 from optimed.adapters.user_repository.pg_user_repository import PGUserRepository
-from optimed.core.domain import UserSession
 
 
 @pytest.mark.asyncio

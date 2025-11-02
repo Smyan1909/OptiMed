@@ -2011,7 +2011,7 @@ async def diagnose_stream(
                 requests=1,
                 diagnostic_requests=1
             )
-            logger.debug(f"[session-analytics] Successfully updated diagnostic request")
+            logger.debug("[session-analytics] Successfully updated diagnostic request")
         except Exception as e:
             logger.error(f"[session-analytics] Failed to update session analytics: {e}", exc_info=True)
 
@@ -2090,7 +2090,7 @@ async def chat_stream(
                 requests=1,
                 chat_requests=1
             )
-            logger.debug(f"[session-analytics] Successfully updated chat request")
+            logger.debug("[session-analytics] Successfully updated chat request")
         except Exception as e:
             logger.error(f"[session-analytics] Failed to update session analytics: {e}", exc_info=True)
 
