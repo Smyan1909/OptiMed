@@ -10,9 +10,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, User, Lock, Stethoscope, Hospital, Shield, ShieldCheck } from 'lucide-react';
+import { Loader2, User, Lock, Hospital, Shield, ShieldCheck } from 'lucide-react';
 import { initiateEHRLogin, initiateSITHSLogin } from '@/lib/api';
 import { useTranslations } from 'next-intl';
+import Image from 'next/image';
 
 
 export default function LoginPage() {
@@ -138,8 +139,14 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center space-y-4">
           <div className="flex justify-center">
-            <div className="h-12 w-12 bg-blue-600 rounded-full flex items-center justify-center">
-              <Stethoscope className="h-6 w-6 text-white" />
+            <div className="relative h-24 w-24">
+              <Image
+                src="/favicon.svg"
+                alt="CLARA Logo"
+                fill
+                className="object-contain"
+                priority
+              />
             </div>
           </div>
           <div>

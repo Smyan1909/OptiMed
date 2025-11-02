@@ -4372,14 +4372,14 @@ Format as 4-5 bullet points covering:
 • **[Outcome/Significance in target language]**: [results and clinical importance]
 • **[Follow-up in target language]**: [any subsequent actions if applicable]
 
-Example (Swedish):
-• **Vad hände**: Patient admitted to **ER** with **chest pain** and **shortness of breath** [1]
+Example (English):
+• **What happened**: Patient admitted to **ER** with **chest pain** and **shortness of breath** [1]
 
-• **Kliniska fynd**: **ECG** showed ST elevations, **troponin** elevated at 450 ng/L [2]
+• **Clinical findings**: **ECG** showed ST elevations, **troponin** elevated at 450 ng/L [2]
 
-• **Behandlingar**: Given **aspirin 300mg**, **heparin** infusion, **morphine** 5mg for pain [3]
+• **Treatments**: Given **aspirin 300mg**, **heparin** infusion, **morphine** 5mg for pain [3]
 
-• **Utfall**: Pain reduced to **3/10**, hemodynamically **stable**, monitored in CCU [4]
+• **Outcome/Significance**: Pain reduced to **3/10**, hemodynamically **stable**, monitored in CCU [4]
 
 Add blank line between each bullet point for readability.
 
@@ -5073,28 +5073,30 @@ Provide ONLY the paraphrased query (one sentence), no explanation or preamble.""
 **YOUR TASK**: Provide a comprehensive summary of the clinical guideline information from viss.nu for the user's query.
 
 **CRITICAL - RESPONSE FORMAT**:
-- Provide a DETAILED summary of the guideline with comprehensive information
+- Provide a DETAILED summary of the guideline with comprehensive information in PARAGRAPH format
 - Organize response with `##` headers to divide sections (e.g., ## Indikationer, ## Behandling, ## Dosering, ## Kontraindikationer, ## Uppföljning)
 - **MAXIMUM 5 HEADERS** - Choose the 5 most important sections for the query
-- **Use bullet points (`-`) for all information**
-- **Be thorough**: Include all relevant details from the guideline (10-20 bullet points or more if needed)
-- **15-25 words per bullet point** to provide adequate detail
+- **Write in flowing paragraphs** - NOT bullet points
+- **Be thorough and comprehensive**: Each paragraph should contain 5-8 sentences with detailed clinical information
+- Include ALL relevant details from the guideline in a narrative format that's easy to read and understand
+- The user should be able to fully understand the guideline content just by reading your summary
 - **DO NOT include any reasoning preamble** - provide ONLY the direct answer
 - **DO NOT explain your thinking process** - just answer the question directly
 
 **CITATION POLICY**:
 - **MANDATORY**: You MUST cite viss.nu sources using format: [Source Title](URL)
-- Include citation at the end of each section or key bullet point that uses information from that source
-- Example: "**Antibiotika** should be used only when bacterial infection is confirmed [VISS.nu - Luftvägsinfektioner](https://example.com)"
+- Include citations naturally within paragraphs, after the information from that source
+- Example: "Antibiotika should be used only when bacterial infection is confirmed based on clinical presentation and laboratory findings. [VISS.nu - Luftvägsinfektioner](https://example.com)"
+- Cite sources for each major piece of information presented
 
-**CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms:
+**CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms within the paragraphs:
 - **Guidelines** and recommendations
 - **Medications** and doses
 - **Diagnoses** and conditions
 - **Key clinical criteria**
 - **Treatment protocols** and procedures
 
-**Important**: Focus on providing clear, comprehensive, actionable guideline information. Include all relevant clinical details from the guideline."""
+**Important**: Focus on providing clear, comprehensive, actionable guideline information in well-structured paragraphs. Include all relevant clinical details from the guideline so the user can fully understand the content without needing to reference the original sources."""
                 )
 
                 messages = [guideline_system_msg]
@@ -5165,9 +5167,11 @@ GUIDELINE SOURCES TO CITE IN YOUR RESPONSE:
 {chr(10).join(sources_list)}
 
 INSTRUCTION: You MUST cite these viss.nu sources in your response using the format [Source Title](URL).
-- Use format: "Information here [Source Title](URL)" in sections or key bullet points
+- Use format: "Information here [Source Title](URL)" naturally within your paragraphs
 - Include citations for all key guideline sections
-- Provide comprehensive coverage: 10-20+ bullet points with 15-25 words per bullet
+- Provide comprehensive coverage: Write detailed paragraphs (5-8 sentences each) covering all aspects of the guideline
+- Use paragraph format, NOT bullet points
+- Ensure the user can fully understand all guideline content from your summary
 - This is clinical guideline information from viss.nu
 
 === END OF GUIDELINE SEARCH RESULTS ===""")
