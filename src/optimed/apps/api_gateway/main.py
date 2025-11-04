@@ -2070,15 +2070,22 @@ async def chat_stream(
     user_id = user_ctx.get("user_id") or req.user_id
     current_user = user_ctx.get("user")
 
+    # Log the patient_id from the request
+    logger.info(f"[DEBUG /chat/stream] Received patient_id: {req.patient_id} (type: {type(req.patient_id).__name__})")
+
     if current_user:
         pass  # User context loaded
 
     patient_ctx = None
     if req.patient_id:
         try:
+            logger.info(f"[DEBUG /chat/stream] Fetching patient context for ID: {req.patient_id}")
             patient_ctx = await fhir_repo.get_patient(req.patient_id)
+            logger.info(f"[DEBUG /chat/stream] Patient context fetched: {patient_ctx.patient_id if patient_ctx else 'None'}")
         except Exception as e:
             log_error(logger, "Fetch patient for chat", e, patient_id=req.patient_id)
+    else:
+        logger.info(f"[DEBUG /chat/stream] No patient_id provided - patient_ctx will be None")
 
     # Update session analytics
     session_id = req.session_id or user_ctx.get("session_id")

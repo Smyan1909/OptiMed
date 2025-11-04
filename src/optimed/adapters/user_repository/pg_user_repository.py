@@ -337,9 +337,12 @@ class PGUserRepository(UserRepository):
                         session_id, subject_hash, user_id, tenant_id,
                         lawful_basis, purpose_of_use, scopes, model_config_hash
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                    ON CONFLICT (session_id) DO NOTHING
+                    ON CONFLICT (session_id) DO UPDATE SET
+                        started_at = NOW(),
+                        is_active = TRUE,
+                        ended_at = NULL
                 """,
-                    uuid.UUID(session_id), subject_hash, uuid.UUID(user_id),
+                    uuid.UUID(session_id), subject_hash, user_id,  # user_id is VARCHAR, not UUID
                     uuid.uuid4(),  # Default tenant_id - should be set properly
                     "care_delivery", "diagnosis", ["patient/read", "observation/read"],
                     model_config_hash
@@ -428,7 +431,7 @@ class PGUserRepository(UserRepository):
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             """,
                 uuid.UUID(session_id) if session_id else None,
-                uuid.UUID(user_id), access_type, resource_type, resource_identifier,
+                user_id, access_type, resource_type, resource_identifier,  # user_id is VARCHAR
                 data_source, lawful_basis, purpose_of_use,
                 kwargs.get('access_method'), kwargs.get('requested_fields'),
                 kwargs.get('returned_count'), json.dumps(kwargs.get('filter_criteria', {})),
@@ -450,7 +453,7 @@ class PGUserRepository(UserRepository):
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             """,
                 metric_category, metric_name, value, unit, endpoint,
-                uuid.UUID(user_id) if user_id else None,
+                user_id,  # VARCHAR, not UUID
                 uuid.UUID(session_id) if session_id else None,
                 kwargs.get('patient_context_size'), kwargs.get('model_used'),
                 kwargs.get('processing_stage'), json.dumps(kwargs.get('additional_context', {})))
@@ -470,7 +473,7 @@ class PGUserRepository(UserRepository):
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             """,
                 uuid.UUID(session_id) if session_id else None,
-                uuid.UUID(user_id) if user_id else None,
+                user_id,  # VARCHAR, not UUID
                 operation_type, data_type, encryption_algorithm, key_type,
                 kwargs.get('key_identifier'), kwargs.get('data_size_bytes'),
                 kwargs.get('operation_duration_ms'), success, kwargs.get('error_details'),
@@ -495,7 +498,7 @@ class PGUserRepository(UserRepository):
             """,
                 event_type, compliance_framework,
                 uuid.UUID(session_id) if session_id else None,
-                uuid.UUID(user_id), patient_id, lawful_basis,
+                user_id, patient_id, lawful_basis,  # user_id is VARCHAR
                 kwargs.get('consent_status'), kwargs.get('data_categories'),
                 kwargs.get('processing_purposes'), kwargs.get('retention_period_days'),
                 kwargs.get('data_minimization_applied', True), kwargs.get('anonymization_method'),
@@ -551,7 +554,9 @@ class PGUserRepository(UserRepository):
                     SET {', '.join(updates)}
                     WHERE session_id = ${param_count}
                 """
-                values.append(uuid.UUID(session_id))
+
+                # session_id is now VARCHAR, no UUID conversion needed
+                values.append(session_id)
                 result = await conn.execute(query, *values)
 
                 # Log if no rows were updated (session_analytics doesn't exist)
@@ -565,8 +570,8 @@ class PGUserRepository(UserRepository):
         Initialize session analytics row when session starts.
 
         Args:
-            session_id: Session ID
-            user_id: User ID
+            session_id: Session ID (VARCHAR - supports both UUID and chat session formats)
+            user_id: User ID (VARCHAR)
         """
         pool = await self._get_pool()
         async with pool.acquire() as conn:
@@ -580,8 +585,8 @@ class PGUserRepository(UserRepository):
                 ) VALUES ($1, $2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '{}', '{}')
                 ON CONFLICT (session_id) DO NOTHING
             """,
-                uuid.UUID(session_id),
-                uuid.UUID(user_id)
+                session_id,  # Direct string, no UUID conversion
+                user_id      # Direct string, no UUID conversion
             )
 
     async def finalize_session_analytics(self, session_id: str) -> None:
@@ -591,34 +596,60 @@ class PGUserRepository(UserRepository):
         Call this when a session ends (user logout, timeout, or app shutdown).
 
         Args:
-            session_id: Session ID
+            session_id: Session ID (VARCHAR - supports both UUID and chat session formats)
         """
+        import logging
+        logger = logging.getLogger(__name__)
+
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            # Calculate session duration and update sessions.ended_at
-            session_info = await conn.fetchrow("""
-                UPDATE sessions
-                SET ended_at = NOW(), is_active = FALSE
-                WHERE session_id = $1 AND ended_at IS NULL
-                RETURNING started_at, ended_at
-            """, uuid.UUID(session_id))
+            # Try to convert to UUID for sessions table lookup (only for auth sessions)
+            # Chat sessions don't have entries in sessions table
+            try:
+                session_uuid = uuid.UUID(session_id)
+                logger.debug(f"[finalize_session_analytics] Processing UUID session: {session_id}")
 
-            if session_info:
-                # Calculate duration in minutes
-                started_at = session_info['started_at']
-                ended_at = session_info['ended_at']
-                duration_minutes = (ended_at - started_at).total_seconds() / 60.0
+                # Calculate session duration and update sessions.ended_at
+                try:
+                    session_info = await conn.fetchrow("""
+                        UPDATE sessions
+                        SET ended_at = NOW(), is_active = FALSE
+                        WHERE session_id = $1 AND ended_at IS NULL
+                        RETURNING started_at, ended_at
+                    """, session_uuid)
+                    logger.debug(f"[finalize_session_analytics] Updated sessions table, got info: {session_info is not None}")
+                except Exception as e:
+                    logger.error(f"[finalize_session_analytics] Error updating sessions table: {e}")
+                    raise
 
-                # Update session_analytics with duration
-                await conn.execute("""
-                    UPDATE session_analytics
-                    SET session_duration_minutes = $1,
-                        last_updated = NOW()
-                    WHERE session_id = $2
-                """,
-                    duration_minutes,
-                    uuid.UUID(session_id)
-                )
+                if session_info:
+                    # Calculate duration in minutes
+                    started_at = session_info['started_at']
+                    ended_at = session_info['ended_at']
+                    duration_minutes = (ended_at - started_at).total_seconds() / 60.0
+
+                    # Update session_analytics with duration
+                    try:
+                        await conn.execute("""
+                            UPDATE session_analytics
+                            SET session_duration_minutes = $1,
+                                last_updated = NOW()
+                            WHERE session_id = $2
+                        """,
+                            duration_minutes,
+                            session_id  # VARCHAR, no conversion needed
+                        )
+                        logger.debug(f"[finalize_session_analytics] Updated session_analytics")
+                    except Exception as e:
+                        logger.error(f"[finalize_session_analytics] Error updating session_analytics: {e}")
+                        raise
+            except ValueError:
+                # Not a UUID session (chat session), skip sessions table update
+                # Chat sessions track analytics but don't have entries in sessions table
+                logger.debug(f"Skipping sessions table update for non-UUID session: {session_id}")
+            except Exception as e:
+                logger.error(f"[finalize_session_analytics] Unexpected error for session {session_id}: {e}")
+                raise
 
     async def expire_old_sessions(self, max_session_hours: int = 8) -> tuple[int, list[str]]:
         """
@@ -668,13 +699,26 @@ class PGUserRepository(UserRepository):
         """
         pool = await self._get_pool()
         async with pool.acquire() as conn:
+            # Try to convert to UUID, skip check for non-UUID sessions
+            # (chat sessions use non-UUID session IDs like chat_general_xxx)
+            try:
+                session_uuid = uuid.UUID(session_id)
+            except ValueError:
+                # Not a UUID session, skip timeout check (chat sessions don't timeout)
+                return True
+
             session = await conn.fetchrow("""
                 SELECT started_at, ended_at, is_active FROM sessions
                 WHERE session_id = $1
-            """, uuid.UUID(session_id))
+            """, session_uuid)
 
-            if not session or not session['is_active'] or session['ended_at']:
-                return False  # Session doesn't exist or already ended
+            if not session:
+                return False  # Session doesn't exist
+
+            # Check if session is explicitly inactive or ended
+            # Treat NULL is_active as active (for backward compatibility)
+            if session['is_active'] is False or session['ended_at'] is not None:
+                return False  # Session ended or marked inactive
 
             # Check if session has exceeded max duration
             from datetime import datetime, timezone, timedelta
@@ -698,6 +742,9 @@ class PGUserRepository(UserRepository):
             basic_metrics = await self.get_user_metrics(user_id, days)
 
             # Get session analytics
+            # Note: session_analytics.session_id is VARCHAR (supports both UUID auth sessions and chat sessions)
+            #       sessions.session_id is UUID (only auth sessions have entries in sessions table)
+            # We LEFT JOIN to include both auth sessions and chat sessions in the stats
             session_stats = await conn.fetchrow("""
                 SELECT
                     COUNT(*) as total_sessions,
@@ -709,9 +756,12 @@ class PGUserRepository(UserRepository):
                     SUM(chat_requests) as chat_requests,
                     SUM(error_count) as total_errors
                 FROM session_analytics sa
-                JOIN sessions s ON sa.session_id = s.session_id
-                WHERE s.user_id = $1 AND s.started_at >= $2
-            """, uuid.UUID(user_id), from_date)
+                LEFT JOIN sessions s ON (
+                    sa.session_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                    AND sa.session_id::UUID = s.session_id
+                )
+                WHERE (s.user_id = $1 OR sa.user_id = $1) AND sa.started_at >= $2
+            """, user_id, from_date)  # user_id is VARCHAR
 
             # Get performance metrics
             performance_stats = await conn.fetch("""
@@ -726,7 +776,7 @@ class PGUserRepository(UserRepository):
                 WHERE user_id = $1 AND measured_at >= $2
                 GROUP BY metric_category, metric_name
                 ORDER BY metric_category, metric_name
-            """, uuid.UUID(user_id), from_date)
+            """, user_id, from_date)  # user_id is VARCHAR
 
             # Get data access summary
             data_access_stats = await conn.fetch("""
@@ -739,7 +789,7 @@ class PGUserRepository(UserRepository):
                 WHERE user_id = $1 AND accessed_at >= $2
                 GROUP BY data_source, resource_type
                 ORDER BY access_count DESC
-            """, uuid.UUID(user_id), from_date)
+            """, user_id, from_date)  # user_id is VARCHAR
 
             # Format enhanced metrics
             enhanced_metrics = {
@@ -866,7 +916,7 @@ class PGUserRepository(UserRepository):
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, NOW())
                 """,
                 uuid.UUID(session_id) if session_id else None,
-                uuid.UUID(user_id),
+                user_id,  # VARCHAR
                 access_type,
                 resource_type,
                 resource_count,
