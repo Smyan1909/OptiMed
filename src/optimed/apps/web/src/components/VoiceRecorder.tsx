@@ -41,14 +41,19 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, onRec
   const [isProcessing, setIsProcessing] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const transcriptRef = useRef('');
+  const interimTranscriptRef = useRef('');
   const wasRecordingRef = useRef(false);
   const justStoppedRef = useRef(false);
   const finalTranscriptTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Keep ref updated with latest transcript
+  // Keep refs updated with latest transcripts
   useEffect(() => {
     transcriptRef.current = transcript;
   }, [transcript]);
+
+  useEffect(() => {
+    interimTranscriptRef.current = interimTranscript;
+  }, [interimTranscript]);
 
   // Notify parent when recording state changes
   useEffect(() => {
@@ -62,21 +67,39 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, onRec
 
   // When transcript updates after stopping, immediately call onTranscriptComplete
   useEffect(() => {
-    if (justStoppedRef.current && transcript && !isRecording) {
-      // Clear any pending timeout
-      if (finalTranscriptTimeoutRef.current) {
-        clearTimeout(finalTranscriptTimeoutRef.current);
-        finalTranscriptTimeoutRef.current = null;
-      }
+    if (justStoppedRef.current && !isRecording) {
+      // Capture the current values BEFORE any state changes
+      const currentFinal = transcript;
+      const currentInterim = interimTranscript;
+      const hasContent = currentFinal || currentInterim;
 
-      logInfo(`[VoiceRecorder] Final transcript received: ${transcript.substring(0, 100)}...`);
-      setIsProcessing(false);  // Clear processing state
-      onTranscriptComplete(transcript.trim());
-      reset();
-      justStoppedRef.current = false;
-      wasRecordingRef.current = false;
+      if (hasContent) {
+        // Clear any pending timeout
+        if (finalTranscriptTimeoutRef.current) {
+          clearTimeout(finalTranscriptTimeoutRef.current);
+          finalTranscriptTimeoutRef.current = null;
+        }
+
+        // Combine final + interim transcript
+        const fullTranscript = (currentFinal + (currentInterim ? ' ' + currentInterim : '')).trim();
+
+        logInfo(`[VoiceRecorder] Final transcript received: ${fullTranscript.substring(0, 100)}...`);
+
+        // Store the combined result before reset
+        transcriptRef.current = fullTranscript;
+
+        setIsProcessing(false);  // Clear processing state
+
+        if (fullTranscript) {
+          onTranscriptComplete(fullTranscript);
+        }
+
+        reset();
+        justStoppedRef.current = false;
+        wasRecordingRef.current = false;
+      }
     }
-  }, [transcript, isRecording, onTranscriptComplete, reset]);
+  }, [transcript, interimTranscript, isRecording, onTranscriptComplete, reset]);
 
   // Log when SDK becomes ready
   useEffect(() => {
@@ -104,35 +127,48 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, onRec
 
   const handleToggle = async () => {
     if (isRecording) {
-      // Stop recording
-      logInfo('[VoiceRecorder] Stopping recording...');
+      logInfo(`[VoiceRecorder] Stopping recording...`);
+
       wasRecordingRef.current = true;
       justStoppedRef.current = true;
       setIsProcessing(true);  // Start processing state
       await stopRecording();
 
-      // Fallback timeout in case no transcript arrives (shouldn't normally happen)
+      // Set a longer timeout that only clears processing state but doesn't reset
+      // This allows late-arriving transcripts to still be captured
       finalTranscriptTimeoutRef.current = setTimeout(() => {
         if (justStoppedRef.current) {
-          const fullTranscript = transcriptRef.current.trim();
-          logInfo(`[VoiceRecorder] Fallback timeout - transcript: "${fullTranscript}"`);
+          // Check one final time if we got any transcript
+          const finalText = transcriptRef.current;
+          const interimText = interimTranscriptRef.current;
+          const fullTranscript = (finalText + (interimText ? ' ' + interimText : '')).trim();
 
-          setIsProcessing(false);  // Clear processing state
+          logInfo(`[VoiceRecorder] Timeout check - transcript: "${fullTranscript}"`);
+
           if (fullTranscript) {
+            // We got something, deliver it
+            setIsProcessing(false);
             onTranscriptComplete(fullTranscript);
+            reset();
+            justStoppedRef.current = false;
+            wasRecordingRef.current = false;
           } else {
-            logInfo('[VoiceRecorder] No transcript received after timeout');
+            // Still nothing after extended wait - just clear processing
+            logInfo('[VoiceRecorder] No transcript after extended timeout, clearing processing state but keeping listener active');
+            setIsProcessing(false);
+            // DON'T reset or clear justStoppedRef - keep waiting for transcript
           }
-          reset();
-          justStoppedRef.current = false;
-          wasRecordingRef.current = false;
         }
-      }, 500); // Fallback timeout - should be triggered by event before this
+      }, 5000); // Extended to 5 seconds to give Corti plenty of time
     } else {
       // Start recording - fetch token first
       try {
         setIsFetching(true);
         setTokenError(null);
+
+        // Clear any previous transcripts
+        transcriptRef.current = '';
+        interimTranscriptRef.current = '';
 
         logInfo('[VoiceRecorder] Fetching Corti token...');
         const response = await fetch('/api/transcribe/token', {
