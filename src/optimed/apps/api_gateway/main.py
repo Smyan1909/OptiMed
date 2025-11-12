@@ -2464,18 +2464,21 @@ async def get_current_user_info(user_ctx: dict = Depends(get_user_context)):
 
 @app.post("/auth/logout")
 async def logout(
-    request: Request,
     user_ctx: dict = Depends(get_user_context)
 ):
-    """Logout user and invalidate session. Calls GrandID logout for SITHS users."""
+    """
+    Logout user and invalidate session. Calls GrandID logout for SITHS users.
+    Cleans up ALL user documents from memory (reuses cleanup logic from new session endpoint).
+    """
     try:
         current_user = user_ctx.get("user")
-        session_id = user_ctx.get("session_id")
+        session_id = user_ctx.get("session_id")  # Auth session
 
         if not current_user or not session_id:
             raise HTTPException(status_code=401, detail="Not authenticated")
 
-        logger.info(f"[Logout] User '{current_user.username}' (ID: {sanitize_user_id(current_user.user_id)}) logging out from session: {sanitize_session_id(session_id)}")
+        logger.info(f"[Logout] User '{current_user.username}' (ID: {sanitize_user_id(current_user.user_id)}) logging out")
+        logger.info(f"[Logout] Auth session: {sanitize_session_id(session_id)}")
 
         # Get the session to check if it has a GrandID sessionid
         session = await _user_repo.get_active_session(session_id)
@@ -2497,15 +2500,41 @@ async def logout(
             logger.info("[Logout] Non-SITHS session, skipping GrandID logout")
 
         # Perform complete session cleanup (GDPR compliance)
-        logger.info(f"[Logout] Starting complete session cleanup for {sanitize_session_id(session_id)}")
+        # Reuse the same cleanup logic as "new session" button - cleanup ALL sessions for user
+        logger.info(f"[Logout] ===== STARTING COMPLETE USER CLEANUP =====")
 
-        # 1. Clear RAM memory (chat history, chunk cache, documents)
         try:
+            # Clean up PDF documents for all sessions of this user
+            if hasattr(_pdf_service, 'sessions'):
+                sessions_to_cleanup = []
+                for session_key in _pdf_service.sessions.keys():
+                    if current_user.user_id in session_key:
+                        sessions_to_cleanup.append(session_key)
+
+                for session_key in sessions_to_cleanup:
+                    await _pdf_service.cleanup_session(session_key)
+                    logger.info(f"[Logout] Cleaned up PDF session: {sanitize_session_id(session_key)}")
+
+            # Clean up XML documents for all sessions of this user
+            if hasattr(_xml_service, 'sessions'):
+                sessions_to_cleanup = []
+                for session_key in _xml_service.sessions.keys():
+                    if current_user.user_id in session_key:
+                        sessions_to_cleanup.append(session_key)
+
+                for session_key in sessions_to_cleanup:
+                    await _xml_service.cleanup_session(session_key)
+                    logger.info(f"[Logout] Cleaned up XML session: {sanitize_session_id(session_key)}")
+
+            # Clear auth session RAM
             cleanup_result = await clear_chat_session(session_id)
-            logger.info(f"[Logout] RAM cleanup: {cleanup_result.get('message', 'completed')}")
+            logger.info(f"[Logout] Auth session RAM cleanup: {cleanup_result.get('message', 'completed')}")
+
+            logger.info(f"[Logout] ===== USER CLEANUP COMPLETE =====")
+
         except Exception as e:
-            log_error(logger, "Logout - RAM cleanup", e)
-            # Continue with logout even if RAM cleanup fails
+            log_error(logger, "Logout - user cleanup", e)
+            # Continue with logout even if cleanup fails
 
         # 2. Clear encryption keys
         try:

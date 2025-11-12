@@ -8,6 +8,8 @@ import { logInfo, logError } from '@/lib/logger';
 interface VoiceRecorderProps {
   onTranscriptComplete: (text: string) => void;
   onInterimTranscript?: (text: string) => void;  // Real-time interim results
+  onRecordingStateChange?: (isRecording: boolean) => void;  // Notify parent of recording state
+  onProcessingStateChange?: (isProcessing: boolean) => void;  // Notify parent of processing state
   disabled?: boolean;
   language?: string;
 }
@@ -23,7 +25,7 @@ const getAuthHeaders = () => {
   return headers;
 };
 
-export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, disabled = false, language = 'en' }: VoiceRecorderProps) {
+export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, onRecordingStateChange, onProcessingStateChange, disabled = false, language = 'en' }: VoiceRecorderProps) {
   const {
     isRecording,
     isReady,
@@ -36,6 +38,7 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, disab
   } = useCortiDictation();
 
   const [isFetching, setIsFetching] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const transcriptRef = useRef('');
   const wasRecordingRef = useRef(false);
@@ -47,6 +50,16 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, disab
     transcriptRef.current = transcript;
   }, [transcript]);
 
+  // Notify parent when recording state changes
+  useEffect(() => {
+    onRecordingStateChange?.(isRecording);
+  }, [isRecording, onRecordingStateChange]);
+
+  // Notify parent when processing state changes
+  useEffect(() => {
+    onProcessingStateChange?.(isProcessing);
+  }, [isProcessing, onProcessingStateChange]);
+
   // When transcript updates after stopping, immediately call onTranscriptComplete
   useEffect(() => {
     if (justStoppedRef.current && transcript && !isRecording) {
@@ -57,6 +70,7 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, disab
       }
 
       logInfo(`[VoiceRecorder] Final transcript received: ${transcript.substring(0, 100)}...`);
+      setIsProcessing(false);  // Clear processing state
       onTranscriptComplete(transcript.trim());
       reset();
       justStoppedRef.current = false;
@@ -94,6 +108,7 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, disab
       logInfo('[VoiceRecorder] Stopping recording...');
       wasRecordingRef.current = true;
       justStoppedRef.current = true;
+      setIsProcessing(true);  // Start processing state
       await stopRecording();
 
       // Fallback timeout in case no transcript arrives (shouldn't normally happen)
@@ -102,6 +117,7 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, disab
           const fullTranscript = transcriptRef.current.trim();
           logInfo(`[VoiceRecorder] Fallback timeout - transcript: "${fullTranscript}"`);
 
+          setIsProcessing(false);  // Clear processing state
           if (fullTranscript) {
             onTranscriptComplete(fullTranscript);
           } else {
@@ -155,16 +171,20 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, disab
     <div className="relative">
       <button
         onClick={handleToggle}
-        disabled={disabled || isFetching || !isReady}
+        disabled={disabled || isFetching || !isReady || isProcessing}
         className={`p-2 rounded-full transition-all ${
           isRecording
             ? 'bg-red-500 hover:bg-red-600 animate-pulse'
+            : isProcessing
+            ? 'bg-yellow-500'
             : 'bg-blue-500 hover:bg-blue-600'
         } text-white disabled:opacity-50 disabled:cursor-not-allowed`}
-        title={!isReady ? 'Loading...' : (isRecording ? 'Stop recording' : 'Start voice input')}
+        title={!isReady ? 'Loading...' : isProcessing ? 'Processing...' : (isRecording ? 'Stop recording' : 'Start voice input')}
         type="button"
       >
         {!isReady || isFetching ? (
+          <Loader2 className="w-5 h-5 animate-spin" />
+        ) : isProcessing ? (
           <Loader2 className="w-5 h-5 animate-spin" />
         ) : isRecording ? (
           <MicOff className="w-5 h-5" />

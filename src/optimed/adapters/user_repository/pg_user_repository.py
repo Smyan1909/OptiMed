@@ -321,17 +321,37 @@ class PGUserRepository(UserRepository):
             return session
     
     async def _create_gdpr_session(self, user_id: str, session_id: str) -> None:
-        """Create a GDPR-compliant session record."""
+        """
+        Create a GDPR-compliant session record in sessions table.
+        Only creates if BOTH session_id AND user_id are valid UUIDs.
+        SITHS/EHR sessions (with VARCHAR user_ids) are tracked in user_sessions table only.
+        """
         try:
+            # Only create GDPR session if session_id is a valid UUID
+            try:
+                session_uuid = uuid.UUID(session_id)
+            except ValueError:
+                logger.debug(f"Skipping GDPR session creation for non-UUID session_id: {session_id}")
+                return
+
+            # Also check if user_id is a valid UUID (sessions table requires UUID user_id)
+            # SITHS users have VARCHAR user_ids like "siths_c1653fc552ad"
+            # EHR users have VARCHAR user_ids like "ehr_user_abc-123..."
+            try:
+                user_uuid = uuid.UUID(user_id)
+            except ValueError:
+                logger.debug(f"Skipping GDPR session creation for non-UUID user_id: {user_id} (SITHS/EHR user)")
+                return
+
             pool = await self._get_pool()
             async with pool.acquire() as conn:
                 # Generate pseudonymized subject hash (placeholder - should be actual patient ID)
                 subject_hash = hashlib.sha256(f"user_{user_id}_session_{session_id}".encode()).digest()
-                
+
                 # Generate model config hash
                 model_config = {"version": "1.0", "model": "gpt-4"}
                 model_config_hash = hashlib.sha256(json.dumps(model_config, sort_keys=True).encode()).digest()
-                
+
                 await conn.execute("""
                     INSERT INTO sessions (
                         session_id, subject_hash, user_id, tenant_id,
@@ -342,11 +362,12 @@ class PGUserRepository(UserRepository):
                         is_active = TRUE,
                         ended_at = NULL
                 """,
-                    uuid.UUID(session_id), subject_hash, user_id,  # user_id is VARCHAR, not UUID
+                    session_uuid, subject_hash, user_uuid,  # Both UUIDs now
                     uuid.uuid4(),  # Default tenant_id - should be set properly
                     "care_delivery", "diagnosis", ["patient/read", "observation/read"],
                     model_config_hash
                 )
+                logger.debug(f"Created GDPR session record for session {session_id}, user {user_id}")
         except Exception as e:
             log_error(logger, "Failed to create GDPR session record", e)
 
@@ -591,7 +612,7 @@ class PGUserRepository(UserRepository):
 
     async def finalize_session_analytics(self, session_id: str) -> None:
         """
-        Finalize session analytics by calculating duration and updating sessions table.
+        Finalize session analytics by calculating duration and updating both sessions and user_sessions tables.
 
         Call this when a session ends (user logout, timeout, or app shutdown).
 
@@ -603,13 +624,16 @@ class PGUserRepository(UserRepository):
 
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            # Try to convert to UUID for sessions table lookup (only for auth sessions)
+            session_info = None
+            duration_minutes = None
+
+            # Try to convert to UUID for sessions table lookup (only for GDPR auth sessions)
             # Chat sessions don't have entries in sessions table
             try:
                 session_uuid = uuid.UUID(session_id)
                 logger.debug(f"[finalize_session_analytics] Processing UUID session: {session_id}")
 
-                # Calculate session duration and update sessions.ended_at
+                # Try updating sessions table (GDPR-safe sessions)
                 try:
                     session_info = await conn.fetchrow("""
                         UPDATE sessions
@@ -617,18 +641,38 @@ class PGUserRepository(UserRepository):
                         WHERE session_id = $1 AND ended_at IS NULL
                         RETURNING started_at, ended_at
                     """, session_uuid)
-                    logger.debug(f"[finalize_session_analytics] Updated sessions table, got info: {session_info is not None}")
+
+                    if session_info:
+                        logger.debug(f"[finalize_session_analytics] Updated sessions table")
+                        started_at = session_info['started_at']
+                        ended_at = session_info['ended_at']
+                        duration_minutes = (ended_at - started_at).total_seconds() / 60.0
                 except Exception as e:
-                    logger.error(f"[finalize_session_analytics] Error updating sessions table: {e}")
-                    raise
+                    logger.warning(f"[finalize_session_analytics] Could not update sessions table: {e}")
+                    # Continue - might be in user_sessions instead
 
-                if session_info:
-                    # Calculate duration in minutes
-                    started_at = session_info['started_at']
-                    ended_at = session_info['ended_at']
-                    duration_minutes = (ended_at - started_at).total_seconds() / 60.0
+                # Also try updating user_sessions table (SITHS/EHR/manual login sessions)
+                # This is where SITHS sessions are stored
+                try:
+                    user_session_info = await conn.fetchrow("""
+                        UPDATE user_sessions
+                        SET is_active = FALSE
+                        WHERE session_id = $1 AND is_active = TRUE
+                        RETURNING login_time, NOW() as ended_at
+                    """, session_id)  # Use string session_id for VARCHAR column
 
-                    # Update session_analytics with duration
+                    if user_session_info:
+                        logger.debug(f"[finalize_session_analytics] Updated user_sessions table")
+                        # Use user_sessions timing if sessions table didn't have it
+                        if not session_info:
+                            started_at = user_session_info['login_time']
+                            ended_at = user_session_info['ended_at']
+                            duration_minutes = (ended_at - started_at).total_seconds() / 60.0
+                except Exception as e:
+                    logger.warning(f"[finalize_session_analytics] Could not update user_sessions table: {e}")
+
+                # Update session_analytics with calculated duration
+                if duration_minutes is not None:
                     try:
                         await conn.execute("""
                             UPDATE session_analytics
@@ -639,14 +683,13 @@ class PGUserRepository(UserRepository):
                             duration_minutes,
                             session_id  # VARCHAR, no conversion needed
                         )
-                        logger.debug(f"[finalize_session_analytics] Updated session_analytics")
+                        logger.debug(f"[finalize_session_analytics] Updated session_analytics with duration: {duration_minutes:.2f} min")
                     except Exception as e:
                         logger.error(f"[finalize_session_analytics] Error updating session_analytics: {e}")
-                        raise
             except ValueError:
                 # Not a UUID session (chat session), skip sessions table update
                 # Chat sessions track analytics but don't have entries in sessions table
-                logger.debug(f"Skipping sessions table update for non-UUID session: {session_id}")
+                logger.debug(f"[finalize_session_analytics] Skipping table updates for non-UUID session: {session_id}")
             except Exception as e:
                 logger.error(f"[finalize_session_analytics] Unexpected error for session {session_id}: {e}")
                 raise
@@ -654,6 +697,7 @@ class PGUserRepository(UserRepository):
     async def expire_old_sessions(self, max_session_hours: int = 8) -> tuple[int, list[str]]:
         """
         Expire sessions older than max_session_hours and finalize their analytics.
+        Checks BOTH sessions table (GDPR sessions) AND user_sessions table (SITHS/EHR/manual login).
 
         Args:
             max_session_hours: Maximum session duration in hours (default: 8)
@@ -661,27 +705,49 @@ class PGUserRepository(UserRepository):
         Returns:
             Tuple of (number of sessions expired, list of expired session IDs)
         """
+        import logging
+        logger = logging.getLogger(__name__)
+
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            # Find sessions older than max_session_hours
-            expired_sessions = await conn.fetch("""
-                SELECT session_id FROM sessions
-                WHERE is_active = TRUE
-                AND ended_at IS NULL
-                AND started_at < NOW() - INTERVAL '{} hours'
-            """.format(max_session_hours))
+            # Find expired sessions from BOTH tables
+            all_expired_sessions = []
 
+            # 1. Find expired sessions from sessions table (GDPR sessions)
+            try:
+                gdpr_sessions = await conn.fetch("""
+                    SELECT session_id::TEXT as session_id FROM sessions
+                    WHERE is_active = TRUE
+                    AND ended_at IS NULL
+                    AND started_at < NOW() - INTERVAL '{} hours'
+                """.format(max_session_hours))
+                all_expired_sessions.extend([row['session_id'] for row in gdpr_sessions])
+                logger.debug(f"Found {len(gdpr_sessions)} expired GDPR sessions")
+            except Exception as e:
+                logger.error(f"Error finding expired GDPR sessions: {e}")
+
+            # 2. Find expired sessions from user_sessions table (SITHS/EHR/manual login)
+            try:
+                user_sessions = await conn.fetch("""
+                    SELECT session_id FROM user_sessions
+                    WHERE is_active = TRUE
+                    AND login_time < NOW() - INTERVAL '{} hours'
+                """.format(max_session_hours))
+                all_expired_sessions.extend([row['session_id'] for row in user_sessions])
+                logger.debug(f"Found {len(user_sessions)} expired user sessions (SITHS/EHR/manual)")
+            except Exception as e:
+                logger.error(f"Error finding expired user sessions: {e}")
+
+            # Finalize all expired sessions
             expired_count = 0
             expired_session_ids = []
-            for session_row in expired_sessions:
-                session_id = str(session_row['session_id'])
+            for session_id in all_expired_sessions:
                 try:
                     await self.finalize_session_analytics(session_id)
                     expired_count += 1
                     expired_session_ids.append(session_id)
+                    logger.info(f"Expired session: {session_id}")
                 except Exception as e:
-                    import logging
-                    logger = logging.getLogger(__name__)
                     logger.error(f"Failed to expire session {session_id}: {e}")
 
             return expired_count, expired_session_ids
@@ -707,13 +773,29 @@ class PGUserRepository(UserRepository):
                 # Not a UUID session, skip timeout check (chat sessions don't timeout)
                 return True
 
+            # Check both sessions table (GDPR-safe) and user_sessions table (SITHS/EHR login)
+            # First, try the sessions table (UUID primary key)
             session = await conn.fetchrow("""
                 SELECT started_at, ended_at, is_active FROM sessions
                 WHERE session_id = $1
             """, session_uuid)
 
+            # If not found in sessions table, check user_sessions table (VARCHAR primary key)
             if not session:
-                return False  # Session doesn't exist
+                user_session = await conn.fetchrow("""
+                    SELECT login_time, NULL as ended_at, is_active FROM user_sessions
+                    WHERE session_id = $1
+                """, session_id)  # Use string session_id for VARCHAR column
+
+                if not user_session:
+                    return False  # Session doesn't exist in either table
+
+                # Map user_sessions columns to sessions table format
+                session = {
+                    'started_at': user_session['login_time'],
+                    'ended_at': user_session['ended_at'],
+                    'is_active': user_session['is_active']
+                }
 
             # Check if session is explicitly inactive or ended
             # Treat NULL is_active as active (for backward compatibility)
