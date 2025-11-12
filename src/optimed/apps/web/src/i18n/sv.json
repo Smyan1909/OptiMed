@@ -961,6 +961,18 @@
       "stopExtraction": "Stoppa extraktion",
       "stopping": "Stoppar..."
     }
+  },
+  "help": {
+    "title": "Behöver du hjälp?",
+    "subtitle": "Kontakta oss för support",
+    "email": {
+      "label": "E-post",
+      "value": "hi@optimedai.com"
+    },
+    "phone": {
+      "label": "Telefon",
+      "value": "+46 73 786 95 15"
+    }
   }
 }
 

@@ -23,6 +23,7 @@ import {
   getWatcherStatus,
   getRPAExecutionStatus,
   startRPAExtraction,
+  startDoctorNotesExtraction,
   stopRPAExtraction,
 } from '@/lib/watcherService';
 import { logInfo, logError } from '@/lib/logger';
@@ -159,6 +160,35 @@ export function RPAControlDropdown() {
     }
   };
 
+  const handleStartDoctorNotesExtraction = async () => {
+    setIsStarting(true);
+    try {
+      logInfo('RPA Control: Starting doctor notes extraction...');
+      const result = await startDoctorNotesExtraction();
+
+      if (result.success) {
+        logInfo('RPA Control: Doctor notes extraction started successfully');
+        // Update status immediately
+        setStatus((prev) => ({
+          ...prev,
+          isExecuting: true,
+          executionStatus: 'running',
+          lastError: undefined,
+        }));
+      } else {
+        logError('RPA Control: Failed to start doctor notes extraction', result.error);
+        setStatus((prev) => ({
+          ...prev,
+          lastError: result.error,
+        }));
+      }
+    } catch (error) {
+      logError('RPA Control: Error starting doctor notes extraction', error);
+    } finally {
+      setIsStarting(false);
+    }
+  };
+
   const handleStopExtraction = async () => {
     setIsStopping(true);
     try {
@@ -270,6 +300,15 @@ export function RPAControlDropdown() {
         >
           <PlayCircle className="mr-2 h-4 w-4" />
           <span>{isStarting ? t('rpa.actions.starting') : t('rpa.actions.startExtraction')}</span>
+        </DropdownMenuItem>
+
+        <DropdownMenuItem
+          className="cursor-pointer"
+          onClick={handleStartDoctorNotesExtraction}
+          disabled={!canStartExtraction}
+        >
+          <PlayCircle className="mr-2 h-4 w-4" />
+          <span>{isStarting ? 'Startar...' : 'Extrahera endast läkaranteckningar'}</span>
         </DropdownMenuItem>
 
         {status.isExecuting && (

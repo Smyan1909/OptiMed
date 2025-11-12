@@ -192,6 +192,42 @@ export async function startRPAExtraction(): Promise<{
 }
 
 /**
+ * Start doctor notes extraction workflow on the local watcher
+ * Returns true if successfully started, false otherwise
+ */
+export async function startDoctorNotesExtraction(): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), WATCHER_TIMEOUT);
+
+    const response = await fetch(`${WATCHER_BASE_URL}/start-doctor-notes-extraction`, {
+      method: 'POST',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      logInfo('Watcher Service: Doctor notes extraction started successfully');
+      return { success: true };
+    } else {
+      const data = await response.json().catch(() => ({}));
+      const error = data.error || 'Failed to start doctor notes extraction';
+      logWarning(`Watcher Service: Failed to start doctor notes extraction: ${error}`);
+      return { success: false, error };
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Watcher connection timeout' };
+    }
+    return { success: false, error: 'Watcher not available' };
+  }
+}
+
+/**
  * Stop/cancel the currently running RPA extraction
  * Returns true if successfully stopped, false otherwise
  */

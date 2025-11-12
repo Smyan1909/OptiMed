@@ -3746,38 +3746,15 @@ async def get_upload_context(
         logger.error(f"[ERROR] User ID not found in user context - session: {sanitize_session_id(session_id) if session_id else "none"}")
         return UploadContextResponse(patient_id=None, chat_session_id=None)
 
-    try:
-        # Query database for most recent session for this user
-        sessions = await _vector_store.get_user_sessions_for_patient(
-            user_id=user_id,
-            limit=1
-        )
+    # RAM-ONLY MODE: No database queries for GDPR compliance
+    # Always use the auth session_id as the upload context
+    # Documents will be available to all chat sessions for this user
+    logger.info(f"[INFO] upload-context - RAM-only mode, using auth session: {sanitize_session_id(session_id)}")
 
-        logger.info(f"[DEBUG] upload-context - Found {len(sessions) if sessions else 0} sessions in vector store")
-
-        if sessions and len(sessions) > 0:
-            most_recent_session = sessions[0]
-            logger.info("[INFO] upload-context - Returning most recent session from DB")
-            return UploadContextResponse(
-                patient_id=most_recent_session.patient_id,
-                chat_session_id=most_recent_session.session_id
-            )
-        else:
-            # No sessions in vector store yet - use auth session_id as fallback
-            logger.info(f"[INFO] upload-context - No sessions in DB, using auth session as fallback: {sanitize_session_id(session_id)}")
-            return UploadContextResponse(
-                patient_id=None,
-                chat_session_id=session_id  # Use auth session_id as chat_session_id
-            )
-    except Exception as e:
-        log_error(logger, "upload-context", e)
-        import traceback
-        traceback.print_exc()
-        # Still return session_id as fallback on error
-        return UploadContextResponse(
-            patient_id=None,
-            chat_session_id=session_id
-        )
+    return UploadContextResponse(
+        patient_id=None,  # No patient context for general uploads
+        chat_session_id=session_id  # Use auth session_id
+    )
 
 
 @app.post("/documents/upload", response_model=PDFUploadResponse)

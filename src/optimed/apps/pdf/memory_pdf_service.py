@@ -279,13 +279,14 @@ class MemoryPDFService(PDFService):
         checked_sessions = 0
         checked_pdfs = 0
 
-        # Search through all sessions for this user
+        # RAM-ONLY MODE: Search through ALL sessions for this user
+        # Ignore session_id parameter to allow documents uploaded in one session (auth)
+        # to be available in all chat sessions for GDPR compliance
         for session_key, session_data in self.sessions.items():
-            # Match by user_id (always) and optionally by session_id
+            # Match by user_id only - ignore session_id for cross-session availability
             user_match = user_id in session_key
-            session_match = (session_id is None) or (session_id in session_key)
 
-            if user_match and session_match:
+            if user_match:
                 checked_sessions += 1
                 logger.debug(f"Checking session: {session_key}")
                 session_data.update_access_time()

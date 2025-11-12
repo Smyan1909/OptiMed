@@ -961,6 +961,18 @@
       "stopExtraction": "Stop Extraction",
       "stopping": "Stopping..."
     }
+  },
+  "help": {
+    "title": "Need Help?",
+    "subtitle": "Contact us for support",
+    "email": {
+      "label": "Email",
+      "value": "hi@optimedai.com"
+    },
+    "phone": {
+      "label": "Phone",
+      "value": "+46 73 786 95 15"
+    }
   }
 }
 
