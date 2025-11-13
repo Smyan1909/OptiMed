@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
 import { getCurrentUser, loginUser, logoutUser, User, setupSessionEncryption } from '@/lib/api';
 import { sendSessionToWatcher, clearSessionFromWatcher } from '@/lib/watcherService';
 import { sanitizeUserId, sanitizePatientId, sanitizeSessionId, sanitizeDocumentId, logInfo, logError, logWarning } from '@/lib/logger';
@@ -182,30 +182,36 @@ export function UserProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const isLoggingOutRef = useRef(false);
+
   // Global 401 interceptor - automatically logout when session expires
   useEffect(() => {
     if (!isAuthenticated) return;
 
     const originalFetch = window.fetch;
-    let isLoggingOut = false; // Prevent multiple concurrent logout calls
 
     window.fetch = async (...args: Parameters<typeof fetch>) => {
       const response = await originalFetch(...args);
 
       // Intercept 401 responses (session expired/invalid)
-      if (response.status === 401 && isAuthenticated && !isLoggingOut) {
-        isLoggingOut = true;
-        logWarning('[401 Interceptor] Session expired - triggering automatic logout');
+      if (response.status === 401 && isAuthenticated && !isLoggingOutRef.current) {
 
-        // Clone response before consuming it
-        const clonedResponse = response.clone();
+        const url = args[0];
+        const isAuthEndpoint = typeof url === 'string' &&  (url.includes('/auth/logout') || url.includes('/auth/login') || url.includes('/auth/me'));
 
-        // Trigger logout (async, but don't await to avoid blocking the response)
-        logout().finally(() => {
-          isLoggingOut = false;
-        });
+        if (!isAuthEndpoint) {
+          isLoggingOutRef.current = true;isLoggingOutRef.current = true;
+          logWarning('[401 Interceptor] Session expired - triggering automatic logout');
 
-        return clonedResponse;
+          // Trigger logout (async, but don't await to avoid blocking the response)
+          logout().finally(() => {
+            isLoggingOutRef.current = false;
+          });
+        }
+
+        
+
+        return response;
       }
 
       return response;
