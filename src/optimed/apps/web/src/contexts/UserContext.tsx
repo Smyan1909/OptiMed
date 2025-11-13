@@ -200,7 +200,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
         const isAuthEndpoint = typeof url === 'string' &&  (url.includes('/auth/logout') || url.includes('/auth/login') || url.includes('/auth/me'));
 
         if (!isAuthEndpoint) {
-          isLoggingOutRef.current = true;isLoggingOutRef.current = true;
+          isLoggingOutRef.current = true;
           logWarning('[401 Interceptor] Session expired - triggering automatic logout');
 
           // Trigger logout (async, but don't await to avoid blocking the response)
@@ -208,8 +208,6 @@ export function UserProvider({ children }: { children: ReactNode }) {
             isLoggingOutRef.current = false;
           });
         }
-
-        
 
         return response;
       }
