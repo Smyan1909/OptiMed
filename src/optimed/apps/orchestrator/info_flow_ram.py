@@ -690,13 +690,20 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
         @streaming_step("fetch_patient")
         async def fetch_patient(state: FlowState) -> FlowState:
+            # Skip patient fetching if no patient_id is provided (general chat mode)
+            if not state.patient_id:
+                logger.info("No patient_id provided - skipping patient fetch (general chat mode)")
+                state.patient_ctx = None
+                state.journal_entries = []
+                return state
+
             # Try to use user's EHR connection first
             fhir_repo = self._fhir
-            
+
             if state.user_id:
                 try:
                     user_fhir_repo = await self._connection_service.create_fhir_repository(
-                        state.user_id, 
+                        state.user_id,
                         "smart_fhir"
                     )
                     if user_fhir_repo:
@@ -704,18 +711,18 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                         logger.info("Using user's SMART on FHIR connection")
                 except Exception as e:
                     logger.info(f"Failed to use SMART connection: {e}, falling back to default")
-            
+
             state.patient_ctx = await fhir_repo.get_patient(str(state.patient_id))
-            
+
             # Also fetch journal entries for this patient
             try:
                 journal_entries = await fhir_repo.get_patient_journal_entries(str(state.patient_id))
                 state.journal_entries = list(journal_entries)
-                logger.info(f"Fetched {len(state.journal_entries)} journal entries for patient {sanitize_patient_id(str(state.patient_id))}")
+                logger.info(f"Fetched {len(state.journal_entries)} journal entries for patient {sanitize_patient_id(state.patient_id) if state.patient_id else 'None'}")
             except Exception as e:
                 logger.info(f"Failed to fetch journal entries: {e}")
                 state.journal_entries = []
-            
+
             return state
 
         @streaming_step("fetch_pdfs")
@@ -730,17 +737,19 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 # Get PDF documents for the current session (patient-specific or general)
                 pdf_documents = await self._pdf_service.get_documents_for_context(
                     user_id=state.user_id,
-                    patient_id=state.patient_id
+                    patient_id=state.patient_id,
+                    session_id=state.session_id
                 )
 
-                # Filter to only include ready documents with extracted text
+                # Filter to only include ready documents (with or without text - OCR will be added later)
+                # TODO: Add OCR support for image-based PDFs
                 ready_pdfs = [
                     doc for doc in pdf_documents
-                    if doc.status.value == "READY" and doc.extracted_text
+                    if doc.status.value == "READY"
                 ]
 
                 state.uploaded_pdfs = ready_pdfs
-                logger.info(f"Fetched {len(state.uploaded_pdfs)} ready PDF documents for session {state.session_id} (patient_id={sanitize_patient_id(str(state.patient_id))})")
+                logger.info(f"Fetched {len(state.uploaded_pdfs)} ready PDF documents for session {state.session_id} (patient_id={sanitize_patient_id(state.patient_id) if state.patient_id else 'None'})")
 
             except Exception as e:
                 logger.info(f"Failed to fetch PDF documents: {e}")
@@ -771,7 +780,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 ]
 
                 state.uploaded_xmls = ready_xmls
-                logger.info(f"Fetched {len(state.uploaded_xmls)} ready XML documents for session {state.session_id} (patient_id={sanitize_patient_id(str(state.patient_id))})")
+                logger.info(f"Fetched {len(state.uploaded_xmls)} ready XML documents for session {state.session_id} (patient_id={sanitize_patient_id(state.patient_id) if state.patient_id else 'None'})")
 
             except Exception as e:
                 logger.info(f"Failed to fetch XML documents: {e}")
@@ -969,7 +978,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     logger.warning("[audit] Session ID is None - cannot log events")
 
             try:
-                logger.info(f"Starting retrieval for patient_id: {sanitize_patient_id(str(state.patient_id))}")
+                logger.info(f"Starting retrieval for patient_id: {sanitize_patient_id(state.patient_id) if state.patient_id else 'None'}")
                 logger.info(f"User prompt length: {len(state.user_prompt)} chars")
 
                 # 1) Chunking via ChunkingOrchestrator (policy-driven)

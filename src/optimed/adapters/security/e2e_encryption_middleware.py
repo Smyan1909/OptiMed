@@ -45,7 +45,8 @@ class E2EEncryptionMiddleware(BaseHTTPMiddleware):
             "/health",
             "/docs",
             "/openapi.json",
-            "/favicon.ico"
+            "/favicon.ico",
+            "/auth/logout"  # Logout doesn't need encryption (simple session cleanup)
         }
         
         # Routes that use streaming responses (should not be encrypted)

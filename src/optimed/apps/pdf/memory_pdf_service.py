@@ -262,28 +262,63 @@ class MemoryPDFService(PDFService):
         logger.warning("PDF document not found")
         return False
 
-    async def get_documents_for_context(self, user_id: str, patient_id: Optional[str] = None) -> Sequence[PDFDocument]:
-        """Get PDF documents relevant for the current context (patient-specific or general)."""
-        logger.info(f"Get documents for context - user_id: {sanitize_user_id(user_id)}, patient_id: {sanitize_patient_id(patient_id) if patient_id else 'None'}")
+    async def get_documents_for_context(self, user_id: str, patient_id: Optional[str] = None, session_id: Optional[str] = None) -> Sequence[PDFDocument]:
+        """Get PDF documents relevant for the current context (patient-specific or general).
+
+        Args:
+            user_id: User ID to filter documents
+            patient_id: Optional patient ID to filter patient-specific documents
+            session_id: Optional session ID to filter by specific session (for more precise retrieval)
+
+        Returns:
+            List of PDF documents matching the criteria
+        """
+        logger.info(f"Get documents for context - user_id: {sanitize_user_id(user_id)}, patient_id: {sanitize_patient_id(patient_id) if patient_id else 'None'}, session_id: {sanitize_session_id(session_id) if session_id else 'None'}")
 
         pdf_list = []
-        # Search through all sessions for this user
+        checked_sessions = 0
+        checked_pdfs = 0
+
+        # RAM-ONLY MODE: Search through ALL sessions for this user
+        # Ignore session_id parameter to allow documents uploaded in one session (auth)
+        # to be available in all chat sessions for GDPR compliance
         for session_key, session_data in self.sessions.items():
-            if user_id in session_key:
+            # Match by user_id only - ignore session_id for cross-session availability
+            user_match = user_id in session_key
+
+            if user_match:
+                checked_sessions += 1
+                logger.debug(f"Checking session: {session_key}")
                 session_data.update_access_time()
+
                 for pdf in session_data.pdfs.values():
-                    # Include documents that are ready and have text
-                    if pdf.status == ImageStatus.READY and pdf.extracted_text:
+                    checked_pdfs += 1
+                    logger.debug(f"  PDF: {pdf.filename}, status: {pdf.status}, has_text: {bool(pdf.extracted_text)}, patient_id: {pdf.patient_id}")
+
+                    # Include documents that are ready (with or without text for now - OCR will be added later)
+                    # TODO: Add OCR support for image-based PDFs
+                    if pdf.status == ImageStatus.READY:
                         # If patient_id is specified, include patient-specific docs and general docs
                         # If patient_id is None, include only general docs
                         if patient_id is None:
                             if pdf.patient_id is None:  # General documents only
+                                logger.debug(f"  ✓ Including {pdf.filename} (general doc, no patient filter)")
                                 pdf_list.append(pdf)
+                            else:
+                                logger.debug(f"  ✗ Skipping {pdf.filename} (has patient_id={pdf.patient_id}, but filter is None)")
                         else:
                             if pdf.patient_id == patient_id or pdf.patient_id is None:  # Patient-specific or general
+                                logger.debug(f"  ✓ Including {pdf.filename} (patient match or general)")
                                 pdf_list.append(pdf)
+                            else:
+                                logger.debug(f"  ✗ Skipping {pdf.filename} (patient_id mismatch: {pdf.patient_id} != {patient_id})")
+                    else:
+                        if pdf.status != ImageStatus.READY:
+                            logger.debug(f"  ✗ Skipping {pdf.filename} (status: {pdf.status})")
+                        elif not pdf.extracted_text:
+                            logger.debug(f"  ✗ Skipping {pdf.filename} (no extracted text)")
 
-        logger.info(f"Found {len(pdf_list)} documents for context")
+        logger.info(f"Searched {checked_sessions} sessions, checked {checked_pdfs} PDFs, found {len(pdf_list)} documents for context")
         return pdf_list
 
     # Legacy session-based methods for internal use

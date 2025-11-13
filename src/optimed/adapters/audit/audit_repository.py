@@ -113,7 +113,7 @@ class PGAuditRepository:
                         access_duration_ms, access_granted, accessed_at
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
                 """,
-                    self._to_uuid(session_id),
+                    session_id,  # VARCHAR - no UUID conversion needed
                     user_id,  # Keep as string - column type is VARCHAR(255), not UUID
                     user_id_hash,  # SHA-256 hash for right-to-erasure
                     request_category,
@@ -189,7 +189,7 @@ class PGAuditRepository:
                         purpose_of_use, access_duration_ms, accessed_at
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
                 """,
-                    self._to_uuid(session_id),
+                    session_id,  # VARCHAR - no UUID conversion needed
                     user_id,  # Keep as string - column type is VARCHAR(255), not UUID
                     access_type,
                     resource_type,
@@ -239,7 +239,7 @@ class PGAuditRepository:
                         quality_score, created_at
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
                 """,
-                    self._to_uuid(session_id),
+                    session_id,  # VARCHAR - no UUID conversion needed
                     source_system,
                     source_type,  # Use as source_resource_id
                     destination_system,
@@ -341,7 +341,7 @@ class PGAuditRepository:
                 """,
                     event_type,
                     compliance_framework,
-                    self._to_uuid(session_id),
+                    session_id,  # VARCHAR - no UUID conversion needed
                     user_id,
                     patient_id_hash,
                     data_categories or [],
@@ -433,7 +433,7 @@ class PGAuditRepository:
                         outcome, latency_ms, metadata, occurred_at
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
                 """,
-                    self._to_uuid(session_id),
+                    session_id,  # VARCHAR - no UUID conversion needed
                     user_id,
                     action,
                     resource_type,
@@ -487,8 +487,8 @@ class PGAuditRepository:
                         section, rerank_score, reason, chunk_text_preview, created_at
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
                 """,
-                    self._to_uuid(session_id),
-                    self._to_uuid(question_id),
+                    session_id,  # VARCHAR - no UUID conversion needed
+                    question_id,  # VARCHAR - no UUID conversion needed
                     rank,
                     resource_type,
                     resource_id,
@@ -549,8 +549,8 @@ class PGAuditRepository:
                     value,
                     unit,
                     endpoint,
-                    self._to_uuid(user_id) if user_id else None,
-                    self._to_uuid(session_id) if session_id else None,
+                    user_id,  # VARCHAR - no UUID conversion needed
+                    session_id,  # VARCHAR - no UUID conversion needed
                     patient_context_size,
                     model_used,
                     processing_stage,

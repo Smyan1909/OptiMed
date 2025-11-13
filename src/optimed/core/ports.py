@@ -809,7 +809,7 @@ class PDFService(Protocol):
         """Delete a PDF document by its ID."""
         ...
 
-    async def get_documents_for_context(self, user_id: str, patient_id: Optional[str] = None) -> Sequence[PDFDocument]:
+    async def get_documents_for_context(self, user_id: str, patient_id: Optional[str] = None, session_id: Optional[str] = None) -> Sequence[PDFDocument]:
         """Get PDF documents relevant for the current context (patient-specific or general)."""
         ...
 

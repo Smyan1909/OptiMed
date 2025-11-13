@@ -931,6 +931,48 @@
     "note": "Obs:",
     "noteText": "Denna referens visar källan till klinisk information som används i svaret. Verifiera alltid viktig klinisk information i den ursprungliga journalen.",
     "noteTextUnavailable": "Denna referens kunde inte helt lösas. Verifiera alltid klinisk information oberoende."
+  },
+  "rpa": {
+    "title": "CLARA Watcher",
+    "status": {
+      "offline": "Offline",
+      "running": "Kör",
+      "completed": "Slutförd",
+      "failed": "Misslyckades",
+      "cancelled": "Avbruten",
+      "ready": "Redo",
+      "noSession": "Ingen session"
+    },
+    "session": {
+      "connected": "Ansluten",
+      "notLoggedIn": "Inte inloggad",
+      "label": "Session:"
+    },
+    "extraction": {
+      "inProgress": "Extraktion pågår...",
+      "completedSuccess": "Senaste extraktionen slutförd"
+    },
+    "watcher": {
+      "notRunning": "Watcher-klient körs inte"
+    },
+    "actions": {
+      "startExtraction": "Starta extraktion",
+      "starting": "Startar...",
+      "stopExtraction": "Stoppa extraktion",
+      "stopping": "Stoppar..."
+    }
+  },
+  "help": {
+    "title": "Behöver du hjälp?",
+    "subtitle": "Kontakta oss för support",
+    "email": {
+      "label": "E-post",
+      "value": "hi@optimedai.com"
+    },
+    "phone": {
+      "label": "Telefon",
+      "value": "+46 73 786 95 15"
+    }
   }
 }
 

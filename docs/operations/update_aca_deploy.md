@@ -20,8 +20,8 @@ audiences: ["Developers", "SRE"]
 $RG = "OPTIMED"
 $LOCATION = "northeurope"
 $ACR = "optimedacr123"
-$BACKEND_APP = "optimed-backend"
-$FRONTEND_APP = "optimed-web"
+$BACKEND_APP = "optimed-api-sweden"
+$FRONTEND_APP = "optimed-web-sweden"
 $BACKEND_IMAGE = "$ACR.azurecr.io/optimed-backend"
 $FRONTEND_IMAGE = "$ACR.azurecr.io/optimed-web"
 $TAG = (Get-Date -Format "yyyyMMdd-HHmmss")
@@ -62,7 +62,7 @@ Backend exposes `GET /health` and should return `{ "status": "ok" }`.
 ## Frontend: Build and Deploy
 1) Build web image in ACR from the app Dockerfile:
 ```
-az acr build -r $ACR -t "optimed-web:$TAG" -f src/optimed/apps/web/Dockerfile src/optimed/apps/web
+az acr build --registry $ACR --image optimed-web:$TAG --build-arg NEXT_PUBLIC_API_BASE_URL="https://optimed-api-sweden.agreeablecoast-ffcd3664.swedencentral.azurecontainerapps.io" --build-arg NEXT_PUBLIC_DEFAULT_FHIR_SERVER="https://smart-launcher.mangocoast-b1d63dd2.northeurope.azurecontainerapps.io/v/r4/sim/eyJoIjoiMSJ9/fhir" --build-arg NEXT_PUBLIC_INFO_MODE="true" --build-arg NEXT_PUBLIC_ENABLE_STANDARD_LOGIN="true" --build-arg FRONTEND_URL="https://clara.optimedai.com" --build-arg API_BASE_URL="https://optimed-api-sweden.agreeablecoast-ffcd3664.swedencentral.azurecontainerapps.io" -f src/optimed/apps/web/Dockerfile src/optimed/apps/web
 ```
 2) Update image on Container App and keep external ingress:
 ```

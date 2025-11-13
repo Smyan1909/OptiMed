@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
 import { getCurrentUser, loginUser, logoutUser, User, setupSessionEncryption } from '@/lib/api';
 import { sendSessionToWatcher, clearSessionFromWatcher } from '@/lib/watcherService';
 import { sanitizeUserId, sanitizePatientId, sanitizeSessionId, sanitizeDocumentId, logInfo, logError, logWarning } from '@/lib/logger';
@@ -90,11 +90,88 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     try {
+      // Find all active chat sessions from localStorage
+      let chatSessionId: string | undefined = undefined;
+      if (typeof window !== 'undefined') {
+        // Primary method: Look for chat_session_* keys (these store the actual session IDs)
+        const chatSessionKeys = Object.keys(localStorage).filter(key =>
+          key.startsWith('chat_session_') && !key.includes('cleanup')
+        );
+
+        logInfo(`[Logout] Found ${chatSessionKeys.length} chat_session_* keys in localStorage`);
+
+        if (chatSessionKeys.length > 0) {
+          // Get all session IDs and find the most recent one
+          const sessions: { id: string; time: number }[] = [];
+
+          for (const key of chatSessionKeys) {
+            const sessionId = localStorage.getItem(key);
+            if (sessionId) {
+              // Check if there's a corresponding session_start_time
+              const timeKey = `session_start_time_${sessionId}`;
+              const timeStr = localStorage.getItem(timeKey);
+              const time = timeStr ? parseInt(timeStr, 10) : 0;
+
+              sessions.push({ id: sessionId, time });
+              logInfo(`[Logout] Found session from ${key}: ${sanitizeSessionId(sessionId)}, time: ${time}`);
+            }
+          }
+
+          // Sort by timestamp (most recent first) and take the first one
+          if (sessions.length > 0) {
+            sessions.sort((a, b) => b.time - a.time);
+            chatSessionId = sessions[0].id;
+            logInfo(`[Logout] Selected most recent chat session: ${sanitizeSessionId(chatSessionId)}`);
+          }
+        }
+
+        // Fallback 1: Look for session_start_time_* keys
+        if (!chatSessionId) {
+          const sessionTimeKeys = Object.keys(localStorage).filter(key => key.startsWith('session_start_time_'));
+          logInfo(`[Logout] Fallback: Found ${sessionTimeKeys.length} session_start_time_* keys`);
+
+          if (sessionTimeKeys.length > 0) {
+            let mostRecentTime = 0;
+            for (const key of sessionTimeKeys) {
+              const timeStr = localStorage.getItem(key);
+              if (timeStr) {
+                const time = parseInt(timeStr, 10);
+                if (time > mostRecentTime) {
+                  mostRecentTime = time;
+                  chatSessionId = key.replace('session_start_time_', '');
+                }
+              }
+            }
+            if (chatSessionId) {
+              logInfo(`[Logout] Found session from session_start_time: ${sanitizeSessionId(chatSessionId)}`);
+            }
+          }
+        }
+
+        // Fallback 2: Look for chat_messages_* keys
+        if (!chatSessionId) {
+          const messageKeys = Object.keys(localStorage).filter(key => key.startsWith('chat_messages_'));
+          logInfo(`[Logout] Fallback 2: Found ${messageKeys.length} chat_messages_* keys`);
+
+          if (messageKeys.length > 0) {
+            const lastKey = messageKeys[messageKeys.length - 1];
+            chatSessionId = lastKey.replace('chat_messages_', '');
+            logInfo(`[Logout] Found session from chat_messages: ${sanitizeSessionId(chatSessionId)}`);
+          }
+        }
+
+        if (!chatSessionId) {
+          logWarning('[Logout] No chat session found in localStorage');
+        }
+      }
+
       // Clear session from local CLARA watcher (fails silently if not running)
       clearSessionFromWatcher().catch(() => {
         // Ignore errors - watcher is optional
       });
 
+      // Session ID is sent via headers in logoutUser
+      logInfo(`[Logout] Calling backend logout with chat_session_id: ${chatSessionId ? sanitizeSessionId(chatSessionId) : 'none'}`);
       await logoutUser();
     } catch (err) {
       logError('Logout error', err instanceof Error ? err : new Error(String(err)));
@@ -104,6 +181,45 @@ export function UserProvider({ children }: { children: ReactNode }) {
       setIsAuthenticated(false);
     }
   };
+
+  const isLoggingOutRef = useRef(false);
+
+  // Global 401 interceptor - automatically logout when session expires
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const originalFetch = window.fetch;
+
+    window.fetch = async (...args: Parameters<typeof fetch>) => {
+      const response = await originalFetch(...args);
+
+      // Intercept 401 responses (session expired/invalid)
+      if (response.status === 401 && isAuthenticated && !isLoggingOutRef.current) {
+
+        const url = args[0];
+        const isAuthEndpoint = typeof url === 'string' &&  (url.includes('/auth/logout') || url.includes('/auth/login') || url.includes('/auth/me'));
+
+        if (!isAuthEndpoint) {
+          isLoggingOutRef.current = true;
+          logWarning('[401 Interceptor] Session expired - triggering automatic logout');
+
+          // Trigger logout (async, but don't await to avoid blocking the response)
+          logout().finally(() => {
+            isLoggingOutRef.current = false;
+          });
+        }
+
+        return response;
+      }
+
+      return response;
+    };
+
+    // Cleanup: restore original fetch when component unmounts or auth state changes
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, [isAuthenticated, logout]);
 
   return (
     <UserContext.Provider 

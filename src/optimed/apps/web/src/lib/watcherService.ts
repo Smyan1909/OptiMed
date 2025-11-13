@@ -121,3 +121,144 @@ export async function isWatcherAvailable(): Promise<boolean> {
   const status = await getWatcherStatus();
   return status !== null;
 }
+
+/**
+ * Get RPA execution status from the watcher
+ * Returns null if watcher is not available
+ */
+export async function getRPAExecutionStatus(): Promise<{
+  is_executing: boolean;
+  status: string;
+  started_at?: string;
+  last_error?: string;
+} | null> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), WATCHER_TIMEOUT);
+
+    const response = await fetch(`${WATCHER_BASE_URL}/execution-status`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      return data;
+    } else {
+      return null;
+    }
+  } catch (error) {
+    // Watcher not running
+    return null;
+  }
+}
+
+/**
+ * Start RPA extraction workflow on the local watcher
+ * Returns true if successfully started, false otherwise
+ */
+export async function startRPAExtraction(): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), WATCHER_TIMEOUT);
+
+    const response = await fetch(`${WATCHER_BASE_URL}/start-extraction`, {
+      method: 'POST',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      logInfo('Watcher Service: RPA extraction started successfully');
+      return { success: true };
+    } else {
+      const data = await response.json().catch(() => ({}));
+      const error = data.error || 'Failed to start extraction';
+      logWarning(`Watcher Service: Failed to start RPA extraction: ${error}`);
+      return { success: false, error };
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Watcher connection timeout' };
+    }
+    return { success: false, error: 'Watcher not available' };
+  }
+}
+
+/**
+ * Start doctor notes extraction workflow on the local watcher
+ * Returns true if successfully started, false otherwise
+ */
+export async function startDoctorNotesExtraction(): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), WATCHER_TIMEOUT);
+
+    const response = await fetch(`${WATCHER_BASE_URL}/start-doctor-notes-extraction`, {
+      method: 'POST',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      logInfo('Watcher Service: Doctor notes extraction started successfully');
+      return { success: true };
+    } else {
+      const data = await response.json().catch(() => ({}));
+      const error = data.error || 'Failed to start doctor notes extraction';
+      logWarning(`Watcher Service: Failed to start doctor notes extraction: ${error}`);
+      return { success: false, error };
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Watcher connection timeout' };
+    }
+    return { success: false, error: 'Watcher not available' };
+  }
+}
+
+/**
+ * Stop/cancel the currently running RPA extraction
+ * Returns true if successfully stopped, false otherwise
+ */
+export async function stopRPAExtraction(): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), WATCHER_TIMEOUT);
+
+    const response = await fetch(`${WATCHER_BASE_URL}/stop-extraction`, {
+      method: 'POST',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      logInfo('Watcher Service: RPA extraction stopped successfully');
+      return { success: true };
+    } else {
+      const data = await response.json().catch(() => ({}));
+      const error = data.error || 'Failed to stop extraction';
+      logWarning(`Watcher Service: Failed to stop RPA extraction: ${error}`);
+      return { success: false, error };
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Watcher connection timeout' };
+    }
+    return { success: false, error: 'Watcher not available' };
+  }
+}
