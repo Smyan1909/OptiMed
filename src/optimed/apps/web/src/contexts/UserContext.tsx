@@ -170,9 +170,9 @@ export function UserProvider({ children }: { children: ReactNode }) {
         // Ignore errors - watcher is optional
       });
 
-      // Pass chat session ID to backend for proper cleanup
+      // Session ID is sent via headers in logoutUser
       logInfo(`[Logout] Calling backend logout with chat_session_id: ${chatSessionId ? sanitizeSessionId(chatSessionId) : 'none'}`);
-      await logoutUser(chatSessionId);
+      await logoutUser();
     } catch (err) {
       logError('Logout error', err instanceof Error ? err : new Error(String(err)));
     } finally {
@@ -181,6 +181,41 @@ export function UserProvider({ children }: { children: ReactNode }) {
       setIsAuthenticated(false);
     }
   };
+
+  // Global 401 interceptor - automatically logout when session expires
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const originalFetch = window.fetch;
+    let isLoggingOut = false; // Prevent multiple concurrent logout calls
+
+    window.fetch = async (...args: Parameters<typeof fetch>) => {
+      const response = await originalFetch(...args);
+
+      // Intercept 401 responses (session expired/invalid)
+      if (response.status === 401 && isAuthenticated && !isLoggingOut) {
+        isLoggingOut = true;
+        logWarning('[401 Interceptor] Session expired - triggering automatic logout');
+
+        // Clone response before consuming it
+        const clonedResponse = response.clone();
+
+        // Trigger logout (async, but don't await to avoid blocking the response)
+        logout().finally(() => {
+          isLoggingOut = false;
+        });
+
+        return clonedResponse;
+      }
+
+      return response;
+    };
+
+    // Cleanup: restore original fetch when component unmounts or auth state changes
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, [isAuthenticated, logout]);
 
   return (
     <UserContext.Provider 
