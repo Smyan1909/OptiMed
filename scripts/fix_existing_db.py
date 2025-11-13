@@ -61,7 +61,7 @@ def fix_database():
             result = cursor.fetchone()
             if result:
                 print(result[0])
-        except:
+        except Exception:
             pass
 
         conn.commit()

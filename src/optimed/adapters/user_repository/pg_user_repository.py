@@ -643,7 +643,7 @@ class PGUserRepository(UserRepository):
                     """, session_uuid)
 
                     if session_info:
-                        logger.debug(f"[finalize_session_analytics] Updated sessions table")
+                        logger.debug("[finalize_session_analytics] Updated sessions table")
                         started_at = session_info['started_at']
                         ended_at = session_info['ended_at']
                         duration_minutes = (ended_at - started_at).total_seconds() / 60.0
@@ -662,7 +662,7 @@ class PGUserRepository(UserRepository):
                     """, session_id)  # Use string session_id for VARCHAR column
 
                     if user_session_info:
-                        logger.debug(f"[finalize_session_analytics] Updated user_sessions table")
+                        logger.debug("[finalize_session_analytics] Updated user_sessions table")
                         # Use user_sessions timing if sessions table didn't have it
                         if not session_info:
                             started_at = user_session_info['login_time']

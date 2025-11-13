@@ -2,7 +2,6 @@
 """Check what tables exist in the database"""
 
 import os
-import sys
 import psycopg2
 from dotenv import load_dotenv
 

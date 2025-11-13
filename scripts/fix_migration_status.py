@@ -39,8 +39,6 @@ async def fix_migration_status():
             print(f"\nSQL file not found: {sql_file}")
             return False
 
-        sql_content = sql_file.read_text(encoding='utf-8')
-
         # Execute the fix
         print("\nUpdating migration status...")
 

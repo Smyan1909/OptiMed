@@ -2085,7 +2085,7 @@ async def chat_stream(
         except Exception as e:
             log_error(logger, "Fetch patient for chat", e, patient_id=req.patient_id)
     else:
-        logger.info(f"[DEBUG /chat/stream] No patient_id provided - patient_ctx will be None")
+        logger.info("[DEBUG /chat/stream] No patient_id provided - patient_ctx will be None")
 
     # Update session analytics
     session_id = req.session_id or user_ctx.get("session_id")
@@ -2501,7 +2501,7 @@ async def logout(
 
         # Perform complete session cleanup (GDPR compliance)
         # Reuse the same cleanup logic as "new session" button - cleanup ALL sessions for user
-        logger.info(f"[Logout] ===== STARTING COMPLETE USER CLEANUP =====")
+        logger.info("[Logout] ===== STARTING COMPLETE USER CLEANUP =====")
 
         try:
             # Clean up PDF documents for all sessions of this user
@@ -2530,7 +2530,7 @@ async def logout(
             cleanup_result = await clear_chat_session(session_id)
             logger.info(f"[Logout] Auth session RAM cleanup: {cleanup_result.get('message', 'completed')}")
 
-            logger.info(f"[Logout] ===== USER CLEANUP COMPLETE =====")
+            logger.info("[Logout] ===== USER CLEANUP COMPLETE =====")
 
         except Exception as e:
             log_error(logger, "Logout - user cleanup", e)

@@ -130,7 +130,7 @@ def create_new_database():
             conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
             connected = True
             strategy_used = strategy
-            print(f"✅ Connected successfully!")
+            print("✅ Connected successfully!")
             print()
             break
 
@@ -158,7 +158,7 @@ def create_new_database():
 
         if cursor.fetchone():
             print(f"⚠️  Database '{new_db_name}' already exists.")
-            response = input(f"Drop and recreate it? (yes/no): ")
+            response = input("Drop and recreate it? (yes/no): ")
             if response.lower() == 'yes':
                 # Terminate connections
                 cursor.execute(f"""
@@ -168,7 +168,7 @@ def create_new_database():
                       AND pid <> pg_backend_pid();
                 """)
                 cursor.execute(f"DROP DATABASE {new_db_name};")
-                print(f"✅ Dropped existing database")
+                print("✅ Dropped existing database")
             else:
                 print("❌ Aborted.")
                 sys.exit(0)
@@ -188,7 +188,7 @@ def create_new_database():
             print(f"✅ Privileges granted to '{user}'")
         except Exception as e:
             print(f"⚠️  Could not grant privileges: {e}")
-            print(f"   You may need to grant privileges manually")
+            print("   You may need to grant privileges manually")
 
         cursor.close()
         conn.close()

@@ -40,9 +40,9 @@ def reset_database():
 
     # Safety check - ensure this is localhost
     if db_host not in ['localhost', '127.0.0.1', '::1']:
-        print(f"❌ ERROR: This script is for LOCAL databases only!")
+        print("❌ ERROR: This script is for LOCAL databases only!")
         print(f"   Host '{db_host}' is not localhost")
-        print(f"   Refusing to continue for safety.")
+        print("   Refusing to continue for safety.")
         sys.exit(1)
 
     # Confirmation prompt
@@ -94,7 +94,7 @@ def reset_database():
         conn.close()
 
         # Connect to new database to enable extensions
-        print(f"🔌 Connecting to new database...")
+        print("🔌 Connecting to new database...")
         conn = psycopg2.connect(
             host=db_host,
             port=db_port,

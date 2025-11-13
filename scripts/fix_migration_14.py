@@ -1,4 +1,6 @@
-import asyncio, os, asyncpg
+import asyncio
+import os
+import asyncpg
 from pathlib import Path
 from dotenv import load_dotenv
 
