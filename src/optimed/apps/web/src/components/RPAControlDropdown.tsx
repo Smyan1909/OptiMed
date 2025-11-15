@@ -308,7 +308,7 @@ export function RPAControlDropdown() {
           disabled={!canStartExtraction}
         >
           <PlayCircle className="mr-2 h-4 w-4" />
-          <span>{isStarting ? 'Startar...' : 'Extrahera endast läkaranteckningar'}</span>
+          <span>{isStarting ? t('rpa.actions.starting') : t('rpa.actions.extractOnlyDoctorNotes')}</span>
         </DropdownMenuItem>
 
         {status.isExecuting && (

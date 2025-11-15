@@ -956,7 +956,8 @@
       "notRunning": "Watcher client not running"
     },
     "actions": {
-      "startExtraction": "Start Extraction",
+      "startExtraction": "Extract all notes",
+      "extractOnlyDoctorNotes": "Extract doctor notes only",
       "starting": "Starting...",
       "stopExtraction": "Stop Extraction",
       "stopping": "Stopping..."

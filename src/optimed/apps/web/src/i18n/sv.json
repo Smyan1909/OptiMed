@@ -956,7 +956,8 @@
       "notRunning": "Watcher-klient körs inte"
     },
     "actions": {
-      "startExtraction": "Starta extraktion",
+      "startExtraction": "Extrahera alla anteckningar",
+      "extractOnlyDoctorNotes": "Extrahera endast läkaranteckningar",
       "starting": "Startar...",
       "stopExtraction": "Stoppa extraktion",
       "stopping": "Stoppar..."
