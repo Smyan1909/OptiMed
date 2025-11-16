@@ -4,6 +4,7 @@ import os
 import math
 import asyncio
 import concurrent.futures
+import numpy as np
 from typing import List, Tuple, Any
 from optimed.core.logging_utils import get_logger
 
@@ -25,7 +26,8 @@ class MultilingualCrossEncoder:
     def __init__(self, model_name: str | None = None, max_batch_size: int = 32) -> None:
         self._model: Any = None
         self._loaded = False
-        self._model_name = model_name or "BAAI/bge-reranker-v2-m3"
+        # Use Jina reranker for best multilingual accuracy
+        self._model_name = model_name or os.getenv("CROSS_ENCODER_MODEL", "Alibaba-NLP/gte-multilingual-reranker-base")
         self._max_batch_size = max_batch_size
         self._use_fp16 = os.getenv("CROSS_ENCODER_USE_FP16", "True").lower() == "true"
         self._use_compile = os.getenv("CROSS_ENCODER_USE_COMPILE", "True").lower() == "true"
@@ -37,9 +39,9 @@ class MultilingualCrossEncoder:
         if env_batch_size:
             self._optimal_batch_size = int(env_batch_size)
         elif os.getenv("AZURE_CONTAINER_APP"):
-            self._optimal_batch_size = 16  # Conservative for Azure but higher than before
+            self._optimal_batch_size = 128  # More aggressive for Azure A100
         else:
-            self._optimal_batch_size = 64  # Aggressive for local GPU
+            self._optimal_batch_size = 128  # Aggressive for local GPU
 
         logger.info(f"Initialized MultilingualCrossEncoder with model: {self._model_name}")
         logger.info(f"Optimal batch size: {self._optimal_batch_size}")
@@ -71,12 +73,16 @@ class MultilingualCrossEncoder:
 
                 # Adjust batch size based on available memory if not explicitly set
                 if not os.getenv("CROSS_ENCODER_BATCH_SIZE"):
-                    if gpu_mem < 6:
-                        self._optimal_batch_size = 16  # Conservative for small GPUs
-                    elif gpu_mem < 12:
-                        self._optimal_batch_size = 32  # Safer for 8GB (was 64, caused OOM)
-                    else:
-                        self._optimal_batch_size = 48  # For larger GPUs
+                    if gpu_mem >= 40:  # A100 (40-80GB)
+                        self._optimal_batch_size = 256
+                    elif gpu_mem >= 24:  # A6000, RTX 4090 (24GB)
+                        self._optimal_batch_size = 128
+                    elif gpu_mem >= 12:  # RTX 3090, 4080 (12-16GB)
+                        self._optimal_batch_size = 64
+                    elif gpu_mem >= 8:   # RTX 3070, 4070 (8-12GB)
+                        self._optimal_batch_size = 32
+                    else:  # Small GPUs (<8GB)
+                        self._optimal_batch_size = 16
                     logger.info(f"Auto-adjusted batch size to {self._optimal_batch_size} based on {gpu_mem:.2f}GB VRAM")
 
                 # Enable cuDNN autotuner for optimal convolution algorithms
@@ -110,9 +116,11 @@ class MultilingualCrossEncoder:
                             logger.info("Skipping torch.compile on Windows (Triton not available)")
                         else:
                             # Compile the underlying model for optimization
-                            self._model.model = torch.compile(self._model.model, mode='reduce-overhead')
+                            # Use 'max-autotune' for best performance (slower first run, faster inference)
+                            compile_mode = os.getenv("TORCH_COMPILE_MODE", "max-autotune")
+                            self._model.model = torch.compile(self._model.model, mode=compile_mode, fullgraph=True)
                             self._compiled = True
-                            logger.info("Applied torch.compile() optimization for PyTorch 2.x")
+                            logger.info(f"Applied torch.compile({compile_mode}) optimization for PyTorch 2.x")
                     except Exception as e:
                         logger.warning(f"Could not compile model (this is OK): {e}")
 
@@ -133,6 +141,12 @@ class MultilingualCrossEncoder:
             return 1 / (1 + math.exp(-x))
         except OverflowError:
             return 0.0 if x < 0 else 1.0
+
+    def _sigmoid_batch(self, scores: np.ndarray) -> List[float]:
+        """Vectorized sigmoid for batch processing (faster than per-element)."""
+        # Clip to prevent overflow
+        clipped = np.clip(scores, -50, 50)
+        return (1 / (1 + np.exp(-clipped))).tolist()
 
     def _fallback_score(self, query: str, passage: str) -> float:
         """Simple fallback scoring based on word overlap."""
@@ -286,8 +300,8 @@ class MultilingualCrossEncoder:
             except (ImportError, Exception):
                 pass  # Ignore errors
 
-            # Apply sigmoid normalization
-            normalized_scores = [self._sigmoid(float(score)) for score in raw_scores]
+            # Apply vectorized sigmoid normalization (faster than per-element)
+            normalized_scores = self._sigmoid_batch(np.array(raw_scores))
             return normalized_scores
 
         except Exception as e:
