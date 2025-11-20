@@ -60,13 +60,15 @@ class SemanticPDFChunker:
         overlap_ratio: float = 0.15,   # 15% overlap
         min_chunk_size: int = 100,     # minimum chunk size
         max_chunk_size: int = 1200,    # maximum chunk size
-        preserve_medical_context: bool = True
+        preserve_medical_context: bool = True,
+        disable_section_detection: bool = False  # NEW: For hierarchical chunking
     ):
         self.target_chunk_size = target_chunk_size
         self.overlap_ratio = overlap_ratio
         self.min_chunk_size = min_chunk_size
         self.max_chunk_size = max_chunk_size
         self.preserve_medical_context = preserve_medical_context
+        self.disable_section_detection = disable_section_detection
 
         # Fully language-agnostic structural patterns for medical documents
         # Using semantic structure patterns instead of language-specific keywords
@@ -202,6 +204,16 @@ class SemanticPDFChunker:
 
     def _detect_document_structure(self, text: str) -> List[Dict[str, Any]]:
         """Detect sections and structure in medical documents."""
+        # If section detection is disabled, treat entire text as one section
+        if self.disable_section_detection:
+            return [{
+                "title": None,
+                "content": text,
+                "start_pos": 0,
+                "end_pos": len(text),
+                "type": "content"
+            }]
+
         sections = []
         current_section = {"title": None, "content": "", "start_pos": 0, "type": "content"}
 
@@ -307,9 +319,12 @@ class SemanticPDFChunker:
 
             # Check if adding this paragraph exceeds target size
             potential_chunk = current_chunk + "\n\n" + paragraph if current_chunk else paragraph
-            potential_size = len(potential_chunk.split()) * 1.3
+            # Estimate token count: words * 1.3 (average words to tokens ratio)
+            potential_tokens = len(potential_chunk.split()) * 1.3
+            # Convert target_chunk_size from CHARACTERS to TOKENS (~4 chars per token)
+            target_tokens = self.target_chunk_size / 4.0
 
-            if potential_size <= self.target_chunk_size or not current_chunk:
+            if potential_tokens <= target_tokens or not current_chunk:
                 current_chunk = potential_chunk
             else:
                 # Create chunk from current content
@@ -388,9 +403,12 @@ class SemanticPDFChunker:
                 continue
 
             potential_chunk = current_chunk + " " + sentence if current_chunk else sentence
-            potential_size = len(potential_chunk.split()) * 1.3
+            # Estimate token count: words * 1.3 (average words to tokens ratio)
+            potential_tokens = len(potential_chunk.split()) * 1.3
+            # Convert target_chunk_size from CHARACTERS to TOKENS (~4 chars per token)
+            target_tokens = self.target_chunk_size / 4.0
 
-            if potential_size <= self.target_chunk_size or not current_chunk:
+            if potential_tokens <= target_tokens or not current_chunk:
                 current_chunk = potential_chunk
             else:
                 # Create chunk

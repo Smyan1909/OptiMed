@@ -1,4 +1,5 @@
 import fitz  # PyMuPDF
+import re
 from datetime import datetime
 
 from optimed.core.ports import PDFProcessor
@@ -8,8 +9,41 @@ from optimed.core.domain.pdf_document import PDFMetadata
 class PyMuPDFProcessor(PDFProcessor):
     """PDF processor implementation using PyMuPDF."""
 
+    def _clean_pdf_text(self, text: str) -> str:
+        """
+        Clean PDF text by removing common artifacts and noise.
+
+        Args:
+            text: Raw text extracted from PDF
+
+        Returns:
+            Cleaned text with artifacts removed
+        """
+        # Remove page markers that were added during extraction
+        text = re.sub(r'---\s*Page\s+\d+\s*---', '', text, flags=re.IGNORECASE)
+
+        # Remove common Swedish PDF artifacts
+        text = re.sub(r'\btom rad\b', '', text, flags=re.IGNORECASE)  # "empty row"
+        text = re.sub(r'\bSida\s+\d+\s+av\s+\d+\b', '', text, flags=re.IGNORECASE)  # "Page X of Y"
+
+        # Remove excessive whitespace and empty lines
+        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)  # Multiple blank lines → double newline
+        text = re.sub(r'[ \t]+', ' ', text)  # Multiple spaces/tabs → single space
+
+        # Remove standalone page numbers (lines with only numbers)
+        text = re.sub(r'\n\s*\d+\s*\n', '\n', text)
+
+        # Remove common header/footer patterns
+        text = re.sub(r'\n\s*Journalkopia\s*\n', '\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'\n\s*Utskrift ur journal\s*\n', '\n', text, flags=re.IGNORECASE)
+
+        # Trim leading/trailing whitespace
+        text = text.strip()
+
+        return text
+
     async def extract_text(self, file_content: bytes) -> str:
-        """Extract text content from a PDF file."""
+        """Extract and clean text content from a PDF file."""
         try:
             # Open PDF from bytes
             doc = fitz.open(stream=file_content, filetype="pdf")
@@ -19,10 +53,17 @@ class PyMuPDFProcessor(PDFProcessor):
                 page = doc.load_page(page_num)
                 text = page.get_text()
                 if text.strip():  # Only add non-empty pages
-                    text_content.append(f"--- Page {page_num + 1} ---\n{text}")
+                    # Clean the text before adding
+                    cleaned_text = self._clean_pdf_text(text)
+                    if cleaned_text:  # Only add if there's content after cleaning
+                        text_content.append(cleaned_text)
 
             doc.close()
-            return "\n\n".join(text_content)
+
+            # Join pages with clear separator (but not the page marker)
+            full_text = "\n\n".join(text_content)
+
+            return full_text
 
         except Exception as e:
             raise ValueError(f"Failed to extract text from PDF: {str(e)}")

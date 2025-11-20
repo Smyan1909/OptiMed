@@ -8,9 +8,10 @@ import time
 import math
 import asyncio
 import re
-from typing import List, Any, Union, AsyncGenerator, Optional, Dict
+from typing import List, Any, Union, AsyncGenerator, Optional, Dict, Tuple
 from datetime import datetime, timezone
 
+from langgraph.types import Send
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
@@ -954,7 +955,11 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
         async def intelligent_retrieve_chunks(state: FlowState) -> FlowState:
             """In-RAM retrieval: chunk, embed, paraphrase, bi-encoder, cross-encoder rerank, dynamic-N MMR, gate, retry."""
+
             retrieval_start_time = time.time()
+
+            # Note: We always do chunking and embedding, even for specialized flows
+            # Specialized flows skip the retrieval logic at the end of this function
 
             # Log audit event: START retrieval
             if self._audit_repo and state.session_id:
@@ -1104,6 +1109,8 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                             "document": c.meta.get("document_name", "Clinical Record") if c.meta else "Clinical Record",
                             "page": c.meta.get("page") if c.meta else None,
                             "url": c.meta.get("url") if c.meta else None,
+                            "chunk_level": c.meta.get("chunk_level") if c.meta else "child",
+                            "parent_chunk_id": c.meta.get("parent_chunk_id") if c.meta else None
                         },
                         "data_type": c.resource_type,
                     } for c in all_chunks]
@@ -1123,14 +1130,37 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                         state.chunk_analysis = {"method": "none", "reason": "No content available for chunking"}
                     return state
 
-                # 2) Embed chunks (only if we just chunked them)
+                # 2) Separate parent and child chunks for hierarchical retrieval
                 if needs_chunking and chunks:
-                    logger.info(f"Embedding {len(chunks)} chunks...")
-                    chunk_texts = [c["content"] for c in chunks]
-                    chunk_vecs = await self._embed_many(chunk_texts, mode="passage")
-                    for i, vec in enumerate(chunk_vecs):
-                        chunks[i]["embedding"] = vec
-                    logger.info(f"Successfully embedded {len(chunk_vecs)} chunks")
+                    # Separate parent and child chunks
+                    parent_chunks_list = [c for c in chunks if c.get("metadata", {}).get("chunk_level") == "parent"]
+                    child_chunks_list = [c for c in chunks if c.get("metadata", {}).get("chunk_level") == "child"]
+
+                    # If no chunk_level metadata (backward compatibility), treat all as child chunks
+                    if not parent_chunks_list and not child_chunks_list:
+                        logger.info(f"No parent-child structure detected, treating all {len(chunks)} chunks as retrieval chunks")
+                        child_chunks_list = chunks
+                        parent_chunks_list = []
+
+                    logger.info(f"Parent-child chunking: {len(parent_chunks_list)} parent chunks, {len(child_chunks_list)} child chunks")
+
+                    # Embed ONLY child chunks (for precise retrieval)
+                    logger.info(f"Embedding {len(child_chunks_list)} child chunks...")
+                    child_chunk_texts = [c["content"] for c in child_chunks_list]
+                    child_chunk_vecs = await self._embed_many(child_chunk_texts, mode="passage")
+                    for i, vec in enumerate(child_chunk_vecs):
+                        child_chunks_list[i]["embedding"] = vec
+                    logger.info(f"Successfully embedded {len(child_chunk_vecs)} child chunks")
+
+                    # Store parent chunks in lookup dict (no embeddings needed)
+                    parent_chunks_dict = {}
+                    for parent_chunk in parent_chunks_list:
+                        parent_id = parent_chunk.get("chunk_id") or parent_chunk.get("id")
+                        if parent_id:
+                            parent_chunks_dict[parent_id] = parent_chunk
+
+                    # Update chunks variable to only contain child chunks for retrieval
+                    chunks = child_chunks_list
 
                 # Log data lineage: Chunks → Embeddings (only if we just embedded)
                 if needs_chunking and chunks:
@@ -1145,17 +1175,36 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                         data_quality_score=1.0
                     )
 
-                    # Cache chunks globally for this session
-                    _GLOBAL_CHUNK_CACHE[session_cache_key] = {
-                        "chunks": chunks,
+                    # Cache child chunks (for retrieval) + parent chunks (for context delivery)
+                    cache_entry = {
+                        "chunks": chunks,  # Child chunks with embeddings
                         "doc_signature": current_doc_signature,
                         "timestamp": time.time()
                     }
-                    logger.info(f"Cached {len(chunks)} chunks for session {sanitize_session_id(session_cache_key)}")
+
+                    # Add parent chunks lookup if they exist
+                    if parent_chunks_dict:
+                        cache_entry["parent_chunks"] = parent_chunks_dict
+                        logger.info(f"Cached {len(chunks)} child chunks + {len(parent_chunks_dict)} parent chunks for session {sanitize_session_id(session_cache_key)}")
+                    else:
+                        logger.info(f"Cached {len(chunks)} chunks for session {sanitize_session_id(session_cache_key)}")
+
+                    _GLOBAL_CHUNK_CACHE[session_cache_key] = cache_entry
                 elif not needs_chunking and cached_chunks:
                     # Use cached chunks from previous query
                     logger.info(f"Reusing {len(cached_chunks)} cached chunks (skipping chunking & embedding)")
                     chunks = cached_chunks
+
+                # SKIP RETRIEVAL FOR SPECIALIZED FLOWS (but keep the chunks in cache)
+                # Specialized flows (SBAR, General Summary, Timeline, Focused Summary) do per-component retrieval
+                if state.is_sbar_flow or state.is_general_summary_flow or state.is_timeline_flow or state.is_focused_summary_flow:
+                    logger.info(f"Skipping global retrieval - specialized flow detected")
+                    logger.info(f"  is_sbar_flow: {state.is_sbar_flow}")
+                    logger.info(f"  is_general_summary: {state.is_general_summary_flow}")
+                    logger.info(f"  is_timeline: {state.is_timeline_flow}")
+                    logger.info(f"  is_focused_summary: {state.is_focused_summary_flow}")
+                    logger.info(f"✅ Chunks cached ({len(chunks) if chunks else len(cached_chunks)} chunks) - components will perform independent retrieval")
+                    return state
 
                 # 3) Query variants
                 logger.info("Generating query variants...")
@@ -1206,93 +1255,102 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 reranked, selected_indices, gate_scores = await self._run_parallel_cross_encoder_operations(
                     state, chunks, initial_indices, query_vecs
                 )
-                
-                # Apply gating threshold
-                logger.info(f"Applying binary gate with threshold {GATE_THRESH}")
-                gate_results = [s >= GATE_THRESH for s in gate_scores]
-                final_selected = [i for i, ok in zip(selected_indices, gate_results) if ok]
-                
-                # Log gating results
-                logger.info("Gate results:")
-                for i, (idx, score, passed) in enumerate(zip(selected_indices, gate_scores, gate_results)):
-                    chunk_type = chunks[idx]["data_type"]
-                    status = "PASSED" if passed else "FILTERED"
-                    logger.info(f"  Chunk {idx} ({chunk_type}): {score:.4f} - {status}")
-                
-                logger.info(f"Final selected chunks after gating: {len(final_selected)}")
-                
-                # If no chunks pass gating, try with a lower threshold
-                if not final_selected and gate_scores:
-                    max_score = max(gate_scores)
-                    logger.info(f"No chunks passed gating (max score: {max_score:.4f}), trying with lower threshold")
-                    lower_threshold = min(0.3, max_score * 0.8)  # Use 80% of max score or 0.3, whichever is lower
-                    logger.info(f"Using lower threshold: {lower_threshold:.4f}")
-                    gate_results_lower = [s >= lower_threshold for s in gate_scores]
-                    final_selected = [i for i, ok in zip(selected_indices, gate_results_lower) if ok]
-                    logger.info(f"Final selected chunks with lower threshold: {len(final_selected)}")
-                    
-                    # Log the new results
-                    for i, (idx, score, passed) in enumerate(zip(selected_indices, gate_scores, gate_results_lower)):
-                        chunk_type = chunks[idx]["data_type"]
-                        status = "PASSED" if passed else "FILTERED"
-                        logger.info(f"  Chunk {idx} ({chunk_type}): {score:.4f} - {status}")
 
-                # 9) Retry if too few
-                # Agentic refinement handoff: if too few, set state and branch in the graph
-                min_required = max(N_MIN, min(N_MAX, len(chunks)))
-                state.needs_refinement = len(final_selected) < min_required and state.retrieval_retry_attempts < RETRY_MAX
-                
-                logger.info(f"Retry check: {len(final_selected)} < {min_required} and attempts {state.retrieval_retry_attempts} < {RETRY_MAX}")
-                
-                if state.needs_refinement:
-                    logger.info(f"Too few chunks selected ({len(final_selected)}), attempting refinement...")
-                    try:
-                        refinements = await self._refine_queries(state.user_prompt, [cast(str, chunks[i]["content"]) for i in final_selected])
-                        logger.info(f"Generated {len(refinements)} refined queries: {refinements}")
-                        
-                        # If we have refined queries, we could potentially run them in parallel here
-                        # but for now, we'll use them in the next iteration
-                        state.refined_queries = [r for r in refinements if r][:2]
-                    except Exception as e:
-                        logger.info(f"Refinement failed: {e}")
-                        refinements = []
-                        state.refined_queries = []
-                    state.retrieval_retry_attempts += 1
+                # 8-9) Agentic evaluation and refinement
+                logger.info(f"Selected {len(selected_indices)} chunks after MMR")
 
-                    # Set partial state for streaming decorator to show progress
-                    state.retrieved_chunks = [
-                        {
-                            "chunk_id": chunks[i]["chunk_id"],
-                            "content": chunks[i]["content"],
-                            "metadata": chunks[i]["metadata"]
-                        }
-                        for i in final_selected
-                    ] if final_selected else []
-
-                    # Build citations from chunk metadata with sequential numbers
-                    if state.retrieved_chunks:
-                        state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(state.retrieved_chunks)
-
-                    state.chunk_analysis = {
-                        "method": "bi_cross_mmr_gate_refining",
-                        "dynamic_n": len(final_selected),
-                        "selected_chunks": [f"chunk_{i}" for i in final_selected],
-                        "total_chunks_processed": len(chunks),
-                        "chunks_after_bi_encoder": len(initial_indices),
-                        "chunks_after_cross_encoder": len(reranked),
-                        "chunks_after_mmr": len(selected_indices),
-                        "chunks_after_gating": len(final_selected),
-                        "refinement_attempt": state.retrieval_retry_attempts,
-                        "refined_queries": state.refined_queries
+                # Build chunk list for evaluation
+                selected_chunks_for_eval = [
+                    {
+                        "chunk_id": chunks[i].get("chunk_id", i),
+                        "content": chunks[i].get("content", ""),
+                        "metadata": chunks[i].get("metadata", {}),
+                        "data_type": chunks[i].get("data_type", "unknown")
                     }
-                    state.retrieval_reasoning = f"Refining search (attempt {state.retrieval_retry_attempts}) - too few chunks selected"
-                    
-                    logger.info(f"Setting up for retry with {len(state.refined_queries)} refined queries")
-                    # Do not finalize retrieved_chunks yet; upstream conditional edge will loop
-                    return state
+                    for i in selected_indices
+                ]
+
+                # Agentic evaluation (LLM decides if chunks are sufficient)
+                try:
+                    is_sufficient, reasoning = await self._evaluate_chunk_sufficiency(
+                        query=state.user_prompt,
+                        chunks=selected_chunks_for_eval,
+                        scores=gate_scores,
+                        classification=state.query_classification or "general",
+                        attempt=state.retrieval_retry_attempts
+                    )
+
+                    logger.info(f"Agentic evaluation: sufficient={is_sufficient}")
+                    logger.info(f"Reasoning: {reasoning}")
+
+                    # If insufficient and haven't exceeded max retries, refine and retry
+                    if not is_sufficient and state.retrieval_retry_attempts < RETRY_MAX:
+                        logger.info(f"Insufficient chunks (attempt {state.retrieval_retry_attempts}/{RETRY_MAX})")
+                        logger.info(f"Generating refined queries...")
+
+                        # Generate refined queries with reasoning context
+                        try:
+                            refinements = await self._refine_queries(
+                                query=state.user_prompt,
+                                seen_passages=[c.get("content", "") for c in selected_chunks_for_eval],
+                                insufficiency_reasoning=reasoning
+                            )
+                            logger.info(f"Generated {len(refinements)} refined queries: {refinements}")
+                            state.refined_queries = [r for r in refinements if r][:2]
+                        except Exception as e:
+                            logger.warning(f"Refinement failed: {e}")
+                            state.refined_queries = []
+
+                        # Set flag for retry loop
+                        state.needs_refinement = bool(state.refined_queries)
+                        state.retrieval_retry_attempts += 1
+
+                        if state.needs_refinement:
+                            # Set partial state for streaming decorator to show progress
+                            state.retrieved_chunks = [
+                                {
+                                    "chunk_id": chunks[i]["chunk_id"],
+                                    "content": chunks[i]["content"],
+                                    "metadata": chunks[i]["metadata"]
+                                }
+                                for i in selected_indices
+                            ]
+
+                            # Build citations from chunk metadata
+                            if state.retrieved_chunks:
+                                state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(state.retrieved_chunks)
+
+                            state.chunk_analysis = {
+                                "method": "bi_cross_mmr_agentic_refining",
+                                "dynamic_n": len(selected_indices),
+                                "selected_chunks": [f"chunk_{i}" for i in selected_indices],
+                                "total_chunks_processed": len(chunks),
+                                "chunks_after_bi_encoder": len(initial_indices),
+                                "chunks_after_cross_encoder": len(reranked),
+                                "chunks_after_mmr": len(selected_indices),
+                                "chunks_after_agentic_eval": len(selected_indices),
+                                "refinement_attempt": state.retrieval_retry_attempts,
+                                "refined_queries": state.refined_queries,
+                                "insufficiency_reasoning": reasoning
+                            }
+                            state.retrieval_reasoning = f"Refining search (attempt {state.retrieval_retry_attempts}): {reasoning}"
+
+                            logger.info(f"Setting up for retry with {len(state.refined_queries)} refined queries")
+                            # Do not finalize retrieved_chunks yet; upstream conditional edge will loop
+                            return state
+
+                    # If sufficient or max retries reached, use current chunks
+                    if state.retrieval_retry_attempts >= RETRY_MAX:
+                        logger.info(f"Max refinement attempts reached ({RETRY_MAX}), using current chunks")
+
+                except Exception as e:
+                    logger.warning(f"Agentic evaluation failed: {e}, using current chunks")
+
+                # Use all selected indices as final result
+                final_selected = selected_indices
 
                 if not final_selected:
-                    logger.info("No chunks passed gating, using fallback selection")
+                    logger.info("No chunks selected, using fallback selection")
                     fallback_n = min(max(N_MIN, 1), len(reranked))
                     final_selected = [idx for idx, _ in reranked[:fallback_n]]
                     logger.info(f"Fallback selected {len(final_selected)} chunks: {final_selected}")
@@ -1304,7 +1362,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     chunk_length = len(cast(str, chunks[idx]["content"]))
                     logger.info(f"  {i+1}. Chunk {idx} ({chunk_type}): {chunk_length} chars")
 
-                # Log data lineage: Embeddings → Retrieval (bi-encoder + cross-encoder + MMR + gating)
+                # Log data lineage: Embeddings → Retrieval (bi-encoder + cross-encoder + MMR + agentic evaluation)
                 if final_selected:
                     # Calculate data quality score based on retrieval metrics
                     avg_gate_score = sum(gate_scores) / len(gate_scores) if gate_scores else 0.0
@@ -1322,7 +1380,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                             "bi_encoder_similarity",
                             "cross_encoder_reranking",
                             "mmr_diversification",
-                            "binary_gating",
+                            "agentic_evaluation",
                             f"dynamic_n_selection_{len(final_selected)}"
                         ],
                         data_quality_score=min(1.0, max(0.0, quality_score))
@@ -1347,16 +1405,16 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     logger.info(f"🔖 First citation sample: {first_citation}")
 
                 state.chunk_analysis = {
-                    "method": "bi_cross_mmr_gate",
+                    "method": "bi_cross_mmr_agentic",
                     "dynamic_n": len(final_selected),
                     "selected_chunks": [f"chunk_{i}" for i in final_selected],
                     "total_chunks_processed": len(chunks),
                     "chunks_after_bi_encoder": len(initial_indices),
                     "chunks_after_cross_encoder": len(reranked),
                     "chunks_after_mmr": len(selected_indices),
-                    "chunks_after_gating": len(final_selected)
+                    "chunks_after_agentic_eval": len(final_selected)
                 }
-                state.retrieval_reasoning = "Paraphrases + bi-encoder, cross-encoder rerank, MMR diversity, binary gating"
+                state.retrieval_reasoning = "Paraphrases + bi-encoder, cross-encoder rerank, MMR diversity, agentic evaluation"
 
                 logger.info(f"Retrieval complete: {len(state.retrieved_chunks)} chunks selected")
                 logger.info(f"Chunk analysis: {state.chunk_analysis}")
@@ -1444,81 +1502,237 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
             return state
 
-        async def _fast_sbar_retrieve(state: FlowState, focus: str, queries: List[str]) -> List[Dict[str, Any]]:
-            """Fast SBAR retrieval using only bi-encoder similarity (no cross-encoder)."""
-            try:
-                logger.info(f"{focus} - Starting fast bi-encoder retrieval")
+        async def _retrieve_with_full_pipeline(
+            self,
+            state: FlowState,
+            queries: List[str],
+            context_label: str,
+            topk_initial: int = 100,
+            topk_rerank: int = 30,
+            use_mmr: bool = True,
+            use_agentic_refinement: bool = True,
+            refinement_attempt: int = 0
+        ) -> List[Dict[str, Any]]:
+            """
+            Core retrieval pipeline with full agentic algorithm.
 
-                # Get chunks from state - try multiple sources
-                chunks = []
-                chunk_contents = []  # For embedding
-                if state.retrieved_chunks:
-                    chunks = state.retrieved_chunks[:50]  # Use cached chunks if available
-                    # Extract content from chunk dictionaries
-                    chunk_contents = [chunk.get("content", "") if isinstance(chunk, dict) else chunk for chunk in chunks]
-                    logger.info(f"{focus} - Using {len(chunks)} cached chunks")
-                else:
-                    # Fall back to doing quick retrieval ourselves
-                    logger.info(f"{focus} - No cached chunks, doing quick retrieval")
-                    if state.patient_ctx and state.journal_entries:
-                        # Quick retrieval from journal entries (most relevant for SBAR)
-                        import hashlib
-                        for idx, entry in enumerate(state.journal_entries[:15]):  # Limit for speed
-                            content = ""
-                            if hasattr(entry, 'content') and entry.content:
-                                content = entry.content
-                            elif hasattr(entry, 'text') and entry.text:
-                                content = entry.text
+            Stages:
+            1. Get chunks from global cache (already chunked & embedded)
+            2. Query paraphrasing
+            3. Query embedding
+            4. Bi-encoder scoring (cosine similarity)
+            5. Cross-encoder reranking
+            6. Dynamic-N selection
+            7. MMR diversification
+            8. Agentic evaluation (LLM decides sufficiency)
+            9. Query refinement & retry (if insufficient)
 
-                            if content:
-                                # Wrap in minimal chunk dict structure
-                                chunk_id = hashlib.md5(content.encode()).hexdigest()[:16]
-                                chunk_dict = {
-                                    "chunk_id": chunk_id,
-                                    "content": content,
-                                    "metadata": {"source": "journal_entry", "index": idx}
-                                }
-                                chunks.append(chunk_dict)
-                                chunk_contents.append(content)
+            Args:
+                state: Current flow state with cached chunks
+                queries: Component-specific queries (e.g., ["current vital signs", "recent symptoms"])
+                context_label: Label for logging (e.g., "sbar_situation")
+                topk_initial: Number of chunks to select after bi-encoder (default: 100)
+                topk_rerank: Number of chunks to rerank with cross-encoder (default: 30)
+                use_mmr: Whether to apply MMR diversification (default: True)
+                use_agentic_refinement: Whether to enable LLM evaluation and refinement (default: True)
+                refinement_attempt: Current refinement iteration (internal, starts at 0)
 
-                    if not chunk_contents:
-                        logger.info(f"{focus} - No chunks available")
-                        return []
+            Returns:
+                List of chunk dicts with content, metadata, embeddings
+            """
+            logger.info(f"[{context_label}] Starting full retrieval pipeline")
+            logger.info(f"[{context_label}] Queries: {len(queries)} variants")
 
-                # Bi-encoder retrieval using semantic similarity
-                # Embed the queries
-                query_vecs = await self._embed_many(queries, mode="query")
-                logger.info(f"{focus} - Embedded {len(query_vecs)} queries")
+            # 1) Get chunks from global cache
+            session_cache_key = state.session_id or "default_session"
+            global _GLOBAL_CHUNK_CACHE
 
-                # Embed the chunk contents (strings)
-                chunk_vecs = await self._embed_many(chunk_contents, mode="passage")
-                logger.info(f"{focus} - Embedded {len(chunk_vecs)} chunks")
-
-                # Compute bi-encoder scores (max cosine similarity across all queries)
-                scored_chunks = []
-                for i, chunk_vec in enumerate(chunk_vecs):
-                    max_score = max(self._cosine(chunk_vec, qv) for qv in query_vecs)
-                    if max_score > 0.0:  # Only include chunks with some similarity
-                        # Return full chunk dict (if available) or wrap content string as dict (fallback)
-                        if i < len(chunks):
-                            chunk_data = chunks[i]
-                        else:
-                            chunk_data = {"content": chunk_contents[i], "chunk_id": f"chunk-{i}"}
-                        scored_chunks.append((max_score, chunk_data))
-
-                # Sort by score and return top chunks
-                scored_chunks.sort(key=lambda x: x[0], reverse=True)
-                result_chunks = [chunk for _, chunk in scored_chunks[:15]]
-
-                logger.info(f"{focus} - Retrieved {len(result_chunks)} chunks using bi-encoder similarity")
-                return result_chunks
-
-            except Exception as e:
-                logger.info(f"{focus} - Error: {e}")
+            if session_cache_key not in _GLOBAL_CHUNK_CACHE:
+                logger.warning(f"[{context_label}] No cached chunks found - cannot retrieve")
                 return []
 
+            cache_entry = _GLOBAL_CHUNK_CACHE[session_cache_key]
+            chunks = cache_entry.get("chunks", [])
+
+            if not chunks:
+                logger.warning(f"[{context_label}] Empty chunk cache")
+                return []
+
+            logger.info(f"[{context_label}] Retrieved {len(chunks)} chunks from cache")
+
+            # 2-3) Query paraphrasing + embedding
+            logger.info(f"[{context_label}] Generating query variants...")
+            try:
+                # Generate paraphrases for the first query
+                paraphrases = await self._paraphrase_query_variants(queries[0] if queries else "")
+                logger.info(f"[{context_label}] Generated {len(paraphrases)} paraphrases")
+            except Exception as e:
+                logger.warning(f"[{context_label}] Failed to generate paraphrases: {e}")
+                paraphrases = []
+
+            # Combine original queries + paraphrases
+            query_variants = queries + paraphrases[:2]  # Limit paraphrases
+            logger.info(f"[{context_label}] Using {len(query_variants)} query variants total")
+
+            # Embed all query variants
+            query_vecs = await self._embed_many(query_variants, mode="query")
+            logger.info(f"[{context_label}] Embedded {len(query_vecs)} query vectors")
+
+            # 4) Bi-encoder scoring (max cosine similarity across all query variants)
+            logger.info(f"[{context_label}] Computing bi-encoder scores for {len(chunks)} chunks...")
+
+            def bi_score(vec: list[float]) -> float:
+                return max(self._cosine(vec, qv) for qv in query_vecs)
+
+            from typing import cast
+            bi_scored = [(i, bi_score(cast(list[float], chunks[i]["embedding"]))) for i in range(len(chunks))]
+            bi_scored.sort(key=lambda x: x[1], reverse=True)
+
+            # Log top bi-encoder scores
+            logger.info(f"[{context_label}] Top 5 bi-encoder scores:")
+            for i, (idx, score) in enumerate(bi_scored[:5]):
+                chunk_type = chunks[idx].get("data_type", "unknown")
+                logger.info(f"  {i+1}. Chunk {idx} ({chunk_type}): {score:.4f}")
+
+            if bi_scored:
+                bi_scores = [score for _, score in bi_scored]
+                logger.info(f"[{context_label}] Bi-encoder score range: [{min(bi_scores):.4f}, {max(bi_scores):.4f}]")
+
+            # Select top-K for cross-encoder reranking
+            initial_indices = [idx for idx, _ in bi_scored[:topk_initial]]
+            logger.info(f"[{context_label}] Selected top {len(initial_indices)} chunks for cross-encoder")
+
+            # 5-8) Cross-encoder operations (reranking, MMR, gating) - PARALLEL EXECUTION
+            lang = detect_language_code(queries[0] if queries else "")
+            logger.info(f"[{context_label}] Detected language: {lang}")
+            logger.info(f"[{context_label}] Running parallel cross-encoder operations...")
+
+            # Use the optimized parallel cross-encoder method
+            reranked, selected_indices, gate_scores = await self._run_parallel_cross_encoder_operations(
+                state, chunks, initial_indices, query_vecs
+            )
+
+            # 8-9) Agentic evaluation and refinement
+            logger.info(f"[{context_label}] Selected {len(selected_indices)} chunks after MMR")
+
+            # Build chunk list for evaluation
+            selected_chunks = [
+                {
+                    "chunk_id": chunks[i].get("chunk_id", i),
+                    "content": chunks[i].get("content", ""),
+                    "metadata": chunks[i].get("metadata", {}),
+                    "data_type": chunks[i].get("data_type", "unknown")
+                }
+                for i in selected_indices
+            ]
+
+            # 🔑 PARENT-CHILD SWAP: Replace child chunks with parent chunks for LLM evaluation
+            # This provides richer context while maintaining precise retrieval
+            parent_lookup = cache_entry.get("parent_chunks", {})
+            if parent_lookup:
+                selected_chunks_with_parents = []
+                seen_parent_ids = set()  # Deduplicate parents (multiple children may share same parent)
+
+                for child_chunk in selected_chunks:
+                    parent_chunk_id = child_chunk.get("metadata", {}).get("parent_chunk_id")
+
+                    if parent_chunk_id and parent_chunk_id in parent_lookup and parent_chunk_id not in seen_parent_ids:
+                        # Swap child for parent
+                        parent_chunk = parent_lookup[parent_chunk_id]
+                        parent_dict = {
+                            "chunk_id": parent_chunk.get("chunk_id") or parent_chunk.get("id"),
+                            "content": parent_chunk.get("content", ""),
+                            "metadata": parent_chunk.get("metadata", {}),
+                            "data_type": parent_chunk.get("data_type", "unknown")
+                        }
+                        selected_chunks_with_parents.append(parent_dict)
+                        seen_parent_ids.add(parent_chunk_id)
+                    elif parent_chunk_id is None:
+                        # No parent-child structure (backward compatibility), use child as-is
+                        selected_chunks_with_parents.append(child_chunk)
+                    # Skip if parent already added (deduplication)
+
+                if selected_chunks_with_parents:
+                    logger.info(f"[{context_label}] Swapped {len(selected_chunks)} child chunks → {len(selected_chunks_with_parents)} parent chunks for LLM evaluation")
+                    selected_chunks = selected_chunks_with_parents
+                else:
+                    logger.info(f"[{context_label}] No parent chunks found, using {len(selected_chunks)} child chunks")
+            else:
+                logger.info(f"[{context_label}] No parent-child structure, using {len(selected_chunks)} chunks as-is")
+
+            # Agentic evaluation (LLM decides if chunks are sufficient)
+            if use_agentic_refinement:
+                try:
+                    is_sufficient, reasoning = await self._evaluate_chunk_sufficiency(
+                        query=queries[0] if queries else "",
+                        chunks=selected_chunks,
+                        scores=gate_scores,
+                        classification=context_label,
+                        attempt=refinement_attempt
+                    )
+
+                    logger.info(f"[{context_label}] Agentic evaluation: sufficient={is_sufficient}")
+                    logger.info(f"[{context_label}] Reasoning: {reasoning}")
+
+                    # If insufficient and haven't exceeded max retries, refine and retry
+                    if not is_sufficient and refinement_attempt < RETRY_MAX:
+                        logger.info(f"[{context_label}] Insufficient chunks (attempt {refinement_attempt}/{RETRY_MAX})")
+                        logger.info(f"[{context_label}] Generating refined queries...")
+
+                        # Generate refined queries with reasoning context
+                        refined_queries = await self._refine_queries(
+                            query=queries[0] if queries else "",
+                            seen_passages=[c.get("content", "") for c in selected_chunks],
+                            insufficiency_reasoning=reasoning
+                        )
+
+                        if refined_queries:
+                            logger.info(f"[{context_label}] Generated {len(refined_queries)} refined queries: {refined_queries}")
+                            logger.info(f"[{context_label}] Retrying retrieval with refined queries...")
+
+                            # Recursive retry with refined queries
+                            return await _retrieve_with_full_pipeline(
+                                self,
+                                state=state,
+                                queries=refined_queries,
+                                context_label=context_label,
+                                topk_initial=topk_initial,
+                                topk_rerank=topk_rerank,
+                                use_mmr=use_mmr,
+                                use_agentic_refinement=use_agentic_refinement,
+                                refinement_attempt=refinement_attempt + 1
+                            )
+                        else:
+                            logger.warning(f"[{context_label}] Failed to generate refined queries, using current chunks")
+
+                    # If sufficient or max retries reached
+                    if refinement_attempt >= RETRY_MAX:
+                        logger.info(f"[{context_label}] Max refinement attempts reached ({RETRY_MAX}), using current chunks")
+
+                except Exception as e:
+                    logger.warning(f"[{context_label}] Agentic evaluation failed: {e}, using current chunks")
+
+            # Use all selected indices as final result
+            final_selected = selected_indices
+
+            # Prepare final chunk results
+            result_chunks = [
+                {
+                    "chunk_id": chunks[i]["chunk_id"],
+                    "content": chunks[i]["content"],
+                    "metadata": chunks[i]["metadata"],
+                    "embedding": chunks[i].get("embedding")
+                }
+                for i in final_selected
+            ]
+
+            logger.info(f"[{context_label}] Retrieval complete: {len(result_chunks)} chunks selected")
+            logger.info(f"[{context_label}] Pipeline stats: {len(chunks)} total → {len(initial_indices)} bi-encoder → {len(reranked)} cross-encoder → {len(selected_indices)} MMR → {len(final_selected)} agentic-eval (attempt {refinement_attempt})")
+
+            return result_chunks
+
         async def _generate_sbar_queries(state: FlowState, sbar_component: str, focus_instruction: str) -> List[str]:
-            """Generate focused queries for each SBAR component based on the user's original query."""
+            """Generate focused queries for each SBAR component based on the user's original query and chat history."""
             try:
                 logger.info(f"Generating {sbar_component} queries (prompt_length={len(state.user_prompt)} chars)")
 
@@ -1530,8 +1744,19 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     "recommendation": "Treatment plans, medications, follow-up care, interventions, next steps"
                 }
 
+                # Include chat history context for better query generation
+                history_context = ""
+                if state.chat_history:
+                    recent = state.chat_history[-4:]  # Last 2 turns (2 user + 2 assistant)
+                    if recent:
+                        history_context = "\n\nRecent conversation context:\n"
+                        for msg in recent:
+                            # Truncate long messages
+                            content_preview = msg.content[:150] if len(msg.content) > 150 else msg.content
+                            history_context += f"{msg.role.value}: {content_preview}\n"
+
                 prompt = f"""
-Based on this user query: "{state.user_prompt}"
+Based on this user query: "{state.user_prompt}"{history_context}
 
 Generate 3 specific search queries focused on the {sbar_component.upper()} component of SBAR medical reporting.
 
@@ -1539,6 +1764,7 @@ Generate 3 specific search queries focused on the {sbar_component.upper()} compo
 
 Return only the 3 queries, one per line, without numbers or bullets.
 Keep queries concise and medical terminology appropriate.
+Consider what has already been discussed in the conversation to avoid redundancy.
 """
 
                 messages = [
@@ -1580,7 +1806,7 @@ Keep queries concise and medical terminology appropriate.
                 return fallback_queries.get(sbar_component, ["medical information"])
 
         async def _generate_general_summary_queries(state: FlowState, component: str, focus_instruction: str) -> List[str]:
-            """Generate focused queries for each general summary component based on the user's original query."""
+            """Generate focused queries for each general summary component based on the user's original query and chat history."""
             try:
                 logger.info(f"Generating {component} queries (prompt_length={len(state.user_prompt)} chars)")
 
@@ -1594,17 +1820,16 @@ Keep queries concise and medical terminology appropriate.
                     "risks": "Allergies, fall risk, bleeding risk, DNR status, cognitive impairment, medication side-effects"
                 }
 
-                # Add chat history context if available for better query generation
+                # Include chat history context for better query generation
                 history_context = ""
-                recent_history = state.chat_history[-5:] if state.chat_history else []
-                if recent_history:
-                    history_lines = []
-                    for msg in recent_history:
-                        if msg.content and msg.content.strip():
-                            role = "User" if msg.role == ChatRole.USER else "CLARA"
-                            history_lines.append(f"{role}: {msg.content[:100]}")
-                    if history_lines:
-                        history_context = "\n\nRecent conversation:\n" + "\n".join(history_lines) + "\n"
+                if state.chat_history:
+                    recent = state.chat_history[-4:]  # Last 2 turns (2 user + 2 assistant)
+                    if recent:
+                        history_context = "\n\nRecent conversation context:\n"
+                        for msg in recent:
+                            # Truncate long messages
+                            content_preview = msg.content[:150] if len(msg.content) > 150 else msg.content
+                            history_context += f"{msg.role.value}: {content_preview}\n"
 
                 prompt = f"""
 Based on this user query: "{state.user_prompt}"{history_context}
@@ -1615,6 +1840,7 @@ Generate 3 specific search queries focused on the {component.upper()} component 
 
 Return only the 3 queries, one per line, without numbers or bullets.
 Keep queries concise and medical terminology appropriate.
+Consider what has already been discussed in the conversation to avoid redundancy.
 """
 
                 messages = [
@@ -1699,65 +1925,23 @@ Keep queries concise and medical terminology appropriate.
 
             return "\n".join(lines)
 
-        async def _fast_general_summary_retrieve(state: FlowState, focus: str, queries: List[str]) -> List[Dict[str, Any]]:
-            """Fast general summary retrieval using only bi-encoder similarity (same pattern as SBAR)."""
-            try:
-                logger.info(f"{focus} - Starting fast bi-encoder retrieval")
-
-                # Get chunks from state - try multiple sources
-                chunks = []
-                chunk_contents = []  # For embedding
-                if state.retrieved_chunks:
-                    chunks = state.retrieved_chunks[:50]  # Use cached chunks if available
-                    # Extract content from chunk dictionaries
-                    chunk_contents = [chunk.get("content", "") if isinstance(chunk, dict) else chunk for chunk in chunks]
-                    logger.info(f"{focus} - Using {len(chunks)} cached chunks")
-                else:
-                    logger.info(f"{focus} - No cached chunks available, using keyword matching only")
-
-                if not chunk_contents and not chunks:
-                    logger.info(f"{focus} - No chunks available for retrieval")
-                    return []
-
-                # Bi-encoder retrieval using semantic similarity (same as _fast_sbar_retrieve)
-                # Embed the queries
-                query_vecs = await self._embed_many(queries, mode="query")
-                logger.info(f"{focus} - Embedded {len(query_vecs)} queries")
-
-                # Embed the chunk contents (strings)
-                chunk_vecs = await self._embed_many(chunk_contents, mode="passage")
-                logger.info(f"{focus} - Embedded {len(chunk_vecs)} chunks")
-
-                # Compute bi-encoder scores (max cosine similarity across all queries)
-                scored_chunks = []
-                for i, chunk_vec in enumerate(chunk_vecs):
-                    max_score = max(self._cosine(chunk_vec, qv) for qv in query_vecs)
-                    if max_score > 0.0:  # Only include chunks with some similarity
-                        # Return full chunk dict (if available) or wrap content string as dict (fallback)
-                        if i < len(chunks):
-                            chunk_data = chunks[i]
-                        else:
-                            chunk_data = {"content": chunk_contents[i], "chunk_id": f"chunk-{i}"}
-                        scored_chunks.append((max_score, chunk_data))
-
-                # Sort by score and return top chunks
-                scored_chunks.sort(key=lambda x: x[0], reverse=True)
-                result_chunks = [chunk for _, chunk in scored_chunks[:15]]
-
-                logger.info(f"{focus} - Retrieved {len(result_chunks)} chunks using bi-encoder similarity")
-                return result_chunks
-
-            except Exception as e:
-                logger.info(f"{focus} - Error: {e}")
-                return []
-
         async def _generate_timeline_queries(state: FlowState, event_description: str, time_period: str) -> List[str]:
-            """Generate focused temporal queries for each timeline event."""
+            """Generate focused temporal queries for each timeline event with chat history context."""
             try:
                 logger.info(f"Generating queries for event: '{event_description}' at '{time_period}'")
 
+                # Include chat history context for better query generation
+                history_context = ""
+                if state.session_history:
+                    recent = state.session_history[-4:]  # Last 2 turns
+                    if recent:
+                        history_context = "\n\nRecent conversation context:\n"
+                        for msg in recent:
+                            content_preview = msg.content[:150] if len(msg.content) > 150 else msg.content
+                            history_context += f"{msg.role.value}: {content_preview}\n"
+
                 prompt = f"""
-Based on this user request: "{state.user_prompt}"
+Based on this user request: "{state.user_prompt}"{history_context}
 
 Generate 2-3 specific search queries to find information about this medical event:
 Event: {event_description}
@@ -1771,6 +1955,7 @@ Focus on:
 
 Return only the queries, one per line, without numbers or bullets.
 Keep queries concise and focused on the temporal aspect.
+Consider what has already been discussed in the conversation to avoid redundancy.
 """
 
                 messages = [
@@ -1868,7 +2053,7 @@ Make it clear, concise, and clinically appropriate.
                 return ("Medical Condition", "file-text")
 
         async def _generate_focused_summary_queries(state: FlowState, section: str, focus_instruction: str) -> List[str]:
-            """Generate focused queries for each focused summary section based on the user's query and extracted aspect.
+            """Generate focused queries for each focused summary section based on the user's query, aspect, and chat history.
 
             Args:
                 state: Flow state containing user prompt and focused aspect
@@ -1891,8 +2076,18 @@ Make it clear, concise, and clinically appropriate.
                     "next_steps": "Follow-up plans, pending tests, medication reviews, specialist referrals, outstanding issues"
                 }
 
+                # Include chat history context for better query generation
+                history_context = ""
+                if state.session_history:
+                    recent = state.session_history[-4:]  # Last 2 turns
+                    if recent:
+                        history_context = "\n\nRecent conversation context:\n"
+                        for msg in recent:
+                            content_preview = msg.content[:150] if len(msg.content) > 150 else msg.content
+                            history_context += f"{msg.role.value}: {content_preview}\n"
+
                 prompt = f"""
-Based on this user query: "{state.user_prompt}"
+Based on this user query: "{state.user_prompt}"{history_context}
 
 The user wants a focused summary about: {state.focused_aspect}
 
@@ -1904,6 +2099,7 @@ IMPORTANT: All queries should be specific to "{state.focused_aspect}" - don't in
 
 Return only the queries, one per line, without numbers or bullets.
 Keep queries concise and medically precise.
+Consider what has already been discussed in the conversation to avoid redundancy.
 """
 
                 messages = [
@@ -1946,16 +2142,26 @@ Keep queries concise and medically precise.
 
         @streaming_step("retrieve_situation_chunks")
         async def retrieve_situation_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on current patient situation (fast SBAR version)."""
+            """Retrieve chunks focused on current patient situation using full retrieval pipeline."""
             try:
                 logger.info("Generating situation-focused queries from user prompt")
 
-                # Generate SBAR-focused queries from the original user query
+                # Generate SBAR-focused queries (includes chat history context)
                 situation_queries = await _generate_sbar_queries(state, "situation",
                     "Generate queries focused on the current patient situation and immediate concerns")
 
-                chunks = await _fast_sbar_retrieve(state, "situation", situation_queries)
-                state.sbar_situation_chunks = chunks[:10]  # Limit for speed
+                # Use full retrieval pipeline with cross-encoder reranking
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=situation_queries,
+                    context_label="sbar_situation",
+                    topk_initial=100,
+                    topk_rerank=15,  # Smaller for speed
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True  # Disabled for speed
+                )
+                state.sbar_situation_chunks = chunks
                 logger.info(f"Retrieved {len(state.sbar_situation_chunks)} chunks")
 
             except Exception as e:
@@ -1966,16 +2172,26 @@ Keep queries concise and medically precise.
 
         @streaming_step("retrieve_background_chunks")
         async def retrieve_background_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on patient background and history (fast SBAR version)."""
+            """Retrieve chunks focused on patient background and history using full retrieval pipeline."""
             try:
                 logger.info("Generating background-focused queries from user prompt")
 
-                # Generate SBAR-focused queries from the original user query
+                # Generate SBAR-focused queries (includes chat history context)
                 background_queries = await _generate_sbar_queries(state, "background",
                     "Generate queries focused on patient medical history and background")
 
-                chunks = await _fast_sbar_retrieve(state, "background", background_queries)
-                state.sbar_background_chunks = chunks[:10]  # Limit for speed
+                # Use full retrieval pipeline with cross-encoder reranking
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=background_queries,
+                    context_label="sbar_background",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.sbar_background_chunks = chunks
                 logger.info(f"Retrieved {len(state.sbar_background_chunks)} chunks")
 
             except Exception as e:
@@ -1986,16 +2202,26 @@ Keep queries concise and medically precise.
 
         @streaming_step("retrieve_assessment_chunks")
         async def retrieve_assessment_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on clinical assessment data (fast SBAR version)."""
+            """Retrieve chunks focused on clinical assessment data using full retrieval pipeline."""
             try:
                 logger.info("Generating assessment-focused queries from user prompt")
 
-                # Generate SBAR-focused queries from the original user query
+                # Generate SBAR-focused queries (includes chat history context)
                 assessment_queries = await _generate_sbar_queries(state, "assessment",
                     "Generate queries focused on clinical assessment and diagnostic findings")
 
-                chunks = await _fast_sbar_retrieve(state, "assessment", assessment_queries)
-                state.sbar_assessment_chunks = chunks[:10]  # Limit for speed
+                # Use full retrieval pipeline with cross-encoder reranking
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=assessment_queries,
+                    context_label="sbar_assessment",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.sbar_assessment_chunks = chunks
                 logger.info(f"Retrieved {len(state.sbar_assessment_chunks)} chunks")
 
             except Exception as e:
@@ -2006,16 +2232,26 @@ Keep queries concise and medically precise.
 
         @streaming_step("retrieve_recommendation_chunks")
         async def retrieve_recommendation_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on treatment and recommendations (fast SBAR version)."""
+            """Retrieve chunks focused on treatment and recommendations using full retrieval pipeline."""
             try:
                 logger.info("Generating recommendation-focused queries from user prompt")
 
-                # Generate SBAR-focused queries from the original user query
+                # Generate SBAR-focused queries (includes chat history context)
                 recommendation_queries = await _generate_sbar_queries(state, "recommendation",
                     "Generate queries focused on treatment recommendations and next steps")
 
-                chunks = await _fast_sbar_retrieve(state, "recommendation", recommendation_queries)
-                state.sbar_recommendation_chunks = chunks[:10]  # Limit for speed
+                # Use full retrieval pipeline with cross-encoder reranking
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=recommendation_queries,
+                    context_label="sbar_recommendation",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.sbar_recommendation_chunks = chunks
                 logger.info(f"Retrieved {len(state.sbar_recommendation_chunks)} chunks")
 
             except Exception as e:
@@ -2026,15 +2262,24 @@ Keep queries concise and medically precise.
 
         @streaming_step("retrieve_snapshot_chunks")
         async def retrieve_snapshot_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on patient snapshot (demographics, social context, top conditions)."""
+            """Retrieve chunks focused on patient snapshot using full retrieval pipeline."""
             try:
                 logger.info("Generating snapshot-focused queries from user prompt")
 
                 snapshot_queries = await _generate_general_summary_queries(state, "snapshot",
                     "Generate queries focused on patient demographics, living situation, and chronic conditions")
 
-                chunks = await _fast_general_summary_retrieve(state, "snapshot", snapshot_queries)
-                state.general_snapshot_chunks = chunks[:10]
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=snapshot_queries,
+                    context_label="general_snapshot",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.general_snapshot_chunks = chunks
                 logger.info(f"Retrieved {len(state.general_snapshot_chunks)} chunks")
 
             except Exception as e:
@@ -2045,15 +2290,24 @@ Keep queries concise and medically precise.
 
         @streaming_step("retrieve_problems_chunks")
         async def retrieve_problems_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on active problems and chronic diseases."""
+            """Retrieve chunks focused on active problems using full retrieval pipeline."""
             try:
                 logger.info("Generating problems-focused queries from user prompt")
 
                 problems_queries = await _generate_general_summary_queries(state, "problems",
                     "Generate queries focused on active medical problems and chronic diseases")
 
-                chunks = await _fast_general_summary_retrieve(state, "problems", problems_queries)
-                state.general_problems_chunks = chunks[:10]
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=problems_queries,
+                    context_label="general_problems",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.general_problems_chunks = chunks
                 logger.info(f"Retrieved {len(state.general_problems_chunks)} chunks")
 
             except Exception as e:
@@ -2064,15 +2318,24 @@ Keep queries concise and medically precise.
 
         @streaming_step("retrieve_medications_chunks")
         async def retrieve_medications_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on current medications and high-risk drugs."""
+            """Retrieve chunks focused on medications using full retrieval pipeline."""
             try:
                 logger.info("Generating medications-focused queries from user prompt")
 
                 medications_queries = await _generate_general_summary_queries(state, "medications",
                     "Generate queries focused on current medications and high-risk drugs")
 
-                chunks = await _fast_general_summary_retrieve(state, "medications", medications_queries)
-                state.general_medications_chunks = chunks[:10]
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=medications_queries,
+                    context_label="general_medications",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.general_medications_chunks = chunks
                 logger.info(f"Retrieved {len(state.general_medications_chunks)} chunks")
 
             except Exception as e:
@@ -2083,15 +2346,24 @@ Keep queries concise and medically precise.
 
         @streaming_step("retrieve_trends_chunks")
         async def retrieve_trends_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on lab and vital sign trends."""
+            """Retrieve chunks focused on trends using full retrieval pipeline."""
             try:
                 logger.info("Generating trends-focused queries from user prompt")
 
                 trends_queries = await _generate_general_summary_queries(state, "trends",
                     "Generate queries focused on lab values and vital signs trends")
 
-                chunks = await _fast_general_summary_retrieve(state, "trends", trends_queries)
-                state.general_trends_chunks = chunks[:10]
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=trends_queries,
+                    context_label="general_trends",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.general_trends_chunks = chunks
                 logger.info(f"Retrieved {len(state.general_trends_chunks)} chunks")
 
             except Exception as e:
@@ -2102,15 +2374,24 @@ Keep queries concise and medically precise.
 
         @streaming_step("retrieve_history_chunks")
         async def retrieve_history_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on past medical history (surgeries, hospitalizations)."""
+            """Retrieve chunks focused on medical history using full retrieval pipeline."""
             try:
                 logger.info("Generating history-focused queries from user prompt")
 
                 history_queries = await _generate_general_summary_queries(state, "history",
                     "Generate queries focused on major hospitalizations and surgeries")
 
-                chunks = await _fast_general_summary_retrieve(state, "history", history_queries)
-                state.general_history_chunks = chunks[:10]
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=history_queries,
+                    context_label="general_history",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.general_history_chunks = chunks
                 logger.info(f"Retrieved {len(state.general_history_chunks)} chunks")
 
             except Exception as e:
@@ -2121,15 +2402,24 @@ Keep queries concise and medically precise.
 
         @streaming_step("retrieve_risks_chunks")
         async def retrieve_risks_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on patient risks and alerts (allergies, falls, DNR)."""
+            """Retrieve chunks focused on risks using full retrieval pipeline."""
             try:
                 logger.info("Generating risks-focused queries from user prompt")
 
                 risks_queries = await _generate_general_summary_queries(state, "risks",
                     "Generate queries focused on allergies, fall risk, and clinical alerts")
 
-                chunks = await _fast_general_summary_retrieve(state, "risks", risks_queries)
-                state.general_risks_chunks = chunks[:10]
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=risks_queries,
+                    context_label="general_risks",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.general_risks_chunks = chunks
                 logger.info(f"Retrieved {len(state.general_risks_chunks)} chunks")
 
             except Exception as e:
@@ -3330,24 +3620,113 @@ CRITICAL: Output ONLY valid JSON. Translate encounter_type to user's language. N
 
         @streaming_step("sbar_parallel_dispatcher")
         async def sbar_parallel_dispatcher(state: FlowState) -> FlowState:
-            """Dispatcher node that triggers parallel SBAR processing."""
+            """Execute parallel SBAR component retrieval and generation using asyncio.gather."""
             try:
-                logger.info("Initiating parallel SBAR processing")
-
-                # Initialize SBAR component fields if needed
-                logger.info("SBAR fields initialized for parallel processing")
+                logger.info("Initiating parallel SBAR retrieval and generation for 4 components using asyncio.gather")
 
                 # Disable refinement for SBAR flows (they use their own retrieval)
                 state.needs_refinement = False
 
-                # This node doesn't do much - it's just a dispatcher
-                # The actual parallel work will happen in the parallel tasks
-                logger.info("Dispatcher ready for parallel execution")
+                # Generate queries for all components IN PARALLEL
+                logger.info("Generating queries for all 4 SBAR components in parallel")
+                query_results = await asyncio.gather(
+                    _generate_sbar_queries(state, "situation",
+                        "Generate queries focused on the current patient situation and immediate concerns"),
+                    _generate_sbar_queries(state, "background",
+                        "Generate queries focused on patient history and relevant context"),
+                    _generate_sbar_queries(state, "assessment",
+                        "Generate queries focused on clinical assessment and current status"),
+                    _generate_sbar_queries(state, "recommendation",
+                        "Generate queries focused on treatment plans and recommendations"),
+                    return_exceptions=True
+                )
+
+                # Unpack query results
+                situation_queries, background_queries, assessment_queries, recommendation_queries = query_results
+                logger.info("All SBAR queries generated in parallel, starting retrievals")
+
+                # Execute all retrievals in parallel
+                retrieval_results = await asyncio.gather(
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=situation_queries, context_label="sbar_situation",
+                        topk_initial=100, topk_rerank=15, use_mmr=True,  use_agentic_refinement=True
+                    ),
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=background_queries, context_label="sbar_background",
+                        topk_initial=100, topk_rerank=15, use_mmr=True,  use_agentic_refinement=True
+                    ),
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=assessment_queries, context_label="sbar_assessment",
+                        topk_initial=100, topk_rerank=15, use_mmr=True,  use_agentic_refinement=True
+                    ),
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=recommendation_queries, context_label="sbar_recommendation",
+                        topk_initial=100, topk_rerank=15, use_mmr=True,  use_agentic_refinement=True
+                    ),
+                    return_exceptions=True
+                )
+
+                # Assign retrieval results to state
+                component_names = ["situation", "background", "assessment", "recommendation"]
+                for i, (component_name, chunks) in enumerate(zip(component_names, retrieval_results)):
+                    if isinstance(chunks, Exception):
+                        logger.error(f"Error retrieving {component_name}: {chunks}")
+                        chunks = []
+
+                    if component_name == "situation":
+                        state.sbar_situation_chunks = chunks
+                    elif component_name == "background":
+                        state.sbar_background_chunks = chunks
+                    elif component_name == "assessment":
+                        state.sbar_assessment_chunks = chunks
+                    elif component_name == "recommendation":
+                        state.sbar_recommendation_chunks = chunks
+
+                    logger.info(f"Retrieved {len(chunks)} chunks for SBAR {component_name}")
+
+                logger.info("All 4 SBAR retrievals completed, starting parallel generation")
+
+                # Build citations from all retrieved chunks
+                all_chunks = []
+                for chunks in [state.sbar_situation_chunks, state.sbar_background_chunks,
+                               state.sbar_assessment_chunks, state.sbar_recommendation_chunks]:
+                    if chunks:
+                        all_chunks.extend(chunks)
+
+                if all_chunks:
+                    state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(all_chunks)
+                    logger.info(f"🔖 Built {len(state.citations)} citations from {len(all_chunks)} total SBAR chunks")
+                else:
+                    state.citations = {}
+                    state.chunk_id_to_number = {}
+                    logger.warning("No SBAR chunks retrieved - citations will be empty")
+
+                # Generate all 4 components in parallel
+                generation_results = await asyncio.gather(
+                    generate_sbar_situation(state),
+                    generate_sbar_background(state),
+                    generate_sbar_assessment(state),
+                    generate_sbar_recommendation(state),
+                    return_exceptions=True
+                )
+
+                # Check for errors
+                for i, result in enumerate(generation_results):
+                    if isinstance(result, Exception):
+                        component_names = ["situation", "background", "assessment", "recommendation"]
+                        logger.error(f"Error generating SBAR {component_names[i]}: {result}")
+
+                logger.info("All 4 SBAR generations completed successfully")
+                return state
 
             except Exception as e:
                 log_error(logger, "sbar_parallel_dispatcher", e)
-
-            return state
+                # Set empty chunks on error
+                state.sbar_situation_chunks = []
+                state.sbar_background_chunks = []
+                state.sbar_assessment_chunks = []
+                state.sbar_recommendation_chunks = []
+                return state
 
         @streaming_step("merge_general_summary_results")
         async def merge_general_summary_results(state: FlowState) -> FlowState:
@@ -3497,9 +3876,9 @@ CRITICAL: Output ONLY valid JSON. Translate encounter_type to user's language. N
 
         @streaming_step("general_summary_parallel_dispatcher")
         async def general_summary_parallel_dispatcher(state: FlowState) -> FlowState:
-            """Dispatcher node that triggers parallel general summary processing."""
+            """Execute parallel general summary component retrieval using asyncio.gather."""
             try:
-                logger.info("Initiating parallel general summary processing")
+                logger.info("Initiating parallel general summary retrieval for 6 components using asyncio.gather")
 
                 # Initialize general summary cache if needed
                 if not state.general_retrieval_cache:
@@ -3508,13 +3887,135 @@ CRITICAL: Output ONLY valid JSON. Translate encounter_type to user's language. N
                 # Disable refinement for summary flows (they use their own retrieval)
                 state.needs_refinement = False
 
-                logger.info("General summary fields initialized for parallel processing")
-                logger.info("Dispatcher ready for parallel execution")
+                # Generate queries for all components IN PARALLEL
+                logger.info("Generating queries for all 6 components in parallel")
+                query_results = await asyncio.gather(
+                    _generate_general_summary_queries(state, "snapshot",
+                        "Generate queries focused on patient demographics, living situation, and chronic conditions"),
+                    _generate_general_summary_queries(state, "problems",
+                        "Generate queries focused on active diagnoses and health concerns"),
+                    _generate_general_summary_queries(state, "medications",
+                        "Generate queries focused on current medications and recent prescriptions"),
+                    _generate_general_summary_queries(state, "trends",
+                        "Generate queries focused on lab values and vital signs trends"),
+                    _generate_general_summary_queries(state, "history",
+                        "Generate queries focused on recent care visits and hospitalizations"),
+                    _generate_general_summary_queries(state, "risks",
+                        "Generate queries focused on allergies, fall risk, and clinical alerts"),
+                    return_exceptions=True
+                )
+
+                # Unpack query results
+                snapshot_queries, problems_queries, medications_queries, trends_queries, history_queries, risks_queries = query_results
+                logger.info("All queries generated in parallel, starting retrievals")
+
+                # Execute all retrievals in parallel using asyncio.gather
+                results = await asyncio.gather(
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=snapshot_queries, context_label="general_snapshot",
+                        topk_initial=100, topk_rerank=15, use_mmr=True,  use_agentic_refinement=True
+                    ),
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=problems_queries, context_label="general_problems",
+                        topk_initial=100, topk_rerank=15, use_mmr=True,  use_agentic_refinement=True
+                    ),
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=medications_queries, context_label="general_medications",
+                        topk_initial=100, topk_rerank=15, use_mmr=True,  use_agentic_refinement=True
+                    ),
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=trends_queries, context_label="general_trends",
+                        topk_initial=100, topk_rerank=15, use_mmr=True,  use_agentic_refinement=True
+                    ),
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=history_queries, context_label="general_history",
+                        topk_initial=100, topk_rerank=15, use_mmr=True,  use_agentic_refinement=True
+                    ),
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=risks_queries, context_label="general_risks",
+                        topk_initial=100, topk_rerank=15, use_mmr=True,  use_agentic_refinement=True
+                    ),
+                    return_exceptions=True
+                )
+
+                # Assign results to state fields
+                component_names = ["snapshot", "problems", "medications", "trends", "history", "risks"]
+                for component_name, chunks in zip(component_names, results):
+                    if isinstance(chunks, Exception):
+                        logger.error(f"Error retrieving {component_name}: {chunks}")
+                        chunks = []
+
+                    if component_name == "snapshot":
+                        state.general_snapshot_chunks = chunks
+                    elif component_name == "problems":
+                        state.general_problems_chunks = chunks
+                    elif component_name == "medications":
+                        state.general_medications_chunks = chunks
+                    elif component_name == "trends":
+                        state.general_trends_chunks = chunks
+                    elif component_name == "history":
+                        state.general_history_chunks = chunks
+                    elif component_name == "risks":
+                        state.general_risks_chunks = chunks
+
+                    logger.info(f"Retrieved {len(chunks)} chunks for {component_name}")
+
+                logger.info("All 6 parallel retrievals completed successfully")
+
+                # Build citations from all retrieved chunks
+                all_chunks = []
+                for chunks in [state.general_snapshot_chunks, state.general_problems_chunks,
+                               state.general_medications_chunks, state.general_trends_chunks,
+                               state.general_history_chunks, state.general_risks_chunks]:
+                    if chunks:
+                        all_chunks.extend(chunks)
+
+                if all_chunks:
+                    state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(all_chunks)
+                    logger.info(f"🔖 Built {len(state.citations)} citations from {len(all_chunks)} total chunks")
+                else:
+                    state.citations = {}
+                    state.chunk_id_to_number = {}
+                    logger.warning("No chunks retrieved - citations will be empty")
+
+                # Now generate all 6 components in parallel using the retrieved chunks
+                logger.info("Starting parallel generation for 6 components")
+
+                generation_results = await asyncio.gather(
+                    # Generate snapshot
+                    generate_snapshot_summary(state),
+                    # Generate problems
+                    generate_problems_summary(state),
+                    # Generate medications
+                    generate_medications_summary(state),
+                    # Generate trends
+                    generate_trends_summary(state),
+                    # Generate history/encounters
+                    generate_history_summary(state),
+                    # Generate risks
+                    generate_risks_summary(state),
+                    return_exceptions=True
+                )
+
+                # Check for errors in generation
+                for i, result in enumerate(generation_results):
+                    if isinstance(result, Exception):
+                        component_names = ["snapshot", "problems", "medications", "trends", "history", "risks"]
+                        logger.error(f"Error generating {component_names[i]}: {result}")
+
+                logger.info("All 6 parallel generations completed successfully")
+                return state
 
             except Exception as e:
                 log_error(logger, "general_summary_parallel_dispatcher", e)
-
-            return state
+                # Set empty chunks on error
+                state.general_snapshot_chunks = []
+                state.general_problems_chunks = []
+                state.general_medications_chunks = []
+                state.general_trends_chunks = []
+                state.general_history_chunks = []
+                state.general_risks_chunks = []
+                return state
 
         # ==================== FOCUSED SUMMARY FLOW NODES ====================
 
@@ -3565,15 +4066,24 @@ CRITICAL: Output ONLY valid JSON. Translate encounter_type to user's language. N
 
         @streaming_step("retrieve_focused_diagnoses_chunks")
         async def retrieve_focused_diagnoses_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on diagnoses related to the aspect."""
+            """Retrieve chunks focused on diagnoses using full retrieval pipeline."""
             try:
                 logger.info(f"Retrieving diagnoses chunks for {state.focused_aspect}")
 
                 diagnoses_queries = await _generate_focused_summary_queries(state, "diagnoses",
                     "Generate queries focused on formal diagnoses and disease classifications")
 
-                chunks = await _fast_sbar_retrieve(state, f"diagnoses_{state.focused_aspect}", diagnoses_queries)
-                state.focused_diagnoses_chunks = chunks[:10]
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=diagnoses_queries,
+                    context_label=f"focused_diagnoses_{state.focused_aspect}",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.focused_diagnoses_chunks = chunks
                 logger.info(f"Retrieved {len(state.focused_diagnoses_chunks)} diagnoses chunks")
 
             except Exception as e:
@@ -3647,15 +4157,24 @@ RULES:
 
         @streaming_step("retrieve_focused_events_chunks")
         async def retrieve_focused_events_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on key clinical events."""
+            """Retrieve chunks focused on key clinical events using full retrieval pipeline."""
             try:
                 logger.info(f"Retrieving events chunks for {state.focused_aspect}")
 
                 events_queries = await _generate_focused_summary_queries(state, "events",
                     "Generate queries focused on key clinical events and milestones")
 
-                chunks = await _fast_sbar_retrieve(state, f"events_{state.focused_aspect}", events_queries)
-                state.focused_events_chunks = chunks[:10]
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=events_queries,
+                    context_label=f"focused_events_{state.focused_aspect}",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.focused_events_chunks = chunks
                 logger.info(f"Retrieved {len(state.focused_events_chunks)} events chunks")
 
             except Exception as e:
@@ -3724,15 +4243,24 @@ RULES:
 
         @streaming_step("retrieve_focused_medications_chunks")
         async def retrieve_focused_medications_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on medications related to the aspect."""
+            """Retrieve chunks focused on medications using full retrieval pipeline."""
             try:
                 logger.info(f"Retrieving medications chunks for {state.focused_aspect}")
 
                 medications_queries = await _generate_focused_summary_queries(state, "medications",
                     "Generate queries focused on medications and treatment regimens")
 
-                chunks = await _fast_sbar_retrieve(state, f"medications_{state.focused_aspect}", medications_queries)
-                state.focused_medications_chunks = chunks[:10]
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=medications_queries,
+                    context_label=f"focused_medications_{state.focused_aspect}",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.focused_medications_chunks = chunks
                 logger.info(f"Retrieved {len(state.focused_medications_chunks)} medications chunks")
 
             except Exception as e:
@@ -3807,15 +4335,24 @@ RULES:
 
         @streaming_step("retrieve_focused_objective_data_chunks")
         async def retrieve_focused_objective_data_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on objective data (labs, vitals, imaging)."""
+            """Retrieve chunks focused on objective data using full retrieval pipeline."""
             try:
                 logger.info(f"Retrieving objective data chunks for {state.focused_aspect}")
 
                 objective_queries = await _generate_focused_summary_queries(state, "objective_data",
                     "Generate queries focused on lab results, vitals, imaging, and test results")
 
-                chunks = await _fast_sbar_retrieve(state, f"objective_{state.focused_aspect}", objective_queries)
-                state.focused_objective_data_chunks = chunks[:10]
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=objective_queries,
+                    context_label=f"focused_objective_{state.focused_aspect}",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.focused_objective_data_chunks = chunks
                 logger.info(f"Retrieved {len(state.focused_objective_data_chunks)} objective data chunks")
 
             except Exception as e:
@@ -3890,15 +4427,24 @@ RULES:
 
         @streaming_step("retrieve_focused_assessment_chunks")
         async def retrieve_focused_assessment_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on clinical assessment."""
+            """Retrieve chunks focused on clinical assessment using full retrieval pipeline."""
             try:
                 logger.info(f"Retrieving assessment chunks for {state.focused_aspect}")
 
                 assessment_queries = await _generate_focused_summary_queries(state, "assessment",
                     "Generate queries focused on clinical assessments and current status")
 
-                chunks = await _fast_sbar_retrieve(state, f"assessment_{state.focused_aspect}", assessment_queries)
-                state.focused_assessment_chunks = chunks[:10]
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=assessment_queries,
+                    context_label=f"focused_assessment_{state.focused_aspect}",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.focused_assessment_chunks = chunks
                 logger.info(f"Retrieved {len(state.focused_assessment_chunks)} assessment chunks")
 
             except Exception as e:
@@ -3976,15 +4522,24 @@ RULES:
 
         @streaming_step("retrieve_focused_next_steps_chunks")
         async def retrieve_focused_next_steps_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on follow-up plans and outstanding issues."""
+            """Retrieve chunks focused on follow-up plans using full retrieval pipeline."""
             try:
                 logger.info(f"Retrieving next steps chunks for {state.focused_aspect}")
 
                 next_steps_queries = await _generate_focused_summary_queries(state, "next_steps",
                     "Generate queries focused on follow-up plans and outstanding issues")
 
-                chunks = await _fast_sbar_retrieve(state, f"next_steps_{state.focused_aspect}", next_steps_queries)
-                state.focused_next_steps_chunks = chunks[:10]
+                chunks = await _retrieve_with_full_pipeline(
+                    self, state=state,
+                    queries=next_steps_queries,
+                    context_label=f"focused_next_steps_{state.focused_aspect}",
+                    topk_initial=100,
+                    topk_rerank=15,
+                    use_mmr=True,
+                    
+                    use_agentic_refinement=True
+                )
+                state.focused_next_steps_chunks = chunks
                 logger.info(f"Retrieved {len(state.focused_next_steps_chunks)} next steps chunks")
 
             except Exception as e:
@@ -4058,6 +4613,25 @@ RULES:
             """Merge all focused summary sections and prepare final JSON response."""
             try:
                 logger.info(f"Merging focused summary results for {state.focused_aspect}")
+
+                # Build citations from all retrieved chunks across all focused summary components
+                all_chunks = []
+                for chunks in [
+                    state.focused_diagnoses_chunks,
+                    state.focused_events_chunks,
+                    state.focused_medications_chunks,
+                    state.focused_objective_data_chunks,
+                    state.focused_assessment_chunks,
+                    state.focused_next_steps_chunks
+                ]:
+                    if chunks:
+                        all_chunks.extend(chunks)
+
+                if all_chunks:
+                    state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(all_chunks)
+                    logger.info(f"🔖 Built {len(state.citations)} citations from {len(all_chunks)} total focused summary chunks")
+                else:
+                    logger.info("⚠️ No chunks retrieved for focused summary - citations will be empty")
 
                 # Collect results from separate fields
                 focused_results = {
@@ -4268,7 +4842,7 @@ Return ONLY the JSON array, no additional text.
 
         @streaming_step("retrieve_timeline_chunks")
         async def retrieve_timeline_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks for each timeline event sequentially."""
+            """Retrieve chunks for each timeline event using full retrieval pipeline."""
             try:
                 logger.info("Starting retrieval for timeline events")
 
@@ -4278,25 +4852,62 @@ Return ONLY the JSON array, no additional text.
 
                 state.timeline_chunks = {}
 
-                # Retrieve chunks for each event sequentially
-                for idx, event in enumerate(state.timeline_events):
+                # Retrieve chunks for all events IN PARALLEL
+                logger.info(f"Retrieving chunks for {len(state.timeline_events)} timeline events in parallel")
+
+                # Generate tasks for all events
+                async def retrieve_event_chunks(idx: int, event: dict):
+                    """Retrieve chunks for a single timeline event."""
                     event_id = f"event_{idx}"
                     title = event.get("title", "Unknown event")
                     time_period = event.get("time_period", "Unknown time")
 
-                    logger.info(f"Retrieving chunks for: {title} ({time_period})")
-
                     # Generate queries for this event
                     queries = await _generate_timeline_queries(state, title, time_period)
 
-                    # Use fast retrieval (same as SBAR)
-                    chunks = await _fast_sbar_retrieve(state, f"timeline_{idx}", queries)
+                    # Use full retrieval pipeline with cross-encoder reranking
+                    chunks = await _retrieve_with_full_pipeline(
+                        self, state=state,
+                        queries=queries,
+                        context_label=f"timeline_event_{idx}",
+                        topk_initial=100,
+                        topk_rerank=15,
+                        use_mmr=True,
+                        
+                        use_agentic_refinement=True
+                    )
 
-                    # Store chunks for this event
-                    state.timeline_chunks[event_id] = chunks[:8]  # Limit to 8 chunks per event
-                    logger.info(f"Retrieved {len(state.timeline_chunks[event_id])} chunks for {title}")
+                    # Limit to 8 chunks for UI performance
+                    return event_id, title, chunks[:8]
 
-                logger.info(f"Retrieved chunks for {len(state.timeline_chunks)} events")
+                # Execute all retrievals in parallel
+                results = await asyncio.gather(
+                    *[retrieve_event_chunks(idx, event) for idx, event in enumerate(state.timeline_events)],
+                    return_exceptions=True
+                )
+
+                # Store results
+                for result in results:
+                    if isinstance(result, Exception):
+                        logger.error(f"Error retrieving timeline event: {result}")
+                        continue
+                    event_id, title, chunks = result
+                    state.timeline_chunks[event_id] = chunks
+                    logger.info(f"Retrieved {len(chunks)} chunks for {title}")
+
+                logger.info(f"Retrieved chunks for {len(state.timeline_chunks)} events in parallel")
+
+                # Build citations from all retrieved timeline chunks
+                all_chunks = []
+                for event_chunks in state.timeline_chunks.values():
+                    if event_chunks:
+                        all_chunks.extend(event_chunks)
+
+                if all_chunks:
+                    state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(all_chunks)
+                    logger.info(f"🔖 Built {len(state.citations)} citations from {len(all_chunks)} total timeline chunks")
+                else:
+                    logger.info("⚠️ No chunks retrieved for timeline - citations will be empty")
 
             except Exception as e:
                 logger.info(f"Error: {e}")
@@ -6605,42 +7216,16 @@ Return ONLY the reformulated query, nothing else."""
             }
         )
 
-        # Sequential SBAR execution to avoid concurrent state updates
-        _builder.add_edge("sbar_parallel_dispatcher", "retrieve_situation_chunks")
+        # SBAR execution - dispatcher uses asyncio.gather for parallel retrieval + generation
+        # Dispatcher does all 4 retrievals and generations in parallel, then routes to merge
+        _builder.add_edge("sbar_parallel_dispatcher", "merge_sbar_results")
 
-        # Sequential retrieval and generation chain
-        _builder.add_edge("retrieve_situation_chunks", "generate_sbar_situation")
-        _builder.add_edge("generate_sbar_situation", "retrieve_background_chunks")
-        _builder.add_edge("retrieve_background_chunks", "generate_sbar_background")
-        _builder.add_edge("generate_sbar_background", "retrieve_assessment_chunks")
-        _builder.add_edge("retrieve_assessment_chunks", "generate_sbar_assessment")
-        _builder.add_edge("generate_sbar_assessment", "retrieve_recommendation_chunks")
-        _builder.add_edge("retrieve_recommendation_chunks", "generate_sbar_recommendation")
-
-        # Final generation node goes to merge
-        _builder.add_edge("generate_sbar_recommendation", "merge_sbar_results")
-
-        # SBAR merge to store response (skip web search for now in SBAR flow)
+        # SBAR merge to store response
         _builder.add_edge("merge_sbar_results", "store_assistant_response")
 
-        # Sequential general summary execution to avoid concurrent state updates
-        _builder.add_edge("general_summary_parallel_dispatcher", "retrieve_snapshot_chunks")
-
-        # Sequential retrieval and generation chain for general summary
-        _builder.add_edge("retrieve_snapshot_chunks", "generate_snapshot_summary")
-        _builder.add_edge("generate_snapshot_summary", "retrieve_problems_chunks")
-        _builder.add_edge("retrieve_problems_chunks", "generate_problems_summary")
-        _builder.add_edge("generate_problems_summary", "retrieve_medications_chunks")
-        _builder.add_edge("retrieve_medications_chunks", "generate_medications_summary")
-        _builder.add_edge("generate_medications_summary", "retrieve_trends_chunks")
-        _builder.add_edge("retrieve_trends_chunks", "generate_trends_summary")
-        _builder.add_edge("generate_trends_summary", "retrieve_history_chunks")
-        _builder.add_edge("retrieve_history_chunks", "generate_history_summary")
-        _builder.add_edge("generate_history_summary", "retrieve_risks_chunks")
-        _builder.add_edge("retrieve_risks_chunks", "generate_risks_summary")
-
-        # Final generation node goes to merge
-        _builder.add_edge("generate_risks_summary", "merge_general_summary_results")
+        # General summary execution - dispatcher uses asyncio.gather for parallel retrieval + generation
+        # Dispatcher does all 6 retrievals and generations in parallel, then routes to merge
+        _builder.add_edge("general_summary_parallel_dispatcher", "merge_general_summary_results")
 
         # General summary merge to store response
         _builder.add_edge("merge_general_summary_results", "store_assistant_response")
@@ -6882,50 +7467,117 @@ Content:
         chunks = strategy.apply(records, policy, orchestrator._tokenizer)
         
         logger.info(f"Created {len(chunks)} chunks from {len(journal_entries)} journal entries")
-        
+
         return chunks
 
+    def _parse_journal_entries(self, text: str) -> List[Tuple[datetime, str]]:
+        """
+        Parse Swedish journal entries using line-start dates as boundaries.
+
+        RULE: A date at the START of a line (with optional whitespace) marks a new entry.
+        This avoids false positives from dates mentioned in entry content.
+
+        Supports:
+        - YYYY-MM-DD HH:MM (e.g., 2024-09-25 09:45)
+        - YYYY-MM-DD (e.g., 2024-09-25)
+
+        Returns: List of (entry_date, entry_text) tuples
+        """
+        lines = text.split('\n')
+
+        # Pattern: Optional whitespace, then date at start of line
+        date_at_line_start = r'^\s*(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}))?'
+
+        entries = []
+        current_entry_date = None
+        current_entry_lines = []
+
+        for line in lines:
+            # Check if this line starts with a date
+            match = re.match(date_at_line_start, line)
+
+            if match:
+                # NEW ENTRY FOUND
+
+                # Save previous entry if exists
+                if current_entry_date is not None and current_entry_lines:
+                    entry_text = '\n'.join(current_entry_lines).strip()
+                    if entry_text:
+                        entries.append((current_entry_date, entry_text))
+
+                # Parse the new entry's date
+                date_part = match.group(1)  # YYYY-MM-DD
+                time_part = match.group(2)  # HH:MM or None
+
+                if time_part:
+                    date_str = f"{date_part} {time_part}"
+                    date_format = '%Y-%m-%d %H:%M'
+                else:
+                    date_str = date_part
+                    date_format = '%Y-%m-%d'
+
+                try:
+                    current_entry_date = datetime.strptime(date_str, date_format)
+                    current_entry_lines = [line]  # Start with header line
+                    logger.debug(f"New journal entry: {date_str}")
+                except ValueError:
+                    logger.warning(f"Could not parse date: {date_str}")
+                    current_entry_date = None
+                    current_entry_lines = []
+            else:
+                # This line is part of the current entry
+                if current_entry_date is not None:
+                    current_entry_lines.append(line)
+
+        # Save the last entry
+        if current_entry_date is not None and current_entry_lines:
+            entry_text = '\n'.join(current_entry_lines).strip()
+            if entry_text:
+                entries.append((current_entry_date, entry_text))
+
+        logger.info(f"Parsed {len(entries)} journal entries using line-start date markers")
+        return entries
+
     async def _chunk_pdf_documents(self, pdf_documents: List[PDFDocument], orchestrator: ChunkingOrchestrator, patient_id_str: Optional[str]) -> List[Chunk]:
-        """Chunk PDF documents using the narrative strategy with orchestrator's redactor (Presidio)."""
-        from optimed.core.domain import Record
-        from optimed.adapters.chunking.strategies.narrative_v1 import NarrativeV1
+        """
+        Chunk PDF documents using SemanticPDFChunker.
+
+        NOTE: We skip NarrativeV1 double-chunking to preserve semantic coherence.
+        SemanticPDFChunker already creates optimal chunks with medical context awareness.
+        """
+        from optimed.core.domain import Chunk
         from optimed.core.services.hash_utils import stable_hash
+        import uuid
 
         if not pdf_documents:
             return []
 
-        # Create records from PDF documents
-        records = []
+        # Final chunks to return (both parent and child chunks)
+        final_chunks = []
 
         # Use semantic chunking for better PDF processing
         from optimed.adapters.pdf.semantic_chunker import SemanticPDFChunker
 
-        chunker = SemanticPDFChunker(
-            target_chunk_size=800,
-            overlap_ratio=0.15,
-            preserve_medical_context=True
+        # Create parent chunker for large context chunks
+        # Note: target_chunk_size is in CHARACTERS, ~4 chars per token
+        parent_chunker = SemanticPDFChunker(
+            target_chunk_size=6000,  # 1500 tokens * 4 = 6000 chars (large chunks for LLM context)
+            overlap_ratio=0.25,      # ~375 tokens overlap for context preservation
+            preserve_medical_context=True,
+            disable_section_detection=True  # Don't split on headers/lists - we want large coherent chunks
+        )
+
+        # Create child chunker for precise retrieval chunks
+        child_chunker = SemanticPDFChunker(
+            target_chunk_size=1000,  # 250 tokens * 4 = 1000 chars (200-300 token range for precise retrieval)
+            overlap_ratio=0.15,      # ~60 tokens overlap
+            preserve_medical_context=True,
+            disable_section_detection=True  # Don't split on headers/lists - paragraph-based chunking only
         )
 
         for pdf in pdf_documents:
             if not pdf.extracted_text:
                 continue
-
-            # Create semantic chunks from the PDF
-            semantic_chunks = chunker.chunk_pdf_text(
-                pdf.extracted_text,
-                pdf.document_id,
-                {
-                    "title": pdf.metadata.title,
-                    "author": pdf.metadata.author,
-                    "subject": pdf.metadata.subject,
-                    "patient_id": pdf.patient_id,
-                    "user_id": pdf.user_id,
-                    "filename": pdf.filename,
-                    "uploaded_at": pdf.uploaded_at.strftime('%Y-%m-%d %H:%M')
-                }
-            )
-
-            logger.info(f"PDF {pdf.filename} -> {len(semantic_chunks)} semantic chunks")
 
             # Use appropriate patient reference
             if pdf.patient_id:
@@ -6933,53 +7585,263 @@ Content:
             else:
                 pseudo_patient = stable_hash({"uid": pdf.user_id}, namespace="user")
 
-            # Create a record for each semantic chunk
-            for i, chunk in enumerate(semantic_chunks):
-                # Create document header for context
-                doc_header = f"PDF Document: {pdf.get_display_name()}\n"
-                doc_header += f"Filename: {pdf.filename}\n"
-                if pdf.metadata.title:
-                    doc_header += f"Title: {pdf.metadata.title}\n"
-                if pdf.metadata.author:
-                    doc_header += f"Author: {pdf.metadata.author}\n"
-                doc_header += f"Upload Date: {pdf.uploaded_at.strftime('%Y-%m-%d %H:%M')}\n"
-                doc_header += f"{'Patient ID: ' + pdf.patient_id if pdf.patient_id else 'General Document'}\n"
+            # Try to parse as journal format first
+            journal_entries = self._parse_journal_entries(pdf.extracted_text)
 
-                if chunk.metadata.section_title:
-                    doc_header += f"Section: {chunk.metadata.section_title}\n"
+            if journal_entries:
+                # JOURNAL FORMAT DETECTED
+                logger.info(f"PDF '{pdf.filename}' detected as journal with {len(journal_entries)} entries")
 
-                # Include page numbers for citation
-                if chunk.metadata.start_page == chunk.metadata.end_page:
-                    doc_header += f"Page: {chunk.metadata.start_page}\n"
-                else:
-                    doc_header += f"Pages: {chunk.metadata.start_page}-{chunk.metadata.end_page}\n"
+                # Chunk each journal entry separately
+                for entry_date, entry_text in journal_entries:
+                    # STEP 1: Create PARENT chunks from THIS ENTRY
+                    parent_semantic_chunks = parent_chunker.chunk_pdf_text(
+                        entry_text,
+                        pdf.document_id,
+                        {
+                            "title": pdf.metadata.title,
+                            "filename": pdf.filename,
+                            "entry_date": entry_date.strftime('%Y-%m-%d %H:%M')
+                        }
+                    )
 
-                doc_header += f"Chunk {i+1}/{len(semantic_chunks)}\n---\n"
+                    logger.info(f"  Entry {entry_date.strftime('%Y-%m-%d %H:%M')}: {len(parent_semantic_chunks)} parent chunks")
 
-                full_text = doc_header + chunk.text
+                    # Create document header for journal entry
+                    base_doc_header = f"Journal Entry: {entry_date.strftime('%Y-%m-%d %H:%M')}\n"
+                    base_doc_header += f"PDF Document: {pdf.get_display_name()}\n"
+                    base_doc_header += f"Filename: {pdf.filename}\n"
+                    if pdf.metadata.title:
+                        base_doc_header += f"Title: {pdf.metadata.title}\n"
+                    base_doc_header += "---\n"
 
-                record = Record(
-                    patient_ref=pseudo_patient,
-                    encounter_ref=None,
-                    resource_type="pdf_document",
-                    key=chunk.metadata.chunk_id,
-                    text=full_text
+                    # STEP 2: For EACH parent chunk, create child chunks from parent's text
+                    for parent_idx, parent_semantic_chunk in enumerate(parent_semantic_chunks):
+                        # Create PARENT Chunk object
+                        parent_chunk_uuid = str(uuid.uuid4())
+                        parent_full_text = base_doc_header + parent_semantic_chunk.text
+
+                        parent_chunk = Chunk(
+                            id=parent_chunk_uuid,
+                            patient_ref=pseudo_patient,
+                            encounter_ref=None,
+                            resource_type="journal_entry",
+                            key=parent_semantic_chunk.metadata.chunk_id,
+                            text=parent_full_text,
+                            strategy_id="SemanticPDFChunker",
+                            strategy_version="1.0",
+                            timestamp=entry_date,
+                            meta={
+                                "entry_date": entry_date.isoformat(),
+                                "document_name": pdf.get_display_name(),
+                                "filename": pdf.filename,
+                                "title": pdf.metadata.title,
+                                "chunk_index": parent_idx,
+                                "total_chunks": len(parent_semantic_chunks),
+                                "chunk_level": "parent",
+                                "child_chunk_ids": []  # Will populate below
+                            },
+                            has_phi=False
+                        )
+                        final_chunks.append(parent_chunk)
+
+                        # STEP 3: Split THIS parent chunk into child chunks
+                        child_semantic_chunks = child_chunker.chunk_pdf_text(
+                            parent_semantic_chunk.text,  # 🔑 Chunk from PARENT text, not full entry
+                            f"{pdf.document_id}_parent_{parent_idx}",
+                            {
+                                "title": pdf.metadata.title,
+                                "filename": pdf.filename,
+                                "entry_date": entry_date.strftime('%Y-%m-%d %H:%M'),
+                                "parent_chunk_id": parent_chunk_uuid
+                            }
+                        )
+
+                        # Create CHILD Chunk objects from this parent
+                        child_chunk_ids = []
+                        for child_idx, child_semantic_chunk in enumerate(child_semantic_chunks):
+                            child_chunk_uuid = str(uuid.uuid4())
+                            child_full_text = base_doc_header + child_semantic_chunk.text
+
+                            child_chunk = Chunk(
+                                id=child_chunk_uuid,
+                                patient_ref=pseudo_patient,
+                                encounter_ref=None,
+                                resource_type="journal_entry",
+                                key=child_semantic_chunk.metadata.chunk_id,
+                                text=child_full_text,
+                                strategy_id="SemanticPDFChunker",
+                                strategy_version="1.0",
+                                timestamp=entry_date,
+                                meta={
+                                    "entry_date": entry_date.isoformat(),
+                                    "document_name": pdf.get_display_name(),
+                                    "filename": pdf.filename,
+                                    "title": pdf.metadata.title,
+                                    "chunk_index": child_idx,
+                                    "total_chunks": len(child_semantic_chunks),
+                                    "chunk_level": "child",
+                                    "parent_chunk_id": parent_chunk_uuid  # 🔑 Natural parent-child link
+                                },
+                                has_phi=False
+                            )
+                            final_chunks.append(child_chunk)
+                            child_chunk_ids.append(child_chunk_uuid)
+
+                        # Update parent's child_chunk_ids
+                        parent_chunk.meta["child_chunk_ids"] = child_chunk_ids
+                        logger.info(f"    Parent chunk {parent_idx}: {len(child_chunk_ids)} child chunks")
+            else:
+                # NOT A JOURNAL - use standard hierarchical chunking
+                logger.info(f"PDF '{pdf.filename}' is not journal format - using standard chunking")
+
+                # STEP 1: Create PARENT chunks from the full PDF
+                parent_semantic_chunks = parent_chunker.chunk_pdf_text(
+                    pdf.extracted_text,
+                    pdf.document_id,
+                    {
+                        "title": pdf.metadata.title,
+                        "author": pdf.metadata.author,
+                        "subject": pdf.metadata.subject,
+                        "patient_id": pdf.patient_id,
+                        "user_id": pdf.user_id,
+                        "filename": pdf.filename,
+                        "uploaded_at": pdf.uploaded_at.strftime('%Y-%m-%d %H:%M')
+                    }
                 )
-                records.append(record)
 
-        if not records:
+                logger.info(f"PDF {pdf.filename} -> {len(parent_semantic_chunks)} parent chunks")
+
+                # Create base document header
+                base_doc_header = f"PDF Document: {pdf.get_display_name()}\n"
+                base_doc_header += f"Filename: {pdf.filename}\n"
+                if pdf.metadata.title:
+                    base_doc_header += f"Title: {pdf.metadata.title}\n"
+                if pdf.metadata.author:
+                    base_doc_header += f"Author: {pdf.metadata.author}\n"
+                base_doc_header += f"Upload Date: {pdf.uploaded_at.strftime('%Y-%m-%d %H:%M')}\n"
+                base_doc_header += f"{'Patient ID: ' + pdf.patient_id if pdf.patient_id else 'General Document'}\n"
+
+                # STEP 2: For EACH parent chunk, create child chunks from parent's text
+                for parent_idx, parent_semantic_chunk in enumerate(parent_semantic_chunks):
+                    # Build parent document header
+                    parent_doc_header = base_doc_header
+
+                    if parent_semantic_chunk.metadata.section_title:
+                        parent_doc_header += f"Section: {parent_semantic_chunk.metadata.section_title}\n"
+
+                    # Include page numbers for citation
+                    if parent_semantic_chunk.metadata.start_page == parent_semantic_chunk.metadata.end_page:
+                        parent_doc_header += f"Page: {parent_semantic_chunk.metadata.start_page}\n"
+                    else:
+                        parent_doc_header += f"Pages: {parent_semantic_chunk.metadata.start_page}-{parent_semantic_chunk.metadata.end_page}\n"
+
+                    parent_doc_header += f"Chunk {parent_idx+1}/{len(parent_semantic_chunks)}\n---\n"
+
+                    # Create PARENT Chunk object
+                    parent_chunk_uuid = str(uuid.uuid4())
+                    parent_full_text = parent_doc_header + parent_semantic_chunk.text
+
+                    parent_chunk = Chunk(
+                        id=parent_chunk_uuid,
+                        patient_ref=pseudo_patient,
+                        encounter_ref=None,
+                        resource_type="pdf_document",
+                        key=parent_semantic_chunk.metadata.chunk_id,
+                        text=parent_full_text,
+                        strategy_id="SemanticPDFChunker",
+                        strategy_version="1.0",
+                        timestamp=pdf.uploaded_at,
+                        meta={
+                            "filename": pdf.filename,
+                            "title": pdf.metadata.title,
+                            "author": pdf.metadata.author,
+                            "start_page": parent_semantic_chunk.metadata.start_page,
+                            "end_page": parent_semantic_chunk.metadata.end_page,
+                            "section_title": parent_semantic_chunk.metadata.section_title,
+                            "chunk_index": parent_idx,
+                            "total_chunks": len(parent_semantic_chunks),
+                            "chunk_level": "parent",
+                            "child_chunk_ids": []  # Will populate below
+                        },
+                        has_phi=False
+                    )
+                    final_chunks.append(parent_chunk)
+
+                    # STEP 3: Split THIS parent chunk into child chunks
+                    child_semantic_chunks = child_chunker.chunk_pdf_text(
+                        parent_semantic_chunk.text,  # 🔑 Chunk from PARENT text, not full PDF
+                        f"{pdf.document_id}_parent_{parent_idx}",
+                        {
+                            "title": pdf.metadata.title,
+                            "author": pdf.metadata.author,
+                            "filename": pdf.filename,
+                            "uploaded_at": pdf.uploaded_at.strftime('%Y-%m-%d %H:%M'),
+                            "parent_chunk_id": parent_chunk_uuid
+                        }
+                    )
+
+                    # Create CHILD Chunk objects from this parent
+                    child_chunk_ids = []
+                    for child_idx, child_semantic_chunk in enumerate(child_semantic_chunks):
+                        # Build child document header
+                        child_doc_header = base_doc_header
+
+                        if child_semantic_chunk.metadata.section_title:
+                            child_doc_header += f"Section: {child_semantic_chunk.metadata.section_title}\n"
+
+                        # Include page numbers for citation
+                        if child_semantic_chunk.metadata.start_page == child_semantic_chunk.metadata.end_page:
+                            child_doc_header += f"Page: {child_semantic_chunk.metadata.start_page}\n"
+                        else:
+                            child_doc_header += f"Pages: {child_semantic_chunk.metadata.start_page}-{child_semantic_chunk.metadata.end_page}\n"
+
+                        child_doc_header += f"Child {child_idx+1}/{len(child_semantic_chunks)}\n---\n"
+
+                        child_chunk_uuid = str(uuid.uuid4())
+                        child_full_text = child_doc_header + child_semantic_chunk.text
+
+                        child_chunk = Chunk(
+                            id=child_chunk_uuid,
+                            patient_ref=pseudo_patient,
+                            encounter_ref=None,
+                            resource_type="pdf_document",
+                            key=child_semantic_chunk.metadata.chunk_id,
+                            text=child_full_text,
+                            strategy_id="SemanticPDFChunker",
+                            strategy_version="1.0",
+                            timestamp=pdf.uploaded_at,
+                            meta={
+                                "filename": pdf.filename,
+                                "title": pdf.metadata.title,
+                                "author": pdf.metadata.author,
+                                "start_page": child_semantic_chunk.metadata.start_page,
+                                "end_page": child_semantic_chunk.metadata.end_page,
+                                "section_title": child_semantic_chunk.metadata.section_title,
+                                "chunk_index": child_idx,
+                                "total_chunks": len(child_semantic_chunks),
+                                "chunk_level": "child",
+                                "parent_chunk_id": parent_chunk_uuid  # 🔑 Natural parent-child link
+                            },
+                            has_phi=False
+                        )
+                        final_chunks.append(child_chunk)
+                        child_chunk_ids.append(child_chunk_uuid)
+
+                    # Update parent's child_chunk_ids
+                    parent_chunk.meta["child_chunk_ids"] = child_chunk_ids
+                    logger.info(f"  Parent chunk {parent_idx}: {len(child_chunk_ids)} child chunks")
+
+        if not final_chunks:
             return []
 
-        # NO PHI redaction - healthcare professionals need complete clinical data
-        strategy = NarrativeV1()
-        policy = CHUNK_POLICY_PRESETS.get("narrative_default")
+        # Count parent and child chunks
+        parent_count = len([c for c in final_chunks if c.meta.get("chunk_level") == "parent"])
+        child_count = len([c for c in final_chunks if c.meta.get("chunk_level") == "child"])
 
-        # Apply chunking strategy - NO redaction
-        chunks = strategy.apply(records, policy, orchestrator._tokenizer)
+        logger.info(f"Created {len(final_chunks)} total chunks from {len(pdf_documents)} PDF documents ({parent_count} parent + {child_count} child, parent-child hierarchical chunking)")
 
-        logger.info(f"Created {len(chunks)} chunks from {len(pdf_documents)} PDF documents (NO redaction - complete clinical data)")
-
-        return chunks
+        return final_chunks
 
     async def _chunk_xml_documents(self, xml_documents: List[XMLDocument], orchestrator: ChunkingOrchestrator, patient_id_str: Optional[str]) -> List[Chunk]:
         """Chunk XML documents using simple text-based chunking with NarrativeV1 strategy and orchestrator's redactor (Presidio)."""
@@ -7307,11 +8169,110 @@ Content:
             return 12
         return 8
 
-    async def _refine_queries(self, query: str, seen_passages: list[str]) -> list[str]:
+    async def _evaluate_chunk_sufficiency(
+        self,
+        query: str,
+        chunks: list[dict[str, Any]],
+        scores: list[float],
+        classification: Optional[str] = None,
+        attempt: int = 0
+    ) -> tuple[bool, str]:
+        """
+        Agentic evaluation of retrieved chunks using LLM.
+
+        Args:
+            query: The original clinical query
+            chunks: Retrieved chunks with content and metadata
+            scores: Cross-encoder relevance scores for each chunk
+            classification: Query type classification (lookup/summary/temporal/etc)
+            attempt: Current refinement attempt number
+
+        Returns:
+            tuple[bool, str]: (is_sufficient, reasoning)
+                - is_sufficient: True if chunks are adequate, False if need refinement
+                - reasoning: Ultra minimal (2-3 sentences) explaining what's missing
+        """
+        # Prepare chunk summaries with scores
+        chunk_summaries = []
+        for i, (chunk, score) in enumerate(zip(chunks, scores)):
+            content_preview = (chunk.get('content', '') or '')[:200]
+            chunk_summaries.append(
+                f"[Chunk {i+1}, Score: {score:.3f}] {content_preview}"
+            )
+
         prompt = (
-            "Given the clinical query and partial relevant passages, propose up to 2 refined queries "
-            "that might retrieve missing aspects or synonyms. Return a JSON array of strings only.\n\n"
-            f"Query: {query}\nPassages:\n- " + "\n- ".join([(p or "")[:300] for p in seen_passages])
+            f"You are evaluating if retrieved clinical chunks are sufficient to answer the query.\n\n"
+            f"Query: {query}\n"
+            f"Query Type: {classification or 'general'}\n"
+            f"Refinement Attempt: {attempt}/{RETRY_MAX}\n"
+            f"Retrieved Chunks ({len(chunks)} total):\n" + "\n".join(chunk_summaries) + "\n\n"
+            f"Evaluate if these chunks are sufficient to answer the query. Consider:\n"
+            f"- Do chunks contain relevant clinical information?\n"
+            f"- Are there gaps in temporal coverage, medication details, lab results, or clinical context?\n"
+            f"- Given the query type, is the chunk count and diversity adequate?\n\n"
+            f"Return JSON with:\n"
+            f'{{"is_sufficient": true/false, "reasoning": "2-3 sentence explanation of what\'s missing if insufficient"}}'
+        )
+
+        try:
+            resp = await self._llm.chat([
+                ChatMessage(role=ChatRole.SYSTEM, content="You are a clinical information retrieval expert. Evaluate chunk sufficiency concisely."),
+                ChatMessage(role=ChatRole.USER, content=prompt),
+            ], json_mode=True)
+
+            if resp and resp.content:
+                content = resp.content.strip()
+                # Handle markdown code blocks
+                if content.startswith("```"):
+                    start = content.find('\n') + 1
+                    end = content.rfind("```")
+                    if start > 0 and end > start:
+                        content = content[start:end].strip()
+
+                result = json.loads(content)
+                is_sufficient = result.get('is_sufficient', False)
+                reasoning = result.get('reasoning', 'No reasoning provided')
+
+                logger.info(f"Agentic evaluation: sufficient={is_sufficient}, reasoning={reasoning}")
+                return (is_sufficient, reasoning)
+
+        except Exception as e:
+            logger.warning(f"Agentic evaluation failed: {e}, defaulting to insufficient")
+            return (False, "Evaluation failed, retrying with refined queries")
+
+        # Default fallback: consider insufficient if we got here
+        return (False, "Unable to evaluate chunks, attempting refinement")
+
+    async def _refine_queries(
+        self,
+        query: str,
+        seen_passages: list[str],
+        insufficiency_reasoning: str = ""
+    ) -> list[str]:
+        """
+        Generate refined queries based on what's missing from retrieved chunks.
+
+        Args:
+            query: Original clinical query
+            seen_passages: Already-retrieved chunk contents
+            insufficiency_reasoning: LLM-generated reasoning about what's missing
+
+        Returns:
+            list[str]: Up to 2 refined queries targeting missing aspects
+        """
+        # Include reasoning in prompt to guide query refinement
+        reasoning_context = (
+            f"\n\nWHAT'S MISSING: {insufficiency_reasoning}\n"
+            if insufficiency_reasoning else ""
+        )
+
+        prompt = (
+            "Given the clinical query, partial relevant passages, and analysis of what's missing, "
+            "propose up to 2 refined queries that target the missing information. "
+            "Return a JSON array of strings only.\n\n"
+            f"Query: {query}\n"
+            f"Passages:\n- " + "\n- ".join([(p or "")[:300] for p in seen_passages]) +
+            reasoning_context
         )
         try:
             resp = await self._llm.chat([
