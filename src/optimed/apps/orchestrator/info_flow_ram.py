@@ -8376,9 +8376,10 @@ Content:
         # Prepare chunk summaries with scores
         chunk_summaries = []
         for i, (chunk, score) in enumerate(zip(chunks, scores)):
-            content_preview = (chunk.get('content', '') or '')[:200]
+            # Use full content for sufficiency evaluation as requested
+            content_full = chunk.get('content', '') or ''
             chunk_summaries.append(
-                f"[Chunk {i+1}, Score: {score:.3f}] {content_preview}"
+                f"[Chunk {i+1}, Score: {score:.3f}] {content_full}"
             )
 
         prompt = (
