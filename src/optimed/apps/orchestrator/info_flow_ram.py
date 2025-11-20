@@ -19,6 +19,7 @@ from optimed.core.domain import PatientContext, ChatMessage, DiagnosisResult, Ch
 from optimed.core.domain.pdf_document import PDFDocument
 from optimed.core.domain.xml_document import XMLDocument
 from optimed.core.lang import detect_language_code
+from optimed.core.streaming_messages import get_message
 
 from optimed.core.ports import DiagnosticEngine, FHIRRepository, LLMClient, VectorStore, UserRepository, WebSearchService, PDFService, XMLService, AuditRepository
 
@@ -995,6 +996,23 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 session_cache_key = state.session_id or "default_session"
                 global _GLOBAL_CHUNK_CACHE
 
+                if state.stream_callback:
+                    language = getattr(state, 'user_language', 'en')
+
+                    description = get_message(
+                    "intelligent_retrieve_chunks",
+                    "processing",
+                    language
+                )
+
+                await state.stream_callback({
+                                    "type": "status",
+                                    "step": "intelligent_retrieve_chunks",
+                                    "description": description,
+                                    "status": "processing",
+                                    "timestamp": datetime.now().isoformat()
+                                })
+
                 # Detect if documents have changed (new uploads)
                 current_doc_ids = (
                     [state.patient_ctx.patient_id if state.patient_ctx else ""] +
@@ -1543,6 +1561,24 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             logger.info(f"[{context_label}] Starting full retrieval pipeline")
             logger.info(f"[{context_label}] Queries: {len(queries)} variants")
 
+            if state.stream_callback:
+                
+                language = getattr(state, 'user_language', 'en')
+
+                description = get_message(
+                    "intelligent_retrieve_chunks",
+                    "retrieval",
+                    language
+                )
+
+                await state.stream_callback({
+                                    "type": "status",
+                                    "step": "intelligent_retrieve_chunks",
+                                    "description": description,
+                                    "status": "processing",
+                                    "timestamp": datetime.now().isoformat()
+                                })
+
             # 1) Get chunks from global cache
             session_cache_key = state.session_id or "default_session"
             global _GLOBAL_CHUNK_CACHE
@@ -1689,6 +1725,29 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                         if refined_queries:
                             logger.info(f"[{context_label}] Generated {len(refined_queries)} refined queries: {refined_queries}")
                             logger.info(f"[{context_label}] Retrying retrieval with refined queries...")
+
+                            # Emit refinement status with reasoning (localized)
+                            if state.stream_callback:
+                                # Get language from state
+                                language = getattr(state, 'user_language', 'en')
+
+                                # Format localized message
+                                description = get_message(
+                                    "intelligent_retrieve_chunks",
+                                    "refining_with_reason",
+                                    language,
+                                    reason=reasoning[:10],
+                                    attempt=refinement_attempt + 1,
+                                    max_attempts=RETRY_MAX
+                                )
+
+                                await state.stream_callback({
+                                    "type": "status",
+                                    "step": "intelligent_retrieve_chunks",
+                                    "description": description,
+                                    "status": "refining_with_reason",
+                                    "timestamp": datetime.now().isoformat()
+                                })
 
                             # Recursive retry with refined queries
                             return await _retrieve_with_full_pipeline(
@@ -4021,9 +4080,9 @@ CRITICAL: Output ONLY valid JSON. Translate encounter_type to user's language. N
 
         @streaming_step("focused_summary_parallel_dispatcher")
         async def focused_summary_parallel_dispatcher(state: FlowState) -> FlowState:
-            """Dispatcher node that triggers focused summary processing."""
+            """Execute parallel focused summary component retrieval and generation using asyncio.gather."""
             try:
-                logger.info(f"Initiating focused summary processing for aspect: {state.focused_aspect}")
+                logger.info(f"Initiating parallel focused summary processing for aspect: {state.focused_aspect}")
 
                 # Initialize focused summary cache if needed
                 if not state.focused_retrieval_cache:
@@ -4032,13 +4091,126 @@ CRITICAL: Output ONLY valid JSON. Translate encounter_type to user's language. N
                 # Disable refinement for focused summary flows (they use their own retrieval)
                 state.needs_refinement = False
 
-                logger.info("Focused summary fields initialized for processing")
-                logger.info("Dispatcher ready for execution")
+                # Generate queries for all components IN PARALLEL
+                logger.info("Generating queries for all 6 focused summary components in parallel")
+                query_results = await asyncio.gather(
+                    _generate_focused_summary_queries(state, "diagnoses",
+                        f"Generate queries for diagnoses related to {state.focused_aspect}"),
+                    _generate_focused_summary_queries(state, "events",
+                        f"Generate queries for key events related to {state.focused_aspect}"),
+                    _generate_focused_summary_queries(state, "medications",
+                        f"Generate queries for medications related to {state.focused_aspect}"),
+                    _generate_focused_summary_queries(state, "objective_data",
+                        f"Generate queries for objective data (labs, vitals) related to {state.focused_aspect}"),
+                    _generate_focused_summary_queries(state, "assessment",
+                        f"Generate queries for clinical assessment related to {state.focused_aspect}"),
+                    _generate_focused_summary_queries(state, "next_steps",
+                        f"Generate queries for next steps and plan related to {state.focused_aspect}"),
+                    return_exceptions=True
+                )
+
+                # Unpack query results
+                diagnoses_queries, events_queries, medications_queries, objective_queries, assessment_queries, next_steps_queries = query_results
+                logger.info("All focused summary queries generated in parallel, starting retrievals")
+
+                # Execute all retrievals in parallel
+                retrieval_results = await asyncio.gather(
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=diagnoses_queries, context_label="focused_diagnoses",
+                        topk_initial=100, topk_rerank=15, use_mmr=True, use_agentic_refinement=True
+                    ),
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=events_queries, context_label="focused_events",
+                        topk_initial=100, topk_rerank=15, use_mmr=True, use_agentic_refinement=True
+                    ),
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=medications_queries, context_label="focused_medications",
+                        topk_initial=100, topk_rerank=15, use_mmr=True, use_agentic_refinement=True
+                    ),
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=objective_queries, context_label="focused_objective_data",
+                        topk_initial=100, topk_rerank=15, use_mmr=True, use_agentic_refinement=True
+                    ),
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=assessment_queries, context_label="focused_assessment",
+                        topk_initial=100, topk_rerank=15, use_mmr=True, use_agentic_refinement=True
+                    ),
+                    _retrieve_with_full_pipeline(
+                        self, state=state, queries=next_steps_queries, context_label="focused_next_steps",
+                        topk_initial=100, topk_rerank=15, use_mmr=True, use_agentic_refinement=True
+                    ),
+                    return_exceptions=True
+                )
+
+                # Assign retrieval results to state
+                component_names = ["diagnoses", "events", "medications", "objective_data", "assessment", "next_steps"]
+                for i, (component_name, chunks) in enumerate(zip(component_names, retrieval_results)):
+                    if isinstance(chunks, Exception):
+                        logger.error(f"Error retrieving focused {component_name}: {chunks}")
+                        chunks = []
+
+                    if component_name == "diagnoses":
+                        state.focused_diagnoses_chunks = chunks
+                    elif component_name == "events":
+                        state.focused_events_chunks = chunks
+                    elif component_name == "medications":
+                        state.focused_medications_chunks = chunks
+                    elif component_name == "objective_data":
+                        state.focused_objective_data_chunks = chunks
+                    elif component_name == "assessment":
+                        state.focused_assessment_chunks = chunks
+                    elif component_name == "next_steps":
+                        state.focused_next_steps_chunks = chunks
+
+                    logger.info(f"Retrieved {len(chunks)} chunks for focused {component_name}")
+
+                logger.info("All 6 focused summary retrievals completed, starting parallel generation")
+
+                # Build citations from all retrieved chunks
+                all_chunks = []
+                for chunks in [state.focused_diagnoses_chunks, state.focused_events_chunks,
+                               state.focused_medications_chunks, state.focused_objective_data_chunks,
+                               state.focused_assessment_chunks, state.focused_next_steps_chunks]:
+                    if chunks:
+                        all_chunks.extend(chunks)
+
+                if all_chunks:
+                    state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(all_chunks)
+                    logger.info(f"🔖 Built {len(state.citations)} citations from {len(all_chunks)} total focused summary chunks")
+                else:
+                    state.citations = {}
+                    state.chunk_id_to_number = {}
+                    logger.warning("No focused summary chunks retrieved - citations will be empty")
+
+                # Generate all 6 components in parallel
+                generation_results = await asyncio.gather(
+                    generate_diagnoses_section(state),
+                    generate_events_section(state),
+                    generate_medications_section(state),
+                    generate_objective_data_section(state),
+                    generate_assessment_section(state),
+                    generate_next_steps_section(state),
+                    return_exceptions=True
+                )
+
+                # Check for errors
+                for i, result in enumerate(generation_results):
+                    if isinstance(result, Exception):
+                        logger.error(f"Error generating focused {component_names[i]}: {result}")
+
+                logger.info("All 6 focused summary generations completed successfully")
+                return state
 
             except Exception as e:
                 log_error(logger, "focused_summary_parallel_dispatcher", e)
-
-            return state
+                # Set empty chunks on error
+                state.focused_diagnoses_chunks = []
+                state.focused_events_chunks = []
+                state.focused_medications_chunks = []
+                state.focused_objective_data_chunks = []
+                state.focused_assessment_chunks = []
+                state.focused_next_steps_chunks = []
+                return state
 
         @streaming_step("identify_aspect_and_retrieve")
         async def identify_aspect_and_retrieve(state: FlowState) -> FlowState:
@@ -4797,6 +4969,8 @@ Format your response as JSON:
   ...
 ]
 
+Make sure the titles of the events, the time period and the the keywords are all in the same language as the user request. 
+
 Return ONLY the JSON array, no additional text.
 """
 
@@ -4950,8 +5124,9 @@ Return ONLY the JSON array, no additional text.
                     5: "blue"
                 }
 
-                # Generate content for each event
-                for idx, event in enumerate(state.timeline_events):
+                # Define inner function for parallel generation
+                async def generate_event_content(idx: int, event: dict) -> dict:
+                    """Generate content for a single timeline event."""
                     event_id = f"event_{idx}"
                     title = event.get("title", "Unknown event")
                     time_period = event.get("time_period", "Unknown time")
@@ -5024,20 +5199,38 @@ Return only the content in markdown format, no preamble.
                     response = await self._llm.chat(messages, enable_chunk_citations=True)
                     content = response.content.strip()
 
+                    # Format EHR links
+                    content = self._format_ehr_links(content)
+                    content = self._normalize_markdown(content)
+
                     # Create timeline event result with cited chunk IDs
-                    timeline_event = {
+                    return {
+                        "id": idx,
                         "timestamp": time_period,
                         "title": title,
                         "content": content,
-                        "icon": icon_mapping.get(idx, "calendar"),
-                        "color": color_mapping.get(idx, "blue"),
+                        "icon": icon_mapping.get(idx % 6, "activity"),
+                        "color": color_mapping.get(idx % 6, "blue"),
                         "cited_chunk_ids": response.cited_chunk_ids or []
                     }
 
-                    state.timeline_results.append(timeline_event)
-                    logger.info(f"Generated content for {title}: {len(content)} chars")
+                # Execute generation for all events in parallel
+                logger.info(f"Starting parallel generation for {len(state.timeline_events)} events")
+                generation_results = await asyncio.gather(
+                    *[generate_event_content(idx, event) for idx, event in enumerate(state.timeline_events)],
+                    return_exceptions=True
+                )
 
-                logger.info(f"Generated {len(state.timeline_results)} timeline bubbles")
+                # Process results
+                for result in generation_results:
+                    if isinstance(result, Exception):
+                        logger.error(f"Error generating timeline event content: {result}")
+                        continue
+                    state.timeline_results.append(result)
+
+                # Sort results by ID to maintain order
+                state.timeline_results.sort(key=lambda x: x["id"])
+                logger.info(f"Generated {len(state.timeline_results)} timeline bubbles in parallel")
 
             except Exception as e:
                 logger.info(f"Error: {e}")
@@ -7230,21 +7423,9 @@ Return ONLY the reformulated query, nothing else."""
         # General summary merge to store response
         _builder.add_edge("merge_general_summary_results", "store_assistant_response")
 
-        # Focused summary flow edges - sequential processing
-        _builder.add_edge("focused_summary_parallel_dispatcher", "identify_aspect_and_retrieve")
-        _builder.add_edge("identify_aspect_and_retrieve", "retrieve_focused_diagnoses_chunks")
-        _builder.add_edge("retrieve_focused_diagnoses_chunks", "generate_diagnoses_section")
-        _builder.add_edge("generate_diagnoses_section", "retrieve_focused_events_chunks")
-        _builder.add_edge("retrieve_focused_events_chunks", "generate_events_section")
-        _builder.add_edge("generate_events_section", "retrieve_focused_medications_chunks")
-        _builder.add_edge("retrieve_focused_medications_chunks", "generate_medications_section")
-        _builder.add_edge("generate_medications_section", "retrieve_focused_objective_data_chunks")
-        _builder.add_edge("retrieve_focused_objective_data_chunks", "generate_objective_data_section")
-        _builder.add_edge("generate_objective_data_section", "retrieve_focused_assessment_chunks")
-        _builder.add_edge("retrieve_focused_assessment_chunks", "generate_assessment_section")
-        _builder.add_edge("generate_assessment_section", "retrieve_focused_next_steps_chunks")
-        _builder.add_edge("retrieve_focused_next_steps_chunks", "generate_next_steps_section")
-        _builder.add_edge("generate_next_steps_section", "merge_focused_summary_results")
+        # Focused Summary execution - dispatcher uses asyncio.gather for parallel retrieval + generation
+        # Dispatcher does all 6 retrievals and generations in parallel, then routes to merge
+        _builder.add_edge("focused_summary_parallel_dispatcher", "merge_focused_summary_results")
         _builder.add_edge("merge_focused_summary_results", "store_assistant_response")
 
         # Timeline flow edges - sequential processing
