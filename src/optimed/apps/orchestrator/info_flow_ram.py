@@ -2560,7 +2560,6 @@ Consider what has already been discussed in the conversation to avoid redundancy
 
                 # Store GDPR-safe user metrics for analytics (not encrypted - no PHI)
                 if state.user_id:
-                    prompt_category = _categorize_prompt(state.user_prompt)
                     
                     # Create user action for metrics
                     user_action = UserAction(
@@ -2569,9 +2568,9 @@ Consider what has already been discussed in the conversation to avoid redundancy
                         action_type="chat_message",
                         resource_type="prompt",
                         resource_id=str(uuid.uuid4()),
-                        description=f"User sent {prompt_category.lower()} prompt",
+                        description=f"User sent {state.query_classification} prompt",
                         metadata={
-                            "prompt_category": prompt_category,
+                            "prompt_category": state.query_classification,
                             "prompt_length": len(state.user_prompt),
                             "session_id": state.session_id or "",
                             "has_patient_id": bool(state.patient_id),
@@ -2583,7 +2582,7 @@ Consider what has already been discussed in the conversation to avoid redundancy
                     
                     # Store metrics in database
                     await self._user_repo.create_user_action(user_action)
-                    logger.info(f"Stored encrypted GDPR-safe metrics: {prompt_category} prompt from user {sanitize_user_id(state.user_id)}")
+                    logger.info(f"Stored encrypted GDPR-safe metrics: {state.query_classification} prompt from user {sanitize_user_id(state.user_id)}")
                 
             except Exception as e:
                 logger.info(f"Error: {e}")
@@ -6907,7 +6906,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                     resource_id=state.patient_id,
                     description=f"{state.user_context.display_name} {'requested diagnosis for' if not state.chat_mode else 'chatted about'} {'patient ' + state.patient_id if state.patient_id else 'general topic'}",
                     metadata={
-                        "prompt": state.user_prompt,
+                        "prompt": state.query_classification,
                         "chat_mode": state.chat_mode,
                         "session_id": state.session_id,
                         "direct_path": not getattr(state, 'requires_full_processing', True)
