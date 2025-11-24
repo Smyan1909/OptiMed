@@ -1833,10 +1833,14 @@ async def get_user_metrics(
         log_error(logger, "Get user metrics", e)
         raise HTTPException(status_code=500, detail=f"Could not retrieve metrics: {e}")
 
-async def _event_stream(patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None) -> AsyncGenerator[str, None]:
+async def _event_stream(patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "post_meet", user_id: str | None = None, session_id: str | None = None, audit_repo: Any = None) -> AsyncGenerator[str, None]:
     """Stream events from the diagnostic engine."""
     try:
+        start_time = time.perf_counter()
+        first_token_time = None
+        completion_time = None
         chunk_count = 0
+        
         async for update in _engine.run_stream(
             patient=patient, 
             user_prompt=user_prompt, 
@@ -1845,6 +1849,27 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
             user_id=user_id, 
             session_id=session_id
         ):
+            # Capture time to first token (TTFT)
+            if chunk_count == 0 and first_token_time is None:
+                first_token_time = time.perf_counter()
+                ttft_ms = (first_token_time - start_time) * 1000
+                logger.info(f"[PERFORMANCE] TTFT for session {session_id}: {ttft_ms:.2f}ms")
+                
+                if audit_repo:
+                    try:
+                        await audit_repo.log_performance_metric(
+                            metric_category="llm_latency",
+                            metric_name="time_to_first_token",
+                            value=ttft_ms,
+                            unit="ms",
+                            endpoint="/chat/stream",
+                            user_id=user_id,
+                            session_id=session_id,
+                            model_used="gpt-5-mini" # Placeholder, ideally get from engine
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to log TTFT metric: {e}")
+
             chunk_count += 1
             
             # Handle different update types
@@ -1946,7 +1971,27 @@ async def _event_stream(patient: PatientContext | None = None, user_prompt: str 
                 }
 
                 yield f"data: {json.dumps(completion_data)}\n\n"
-                
+            
+        if completion_time is None:
+            completion_time = time.perf_counter()
+            rt_chat_ms = (completion_time - start_time) * 1000
+            logger.info(f"[PERFORMANCE] RT CHAT for session {session_id}: {rt_chat_ms:.2f}ms")
+            
+            if audit_repo:
+                try:
+                    await audit_repo.log_performance_metric(
+                        metric_category="llm_latency",
+                        metric_name="response_time_chat",
+                        value=rt_chat_ms,
+                        unit="ms",
+                        endpoint="/chat/stream",
+                        user_id=user_id,
+                        session_id=session_id,
+                        model_used="gpt-5-mini" # Placeholder, ideally get from engine
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to log RT CHAT metric: {e}")
+
     except Exception as e:
         error_data = {
             "type": "error",
@@ -2025,7 +2070,8 @@ async def diagnose_stream(
             user_id=user_id,
             patient_id_hash=hashlib.sha256(str(req.patient_id).encode()).hexdigest() if req.patient_id else None,
             data_categories=["health_data", "diagnostic_data", "ai_generated_content"],
-            processing_purposes=["clinical_decision_support", "ai_diagnosis", "real_time_streaming"],            compliance_status="compliant",
+            processing_purposes=["clinical_decision_support", "ai_diagnosis", "real_time_streaming"],
+            compliance_status="compliant",
             additional_context={"lawful_basis": "Article 6(1)(c) - Legal obligation, Article 9(2)(h) - Medical diagnosis"}
         )
     except Exception as e:
@@ -2059,16 +2105,20 @@ async def diagnose_stream(
     
     return response
 
-
 @app.post("/chat/stream")
 async def chat_stream(
     req: ChatRequest,
+    request: Request,
     user_ctx: dict = Depends(get_user_context),
     fhir_repo: FHIRRepository = Depends(get_user_fhir_repository)
 ):
     """Stream chat process with real-time status updates."""
+
     user_id = user_ctx.get("user_id") or req.user_id
     current_user = user_ctx.get("user")
+    
+    # Get audit repo for performance logging
+    audit_repo = getattr(request.app.state, "_audit_repo", None)
 
     # Log the patient_id from the request
     logger.info(f"[DEBUG /chat/stream] Received patient_id: {req.patient_id} (type: {type(req.patient_id).__name__})")
@@ -2124,7 +2174,8 @@ async def chat_stream(
             user_prompt=req.user_prompt,
             chat_mode=True,  # Always true for chat
             user_id=user_id,
-            session_id=req.session_id
+            session_id=req.session_id,
+            audit_repo=audit_repo
         ), 
         media_type="text/event-stream",
         headers={
@@ -2135,12 +2186,12 @@ async def chat_stream(
             "Transfer-Encoding": "chunked"  # Use chunked encoding instead of Content-Length
         }
     )
-    
     # Explicitly remove Content-Length header to prevent mismatch
     if "content-length" in response.headers:
         del response.headers["content-length"]
     
     return response
+
 
 @app.post("/chat", response_model=dict)
 async def chat(
