@@ -37,6 +37,14 @@ class PyMuPDFProcessor(PDFProcessor):
         text = re.sub(r'\n\s*Journalkopia\s*\n', '\n', text, flags=re.IGNORECASE)
         text = re.sub(r'\n\s*Utskrift ur journal\s*\n', '\n', text, flags=re.IGNORECASE)
 
+        # Remove page footer patterns with timestamps
+        text = re.sub(r'\n\s*Journalkopia uttagen\s+\d{4}-\d{2}-\d{2}\s+kl\s+\d{2}:\d{2}[^\n]*\n', '\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'\n\s*Uttagen av[^\n]*\n', '\n', text, flags=re.IGNORECASE)
+        # Remove timestamp lines that may have trailing content (e.g., "2025-11-17 kl 15:45	34HD")
+        text = re.sub(r'\n\s*\d{4}-\d{2}-\d{2}\s+kl\s+\d{2}:\d{2}[^\n]*\n', '\n', text)
+        # Remove patient demographics header (person number + KOPIA + patient info)  
+        text = re.sub(r'\n\s*\d{2}\s+\d{6}-\d{4}\s+KOPIA[^\n]*(?:\n[^\n]+)*?\n(?=\n[A-ZÅÄÖ])', '\n', text, flags=re.DOTALL)
+
         # Trim leading/trailing whitespace
         text = text.strip()
 
@@ -52,6 +60,7 @@ class PyMuPDFProcessor(PDFProcessor):
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
                 text = page.get_text()
+
                 if text.strip():  # Only add non-empty pages
                     # Clean the text before adding
                     cleaned_text = self._clean_pdf_text(text)
