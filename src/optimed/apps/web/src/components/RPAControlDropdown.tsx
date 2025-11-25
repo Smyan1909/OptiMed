@@ -24,6 +24,9 @@ import {
   getRPAExecutionStatus,
   startRPAExtraction,
   startDoctorNotesExtraction,
+  startLabExtraction,
+  startMedicationExtraction,
+  waitForRPAIdle,
   stopRPAExtraction,
 } from '@/lib/watcherService';
 import { logInfo, logError } from '@/lib/logger';
@@ -48,6 +51,8 @@ export function RPAControlDropdown() {
   const [isOpen, setIsOpen] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
+  const [runLabExtraction, setRunLabExtraction] = useState(false);
+  const [runMedicationExtraction, setRunMedicationExtraction] = useState(false);
 
   // Poll watcher status when dropdown is open
   useEffect(() => {
@@ -131,63 +136,119 @@ export function RPAControlDropdown() {
     return 'outline';
   };
 
-  const handleStartExtraction = async () => {
-    setIsStarting(true);
+  const refreshExecutionStatus = async () => {
     try {
-      logInfo('RPA Control: Starting extraction...');
-      const result = await startRPAExtraction();
-
-      if (result.success) {
-        logInfo('RPA Control: Extraction started successfully');
-        // Update status immediately
+      const executionStatus = await getRPAExecutionStatus();
+      if (executionStatus) {
         setStatus((prev) => ({
           ...prev,
-          isExecuting: true,
-          executionStatus: 'running',
-          lastError: undefined,
+          isExecuting: executionStatus.is_executing,
+          executionStatus: executionStatus.status,
+          lastError: executionStatus.last_error,
         }));
-      } else {
-        logError('RPA Control: Failed to start extraction', result.error);
+      }
+    } catch (error) {
+      logError('RPA Control: Failed to refresh execution status', error);
+    }
+  };
+
+  const waitForRPAOrThrow = async (context: string) => {
+    const waitResult = await waitForRPAIdle();
+    if (!waitResult.success) {
+      throw new Error(waitResult.error ? `${context}: ${waitResult.error}` : context);
+    }
+  };
+
+  const runFollowupExtractions = async (options: {
+    runLab: boolean;
+    runMedication: boolean;
+  }) => {
+    const tasks = [
+      {
+        enabled: options.runLab,
+        label: 'lab (Provsvar)',
+        starter: startLabExtraction,
+      },
+      {
+        enabled: options.runMedication,
+        label: 'medication (Läkemedel)',
+        starter: startMedicationExtraction,
+      },
+    ] as const;
+
+    for (const task of tasks) {
+      if (!task.enabled) continue;
+
+      logInfo(`RPA Control: Starting ${task.label} follow-up extraction...`);
+      const result = await task.starter();
+      if (!result.success) {
+        throw new Error(result.error || `Failed to start ${task.label} extraction`);
+      }
+
+      setStatus((prev) => ({
+        ...prev,
+        isExecuting: true,
+        executionStatus: 'running',
+        lastError: undefined,
+      }));
+
+      await waitForRPAOrThrow(`${task.label} follow-up`);
+    }
+  };
+
+  const handleStartSequence = async (
+    starter: () => Promise<{ success: boolean; error?: string }>,
+    contextLabel: string,
+  ) => {
+    const followupConfig = {
+      runLab: runLabExtraction,
+      runMedication: runMedicationExtraction,
+    };
+    const shouldRunFollowups = followupConfig.runLab || followupConfig.runMedication;
+
+    setIsStarting(true);
+    try {
+      logInfo(`RPA Control: Starting ${contextLabel} extraction...`);
+      const result = await starter();
+
+      if (!result.success) {
+        logError(`RPA Control: Failed to start ${contextLabel} extraction`, result.error);
         setStatus((prev) => ({
           ...prev,
           lastError: result.error,
         }));
+        return;
       }
+
+      logInfo(`RPA Control: ${contextLabel} extraction started successfully`);
+      setStatus((prev) => ({
+        ...prev,
+        isExecuting: true,
+        executionStatus: 'running',
+        lastError: undefined,
+      }));
+
+      if (shouldRunFollowups) {
+        await waitForRPAOrThrow(`${contextLabel} extraction`);
+        await runFollowupExtractions(followupConfig);
+      }
+
+      await refreshExecutionStatus();
     } catch (error) {
-      logError('RPA Control: Error starting extraction', error);
+      logError(`RPA Control: Error during ${contextLabel} pipeline`, error);
+      setStatus((prev) => ({
+        ...prev,
+        lastError: error instanceof Error ? error.message : String(error),
+      }));
     } finally {
       setIsStarting(false);
     }
   };
 
-  const handleStartDoctorNotesExtraction = async () => {
-    setIsStarting(true);
-    try {
-      logInfo('RPA Control: Starting doctor notes extraction...');
-      const result = await startDoctorNotesExtraction();
+  const handleStartExtraction = () => handleStartSequence(startRPAExtraction, 'standard');
 
-      if (result.success) {
-        logInfo('RPA Control: Doctor notes extraction started successfully');
-        // Update status immediately
-        setStatus((prev) => ({
-          ...prev,
-          isExecuting: true,
-          executionStatus: 'running',
-          lastError: undefined,
-        }));
-      } else {
-        logError('RPA Control: Failed to start doctor notes extraction', result.error);
-        setStatus((prev) => ({
-          ...prev,
-          lastError: result.error,
-        }));
-      }
-    } catch (error) {
-      logError('RPA Control: Error starting doctor notes extraction', error);
-    } finally {
-      setIsStarting(false);
-    }
-  };
+  const handleStartDoctorNotesExtraction = () =>
+    handleStartSequence(startDoctorNotesExtraction, 'doctor notes');
 
   const handleStopExtraction = async () => {
     setIsStopping(true);
@@ -216,6 +277,7 @@ export function RPAControlDropdown() {
   const canStartExtraction =
     status.isAvailable && status.hasSession && !status.isExecuting && !isStarting;
   const canStopExtraction = status.isAvailable && status.isExecuting && !isStopping;
+  const disableFollowupSelection = status.isExecuting || isStarting;
 
   // Pulsing dots for running state
   const PulsingDots = () => (
@@ -290,6 +352,32 @@ export function RPAControlDropdown() {
             )}
           </div>
         </DropdownMenuLabel>
+
+        <DropdownMenuSeparator />
+
+        <div className="px-2 py-2 space-y-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border border-input"
+              checked={runLabExtraction}
+              onChange={(event) => setRunLabExtraction(event.target.checked)}
+              disabled={disableFollowupSelection}
+            />
+            <span className="font-medium">{t('rpa.followUps.provsvar.title')}</span>
+          </label>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border border-input"
+              checked={runMedicationExtraction}
+              onChange={(event) => setRunMedicationExtraction(event.target.checked)}
+              disabled={disableFollowupSelection}
+            />
+            <span className="font-medium">{t('rpa.followUps.medications.title')}</span>
+          </label>
+        </div>
 
         <DropdownMenuSeparator />
 

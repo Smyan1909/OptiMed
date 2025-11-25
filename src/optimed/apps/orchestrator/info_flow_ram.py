@@ -8426,20 +8426,8 @@ Content:
                 return max(N_MIN, min(N_MAX, n_class))
 
             # Map classification to dynamic n based on query complexity
-            if label == "lookup":
-                n_class = min(8, N_MAX)        # ~5–8
-            elif label == "temporal-trend":
-                n_class = min(20, N_MAX)       # ~12–20
-            elif label == "comparative":
-                n_class = min(28, N_MAX)       # ~18–28
-            elif label == "general":
-                n_class = min(25, N_MAX)       # ~20–25 for general medical knowledge questions
-            elif label in ("summary", "general_summary", "focused_summary"):
-                n_class = min(30, N_MAX)       # ~40–80, capped at 30
-            elif label == "guideline":
-                n_class = min(12, N_MAX)       # ~6–12
-            else:
-                n_class = 8  # Default fallback
+            n_class = N_MAX
+
         except Exception as e:
             logger.info(f"Classification mapping failed: {e}, using heuristic fallback")
             n_class = self._classify_query(query)

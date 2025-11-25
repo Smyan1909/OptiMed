@@ -30,9 +30,6 @@ class PyMuPDFProcessor(PDFProcessor):
         text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)  # Multiple blank lines → double newline
         text = re.sub(r'[ \t]+', ' ', text)  # Multiple spaces/tabs → single space
 
-        # Remove standalone page numbers (lines with only numbers)
-        text = re.sub(r'\n\s*\d+\s*\n', '\n', text)
-
         # Remove common header/footer patterns
         text = re.sub(r'\n\s*Journalkopia\s*\n', '\n', text, flags=re.IGNORECASE)
         text = re.sub(r'\n\s*Utskrift ur journal\s*\n', '\n', text, flags=re.IGNORECASE)

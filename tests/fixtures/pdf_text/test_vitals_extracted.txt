@@ -1,0 +1,780 @@
+Karolinska Universitetssjukhuset
+Blickagången 9C, Huddinge
+K45 Akutmottagning 1 
+141 86 Stockholm
+08-123 800 00
+SAMTLIGA
+18 060606-0606
+Fiktiv, Äldrekvinna
+Fiktiva Gatan 12
+125 56 Älvsjö 
+Sida 1 (8)
+Utskriven
+Samtliga
+25-11-17 
+17:35
+25-11-17 
+17:39
+25-11-18 
+08:00
+25-11-18 
+14:02
+25-11-18 
+15:50
+25-11-18 
+15:59
+25-11-20 
+07:43
+Ref.intervall
+Enhet
+Andningsfrekvens
+21
+12
+5-50
+andetag/m
+in.
+Avföringsfrekvens, dygn
+Avföringskonsistens
+Avföringsmängd
+Blodtryck systoliskt - 
+övre
+130
+210
+50-300
+mmHg
+Blodtryck diastoliskt - 
+nedre
+60
+0-170
+mmHg
+Energibalans
+-566
+Energibehov
+566
+kcal/dygn
+Hemblodtryck systoliskt 
+medelvärde
+Hemblodtryck 
+diastoliskt medelvärde
+Hemblodtryck systoliskt, 
+dag 1 - morgon
+Hemblodtryck 
+diastoliskt, dag 1 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 1 - kväll
+Hemblodtryck 
+diastoliskt, dag 1 - kväll
+Hemblodtryck systoliskt, 
+dag 2 - morgon
+Hemblodtryck 
+diastoliskt, dag 2 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 2 - kväll
+Hemblodtryck 
+diastoliskt, dag 2 - kväll
+Hemblodtryck systoliskt, 
+dag 3 - morgon
+Hemblodtryck 
+diastoliskt, dag 3 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 3 - kväll
+Hemblodtryck 
+diastoliskt, dag 3 - kväll
+Hemblodtryck systoliskt, 
+dag 4 - morgon
+Hemblodtryck 
+diastoliskt, dag 4 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 4 - kväll
+Hemblodtryck 
+diastoliskt, dag 4 - kväll
+Hemblodtryck systoliskt, 
+dag 5 - morgon
+Hemblodtryck 
+diastoliskt, dag 5 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 5 - kväll
+
+Karolinska Universitetssjukhuset
+Blickagången 9C, Huddinge
+K45 Akutmottagning 1 
+141 86 Stockholm
+08-123 800 00
+SAMTLIGA
+18 060606-0606
+Fiktiv, Äldrekvinna
+Fiktiva Gatan 12
+125 56 Älvsjö 
+Sida 2 (8)
+Utskriven
+Samtliga
+25-11-17 
+17:35
+25-11-17 
+17:39
+25-11-18 
+08:00
+25-11-18 
+14:02
+25-11-18 
+15:50
+25-11-18 
+15:59
+25-11-20 
+07:43
+Ref.intervall
+Enhet
+Hemblodtryck 
+diastoliskt, dag 5 - kväll
+Hemblodtryck systoliskt, 
+dag 6 - morgon
+Hemblodtryck 
+diastoliskt, dag 6 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 6 - kväll
+Hemblodtryck 
+diastoliskt, dag 6 - kväll
+Hemblodtryck systoliskt, 
+dag 7 - morgon
+Hemblodtryck 
+diastoliskt, dag 7 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 7 - kväll
+Hemblodtryck 
+diastoliskt, dag 7 - kväll
+KAD, inspektion
+Inga 
+komplikati
+oner
+Kroppstemperatur
+37
+34-43
+°C
+Längd
+Medvetandegrad, 
+NEWS2
+Alert
+Nedsatt känsel vid 
+könsorgan
+Nej
+NEWS2 gul färg
+0
+NEWS2, totalpoäng
+4
+Obstetrisk NEWS, 
+totalpoäng
+5
+Perifer venkateter (PVK) 
+1 In/Ut/Byte
+In
+Pulsfrekvens
+80
+25-190
+slag/min
+Påverkan av anal 
+knipförmåga
+Nej
+Smärtint. rörelse enl. 
+NRS
+Syremättnad
+96
+98
+%
+Syremättnad2, NEWS2
+Syrgas, NEWS
+Ja
+
+Karolinska Universitetssjukhuset
+Blickagången 9C, Huddinge
+K45 Akutmottagning 1 
+141 86 Stockholm
+08-123 800 00
+SAMTLIGA
+18 060606-0606
+Fiktiv, Äldrekvinna
+Fiktiva Gatan 12
+125 56 Älvsjö 
+Sida 3 (8)
+Utskriven
+Samtliga
+25-11-16 
+16:04
+25-11-16 
+16:23
+25-11-16 
+16:24
+25-11-16 
+16:24
+25-11-16 
+16:26
+25-11-17 
+17:30
+25-11-17 
+17:32
+Ref.intervall
+Enhet
+Andningsfrekvens
+Avföringsfrekvens, dygn
+2
+ggr
+Avföringskonsistens
+Typ 5: 
+Mjuka 
+klumpar 
+med skarpa 
+kanter, 
+enkla att få 
+ut
+Avföringsmängd
+mellan
+Blodtryck systoliskt - 
+övre
+Blodtryck diastoliskt - 
+nedre
+Energibalans
+Energibehov
+Hemblodtryck systoliskt 
+medelvärde
+Hemblodtryck 
+diastoliskt medelvärde
+Hemblodtryck systoliskt, 
+dag 1 - morgon
+Hemblodtryck 
+diastoliskt, dag 1 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 1 - kväll
+Hemblodtryck 
+diastoliskt, dag 1 - kväll
+Hemblodtryck systoliskt, 
+dag 2 - morgon
+Hemblodtryck 
+diastoliskt, dag 2 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 2 - kväll
+Hemblodtryck 
+diastoliskt, dag 2 - kväll
+Hemblodtryck systoliskt, 
+dag 3 - morgon
+Hemblodtryck 
+diastoliskt, dag 3 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 3 - kväll
+Hemblodtryck 
+diastoliskt, dag 3 - kväll
+Hemblodtryck systoliskt, 
+dag 4 - morgon
+Hemblodtryck 
+diastoliskt, dag 4 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 4 - kväll
+Hemblodtryck 
+diastoliskt, dag 4 - kväll
+Hemblodtryck systoliskt, 
+dag 5 - morgon
+
+Karolinska Universitetssjukhuset
+Blickagången 9C, Huddinge
+K45 Akutmottagning 1 
+141 86 Stockholm
+08-123 800 00
+SAMTLIGA
+18 060606-0606
+Fiktiv, Äldrekvinna
+Fiktiva Gatan 12
+125 56 Älvsjö 
+Sida 4 (8)
+Utskriven
+Samtliga
+25-11-16 
+16:04
+25-11-16 
+16:23
+25-11-16 
+16:24
+25-11-16 
+16:24
+25-11-16 
+16:26
+25-11-17 
+17:30
+25-11-17 
+17:32
+Ref.intervall
+Enhet
+Hemblodtryck 
+diastoliskt, dag 5 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 5 - kväll
+Hemblodtryck 
+diastoliskt, dag 5 - kväll
+Hemblodtryck systoliskt, 
+dag 6 - morgon
+Hemblodtryck 
+diastoliskt, dag 6 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 6 - kväll
+Hemblodtryck 
+diastoliskt, dag 6 - kväll
+Hemblodtryck systoliskt, 
+dag 7 - morgon
+Hemblodtryck 
+diastoliskt, dag 7 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 7 - kväll
+Hemblodtryck 
+diastoliskt, dag 7 - kväll
+KAD, inspektion
+Kroppstemperatur
+Längd
+Medvetandegrad, 
+NEWS2
+Nedsatt känsel vid 
+könsorgan
+NEWS2 gul färg
+NEWS2, totalpoäng
+Obstetrisk NEWS, 
+totalpoäng
+Perifer venkateter (PVK) 
+1 In/Ut/Byte
+Pulsfrekvens
+Påverkan av anal 
+knipförmåga
+Smärtint. rörelse enl. 
+NRS
+8
+Syremättnad
+(A)# 96 
+(B)# 98 
+%
+Syremättnad2, NEWS2
+(E)# 99 
+(F)# 99 
+(G)# 99 
+98
+%
+Syrgas, NEWS
+
+Karolinska Universitetssjukhuset
+Blickagången 9C, Huddinge
+K45 Akutmottagning 1 
+141 86 Stockholm
+08-123 800 00
+SAMTLIGA
+18 060606-0606
+Fiktiv, Äldrekvinna
+Fiktiva Gatan 12
+125 56 Älvsjö 
+Sida 5 (8)
+Utskriven
+Samtliga
+25-11-14 
+16:20
+25-11-14 
+16:21
+25-11-14 
+17:16
+25-11-14 
+17:16
+25-11-14 
+18:19
+25-11-16 
+16:02
+25-11-16 
+16:04
+Ref.intervall
+Enhet
+Andningsfrekvens
+12
+11
+22
+5-50
+andetag/m
+in.
+Avföringsfrekvens, dygn
+Avföringskonsistens
+Avföringsmängd
+Blodtryck systoliskt - 
+övre
+Blodtryck diastoliskt - 
+nedre
+Energibalans
+Energibehov
+Hemblodtryck systoliskt 
+medelvärde
+Hemblodtryck 
+diastoliskt medelvärde
+Hemblodtryck systoliskt, 
+dag 1 - morgon
+Hemblodtryck 
+diastoliskt, dag 1 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 1 - kväll
+Hemblodtryck 
+diastoliskt, dag 1 - kväll
+Hemblodtryck systoliskt, 
+dag 2 - morgon
+Hemblodtryck 
+diastoliskt, dag 2 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 2 - kväll
+Hemblodtryck 
+diastoliskt, dag 2 - kväll
+Hemblodtryck systoliskt, 
+dag 3 - morgon
+Hemblodtryck 
+diastoliskt, dag 3 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 3 - kväll
+Hemblodtryck 
+diastoliskt, dag 3 - kväll
+Hemblodtryck systoliskt, 
+dag 4 - morgon
+Hemblodtryck 
+diastoliskt, dag 4 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 4 - kväll
+Hemblodtryck 
+diastoliskt, dag 4 - kväll
+Hemblodtryck systoliskt, 
+dag 5 - morgon
+Hemblodtryck 
+diastoliskt, dag 5 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 5 - kväll
+
+Karolinska Universitetssjukhuset
+Blickagången 9C, Huddinge
+K45 Akutmottagning 1 
+141 86 Stockholm
+08-123 800 00
+SAMTLIGA
+18 060606-0606
+Fiktiv, Äldrekvinna
+Fiktiva Gatan 12
+125 56 Älvsjö 
+Sida 6 (8)
+Utskriven
+Samtliga
+25-11-14 
+16:20
+25-11-14 
+16:21
+25-11-14 
+17:16
+25-11-14 
+17:16
+25-11-14 
+18:19
+25-11-16 
+16:02
+25-11-16 
+16:04
+Ref.intervall
+Enhet
+Hemblodtryck 
+diastoliskt, dag 5 - kväll
+Hemblodtryck systoliskt, 
+dag 6 - morgon
+Hemblodtryck 
+diastoliskt, dag 6 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 6 - kväll
+Hemblodtryck 
+diastoliskt, dag 6 - kväll
+Hemblodtryck systoliskt, 
+dag 7 - morgon
+Hemblodtryck 
+diastoliskt, dag 7 - 
+morgon
+Hemblodtryck systoliskt, 
+dag 7 - kväll
+Hemblodtryck 
+diastoliskt, dag 7 - kväll
+KAD, inspektion
+Kroppstemperatur
+Längd
+43
+cm
+Medvetandegrad, 
+NEWS2
+Nedsatt känsel vid 
+könsorgan
+NEWS2 gul färg
+NEWS2, totalpoäng
+Obstetrisk NEWS, 
+totalpoäng
+Perifer venkateter (PVK) 
+1 In/Ut/Byte
+Pulsfrekvens
+Påverkan av anal 
+knipförmåga
+Smärtint. rörelse enl. 
+NRS
+Syremättnad
+67
+(C)# 98 
+(D)# 99 
+%
+Syremättnad2, NEWS2
+Syrgas, NEWS
+
+Karolinska Universitetssjukhuset
+Blickagången 9C, Huddinge
+K45 Akutmottagning 1 
+141 86 Stockholm
+08-123 800 00
+SAMTLIGA
+18 060606-0606
+Fiktiv, Äldrekvinna
+Fiktiva Gatan 12
+125 56 Älvsjö 
+Sida 7 (8)
+Utskriven
+Samtliga
+25-11-14 
+12:36
+25-11-14 
+15:31
+25-11-14 
+15:38
+Ref.intervall
+Enhet
+Andningsfrekvens
+12
+5-50
+andetag/min.
+Avföringsfrekvens, dygn
+Avföringskonsistens
+Avföringsmängd
+Blodtryck systoliskt - 
+övre
+Blodtryck diastoliskt - 
+nedre
+Energibalans
+Energibehov
+Hemblodtryck systoliskt 
+medelvärde
+141
+mmHg
+Hemblodtryck 
+diastoliskt medelvärde
+86
+mmHg
+Hemblodtryck systoliskt, 
+dag 1 - morgon
+165
+165
+mmHg
+Hemblodtryck 
+diastoliskt, dag 1 - 
+morgon
+110
+11
+mmHg
+Hemblodtryck systoliskt, 
+dag 1 - kväll
+143
+143
+mmHg
+Hemblodtryck 
+diastoliskt, dag 1 - kväll
+89
+89
+mmHg
+Hemblodtryck systoliskt, 
+dag 2 - morgon
+120
+120
+mmHg
+Hemblodtryck 
+diastoliskt, dag 2 - 
+morgon
+76
+76
+mmHg
+Hemblodtryck systoliskt, 
+dag 2 - kväll
+145
+145
+mmHg
+Hemblodtryck 
+diastoliskt, dag 2 - kväll
+90
+90
+mmHg
+Hemblodtryck systoliskt, 
+dag 3 - morgon
+134
+134
+mmHg
+Hemblodtryck 
+diastoliskt, dag 3 - 
+morgon
+89
+89
+mmHg
+Hemblodtryck systoliskt, 
+dag 3 - kväll
+156
+156
+mmHg
+Hemblodtryck 
+diastoliskt, dag 3 - kväll
+90
+90
+mmHg
+Hemblodtryck systoliskt, 
+dag 4 - morgon
+145
+145
+mmHg
+Hemblodtryck 
+diastoliskt, dag 4 - 
+morgon
+80
+80
+mmHg
+Hemblodtryck systoliskt, 
+dag 4 - kväll
+120
+120
+mmHg
+Hemblodtryck 
+diastoliskt, dag 4 - kväll
+80
+80
+mmHg
+Hemblodtryck systoliskt, 
+dag 5 - morgon
+156
+156
+mmHg
+Hemblodtryck 
+diastoliskt, dag 5 - 
+morgon
+80
+80
+mmHg
+Hemblodtryck systoliskt, 
+dag 5 - kväll
+150
+150
+mmHg
+
+Karolinska Universitetssjukhuset
+Blickagången 9C, Huddinge
+K45 Akutmottagning 1 
+141 86 Stockholm
+08-123 800 00
+SAMTLIGA
+18 060606-0606
+Fiktiv, Äldrekvinna
+Fiktiva Gatan 12
+125 56 Älvsjö 
+Sida 8 (8)
+Utskriven
+Samtliga
+25-11-14 
+12:36
+25-11-14 
+15:31
+25-11-14 
+15:38
+Ref.intervall
+Enhet
+Hemblodtryck 
+diastoliskt, dag 5 - kväll
+90
+90
+mmHg
+Hemblodtryck systoliskt, 
+dag 6 - morgon
+120
+120
+mmHg
+Hemblodtryck 
+diastoliskt, dag 6 - 
+morgon
+80
+80
+mmHg
+Hemblodtryck systoliskt, 
+dag 6 - kväll
+135
+135
+mmHg
+Hemblodtryck 
+diastoliskt, dag 6 - kväll
+70
+70
+mmHg
+Hemblodtryck systoliskt, 
+dag 7 - morgon
+145
+145
+mmHg
+Hemblodtryck 
+diastoliskt, dag 7 - 
+morgon
+99
+99
+mmHg
+Hemblodtryck systoliskt, 
+dag 7 - kväll
+134
+134
+mmHg
+Hemblodtryck 
+diastoliskt, dag 7 - kväll
+89
+89
+mmHg
+KAD, inspektion
+Kroppstemperatur
+Längd
+Medvetandegrad, 
+NEWS2
+Nedsatt känsel vid 
+könsorgan
+NEWS2 gul färg
+NEWS2, totalpoäng
+Obstetrisk NEWS, 
+totalpoäng
+Perifer venkateter (PVK) 
+1 In/Ut/Byte
+Pulsfrekvens
+Påverkan av anal 
+knipförmåga
+Smärtint. rörelse enl. 
+NRS
+Syremättnad
+Syremättnad2, NEWS2
+Syrgas, NEWS
+ Kommentarer
+(A)# Reggad i TC
+(B)# Via Nytt knapp
+(C)# KNAPP: Nytt Mätvärde
+(D)# Länkad aktivitet NEWS2
+(E)# Via länkad aktivitet
+(F)# Via TC
+(G)# Via nytt knapp

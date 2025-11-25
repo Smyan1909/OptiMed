@@ -961,6 +961,17 @@
       "starting": "Starting...",
       "stopExtraction": "Stop Extraction",
       "stopping": "Stopping..."
+    },
+    "followUps": {
+      "title": "Follow-up extractions",
+      "provsvar": {
+        "title": "Provsvar",
+        "helper": "Run the lab (labsvar) RPA after the main extraction finishes."
+      },
+      "medications": {
+        "title": "Läkemedel",
+        "helper": "Run the medication RPA after the previous extraction completes."
+      }
     }
   },
   "help": {
