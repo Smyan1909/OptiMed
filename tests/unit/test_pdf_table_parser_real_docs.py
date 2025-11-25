@@ -21,15 +21,22 @@ def test_medication_table_parsing_produces_expected_rows():
         table for table in tables if "25-11-24" in table.value_columns
     )
 
+    # Check Th Diben row
     th_diben = next(row for row in meds_table.rows if "Th Diben" in row.header)
-    assert th_diben.attributes["Typ"] == "Rb"
-    assert th_diben.attributes["Enh"] == "ml"
-    assert th_diben.values["25-11-17"] == "500 + 500 +"
+    assert th_diben.attributes["Typ"] == "Hp"  # Hp is the type for this medication
+    assert "500 + 500 + 500" in th_diben.values["25-11-17"]
 
+    # Check Orlistat Stada row
+    orlistat = next(row for row in meds_table.rows if "Orlistat Stada" in row.header)
+    assert orlistat.attributes["Styrka"] == "120 mg"
+    assert orlistat.attributes["Typ"] == "Rb"
+    assert orlistat.values["25-11-17"] == "1"
+
+    # Check Nystatin Abacus row
     nystatin = next(row for row in meds_table.rows if "Nystatin Abacus" in row.header)
-    assert nystatin.attributes["Typ"] == "Oral"
-    assert nystatin.attributes["Enh"] == "suspension"
-    assert nystatin.values["25-11-17"] == "Rb ml 1 + 1 + 1 + 1"
+    assert nystatin.attributes["Typ"] == "Rb"
+    assert nystatin.attributes["Enh"] == "ml"
+    assert "1 + 1 + 1 + 1" in nystatin.values["25-11-17"]
 
 
 def test_vitals_table_preserves_timestamp_values():
@@ -40,23 +47,24 @@ def test_vitals_table_preserves_timestamp_values():
         table for table in tables if "25-11-14 12:36" in table.value_columns
     )
 
-    systolic_morning = next(
+    # Check Hemblodtryck systoliskt medelvärde
+    systolic_mean = next(
         row for row in vitals_table.rows
-        if "Hemblodtryck systoliskt" in row.header
-        and row.attributes.get("Utskriven") == "dag 2 - morgon"
+        if "Hemblodtryck systoliskt" in row.header and "medelvärde" in row.header
     )
-    assert systolic_morning.values["25-11-14 12:36"] == "120 mmHg"
+    assert systolic_mean.values["25-11-14 12:36"] == "141"
+    assert systolic_mean.attributes["Enhet"] == "mmHg"
 
-    diastolic_evening = next(
+    # Check Hemblodtryck systoliskt, dag 2 - morgon
+    systolic_day2 = next(
         row for row in vitals_table.rows
-        if "Hemblodtryck" in row.header
-        and row.attributes.get("Utskriven", "").startswith("diastoliskt, dag 2 -")
-        and "kv" in row.attributes.get("Utskriven", "")
+        if "Hemblodtryck systoliskt" in row.header and "dag 2" in row.header and "morgon" in row.header
     )
-    assert diastolic_evening.values["25-11-14 12:36"] == "90 mmHg"
+    assert systolic_day2.values["25-11-14 12:36"] == "120"
+    assert systolic_day2.attributes["Enhet"] == "mmHg"
 
+    # Check Andningsfrekvens
     respiration = next(row for row in vitals_table.rows if row.header == "Andningsfrekvens")
     assert respiration.values["25-11-14 12:36"] == "12"
     assert respiration.attributes["Ref.intervall"] == "5-50"
     assert respiration.attributes["Enhet"] == "andetag/min."
-

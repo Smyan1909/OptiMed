@@ -262,6 +262,22 @@ class MemoryPDFService(PDFService):
         logger.warning("PDF document not found")
         return False
 
+    async def get_document_raw_content(self, document_id: str, user_id: str) -> Optional[bytes]:
+        """Get the raw PDF content for a document.
+        
+        Args:
+            document_id: The document ID
+            user_id: The user ID (for session lookup)
+            
+        Returns:
+            Raw PDF bytes if found, None otherwise
+        """
+        for session_key, session_data in self.sessions.items():
+            if user_id in session_key:
+                if document_id in session_data.raw_content:
+                    return session_data.raw_content[document_id]
+        return None
+
     async def get_documents_for_context(self, user_id: str, patient_id: Optional[str] = None, session_id: Optional[str] = None) -> Sequence[PDFDocument]:
         """Get PDF documents relevant for the current context (patient-specific or general).
 

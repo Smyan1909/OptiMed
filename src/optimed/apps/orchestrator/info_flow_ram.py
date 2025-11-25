@@ -7909,7 +7909,26 @@ Content:
             else:
                 # NOT A JOURNAL - use standard hierarchical chunking
                 logger.info(f"PDF '{pdf.filename}' is not journal format - using standard chunking")
-                table_output = table_parser.extract_tables(pdf.extracted_text, pdf.document_id)
+                
+                # Try coordinate-based table parsing first (more accurate column alignment)
+                table_output = None
+                try:
+                    raw_content = await self._pdf_service.get_document_raw_content(pdf.document_id, pdf.user_id)
+                    if raw_content:
+                        from optimed.adapters.pdf.pdf_processor import PyMuPDFProcessor
+                        pdf_processor = PyMuPDFProcessor()
+                        pages_with_coords = await pdf_processor.extract_text_with_coords(raw_content)
+                        table_output = table_parser.extract_tables_with_coords(pages_with_coords, pdf.document_id)
+                        logger.info(f"Used coordinate-based table parsing for '{pdf.filename}'")
+                except Exception as e:
+                    logger.warning(f"Coordinate-based parsing failed for '{pdf.filename}': {e}, falling back to text-based")
+                    table_output = None
+                
+                # Fall back to text-based parsing if coordinate-based failed
+                if table_output is None:
+                    table_output = table_parser.extract_tables(pdf.extracted_text, pdf.document_id)
+                    logger.info(f"Used text-based table parsing for '{pdf.filename}'")
+                
                 if table_output.tables:
                     table_chunks = self._build_pdf_table_chunks(
                         tables=table_output.tables,

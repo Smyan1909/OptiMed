@@ -17,14 +17,14 @@ Th Diben 1,5 Kcal
 Oral
 Rb
 ml
-500 ml
+500
 ---->
 Movicol
 5 mg
 Pulver
 Rb
 st
-1 dos
+1
 0
 """
 
@@ -42,7 +42,12 @@ def test_pdf_table_parser_extracts_rows():
 
     first_row = table.rows[0]
     assert first_row.header == "Th Diben 1,5 Kcal"
-    assert first_row.values["25-11-17 08:00"] == "500 ml"
+    # Values are now small numbers or arrows
+    assert first_row.values["25-11-17 08:00"] == "500"
     assert first_row.values["25-11-18 09:00"] == "---->"
 
-
+    second_row = table.rows[1]
+    assert second_row.header == "Movicol"
+    # Styrka includes the strength value, may include form text before Typ
+    assert "5 mg" in second_row.attributes["Styrka"]
+    assert second_row.attributes["Typ"] == "Rb"

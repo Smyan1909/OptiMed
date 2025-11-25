@@ -1,9 +1,30 @@
 import fitz  # PyMuPDF
 import re
+from dataclasses import dataclass
 from datetime import datetime
+from typing import List, Optional, Tuple
 
 from optimed.core.ports import PDFProcessor
 from optimed.core.domain.pdf_document import PDFMetadata
+
+
+@dataclass
+class TextSpan:
+    """A text span with position information."""
+    text: str
+    x0: float  # Left x coordinate
+    y0: float  # Top y coordinate
+    x1: float  # Right x coordinate
+    y1: float  # Bottom y coordinate
+    page: int
+
+
+@dataclass 
+class PageTextWithCoords:
+    """Page text with coordinate information for table parsing."""
+    page_number: int
+    spans: List[TextSpan]
+    raw_text: str
 
 
 class PyMuPDFProcessor(PDFProcessor):
@@ -133,3 +154,55 @@ class PyMuPDFProcessor(PDFProcessor):
             return is_valid
         except Exception:
             return False
+
+    async def extract_text_with_coords(self, file_content: bytes) -> List[PageTextWithCoords]:
+        """
+        Extract text with coordinate information from a PDF file.
+        
+        This method extracts text spans with their x,y coordinates, which is useful
+        for table parsing where column alignment matters.
+        
+        Args:
+            file_content: PDF file content as bytes
+            
+        Returns:
+            List of PageTextWithCoords, one per page
+        """
+        try:
+            doc = fitz.open(stream=file_content, filetype="pdf")
+            pages_data: List[PageTextWithCoords] = []
+            
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                
+                # Get words with coordinates
+                # Returns list of (x0, y0, x1, y1, word, block_no, line_no, word_no)
+                words = page.get_text("words")
+                
+                spans: List[TextSpan] = []
+                for word_data in words:
+                    x0, y0, x1, y1, text, block_no, line_no, word_no = word_data
+                    spans.append(TextSpan(
+                        text=text,
+                        x0=x0,
+                        y0=y0,
+                        x1=x1,
+                        y1=y1,
+                        page=page_num
+                    ))
+                
+                # Also get raw text for this page
+                raw_text = page.get_text()
+                cleaned_text = self._clean_pdf_text(raw_text)
+                
+                pages_data.append(PageTextWithCoords(
+                    page_number=page_num + 1,  # 1-indexed
+                    spans=spans,
+                    raw_text=cleaned_text
+                ))
+            
+            doc.close()
+            return pages_data
+            
+        except Exception as e:
+            raise ValueError(f"Failed to extract text with coordinates from PDF: {str(e)}")
