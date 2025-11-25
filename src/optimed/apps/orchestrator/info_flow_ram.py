@@ -34,6 +34,7 @@ from optimed.apps.orchestrator.chunking_config import STRATEGY_REGISTRY as CHUNK
 from optimed.adapters.outbound.tokenizer.whitespace_tokenizer import WhitespaceTokenizer
 from optimed.core.logging_utils import get_logger, sanitize_user_id, sanitize_patient_id, sanitize_session_id, log_error
 from optimed.utils.background_tasks import create_background_task
+from optimed.utils.pdf_table_parser import PDFTableParser, ParsedTable
 
 logger = get_logger(__name__)
 
@@ -1405,14 +1406,30 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     )
 
                 # Set state variables early so streaming decorator can access them
-                state.retrieved_chunks = [
-                    {
-                        "chunk_id": chunks[i]["chunk_id"],
-                        "content": chunks[i]["content"],
-                        "metadata": chunks[i]["metadata"]
-                    }
-                    for i in final_selected
-                ]
+                parent_lookup = cache_entry.get("parent_chunks", {}) if cache_entry else {}
+                state.retrieved_chunks = []
+                for idx in final_selected:
+                    child_chunk = chunks[idx]
+                    child_metadata = child_chunk.get("metadata", {}) or {}
+                    parent_chunk_id = child_metadata.get("parent_chunk_id")
+
+                    if parent_chunk_id and parent_lookup and parent_chunk_id in parent_lookup:
+                        parent_chunk = parent_lookup[parent_chunk_id]
+                        parent_metadata = parent_chunk.get("metadata", {}).copy() if parent_chunk.get("metadata") else {}
+                        parent_metadata["child_chunk_id"] = child_chunk.get("chunk_id") or child_chunk.get("id")
+                        parent_metadata["child_metadata"] = child_metadata
+
+                        state.retrieved_chunks.append({
+                            "chunk_id": parent_chunk.get("chunk_id") or parent_chunk.get("id"),
+                            "content": parent_chunk.get("content", ""),
+                            "metadata": parent_metadata
+                        })
+                    else:
+                        state.retrieved_chunks.append({
+                            "chunk_id": child_chunk.get("chunk_id") or child_chunk.get("id"),
+                            "content": child_chunk.get("content", ""),
+                            "metadata": child_metadata
+                        })
 
                 # Build citations from chunk metadata with sequential numbers
                 state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(state.retrieved_chunks)
@@ -1664,7 +1681,7 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
             # 🔑 PARENT-CHILD SWAP: Replace child chunks with parent chunks for LLM evaluation
             # This provides richer context while maintaining precise retrieval
-            parent_lookup = cache_entry.get("parent_chunks", {})
+            parent_lookup = cache_entry.get("parent_chunks", {}) if cache_entry else {}
             if parent_lookup:
                 selected_chunks_with_parents = []
                 seen_parent_ids = set()  # Deduplicate parents (multiple children may share same parent)
@@ -1775,15 +1792,32 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
             final_selected = selected_indices
 
             # Prepare final chunk results
-            result_chunks = [
-                {
-                    "chunk_id": chunks[i]["chunk_id"],
-                    "content": chunks[i]["content"],
-                    "metadata": chunks[i]["metadata"],
-                    "embedding": chunks[i].get("embedding")
-                }
-                for i in final_selected
-            ]
+            result_chunks: list[dict[str, Any]] = []
+            for i in final_selected:
+                child_chunk = chunks[i]
+                child_metadata = child_chunk.get("metadata", {}) or {}
+                parent_chunk_id = child_metadata.get("parent_chunk_id")
+
+                if parent_chunk_id and parent_lookup and parent_chunk_id in parent_lookup:
+                    parent_chunk = parent_lookup[parent_chunk_id]
+                    parent_metadata = parent_chunk.get("metadata", {}).copy() if parent_chunk.get("metadata") else {}
+                    # Preserve linkage to the originating child chunk for auditing/citations
+                    parent_metadata["child_chunk_id"] = child_chunk.get("chunk_id") or child_chunk.get("id")
+                    parent_metadata["child_metadata"] = child_metadata
+
+                    result_chunks.append({
+                        "chunk_id": parent_chunk.get("chunk_id") or parent_chunk.get("id"),
+                        "content": parent_chunk.get("content", ""),
+                        "metadata": parent_metadata,
+                        "embedding": child_chunk.get("embedding")
+                    })
+                else:
+                    result_chunks.append({
+                        "chunk_id": child_chunk.get("chunk_id") or child_chunk.get("id"),
+                        "content": child_chunk.get("content", ""),
+                        "metadata": child_metadata,
+                        "embedding": child_chunk.get("embedding")
+                    })
 
             logger.info(f"[{context_label}] Retrieval complete: {len(result_chunks)} chunks selected")
             logger.info(f"[{context_label}] Pipeline stats: {len(chunks)} total → {len(initial_indices)} bi-encoder → {len(reranked)} cross-encoder → {len(selected_indices)} MMR → {len(final_selected)} agentic-eval (attempt {refinement_attempt})")
@@ -3251,7 +3285,7 @@ Consider what has already been discussed in the conversation to avoid redundancy
                 ⚠️ **ANTI-HALLUCINATION RULES** ⚠️:
                 - If NO medications exist for a section, write in user's language:
                   * English: "No medications documented" or "No prior medications documented"
-                  * Swedish: "Inga läkemedel dokumenterade" or "Inga tidigare läkemedel dokumenterade"
+                  * Swedish: "Inga läkemedel hittades vid denna sökning" or "Inga tidigare läkemedel hittades vid denna sökning"
                 - DO NOT make up, infer, or assume ANY medications or doses
                 - ONLY list medications explicitly documented in the provided chunks
                 - DO NOT add medications based on conditions alone - only documented prescriptions
@@ -7734,6 +7768,7 @@ Content:
 
         # Final chunks to return (both parent and child chunks)
         final_chunks = []
+        table_parser = PDFTableParser()
 
         # Use semantic chunking for better PDF processing
         from optimed.adapters.pdf.semantic_chunker import SemanticPDFChunker
@@ -7874,10 +7909,22 @@ Content:
             else:
                 # NOT A JOURNAL - use standard hierarchical chunking
                 logger.info(f"PDF '{pdf.filename}' is not journal format - using standard chunking")
+                table_output = table_parser.extract_tables(pdf.extracted_text, pdf.document_id)
+                if table_output.tables:
+                    table_chunks = self._build_pdf_table_chunks(
+                        tables=table_output.tables,
+                        pdf=pdf,
+                        pseudo_patient=pseudo_patient,
+                    )
+                    final_chunks.extend(table_chunks)
+                text_for_chunking = table_output.cleaned_text or pdf.extracted_text
+                if not text_for_chunking:
+                    logger.info(f"PDF '{pdf.filename}' contains tables only - skipping semantic chunker")
+                    continue
 
                 # STEP 1: Create PARENT chunks from the full PDF
                 parent_semantic_chunks = parent_chunker.chunk_pdf_text(
-                    pdf.extracted_text,
+                    text_for_chunking,
                     pdf.document_id,
                     {
                         "title": pdf.metadata.title,
@@ -8022,6 +8069,68 @@ Content:
         logger.info(f"Created {len(final_chunks)} total chunks from {len(pdf_documents)} PDF documents ({parent_count} parent + {child_count} child, parent-child hierarchical chunking)")
 
         return final_chunks
+
+    def _build_pdf_table_chunks(self, tables: list[ParsedTable], pdf: PDFDocument, pseudo_patient: str) -> list[Chunk]:
+        """Create parent/child chunks from parsed tables."""
+        from optimed.core.domain import Chunk
+
+        if not tables:
+            return []
+
+        table_chunks: list[Chunk] = []
+        for table in tables:
+            parent_uuid = str(uuid.uuid4())
+            parent_chunk = Chunk(
+                id=parent_uuid,
+                patient_ref=pseudo_patient,
+                encounter_ref=None,
+                resource_type="pdf_table",
+                key=f"{pdf.document_id}_table_{table.table_id}",
+                text=table.to_json(pdf.document_id),
+                strategy_id="PDFTableParser",
+                strategy_version="1.0",
+                timestamp=pdf.uploaded_at,
+                meta={
+                    "filename": pdf.filename,
+                    "title": pdf.metadata.title,
+                    "page_number": table.page_number,
+                    "chunk_level": "parent",
+                    "chunk_type": "pdf_table",
+                    "table_id": table.table_id,
+                    "child_chunk_ids": [],
+                },
+                has_phi=False,
+            )
+            table_chunks.append(parent_chunk)
+
+            for row in table.rows:
+                child_uuid = str(uuid.uuid4())
+                child_chunk = Chunk(
+                    id=child_uuid,
+                    patient_ref=pseudo_patient,
+                    encounter_ref=None,
+                    resource_type="pdf_table",
+                    key=f"{row.row_id}",
+                    text=row.to_json(table.table_id, table.page_number, pdf.document_id),
+                    strategy_id="PDFTableParser",
+                    strategy_version="1.0",
+                    timestamp=pdf.uploaded_at,
+                    meta={
+                        "filename": pdf.filename,
+                        "title": pdf.metadata.title,
+                        "page_number": table.page_number,
+                        "chunk_level": "child",
+                        "chunk_type": "pdf_table",
+                        "table_id": table.table_id,
+                        "row_id": row.row_id,
+                        "parent_chunk_id": parent_uuid,
+                    },
+                    has_phi=False,
+                )
+                parent_chunk.meta["child_chunk_ids"].append(child_uuid)
+                table_chunks.append(child_chunk)
+
+        return table_chunks
 
     async def _chunk_xml_documents(self, xml_documents: List[XMLDocument], orchestrator: ChunkingOrchestrator, patient_id_str: Optional[str]) -> List[Chunk]:
         """Chunk XML documents using simple text-based chunking with NarrativeV1 strategy and orchestrator's redactor (Presidio)."""

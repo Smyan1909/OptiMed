@@ -44,5 +44,8 @@
     // Include custom CSS for better diagram rendering
     "markdown-pdf.styles": [
         ".vscode/markdown-pdf-styles.css"
-    ]
+    ],
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "python-envs.pythonProjects": []
 }
