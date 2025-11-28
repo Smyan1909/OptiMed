@@ -17,6 +17,10 @@ from typing import Any
 
 STREAMING_MESSAGES = {
     "en": {
+        "prepare_context": {
+            "starting": "Preparing context...",
+            "completed": "Context prepared"
+        },
         # Loading and fetching
         "load_user_context": {
             "starting": "Loading your profile...",

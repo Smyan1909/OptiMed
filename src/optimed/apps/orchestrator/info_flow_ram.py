@@ -56,50 +56,56 @@ PERSISTENCE_ENABLED: bool = False
 TOPK_INITIAL: int = 100
 TOPK_RERANK: int = 30
 N_MIN: int = 3
-N_MAX: int = 25
+N_MAX: int = 30  # Increased from 25 for better coverage on general queries
 MMR_LAMBDA: float = 0.5
 GATE_THRESH: float = 0.5
 RETRY_MAX: int = 2
 
 
 
-# Single system message for information relay only
-SYSTEM_MSG_INFO_RELAY = ChatMessage(role=ChatRole.SYSTEM,
-                         content="""You are CLARA, a clinical information assistant.
+def get_system_msg_info_relay() -> ChatMessage:
+    """Generate the system message for information relay with current date."""
+    current_date = datetime.now().strftime('%Y-%m-%d')
+    return ChatMessage(role=ChatRole.SYSTEM,
+                       content=f"""You are CLARA, a clinical information assistant.
 
-                                    You are not a doctor or a medical device, so always state that the user should make their decisions independently and review the sources for further information.
+**Current Date**: {current_date}
 
-                                    Your goal is to provide information to the user so that they can make decisions based upon the information you provide.
+**IMPORTANT - NOT A MEDICAL DEVICE**:
+You are NOT a doctor or a medical device. You cannot provide clinical advice, diagnostic conclusions, or treatment recommendations from your own knowledge. You can ONLY:
+1. Paraphrase and summarize information retrieved from the patient's medical records (with citations)
+2. Present information from trusted web sources (viss.nu, socialstyrelsen.se, 1177.se, vardhandboken.se, medical databases) for guidelines and general medical knowledge
+3. Always state that the user should make their decisions independently and review the sources
 
-                                    The primary users of this service are doctors and nurses.
+The primary users of this service are doctors and nurses.
 
-                                    **CRITICAL - RESPONSE FORMAT**:
-                                    - Organize response with `##` headers to divide sections
-                                    - **1-4 sections depending on need**, with **up to 10 bullet points per section**
-                                    - **10-15 words per bullet point** - be extremely concise
-                                    - Use bullet points (`-`) for all information, no long paragraphs
-                                    - Each bullet must be a single, focused fact with citation
+**RESPONSE STRUCTURE**:
+- Keep answers concise - if one sentence suffices, use one sentence
+- If more detail is needed, use `##` headers to organize sections
+- Use bullet points (`-`) for lists, 10-15 words per bullet
+- Each statement referencing patient data MUST include a citation
 
-                                    General response guideline:
-                                    - Use previous conversation history (between === lines) when relevant.
-                                    - **Always output in valid GitHub-flavored Markdown** to ensure clean rendering in the application.
-                                    - **DATE/TIME STAMPS**: Only include dates (YYYY-MM-DD or YYYY-MM-DD HH:MM) when referencing specific journal entries, documents, or when temporal context is essential for the query.
-                                    - **CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms:
-                                        - **Diagnoses** and disease names (e.g., **Type 2 Diabetes**, **Hypertension**)
-                                        - **Medications** and doses (e.g., **Metformin 1000mg**, **Enalapril 20mg**)
-                                        - **Vital signs** and lab values (e.g., **BP 145/85**, **HbA1c 68 mmol/mol**, **eGFR 52**)
-                                        - **Symptoms** and clinical findings (e.g., **chest pain**, **dyspnea**, **wheezing**)
-                                        - **Risk levels** and severity descriptors (e.g., **moderate risk**, **stable**, **worsening**)
-                                        - **Key clinical terms** that are important for decision-making
-                                    - Format all URLs as **clickable Markdown links**: [Link Text](URL)
-                                    - For web sources, use format: [Source Title](URL) immediately after the information
-                                    - Do not escape Markdown unnecessarily; the final response must always render cleanly.
+**TEMPORAL RELEVANCE**:
+- Prioritize recent information but include historical data when relevant to the query
+- Note the recency of information when clinically significant (e.g., "as of 2024-01-15")
+- If old information is specifically relevant to the query, include it with clear date context
 
-                                    Restrictions:
-                                    - Provide information and education, **not** diagnostic conclusions or treatment recommendations.
-                                    - Do not provide any treatment recommendations or diagnostic conclusions.
-                                    - Refer all clinical decision-making to qualified healthcare providers.
-                                    """)
+**FORMATTING**:
+- Use **bold** for: diagnoses, medications, vital signs, lab values, symptoms, key clinical terms
+- Format URLs as clickable Markdown links: [Link Text](URL)
+- For web sources: [Source Title](URL) immediately after the information
+- Output valid GitHub-flavored Markdown
+
+**CRITICAL**:
+- Independent of the information you recieve your PRIMARY GOAL is to answer the user's question
+- If you cannot answer the user's question, you should say so and suggest that the user should ask a different question
+- Provide ONLY information that DIRECTLY answers the user's question and avoid providing information that is not directly related to the user's question.
+
+**RESTRICTIONS**:
+- Provide information and education only - NO diagnostic conclusions or treatment recommendations from your own knowledge
+- Treatment/guideline information must come from web sources (viss.nu, socialstyrelsen.se, 1177.se, vardhandboken.se, or trusted medical databases)
+- Refer all clinical decision-making to qualified healthcare providers
+""")
 
 
 class FlowState(BaseModel):
@@ -129,8 +135,6 @@ class FlowState(BaseModel):
     chunk_analysis: dict[str, Any] = Field(default_factory=dict)
     filtered_chunks: List[dict[str, Any]] = Field(default_factory=list)
     retrieval_reasoning: str = ""
-
-    requires_full_processing: bool = True
 
     llm_response: ChatMessage | None = None
 
@@ -178,37 +182,9 @@ class FlowState(BaseModel):
     refined_queries: List[str] = Field(default_factory=list)
     needs_refinement: bool = False
 
-    # SBAR flow fields
+    # Query classification fields
     query_classification: Optional[str] = None
     classification_query: Optional[str] = None  # Contextualized query for classification
-    is_sbar_flow: bool = False
-
-    # Separate fields for each SBAR component to avoid concurrent updates
-    sbar_situation_chunks: Optional[List[Dict[str, Any]]] = None
-    sbar_background_chunks: Optional[List[Dict[str, Any]]] = None
-    sbar_assessment_chunks: Optional[List[Dict[str, Any]]] = None
-    sbar_recommendation_chunks: Optional[List[Dict[str, Any]]] = None
-
-    sbar_situation_result: Optional[str] = None
-    sbar_background_result: Optional[str] = None
-    sbar_assessment_result: Optional[str] = None
-    sbar_recommendation_result: Optional[str] = None
-
-    # Cited chunk IDs from LLM for each SBAR component
-    sbar_situation_cited_ids: Optional[List[str]] = None
-    sbar_background_cited_ids: Optional[List[str]] = None
-    sbar_assessment_cited_ids: Optional[List[str]] = None
-    sbar_recommendation_cited_ids: Optional[List[str]] = None
-
-    # SBAR retrieval cache for performance optimization
-    sbar_retrieval_cache: Optional[Dict[str, Any]] = None
-
-    # Timeline flow fields
-    is_timeline_flow: bool = False
-    timeline_events: Optional[List[Dict[str, Any]]] = None  # Generated timeline events
-    timeline_chunks: Optional[Dict[str, List[Dict[str, Any]]]] = None  # Chunks per event
-    timeline_results: Optional[List[Dict[str, Any]]] = None  # Final timeline bubbles
-    timeline_retrieval_cache: Optional[Dict[str, Any]] = None
 
     # Note generation flow fields
     is_note_generation_flow: bool = False
@@ -254,44 +230,6 @@ class FlowState(BaseModel):
 
     # General summary retrieval cache for performance optimization
     general_retrieval_cache: Optional[Dict[str, Any]] = None
-
-    # Focused summary flow fields
-    is_focused_summary_flow: bool = False
-    focused_aspect: Optional[str] = None  # e.g., "heart disease", "lung history"
-    focused_aspect_icon: Optional[str] = None  # Icon for the aspect
-
-    # General knowledge flow fields (medical knowledge, not patient-specific)
-    is_general_knowledge_flow: bool = False
-
-    # Guideline flow fields (clinical guideline search on viss.nu)
-    is_guideline_flow: bool = False
-    paraphrased_guideline_query: Optional[str] = None  # De-identified query for viss.nu search
-
-    # Separate fields for each focused summary component to avoid concurrent updates
-    focused_diagnoses_chunks: Optional[List[Dict[str, Any]]] = None
-    focused_events_chunks: Optional[List[Dict[str, Any]]] = None
-    focused_medications_chunks: Optional[List[Dict[str, Any]]] = None
-    focused_objective_data_chunks: Optional[List[Dict[str, Any]]] = None
-    focused_assessment_chunks: Optional[List[Dict[str, Any]]] = None
-    focused_next_steps_chunks: Optional[List[Dict[str, Any]]] = None
-
-    focused_diagnoses_result: Optional[str] = None
-    focused_events_result: Optional[str] = None
-    focused_medications_result: Optional[str] = None
-    focused_objective_data_result: Optional[str] = None
-    focused_assessment_result: Optional[str] = None
-    focused_next_steps_result: Optional[str] = None
-
-    # Cited chunk IDs from LLM for each focused summary component
-    focused_diagnoses_cited_ids: Optional[List[str]] = None
-    focused_events_cited_ids: Optional[List[str]] = None
-    focused_medications_cited_ids: Optional[List[str]] = None
-    focused_objective_data_cited_ids: Optional[List[str]] = None
-    focused_assessment_cited_ids: Optional[List[str]] = None
-    focused_next_steps_cited_ids: Optional[List[str]] = None
-
-    # Focused summary retrieval cache for performance optimization
-    focused_retrieval_cache: Optional[Dict[str, Any]] = None
 
 
 class LangGraphRAMInformationEngine(DiagnosticEngine):
@@ -807,33 +745,28 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
         @streaming_step("evaluate_web_search_need")
         async def evaluate_web_search_need(state: FlowState) -> FlowState:
-            """Evaluate if web search is needed for medical information."""
+            """Evaluate if web search is needed for medical information.
+            
+            Web search is triggered for queries about:
+            - Treatment plans, protocols, and guidelines
+            - Drug interactions, side effects, dosing
+            - General medical knowledge not patient-specific
+            - Clinical guidelines and best practices
+            """
             try:
-                # ALWAYS use web search for factoid/guideline questions (general medical knowledge)
-                # This prevents hallucinations and ensures current medical information
-                classification = getattr(state, 'query_classification', None)
 
-                # Force web search for general medical knowledge questions
-                factoid_classifications = ["guideline", "general", "comparative"]
-                if classification in factoid_classifications:
-                    logger.info(f"Factoid question detected ({classification}) - FORCING web search for credible sources")
-                    state.web_search_performed = True
-                    return state
-
-                # For other modes, evaluate based on query content
-                # Note: No patient data is sent to external APIs for GDPR compliance
                 chat_history_str = None
                 if state.chat_history:
                     chat_history_str = [msg.content for msg in state.chat_history[-3:]]
 
                 needs_search = await self._web_search.evaluate_search_need(
                     user_query=state.user_prompt,
-                    patient_context=None,  # No patient data sent to external APIs
+                    patient_context=state.retrieved_chunks if state.retrieved_chunks else None,
                     chat_history=chat_history_str
                 )
 
                 state.web_search_performed = needs_search
-                logger.info(f"Web search needed: {needs_search}")
+                logger.info(f"Web search needed (service evaluation): {needs_search}")
 
             except Exception as e:
                 log_error(logger, "web_search", e)
@@ -843,12 +776,18 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
         @streaming_step("perform_web_search")
         async def perform_web_search(state: FlowState) -> FlowState:
-            """Perform web search if needed."""
+            """Perform web search if needed using trusted medical sources.
+            
+            Combines results from:
+            - viss.nu (Swedish clinical guidelines)
+            - General trusted medical databases
+            """
             try:
                 if not state.web_search_performed:
                     return state
                 
                 # Prepare search query without patient data for GDPR compliance
+
                 search_query = state.user_prompt
                 
                 # Perform search with target language based on user's prompt
@@ -856,11 +795,13 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     active_lang = detect_language_code(state.user_prompt or "")
                 except Exception:
                     active_lang = "en"
+                
+                # Search with combined intent (viss.nu + general medical sources)
                 search_response = await self._web_search.search(
                     query=search_query,
-                    max_results=8,
-                    patient_context=None,  # No patient data sent to external APIs
-                    search_intent="clinical_information",
+                    max_results=10,  # Increased to get more sources
+                    patient_context=state.retrieved_chunks if state.retrieved_chunks else None,  # No patient data sent to external APIs
+                    search_intent="clinical_guideline",  # Prioritizes trusted sources
                     target_language=(active_lang if active_lang and active_lang != "en" else None)
                 )
                 
@@ -870,10 +811,10 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 if search_response.results:
                     state.retrieved_web = [
                         f"Source: {result.title}\nURL: {result.url}\nContent: {result.snippet}"
-                        for result in search_response.results[:3]
+                        for result in search_response.results  # Include more results
                     ]
                 
-                logger.info(f"Found {len(search_response.results)} results")
+                logger.info(f"Found {len(search_response.results)} results from trusted medical sources")
                 
             except Exception as e:
                 log_error(logger, "web_search", e)
@@ -1215,16 +1156,29 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     chunks = cached_chunks
 
                 # SKIP RETRIEVAL FOR SPECIALIZED FLOWS (but keep the chunks in cache)
-                # Specialized flows (SBAR, General Summary, Timeline, Focused Summary) do per-component retrieval
-                if state.is_sbar_flow or state.is_general_summary_flow or state.is_timeline_flow or state.is_focused_summary_flow:
-                    logger.info(f"Skipping global retrieval - specialized flow detected")
-                    logger.info(f"  is_sbar_flow: {state.is_sbar_flow}")
-                    logger.info(f"  is_general_summary: {state.is_general_summary_flow}")
-                    logger.info(f"  is_timeline: {state.is_timeline_flow}")
-                    logger.info(f"  is_focused_summary: {state.is_focused_summary_flow}")
+                # General Summary flow does per-component retrieval
+                if state.is_general_summary_flow:
+                    logger.info(f"Skipping global retrieval - General Summary flow detected")
                     logger.info(f"✅ Chunks cached ({len(chunks) if chunks else len(cached_chunks)} chunks) - components will perform independent retrieval")
                     return state
+            
+                if state.stream_callback:
+                
+                    language = getattr(state, 'user_language', 'en')
 
+                    description = get_message(
+                        "intelligent_retrieve_chunks",
+                        "retrieval",
+                        language
+                    )
+
+                    await state.stream_callback({
+                                        "type": "status",
+                                        "step": "intelligent_retrieve_chunks",
+                                        "description": description,
+                                        "status": "processing",
+                                        "timestamp": datetime.now().isoformat()
+                                    })
                 # 3) Query variants
                 logger.info("Generating query variants...")
                 try:
@@ -1824,80 +1778,6 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
             return result_chunks
 
-        async def _generate_sbar_queries(state: FlowState, sbar_component: str, focus_instruction: str) -> List[str]:
-            """Generate focused queries for each SBAR component based on the user's original query and chat history."""
-            try:
-                logger.info(f"Generating {sbar_component} queries (prompt_length={len(state.user_prompt)} chars)")
-
-                # Define SBAR component specific instructions
-                component_prompts = {
-                    "situation": "Current symptoms, vital signs, immediate presentation, active problems, most recent encounter, most recent note",
-                    "background": "Medical history, past conditions, medications, family history, social history",
-                    "assessment": "Clinical findings, lab results, diagnostic tests, professional observations",
-                    "recommendation": "Treatment plans, medications, follow-up care, interventions, next steps"
-                }
-
-                # Include chat history context for better query generation
-                history_context = ""
-                if state.chat_history:
-                    recent = state.chat_history[-4:]  # Last 2 turns (2 user + 2 assistant)
-                    if recent:
-                        history_context = "\n\nRecent conversation context:\n"
-                        for msg in recent:
-                            # Truncate long messages
-                            content_preview = msg.content[:150] if len(msg.content) > 150 else msg.content
-                            history_context += f"{msg.role.value}: {content_preview}\n"
-
-                prompt = f"""
-Based on this user query: "{state.user_prompt}"{history_context}
-
-Generate 3 specific search queries focused on the {sbar_component.upper()} component of SBAR medical reporting.
-
-{sbar_component.upper()} should focus on: {component_prompts.get(sbar_component, focus_instruction)}
-
-Return only the 3 queries, one per line, without numbers or bullets.
-Keep queries concise and medical terminology appropriate.
-Consider what has already been discussed in the conversation to avoid redundancy.
-"""
-
-                messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist generating focused search queries for SBAR components."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
-                ]
-
-                response = await self._llm.chat(messages)
-
-                # Parse response into individual queries
-                queries = []
-                for line in response.content.strip().split('\n'):
-                    query = line.strip()
-                    if query and not query.startswith(('1.', '2.', '3.', '-', '•')):
-                        queries.append(query)
-
-                if len(queries) < 3:
-                    # Fallback queries if LLM didn't generate enough
-                    fallback = {
-                        "situation": ["current symptoms", "vital signs", "active problems"],
-                        "background": ["medical history", "past conditions", "medications"],
-                        "assessment": ["clinical findings", "test results", "observations"],
-                        "recommendation": ["treatment plans", "medications", "follow-up care"]
-                    }
-                    queries.extend(fallback.get(sbar_component, ["medical information"])[:3-len(queries)])
-
-                logger.info(f"Generated {len(queries)} {sbar_component} queries: {queries}")
-                return queries[:3]  # Limit to 3 queries
-
-            except Exception as e:
-                log_error(logger, "_generate_sbar_queries", e)
-                # Return fallback queries
-                fallback_queries = {
-                    "situation": ["current symptoms complaints", "vital signs measurements", "active problems"],
-                    "background": ["medical history", "past conditions", "medications"],
-                    "assessment": ["clinical findings", "test results", "observations"],
-                    "recommendation": ["treatment plans", "medications", "follow-up"]
-                }
-                return fallback_queries.get(sbar_component, ["medical information"])
-
         async def _generate_general_summary_queries(state: FlowState, component: str, focus_instruction: str) -> List[str]:
             """Generate focused queries for each general summary component based on the user's original query and chat history."""
             try:
@@ -2018,340 +1898,8 @@ Consider what has already been discussed in the conversation to avoid redundancy
 
             return "\n".join(lines)
 
-        async def _generate_timeline_queries(state: FlowState, event_description: str, time_period: str) -> List[str]:
-            """Generate focused temporal queries for each timeline event with chat history context."""
-            try:
-                logger.info(f"Generating queries for event: '{event_description}' at '{time_period}'")
-
-                # Include chat history context for better query generation
-                history_context = ""
-                if state.session_history:
-                    recent = state.session_history[-4:]  # Last 2 turns
-                    if recent:
-                        history_context = "\n\nRecent conversation context:\n"
-                        for msg in recent:
-                            content_preview = msg.content[:150] if len(msg.content) > 150 else msg.content
-                            history_context += f"{msg.role.value}: {content_preview}\n"
-
-                prompt = f"""
-Based on this user request: "{state.user_prompt}"{history_context}
-
-Generate 2-3 specific search queries to find information about this medical event:
-Event: {event_description}
-Time Period: {time_period}
-
-Focus on:
-- What happened at this specific time
-- Clinical findings and observations from this period
-- Treatments, medications, or interventions during this time
-- Results or outcomes from this time period
-
-Return only the queries, one per line, without numbers or bullets.
-Keep queries concise and focused on the temporal aspect.
-Consider what has already been discussed in the conversation to avoid redundancy.
-"""
-
-                messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist generating temporal search queries for timeline events."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
-                ]
-
-                response = await self._llm.chat(messages)
-
-                # Parse response into individual queries
-                queries = []
-                for line in response.content.strip().split('\n'):
-                    query = line.strip()
-                    if query and not query.startswith(('1.', '2.', '3.', '-', '•')):
-                        queries.append(query)
-
-                if len(queries) < 2:
-                    # Fallback queries if LLM didn't generate enough
-                    fallback = [
-                        f"{event_description} at {time_period}",
-                        f"clinical findings {time_period}",
-                        f"treatment during {time_period}"
-                    ]
-                    queries.extend(fallback[:3-len(queries)])
-
-                logger.info(f"Generated {len(queries)} queries: {queries}")
-                return queries[:3]  # Limit to 3 queries
-
-            except Exception as e:
-                log_error(logger, "_generate_timeline_queries", e)
-                # Return fallback queries
-                return [
-                    f"{event_description} {time_period}",
-                    f"medical events {time_period}",
-                    f"clinical findings {time_period}"
-                ]
-
-        async def _extract_aspect_from_query(state: FlowState) -> tuple[str, str]:
-            """Extract the medical aspect from user query and determine appropriate icon.
-
-            Returns:
-                tuple[str, str]: (aspect name, icon name)
-            """
-            try:
-                logger.info(f"Extracting medical aspect from query: {state.user_prompt}")
-
-                prompt = f"""
-Based on this user query: "{state.user_prompt}"
-
-Extract the specific medical aspect or condition that the user wants a focused summary about.
-
-For example:
-- "Give me a summary of the patient's heart disease" → "Heart Disease"
-- "Explain the patient's lung history to me" → "Lung Conditions"
-- "Summarize the diabetes management" → "Diabetes"
-- "What's going on with the kidneys?" → "Kidney Health"
-
-Return ONLY the aspect name (2-4 words maximum) in the same language as the user query, nothing else.
-Make it clear, concise, and clinically appropriate.
-"""
-
-                messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist extracting specific medical aspects from queries."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
-                ]
-
-                response = await self._llm.chat(messages)
-                aspect = response.content.strip().strip('"').strip("'")
-
-                # Determine icon based on aspect (simple keyword matching)
-                aspect_lower = aspect.lower()
-                if any(word in aspect_lower for word in ["heart", "cardiac", "cardio"]):
-                    icon = "heart"
-                elif any(word in aspect_lower for word in ["lung", "pulmonary", "respiratory"]):
-                    icon = "activity"
-                elif any(word in aspect_lower for word in ["kidney", "renal"]):
-                    icon = "droplet"
-                elif any(word in aspect_lower for word in ["liver", "hepatic"]):
-                    icon = "hexagon"
-                elif any(word in aspect_lower for word in ["brain", "neuro", "cognitive"]):
-                    icon = "brain"
-                elif any(word in aspect_lower for word in ["diabetes", "glucose", "insulin"]):
-                    icon = "trending-up"
-                elif any(word in aspect_lower for word in ["cancer", "oncology", "tumor"]):
-                    icon = "alert-circle"
-                else:
-                    icon = "file-text"  # Default icon
-
-                logger.info(f"Extracted aspect: '{aspect}' with icon: '{icon}'")
-                return (aspect, icon)
-
-            except Exception as e:
-                log_error(logger, "_extract_aspect_from_query", e)
-                # Fallback
-                return ("Medical Condition", "file-text")
-
-        async def _generate_focused_summary_queries(state: FlowState, section: str, focus_instruction: str) -> List[str]:
-            """Generate focused queries for each focused summary section based on the user's query, aspect, and chat history.
-
-            Args:
-                state: Flow state containing user prompt and focused aspect
-                section: Section name (diagnoses, events, medications, objective_data, assessment, next_steps)
-                focus_instruction: Instruction for what to focus on
-
-            Returns:
-                List[str]: List of 2-3 search queries
-            """
-            try:
-                logger.info(f"Generating {section} queries for aspect: {state.focused_aspect}")
-
-                # Define section-specific instructions
-                section_prompts = {
-                    "diagnoses": "Formal diagnoses, ICD codes, disease classifications related to the aspect",
-                    "events": "Key clinical events, hospitalizations, surgeries, major interventions, disease milestones",
-                    "medications": "Current and past medications, dosages, treatment regimens for the aspect",
-                    "objective_data": "Lab results, vital signs, imaging findings, test results, measurements",
-                    "assessment": "Clinical assessments, provider notes, current disease status, prognosis",
-                    "next_steps": "Follow-up plans, pending tests, medication reviews, specialist referrals, outstanding issues"
-                }
-
-                # Include chat history context for better query generation
-                history_context = ""
-                if state.session_history:
-                    recent = state.session_history[-4:]  # Last 2 turns
-                    if recent:
-                        history_context = "\n\nRecent conversation context:\n"
-                        for msg in recent:
-                            content_preview = msg.content[:150] if len(msg.content) > 150 else msg.content
-                            history_context += f"{msg.role.value}: {content_preview}\n"
-
-                prompt = f"""
-Based on this user query: "{state.user_prompt}"{history_context}
-
-The user wants a focused summary about: {state.focused_aspect}
-
-Generate 2-3 specific search queries to find information for the "{section}" section.
-
-Focus on: {section_prompts.get(section, focus_instruction)}
-
-IMPORTANT: All queries should be specific to "{state.focused_aspect}" - don't include unrelated conditions.
-
-Return only the queries, one per line, without numbers or bullets.
-Keep queries concise and medically precise.
-Consider what has already been discussed in the conversation to avoid redundancy.
-"""
-
-                messages = [
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist generating focused search queries for aspect-specific summaries."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
-                ]
-
-                response = await self._llm.chat(messages)
-
-                # Parse response into individual queries
-                queries = []
-                for line in response.content.strip().split('\n'):
-                    query = line.strip()
-                    if query and not query.startswith(('1.', '2.', '3.', '-', '•', '*')):
-                        queries.append(query)
-
-                if len(queries) < 2:
-                    # Fallback queries if LLM didn't generate enough
-                    fallback = {
-                        "diagnoses": [f"{state.focused_aspect} diagnosis", f"{state.focused_aspect} ICD code", "disease classification"],
-                        "events": [f"{state.focused_aspect} events", f"{state.focused_aspect} hospitalization", "clinical milestones"],
-                        "medications": [f"{state.focused_aspect} medications", f"{state.focused_aspect} treatment", "drug regimen"],
-                        "objective_data": [f"{state.focused_aspect} labs", f"{state.focused_aspect} imaging", "test results"],
-                        "assessment": [f"{state.focused_aspect} assessment", f"{state.focused_aspect} status", "clinical evaluation"],
-                        "next_steps": [f"{state.focused_aspect} follow-up", f"{state.focused_aspect} pending", "outstanding issues"]
-                    }
-                    queries.extend(fallback.get(section, [f"{state.focused_aspect} {section}"])[:3-len(queries)])
-
-                logger.info(f"Generated {len(queries)} {section} queries: {queries}")
-                return queries[:3]  # Limit to 3 queries
-
-            except Exception as e:
-                log_error(logger, "_generate_focused_summary_queries", e)
-                # Return fallback queries
-                return [
-                    f"{state.focused_aspect or 'condition'} {section}",
-                    f"medical {section}",
-                    f"clinical {section}"
-                ]
-
-        @streaming_step("retrieve_situation_chunks")
-        async def retrieve_situation_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on current patient situation using full retrieval pipeline."""
-            try:
-                logger.info("Generating situation-focused queries from user prompt")
-
-                # Generate SBAR-focused queries (includes chat history context)
-                situation_queries = await _generate_sbar_queries(state, "situation",
-                    "Generate queries focused on the current patient situation and immediate concerns")
-
-                # Use full retrieval pipeline with cross-encoder reranking
-                chunks = await _retrieve_with_full_pipeline(
-                    self, state=state,
-                    queries=situation_queries,
-                    context_label="sbar_situation",
-                    topk_initial=100,
-                    topk_rerank=15,  # Smaller for speed
-                    use_mmr=True,
-                    
-                    use_agentic_refinement=True  # Disabled for speed
-                )
-                state.sbar_situation_chunks = chunks
-                logger.info(f"Retrieved {len(state.sbar_situation_chunks)} chunks")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.sbar_situation_chunks = []
-
-            return state
-
-        @streaming_step("retrieve_background_chunks")
-        async def retrieve_background_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on patient background and history using full retrieval pipeline."""
-            try:
-                logger.info("Generating background-focused queries from user prompt")
-
-                # Generate SBAR-focused queries (includes chat history context)
-                background_queries = await _generate_sbar_queries(state, "background",
-                    "Generate queries focused on patient medical history and background")
-
-                # Use full retrieval pipeline with cross-encoder reranking
-                chunks = await _retrieve_with_full_pipeline(
-                    self, state=state,
-                    queries=background_queries,
-                    context_label="sbar_background",
-                    topk_initial=100,
-                    topk_rerank=15,
-                    use_mmr=True,
-                    
-                    use_agentic_refinement=True
-                )
-                state.sbar_background_chunks = chunks
-                logger.info(f"Retrieved {len(state.sbar_background_chunks)} chunks")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.sbar_background_chunks = []
-
-            return state
-
-        @streaming_step("retrieve_assessment_chunks")
-        async def retrieve_assessment_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on clinical assessment data using full retrieval pipeline."""
-            try:
-                logger.info("Generating assessment-focused queries from user prompt")
-
-                # Generate SBAR-focused queries (includes chat history context)
-                assessment_queries = await _generate_sbar_queries(state, "assessment",
-                    "Generate queries focused on clinical assessment and diagnostic findings")
-
-                # Use full retrieval pipeline with cross-encoder reranking
-                chunks = await _retrieve_with_full_pipeline(
-                    self, state=state,
-                    queries=assessment_queries,
-                    context_label="sbar_assessment",
-                    topk_initial=100,
-                    topk_rerank=15,
-                    use_mmr=True,
-                    
-                    use_agentic_refinement=True
-                )
-                state.sbar_assessment_chunks = chunks
-                logger.info(f"Retrieved {len(state.sbar_assessment_chunks)} chunks")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.sbar_assessment_chunks = []
-
-            return state
-
-        @streaming_step("retrieve_recommendation_chunks")
-        async def retrieve_recommendation_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on treatment and recommendations using full retrieval pipeline."""
-            try:
-                logger.info("Generating recommendation-focused queries from user prompt")
-
-                # Generate SBAR-focused queries (includes chat history context)
-                recommendation_queries = await _generate_sbar_queries(state, "recommendation",
-                    "Generate queries focused on treatment recommendations and next steps")
-
-                # Use full retrieval pipeline with cross-encoder reranking
-                chunks = await _retrieve_with_full_pipeline(
-                    self, state=state,
-                    queries=recommendation_queries,
-                    context_label="sbar_recommendation",
-                    topk_initial=100,
-                    topk_rerank=15,
-                    use_mmr=True,
-                    
-                    use_agentic_refinement=True
-                )
-                state.sbar_recommendation_chunks = chunks
-                logger.info(f"Retrieved {len(state.sbar_recommendation_chunks)} chunks")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.sbar_recommendation_chunks = []
-
-            return state
+        # Note: SBAR, focused summary, and timeline helper functions removed
+        # (These flows removed in favor of system-prompt-driven approach)
 
         @streaming_step("retrieve_snapshot_chunks")
         async def retrieve_snapshot_chunks(state: FlowState) -> FlowState:
@@ -2521,33 +2069,6 @@ Consider what has already been discussed in the conversation to avoid redundancy
 
             return state
 
-        def _categorize_prompt(prompt: str) -> str:
-            """Categorize user prompt for GDPR-safe analytics."""
-            prompt_lower = prompt.lower()
-            
-            # Medical/Clinical categories
-            if any(word in prompt_lower for word in ['diagnose', 'diagnosis', 'what is', 'what are', 'disease', 'condition']):
-                return "Diagnosis"
-            elif any(word in prompt_lower for word in ['summary', 'summarize', 'overview', 'brief']):
-                return "Summary"
-            elif any(word in prompt_lower for word in ['search', 'find', 'look for', 'locate']):
-                return "Search"
-            elif any(word in prompt_lower for word in ['explain', 'what does', 'how does', 'why']):
-                return "Explanation"
-            elif any(word in prompt_lower for word in ['treatment', 'therapy', 'medication', 'drug', 'prescription']):
-                return "Treatment"
-            elif any(word in prompt_lower for word in ['symptom', 'signs', 'presentation', 'manifestation']):
-                return "Symptoms"
-            elif any(word in prompt_lower for word in ['test', 'lab', 'blood', 'imaging', 'scan', 'x-ray', 'mri', 'ct']):
-                return "Testing"
-            elif any(word in prompt_lower for word in ['history', 'background', 'past', 'previous']):
-                return "History"
-            elif any(word in prompt_lower for word in ['compare', 'difference', 'versus', 'vs', 'contrast']):
-                return "Comparison"
-            elif any(word in prompt_lower for word in ['risk', 'complication', 'side effect', 'adverse']):
-                return "Risk Assessment"
-            else:
-                return "General"
 
         async def store_user_message(state: FlowState) -> FlowState:
             """Store the user message in ephemeral memory with end-to-end encryption and GDPR-safe metrics."""
@@ -2678,407 +2199,9 @@ Consider what has already been discussed in the conversation to avoid redundancy
 
             return state
 
-        @streaming_step("generate_sbar_situation")
-        async def generate_sbar_situation(state: FlowState) -> FlowState:
-            """Generate SBAR Situation component."""
-            try:
-                logger.info("Starting SBAR Situation generation")
-
-                # Get situation-specific chunks
-                situation_chunks = state.sbar_situation_chunks or []
-
-                # Build prompt for situation
-                situation_prompt = f"""
-                Generate a concise SBAR Situation summary with 5-7 bullet points.
-
-                USER QUERY: {state.user_prompt}
-
-                CRITICAL: Translate ALL bold headers to the target language. Examples:
-                - Swedish: **Huvudklagomål**, **Nuvarande presentation**, **Akuta symtom**, **Smärtnivå**, **Senaste förändringar**, **Omedelbara bekymmer**, **Patientmedvetenhet**
-                - English: **Chief complaint**, **Current presentation**, **Acute symptoms**, **Pain/distress level**, **Recent changes**, **Immediate concerns**, **Patient awareness**
-
-                Format as 5-7 bullet points covering:
-                • **[Chief complaint header in target language]**: [concise description with key symptoms]
-                • **[Current presentation header in target language]**: [current status and vital signs]
-                • **[Acute symptoms header in target language]**: [most pressing symptoms/concerns]
-                • **[Pain/distress level header in target language]**: [if applicable]
-                • **[Recent changes header in target language]**: [any deterioration or improvement]
-                • **[Immediate concerns header in target language]**: [urgent issues requiring attention]
-                • **[Patient awareness header in target language]**: [patient's understanding/concern level]
-
-                Example (Swedish):
-                • **Huvudklagomål**: Patient presenting with **chest pain** radiating to left arm, started 2 hours ago [1]
-
-                • **Nuvarande presentation**: **BP 145/90**, HR 92, **diaphoretic**, appears anxious [2]
-
-                • **Akuta symtom**: **Crushing substernal pain** 7/10, worse with exertion, not relieved by rest [1]
-
-                • **Senaste förändringar**: Pain intensity **increased** from 5/10 to 7/10 in last hour [3]
-
-                • **Omedelbara bekymmer**: **Possible ACS**, needs urgent ECG and troponin [2]
-
-                Add blank line between each bullet point for readability.
-
-                MANDATORY:
-                - TRANSLATE all bold headers to the target language
-                - Use **bold** markdown for symptoms, vital signs, and key clinical terms
-                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-                CRITICAL: 5-7 concise bullet points. Keep focused on current situation only.
-                """
-
-                messages = [
-                    self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR situation summaries with 5-7 bullet points. TRANSLATE all bold headers to the user's language. Use **bold** for symptoms, vital signs, and key clinical terms.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.")
-                ]
-
-                # Add conversation history for context (excluding current message)
-                recent_history = state.chat_history[-10:] if state.chat_history else []
-                if recent_history:
-                    # Use text-based summary to avoid Azure API issues
-                    conversation_lines = []
-                    for msg in recent_history:
-                        if not msg.content or not msg.content.strip():
-                            continue
-                        content = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
-                        role_name = "You" if msg.role == ChatRole.USER else "CLARA"
-                        conversation_lines.append(f"{role_name}: {content}")
-
-                    if conversation_lines:
-                        conversation_summary = "\n".join(conversation_lines)
-                        history_context = ChatMessage(
-                            role=ChatRole.USER,
-                            content=f"Recent conversation context:\n{conversation_summary}"
-                        )
-                        messages.append(history_context)
-
-                # Add the main prompt
-                messages.append(ChatMessage(role=ChatRole.USER, content=situation_prompt))
-
-                # Add chunks if available
-                if situation_chunks:
-                    # Limit chunks to prevent context overflow
-                    limited_chunks = self._limit_chunks_for_context(situation_chunks, max_tokens=200000, max_chunk_chars=50000)
-                    # Format chunks with citation references
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
-                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
-
-                # Generate response
-                response = await self._llm.chat(messages, enable_chunk_citations=True)
-
-                # Store in SBAR results
-                state.sbar_situation_result = response.content.strip()
-                state.sbar_situation_cited_ids = response.cited_chunk_ids or []
-
-                logger.info(f"Generated situation summary: {len(response.content)} chars")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.sbar_situation_result = f"Error generating situation summary: {str(e)}"
-
-            return state
-
-        @streaming_step("generate_sbar_background")
-        async def generate_sbar_background(state: FlowState) -> FlowState:
-            """Generate SBAR Background component."""
-            try:
-                logger.info("Starting SBAR Background generation")
-
-                # Get background-specific chunks
-                background_chunks = state.sbar_background_chunks or []
-
-                # Build prompt for background
-                background_prompt = f"""
-                Generate a concise SBAR Background summary with 5-7 bullet points.
-
-                USER QUERY: {state.user_prompt}
-
-                CRITICAL: Translate ALL bold headers to the target language. Examples:
-                - Swedish: **Patientdemografi**, **Stora diagnoser**, **Kritiska läkemedel**, **Viktiga allergier**, **Tidigare ingrepp/operationer**, **Senaste inläggningar**, **Baslinjefunktion**
-                - English: **Patient demographics**, **Major diagnoses**, **Critical medications**, **Important allergies**, **Past procedures/surgeries**, **Recent admissions**, **Baseline function**
-
-                Format as 5-7 bullet points covering:
-                • **[Patient demographics header in target language]**: [age, sex, living situation]
-                • **[Major diagnoses header in target language]**: [key chronic conditions with dates]
-                • **[Critical medications header in target language]**: [important meds especially high-risk ones]
-                • **[Important allergies header in target language]**: [drug allergies and reactions]
-                • **[Past procedures/surgeries header in target language]**: [relevant surgical history]
-                • **[Recent admissions header in target language]**: [hospitalizations in last 6-12 months]
-                • **[Baseline function header in target language]**: [usual activity level and independence]
-
-                Example (Swedish):
-                • **Patientdemografi**: **73M**, lives alone, retired, has home care 2x/week [1]
-
-                • **Stora diagnoser**: **T2DM** (2010), **HTN** (2005), **CKD Stage 3a** (2018), **COPD GOLD II** (2015) [2]
-
-                • **Kritiska läkemedel**: **Warfarin 5mg** (INR target 2-3), **Metformin 1000mg 2x/day**, **Enalapril 20mg** [3]
-
-                • **Viktiga allergier**: **Penicillin** (rash and angioedema 2008) [4]
-
-                • **Tidigare ingrepp**: **Hip replacement** (2015), **Cholecystectomy** (2001) [5]
-
-                • **Senaste inläggningar**: **COPD exacerbation** (3 months ago), treated with antibiotics and steroids [6]
-
-                • **Baslinjefunktion**: **Independent** with ADLs, uses walker for mobility, cognitively intact [1]
-
-                Add blank line between each bullet point for readability.
-
-                MANDATORY:
-                - TRANSLATE all bold headers to the target language
-                - Use **bold** markdown for key diagnoses, medications, allergies, and functional descriptors
-                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-                CRITICAL: 5-7 concise bullet points. Focus on context relevant to current situation.
-                """
-
-                messages = [
-                    self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR background summaries with 5-7 bullet points. TRANSLATE all bold headers to the user's language. Use **bold** for diagnoses, medications, allergies, and key descriptors.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise and contextually relevant.")
-                ]
-
-                # Add conversation history for context (excluding current message)
-                recent_history = state.chat_history[-10:] if state.chat_history else []
-                if recent_history:
-                    # Use text-based summary to avoid Azure API issues
-                    conversation_lines = []
-                    for msg in recent_history:
-                        if not msg.content or not msg.content.strip():
-                            continue
-                        content = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
-                        role_name = "You" if msg.role == ChatRole.USER else "CLARA"
-                        conversation_lines.append(f"{role_name}: {content}")
-
-                    if conversation_lines:
-                        conversation_summary = "\n".join(conversation_lines)
-                        history_context = ChatMessage(
-                            role=ChatRole.USER,
-                            content=f"Recent conversation context:\n{conversation_summary}"
-                        )
-                        messages.append(history_context)
-
-                # Add the main prompt
-                messages.append(ChatMessage(role=ChatRole.USER, content=background_prompt))
-
-                # Add chunks if available
-                if background_chunks:
-                    # Limit chunks to prevent context overflow
-                    limited_chunks = self._limit_chunks_for_context(background_chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
-                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
-
-                # Generate response
-                response = await self._llm.chat(messages, enable_chunk_citations=True)
-
-                # Store in SBAR results
-                state.sbar_background_result = response.content.strip()
-                state.sbar_background_cited_ids = response.cited_chunk_ids or []
-
-                logger.info(f"Generated background summary: {len(response.content)} chars")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.sbar_background_result = f"Error generating background summary: {str(e)}"
-
-            return state
-
-        @streaming_step("generate_sbar_assessment")
-        async def generate_sbar_assessment(state: FlowState) -> FlowState:
-            """Generate SBAR Assessment component."""
-            try:
-                logger.info("Starting SBAR Assessment generation")
-
-                # Get assessment-specific chunks
-                assessment_chunks = state.sbar_assessment_chunks or []
-
-                # Build prompt for assessment
-                assessment_prompt = f"""
-                Generate a concise SBAR Assessment summary with 5-7 bullet points in narrative style.
-
-                USER QUERY: {state.user_prompt}
-
-                CRITICAL: Translate ALL bold headers to the target language. Examples:
-                - Swedish: **Kliniskt intryck**, **Nuvarande status**, **Viktiga fynd**, **Trendanalys**, **Riskbedömning**, **Stabilitet**, **Kritiska bekymmer**
-                - English: **Clinical impression**, **Current status**, **Key findings**, **Trend analysis**, **Risk assessment**, **Stability**, **Critical concerns**
-
-                Format as 5-7 bullet points with free-text narrative descriptions:
-                • **[Clinical impression header in target language]**: [narrative description with key observations]
-                • **[Current status header in target language]**: [narrative summary of patient's condition]
-                • **[Key findings header in target language]**: [narrative of significant clinical findings]
-                • **[Trend analysis header in target language]**: [narrative of improvement/deterioration]
-                • **[Risk assessment header in target language]**: [narrative of current risk level and factors]
-                • **[Stability header in target language]**: [narrative of patient stability and prognosis]
-                • **[Critical concerns header in target language]**: [narrative of urgent issues if any]
-
-                Example (Swedish):
-                • **Kliniskt intryck**: Patient with **multimorbidity** showing signs of **worsening diabetic control** with HbA1c rising from 62 to 68 mmol/mol over 6 months [1]
-
-                • **Nuvarande status**: Generally **stable** but requires medication adjustment and closer monitoring of renal function given declining eGFR [2]
-
-                • **Viktiga fynd**: **Declining kidney function** (eGFR 64→52), **elevated blood pressure** (145/85), and **worsening glycemic control** suggest need for therapeutic review [1]
-
-                • **Riskbedömning**: **Moderate-to-high risk** for cardiovascular events given uncontrolled HTN, T2DM, and CKD Stage 3a [3]
-
-                • **Kritiska bekymmer**: Patient on **warfarin** with recent **INR fluctuations**, requires close monitoring to prevent bleeding complications [4]
-
-                Add blank line between each bullet point for readability.
-
-                MANDATORY:
-                - TRANSLATE all bold headers to the target language
-                - Use **bold** markdown for important clinical terms, values, and risk levels
-                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-                - Write in narrative free-text style within each bullet point
-                CRITICAL: 5-7 bullet points with narrative descriptions. Each bullet contains a flowing sentence, not just keywords. Keep concise but informative.
-                """
-
-                messages = [
-                    self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR assessment summaries with 5-7 bullet points in narrative style. TRANSLATE all bold headers to the user's language. Use **bold** for important clinical terms and values. Write flowing sentences within each bullet point.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about clinical findings, not patient-specific diagnostic advice. Users must make their own decisions.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise but informative.")
-                ]
-
-                # Add conversation history for context (excluding current message)
-                recent_history = state.chat_history[-10:] if state.chat_history else []
-                if recent_history:
-                    # Use text-based summary to avoid Azure API issues
-                    conversation_lines = []
-                    for msg in recent_history:
-                        if not msg.content or not msg.content.strip():
-                            continue
-                        content = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
-                        role_name = "You" if msg.role == ChatRole.USER else "CLARA"
-                        conversation_lines.append(f"{role_name}: {content}")
-
-                    if conversation_lines:
-                        conversation_summary = "\n".join(conversation_lines)
-                        history_context = ChatMessage(
-                            role=ChatRole.USER,
-                            content=f"Recent conversation context:\n{conversation_summary}"
-                        )
-                        messages.append(history_context)
-
-                # Add the main prompt
-                messages.append(ChatMessage(role=ChatRole.USER, content=assessment_prompt))
-
-                # Add chunks if available
-                if assessment_chunks:
-                    # Limit chunks to prevent context overflow
-                    limited_chunks = self._limit_chunks_for_context(assessment_chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
-                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
-
-                # Generate response
-                response = await self._llm.chat(messages, enable_chunk_citations=True)
-
-                # Store in SBAR results
-                state.sbar_assessment_result = response.content.strip()
-                state.sbar_assessment_cited_ids = response.cited_chunk_ids or []
-
-                logger.info(f"Generated assessment summary: {len(response.content)} chars")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.sbar_assessment_result = f"Error generating assessment summary: {str(e)}"
-
-            return state
-
-        @streaming_step("generate_sbar_recommendation")
-        async def generate_sbar_recommendation(state: FlowState) -> FlowState:
-            """Generate SBAR Recommendation component."""
-            try:
-                logger.info("Starting SBAR Recommendation generation")
-
-                # Get recommendation-specific chunks
-                recommendation_chunks = state.sbar_recommendation_chunks or []
-
-                # Build prompt for recommendation
-                recommendation_prompt = f"""
-                Generate a concise SBAR Recommendation summary with 5-7 bullet points.
-
-                USER QUERY: {state.user_prompt}
-
-                CRITICAL: Translate ALL bold headers to the target language. Examples:
-                - Swedish: **Brådskande åtgärder**, **Diagnostisk utredning**, **Behandlingsjusteringar**, **Övervakningsplan**, **Konsultationsbehov**, **Uppföljningstid**, **Säkerhetsåtgärder**
-                - English: **Urgent interventions**, **Diagnostic workup**, **Treatment adjustments**, **Monitoring plan**, **Consultation needs**, **Follow-up timing**, **Safety measures**
-
-                Format as 5-7 bullet points covering:
-                • **[Urgent interventions header in target language]**: [immediate actions needed]
-                • **[Diagnostic workup header in target language]**: [tests/imaging required]
-                • **[Treatment adjustments header in target language]**: [medication/therapy changes]
-                • **[Monitoring plan header in target language]**: [what to watch and frequency]
-                • **[Consultation needs header in target language]**: [specialists to involve]
-                • **[Follow-up timing header in target language]**: [when to reassess]
-                • **[Safety measures header in target language]**: [precautions and risk mitigation]
-
-                Example (Swedish):
-                • **Brådskande åtgärder**: Obtain **12-lead ECG** immediately, establish **IV access**, give **aspirin 300mg** if not contraindicated [1]
-
-                • **Diagnostisk utredning**: **Troponin** at 0 and 3 hours, **chest X-ray**, continuous **cardiac monitoring** [2]
-
-                • **Behandlingsjusteringar**: Consider **nitroglycerin SL** for chest pain, hold **metformin** if contrast study needed [3]
-
-                • **Övervakningsplan**: **Vital signs q15min**, monitor for **arrhythmias**, assess **pain response** to treatment [4]
-
-                • **Konsultationsbehov**: **Cardiology** consult for possible ACS, consider **interventional** if STEMI criteria met [5]
-
-                • **Uppföljningstid**: Reassess after **troponin results**, plan disposition based on findings [6]
-
-                • **Säkerhetsåtgärder**: Keep patient **NPO**, ensure **resuscitation equipment** at bedside, discuss **code status** if not documented [7]
-
-                Add blank line between each bullet point for readability.
-
-                MANDATORY:
-                - TRANSLATE all bold headers to the target language
-                - Use **bold** markdown for interventions, tests, medications, and key actions
-                - Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-                CRITICAL: 5-7 concise bullet points. Educational information only - refer complex decisions to healthcare providers. Keep actionable.
-                """
-
-                messages = [
-                    self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create SBAR recommendation summaries with 5-7 bullet points. TRANSLATE all bold headers to the user's language. Use **bold** for interventions, tests, medications, and key actions.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information about treatment approaches, not patient-specific recommendations. Users must make their own decisions.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise and actionable.")
-                ]
-
-                # Add conversation history for context (excluding current message)
-                recent_history = state.chat_history[-10:] if state.chat_history else []
-                if recent_history:
-                    # Use text-based summary to avoid Azure API issues
-                    conversation_lines = []
-                    for msg in recent_history:
-                        if not msg.content or not msg.content.strip():
-                            continue
-                        content = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
-                        role_name = "You" if msg.role == ChatRole.USER else "CLARA"
-                        conversation_lines.append(f"{role_name}: {content}")
-
-                    if conversation_lines:
-                        conversation_summary = "\n".join(conversation_lines)
-                        history_context = ChatMessage(
-                            role=ChatRole.USER,
-                            content=f"Recent conversation context:\n{conversation_summary}"
-                        )
-                        messages.append(history_context)
-
-                # Add the main prompt
-                messages.append(ChatMessage(role=ChatRole.USER, content=recommendation_prompt))
-
-                # Add chunks if available
-                if recommendation_chunks:
-                    # Limit chunks to prevent context overflow
-                    limited_chunks = self._limit_chunks_for_context(recommendation_chunks, max_tokens=200000, max_chunk_chars=50000)
-                    chunk_content = "Relevant patient information:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
-                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
-
-                # Generate response
-                response = await self._llm.chat(messages, enable_chunk_citations=True)
-
-                # Store in SBAR results
-                state.sbar_recommendation_result = response.content.strip()
-                state.sbar_recommendation_cited_ids = response.cited_chunk_ids or []
-
-                logger.info(f"Generated recommendation summary: {len(response.content)} chars")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.sbar_recommendation_result = f"Error generating recommendation summary: {str(e)}"
-
-            return state
+        # Note: SBAR generate functions removed (generate_sbar_situation, generate_sbar_background,
+        # generate_sbar_assessment, generate_sbar_recommendation)
+        # SBAR flow removed in favor of system-prompt-driven approach
 
         @streaming_step("generate_snapshot_summary")
         async def generate_snapshot_summary(state: FlowState) -> FlowState:
@@ -3088,7 +2211,10 @@ Consider what has already been discussed in the conversation to avoid redundancy
 
                 chunks = state.general_snapshot_chunks or []
 
+                current_date = datetime.now().strftime('%Y-%m-%d')
                 prompt = f"""
+                Current date: {current_date}
+                
                 Create a concise Patient Snapshot with 5 bullet points with headers:
 
                 USER QUERY: {state.user_prompt}
@@ -3181,7 +2307,10 @@ Consider what has already been discussed in the conversation to avoid redundancy
 
                 chunks = state.general_problems_chunks or []
 
+                current_date = datetime.now().strftime('%Y-%m-%d')
                 prompt = f"""
+                Current date: {current_date}
+                
                 List the top 5-7 problems divided into two subsections - EXACTLY 6-12 words per bullet.
 
                 USER QUERY: {state.user_prompt}
@@ -3256,7 +2385,10 @@ Consider what has already been discussed in the conversation to avoid redundancy
 
                 chunks = state.general_medications_chunks or []
 
+                current_date = datetime.now().strftime('%Y-%m-%d')
                 prompt = f"""
+                Current date: {current_date}
+                
                 List 5-7 most important/recent medications divided into two subsections - EXACTLY 6-12 words per bullet.
 
                 USER QUERY: {state.user_prompt}
@@ -3338,7 +2470,10 @@ Consider what has already been discussed in the conversation to avoid redundancy
 
                 chunks = state.general_trends_chunks or []
 
+                current_date = datetime.now().strftime('%Y-%m-%d')
                 prompt = f"""
+                Current date: {current_date}
+                
                 Show 5-7 key lab/vital trends - EXACTLY 6-12 words per bullet. Use arrows: ↑ ↓ →
 
                 USER QUERY: {state.user_prompt}
@@ -3408,7 +2543,10 @@ Consider what has already been discussed in the conversation to avoid redundancy
                 # Determine language for instructions
                 is_swedish = state.user_language == "sv"
 
+                current_date = datetime.now().strftime('%Y-%m-%d')
                 prompt = f"""
+Current date: {current_date}
+
 Generate a JSON response with recent encounters. Classify each as MAJOR or MINOR, and provide both a brief one-liner and a detailed summary.
 
 USER QUERY: {state.user_prompt}
@@ -3524,7 +2662,10 @@ CRITICAL: Output ONLY valid JSON. Translate encounter_type to user's language. N
 
                 chunks = state.general_risks_chunks or []
 
+                current_date = datetime.now().strftime('%Y-%m-%d')
                 prompt = f"""
+                Current date: {current_date}
+                
                 List 5-7 critical RISKS/ALERTS - EXACTLY 8-15 words per bullet. Each risk must be a specific safety concern, NOT a patient description.
 
                 USER QUERY: {state.user_prompt}
@@ -3584,241 +2725,8 @@ CRITICAL: Output ONLY valid JSON. Translate encounter_type to user's language. N
 
             return state
 
-        @streaming_step("merge_sbar_results")
-        async def merge_sbar_results(state: FlowState) -> FlowState:
-            """Merge parallel SBAR results and prepare final response."""
-            try:
-                logger.info("All parallel SBAR components completed, merging results")
-
-                # Collect results from separate fields
-                sbar_results = {
-                    "situation": state.sbar_situation_result,
-                    "background": state.sbar_background_result,
-                    "assessment": state.sbar_assessment_result,
-                    "recommendation": state.sbar_recommendation_result
-                }
-
-                completed_components = [comp for comp, result in sbar_results.items() if result]
-                logger.info(f"Available components: {completed_components}")
-
-                if not completed_components:
-                    logger.info("No SBAR results available")
-                    state.llm_response = ChatMessage(
-                        role=ChatRole.ASSISTANT,
-                        content="Error: No SBAR results were generated"
-                    )
-                    return state
-
-                # Create structured SBAR response for frontend cards
-                import json
-
-                # Add conversation context metadata for future reference
-                conversation_context = {
-                    "session_id": state.session_id,
-                    "user_prompt": state.user_prompt,
-                    "timestamp": str(int(time.time() * 1000)),
-                    "has_history": bool(state.chat_history)
-                }
-
-                # Extract cited chunk IDs from stored citation fields (not from content regex)
-                all_cited_chunk_ids = set()
-                for cited_ids in [
-                    state.sbar_situation_cited_ids,
-                    state.sbar_background_cited_ids,
-                    state.sbar_assessment_cited_ids,
-                    state.sbar_recommendation_cited_ids
-                ]:
-                    if cited_ids:
-                        all_cited_chunk_ids.update(cited_ids)
-
-                filtered_citations = {
-                    chunk_id: state.citations[chunk_id]
-                    for chunk_id in all_cited_chunk_ids
-                    if chunk_id in state.citations
-                } if state.citations else {}
-
-                logger.info(f"SBAR citations: {len(all_cited_chunk_ids)} cited out of {len(state.citations) if state.citations else 0} total")
-
-                # Model already outputs numbered citations [1], [2], [3]
-                # Citations dict is already keyed by numbers - no conversion needed!
-
-                # Language-aware fallback message
-                is_swedish = state.user_language == "sv"
-                fallback_failed = "Innehållsgenerering misslyckades" if is_swedish else "Content generation failed"
-
-                structured_sbar = {
-                    "type": "sbar_cards",
-                    "context": conversation_context,
-                    "citations": filtered_citations,
-                    "components": {
-                        "situation": {
-                            "title": "Situation",
-                            "content": (sbar_results.get("situation") or fallback_failed).strip() or fallback_failed,
-                            "icon": "info-circle",
-                            "color": "blue"
-                        },
-                        "background": {
-                            "title": "Background",
-                            "content": (sbar_results.get("background") or fallback_failed).strip() or fallback_failed,
-                            "icon": "history",
-                            "color": "green"
-                        },
-                        "assessment": {
-                            "title": "Assessment",
-                            "content": (sbar_results.get("assessment") or fallback_failed).strip() or fallback_failed,
-                            "icon": "stethoscope",
-                            "color": "orange"
-                        },
-                        "recommendation": {
-                            "title": "Recommendation",
-                            "content": (sbar_results.get("recommendation") or fallback_failed).strip() or fallback_failed,
-                            "icon": "lightbulb",
-                            "color": "purple"
-                        }
-                    }
-                }
-
-                # Create JSON response for frontend
-                json_response = json.dumps(structured_sbar, indent=2)
-
-                # Create response message with structured data
-                state.llm_response = ChatMessage(
-                    role=ChatRole.ASSISTANT,
-                    content=json_response
-                )
-
-                logger.info(f"Created structured SBAR response: {len(json_response)} chars")
-
-            except Exception as e:
-                log_error(logger, "merge_sbar_results", e)
-                # Fallback response
-                import json
-                fallback_sbar = {
-                    "type": "sbar_cards",
-                    "error": str(e),
-                    "components": {
-                        "situation": {"title": "Situation", "content": "Error generating content", "icon": "info-circle", "color": "blue"},
-                        "background": {"title": "Background", "content": "Error generating content", "icon": "history", "color": "green"},
-                        "assessment": {"title": "Assessment", "content": "Error generating content", "icon": "stethoscope", "color": "orange"},
-                        "recommendation": {"title": "Recommendation", "content": "Error generating content", "icon": "lightbulb", "color": "purple"}
-                    }
-                }
-                state.llm_response = ChatMessage(
-                    role=ChatRole.ASSISTANT,
-                    content=json.dumps(fallback_sbar, indent=2)
-                )
-
-            return state
-
-        @streaming_step("sbar_parallel_dispatcher")
-        async def sbar_parallel_dispatcher(state: FlowState) -> FlowState:
-            """Execute parallel SBAR component retrieval and generation using asyncio.gather."""
-            try:
-                logger.info("Initiating parallel SBAR retrieval and generation for 4 components using asyncio.gather")
-
-                # Disable refinement for SBAR flows (they use their own retrieval)
-                state.needs_refinement = False
-
-                # Generate queries for all components IN PARALLEL
-                logger.info("Generating queries for all 4 SBAR components in parallel")
-                query_results = await asyncio.gather(
-                    _generate_sbar_queries(state, "situation",
-                        "Generate queries focused on the current patient situation and immediate concerns"),
-                    _generate_sbar_queries(state, "background",
-                        "Generate queries focused on patient history and relevant context"),
-                    _generate_sbar_queries(state, "assessment",
-                        "Generate queries focused on clinical assessment and current status"),
-                    _generate_sbar_queries(state, "recommendation",
-                        "Generate queries focused on treatment plans and recommendations"),
-                    return_exceptions=True
-                )
-
-                # Unpack query results
-                situation_queries, background_queries, assessment_queries, recommendation_queries = query_results
-                logger.info("All SBAR queries generated in parallel, starting retrievals")
-
-                # Execute all retrievals in parallel
-                retrieval_results = await asyncio.gather(
-                    _retrieve_with_full_pipeline(
-                        self, state=state, queries=situation_queries, context_label="sbar_situation",
-                        topk_initial=100, topk_rerank=15, use_mmr=True,  use_agentic_refinement=True
-                    ),
-                    _retrieve_with_full_pipeline(
-                        self, state=state, queries=background_queries, context_label="sbar_background",
-                        topk_initial=100, topk_rerank=15, use_mmr=True,  use_agentic_refinement=True
-                    ),
-                    _retrieve_with_full_pipeline(
-                        self, state=state, queries=assessment_queries, context_label="sbar_assessment",
-                        topk_initial=100, topk_rerank=15, use_mmr=True,  use_agentic_refinement=True
-                    ),
-                    _retrieve_with_full_pipeline(
-                        self, state=state, queries=recommendation_queries, context_label="sbar_recommendation",
-                        topk_initial=100, topk_rerank=15, use_mmr=True,  use_agentic_refinement=True
-                    ),
-                    return_exceptions=True
-                )
-
-                # Assign retrieval results to state
-                component_names = ["situation", "background", "assessment", "recommendation"]
-                for i, (component_name, chunks) in enumerate(zip(component_names, retrieval_results)):
-                    if isinstance(chunks, Exception):
-                        logger.error(f"Error retrieving {component_name}: {chunks}")
-                        chunks = []
-
-                    if component_name == "situation":
-                        state.sbar_situation_chunks = chunks
-                    elif component_name == "background":
-                        state.sbar_background_chunks = chunks
-                    elif component_name == "assessment":
-                        state.sbar_assessment_chunks = chunks
-                    elif component_name == "recommendation":
-                        state.sbar_recommendation_chunks = chunks
-
-                    logger.info(f"Retrieved {len(chunks)} chunks for SBAR {component_name}")
-
-                logger.info("All 4 SBAR retrievals completed, starting parallel generation")
-
-                # Build citations from all retrieved chunks
-                all_chunks = []
-                for chunks in [state.sbar_situation_chunks, state.sbar_background_chunks,
-                               state.sbar_assessment_chunks, state.sbar_recommendation_chunks]:
-                    if chunks:
-                        all_chunks.extend(chunks)
-
-                if all_chunks:
-                    state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(all_chunks)
-                    logger.info(f"🔖 Built {len(state.citations)} citations from {len(all_chunks)} total SBAR chunks")
-                else:
-                    state.citations = {}
-                    state.chunk_id_to_number = {}
-                    logger.warning("No SBAR chunks retrieved - citations will be empty")
-
-                # Generate all 4 components in parallel
-                generation_results = await asyncio.gather(
-                    generate_sbar_situation(state),
-                    generate_sbar_background(state),
-                    generate_sbar_assessment(state),
-                    generate_sbar_recommendation(state),
-                    return_exceptions=True
-                )
-
-                # Check for errors
-                for i, result in enumerate(generation_results):
-                    if isinstance(result, Exception):
-                        component_names = ["situation", "background", "assessment", "recommendation"]
-                        logger.error(f"Error generating SBAR {component_names[i]}: {result}")
-
-                logger.info("All 4 SBAR generations completed successfully")
-                return state
-
-            except Exception as e:
-                log_error(logger, "sbar_parallel_dispatcher", e)
-                # Set empty chunks on error
-                state.sbar_situation_chunks = []
-                state.sbar_background_chunks = []
-                state.sbar_assessment_chunks = []
-                state.sbar_recommendation_chunks = []
-                return state
+        # Note: SBAR merge and dispatcher functions removed (merge_sbar_results, sbar_parallel_dispatcher)
+        # SBAR flow removed in favor of system-prompt-driven approach
 
         @streaming_step("merge_general_summary_results")
         async def merge_general_summary_results(state: FlowState) -> FlowState:
@@ -4109,1241 +3017,16 @@ CRITICAL: Output ONLY valid JSON. Translate encounter_type to user's language. N
                 state.general_risks_chunks = []
                 return state
 
-        # ==================== FOCUSED SUMMARY FLOW NODES ====================
-
-        @streaming_step("focused_summary_parallel_dispatcher")
-        async def focused_summary_parallel_dispatcher(state: FlowState) -> FlowState:
-            """Execute parallel focused summary component retrieval and generation using asyncio.gather."""
-            try:
-                logger.info(f"Initiating parallel focused summary processing for aspect: {state.focused_aspect}")
-
-                # Initialize focused summary cache if needed
-                if not state.focused_retrieval_cache:
-                    state.focused_retrieval_cache = {}
-
-                # Disable refinement for focused summary flows (they use their own retrieval)
-                state.needs_refinement = False
-
-                # Generate queries for all components IN PARALLEL
-                logger.info("Generating queries for all 6 focused summary components in parallel")
-                query_results = await asyncio.gather(
-                    _generate_focused_summary_queries(state, "diagnoses",
-                        f"Generate queries for diagnoses related to {state.focused_aspect}"),
-                    _generate_focused_summary_queries(state, "events",
-                        f"Generate queries for key events related to {state.focused_aspect}"),
-                    _generate_focused_summary_queries(state, "medications",
-                        f"Generate queries for medications related to {state.focused_aspect}"),
-                    _generate_focused_summary_queries(state, "objective_data",
-                        f"Generate queries for objective data (labs, vitals) related to {state.focused_aspect}"),
-                    _generate_focused_summary_queries(state, "assessment",
-                        f"Generate queries for clinical assessment related to {state.focused_aspect}"),
-                    _generate_focused_summary_queries(state, "next_steps",
-                        f"Generate queries for next steps and plan related to {state.focused_aspect}"),
-                    return_exceptions=True
-                )
-
-                # Unpack query results
-                diagnoses_queries, events_queries, medications_queries, objective_queries, assessment_queries, next_steps_queries = query_results
-                logger.info("All focused summary queries generated in parallel, starting retrievals")
-
-                # Execute all retrievals in parallel
-                retrieval_results = await asyncio.gather(
-                    _retrieve_with_full_pipeline(
-                        self, state=state, queries=diagnoses_queries, context_label="focused_diagnoses",
-                        topk_initial=100, topk_rerank=15, use_mmr=True, use_agentic_refinement=True
-                    ),
-                    _retrieve_with_full_pipeline(
-                        self, state=state, queries=events_queries, context_label="focused_events",
-                        topk_initial=100, topk_rerank=15, use_mmr=True, use_agentic_refinement=True
-                    ),
-                    _retrieve_with_full_pipeline(
-                        self, state=state, queries=medications_queries, context_label="focused_medications",
-                        topk_initial=100, topk_rerank=15, use_mmr=True, use_agentic_refinement=True
-                    ),
-                    _retrieve_with_full_pipeline(
-                        self, state=state, queries=objective_queries, context_label="focused_objective_data",
-                        topk_initial=100, topk_rerank=15, use_mmr=True, use_agentic_refinement=True
-                    ),
-                    _retrieve_with_full_pipeline(
-                        self, state=state, queries=assessment_queries, context_label="focused_assessment",
-                        topk_initial=100, topk_rerank=15, use_mmr=True, use_agentic_refinement=True
-                    ),
-                    _retrieve_with_full_pipeline(
-                        self, state=state, queries=next_steps_queries, context_label="focused_next_steps",
-                        topk_initial=100, topk_rerank=15, use_mmr=True, use_agentic_refinement=True
-                    ),
-                    return_exceptions=True
-                )
-
-                # Assign retrieval results to state
-                component_names = ["diagnoses", "events", "medications", "objective_data", "assessment", "next_steps"]
-                for i, (component_name, chunks) in enumerate(zip(component_names, retrieval_results)):
-                    if isinstance(chunks, Exception):
-                        logger.error(f"Error retrieving focused {component_name}: {chunks}")
-                        chunks = []
-
-                    if component_name == "diagnoses":
-                        state.focused_diagnoses_chunks = chunks
-                    elif component_name == "events":
-                        state.focused_events_chunks = chunks
-                    elif component_name == "medications":
-                        state.focused_medications_chunks = chunks
-                    elif component_name == "objective_data":
-                        state.focused_objective_data_chunks = chunks
-                    elif component_name == "assessment":
-                        state.focused_assessment_chunks = chunks
-                    elif component_name == "next_steps":
-                        state.focused_next_steps_chunks = chunks
-
-                    logger.info(f"Retrieved {len(chunks)} chunks for focused {component_name}")
-
-                logger.info("All 6 focused summary retrievals completed, starting parallel generation")
-
-                # Build citations from all retrieved chunks
-                all_chunks = []
-                for chunks in [state.focused_diagnoses_chunks, state.focused_events_chunks,
-                               state.focused_medications_chunks, state.focused_objective_data_chunks,
-                               state.focused_assessment_chunks, state.focused_next_steps_chunks]:
-                    if chunks:
-                        all_chunks.extend(chunks)
-
-                if all_chunks:
-                    state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(all_chunks)
-                    logger.info(f"🔖 Built {len(state.citations)} citations from {len(all_chunks)} total focused summary chunks")
-                else:
-                    state.citations = {}
-                    state.chunk_id_to_number = {}
-                    logger.warning("No focused summary chunks retrieved - citations will be empty")
-
-                # Generate all 6 components in parallel
-                generation_results = await asyncio.gather(
-                    generate_diagnoses_section(state),
-                    generate_events_section(state),
-                    generate_medications_section(state),
-                    generate_objective_data_section(state),
-                    generate_assessment_section(state),
-                    generate_next_steps_section(state),
-                    return_exceptions=True
-                )
-
-                # Check for errors
-                for i, result in enumerate(generation_results):
-                    if isinstance(result, Exception):
-                        logger.error(f"Error generating focused {component_names[i]}: {result}")
-
-                logger.info("All 6 focused summary generations completed successfully")
-                return state
-
-            except Exception as e:
-                log_error(logger, "focused_summary_parallel_dispatcher", e)
-                # Set empty chunks on error
-                state.focused_diagnoses_chunks = []
-                state.focused_events_chunks = []
-                state.focused_medications_chunks = []
-                state.focused_objective_data_chunks = []
-                state.focused_assessment_chunks = []
-                state.focused_next_steps_chunks = []
-                return state
-
-        @streaming_step("identify_aspect_and_retrieve")
-        async def identify_aspect_and_retrieve(state: FlowState) -> FlowState:
-            """Extract the medical aspect from query and retrieve initial chunks."""
-            try:
-                logger.info("Extracting medical aspect from user query")
-
-                # Extract aspect and icon
-                aspect, icon = await _extract_aspect_from_query(state)
-                state.focused_aspect = aspect
-                state.focused_aspect_icon = icon
-
-                logger.info(f"Identified aspect: '{aspect}' with icon: '{icon}'")
-
-                # Get initial chunks for context (use existing retrieved_chunks if available)
-                if not state.retrieved_chunks or len(state.retrieved_chunks) == 0:
-                    logger.info("No pre-retrieved chunks available for focused summary")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.focused_aspect = "Medical Condition"
-                state.focused_aspect_icon = "file-text"
-
-            return state
-
-        @streaming_step("retrieve_focused_diagnoses_chunks")
-        async def retrieve_focused_diagnoses_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on diagnoses using full retrieval pipeline."""
-            try:
-                logger.info(f"Retrieving diagnoses chunks for {state.focused_aspect}")
-
-                diagnoses_queries = await _generate_focused_summary_queries(state, "diagnoses",
-                    "Generate queries focused on formal diagnoses and disease classifications")
-
-                chunks = await _retrieve_with_full_pipeline(
-                    self, state=state,
-                    queries=diagnoses_queries,
-                    context_label=f"focused_diagnoses_{state.focused_aspect}",
-                    topk_initial=100,
-                    topk_rerank=15,
-                    use_mmr=True,
-                    
-                    use_agentic_refinement=True
-                )
-                state.focused_diagnoses_chunks = chunks
-                logger.info(f"Retrieved {len(state.focused_diagnoses_chunks)} diagnoses chunks")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.focused_diagnoses_chunks = []
-
-            return state
-
-        @streaming_step("generate_diagnoses_section")
-        async def generate_diagnoses_section(state: FlowState) -> FlowState:
-            """Generate diagnoses section with format: • [Diagnosis] ([Year/duration])"""
-            try:
-                logger.info(f"Generating diagnoses section for {state.focused_aspect}")
-
-                chunks = state.focused_diagnoses_chunks or []
-
-                prompt = f"""
-Generate a CONCISE diagnoses section for a focused summary about: {state.focused_aspect}
-
-USER QUERY: {state.user_prompt}
-
-Format exactly as markdown bullet points with **bold** highlighting:
-
-• **[Diagnosis 1]** ([Year diagnosed or duration])
-
-• **[Diagnosis 2]** ([Timeline or status])
-
-• **[Diagnosis 3]** ([Resolution status or ongoing])
-
-Example:
-• **Type 2 Diabetes Mellitus** (E11.9, since **2018**) [1]
-• **Hypertension** (**2005**, well-controlled on meds) [2]
-• **COPD GOLD II** (J44.1, **2015**, stable) [3]
-
-RULES:
-- List 2-4 diagnoses ONLY related to {state.focused_aspect}
-- Use **bold** markdown for diagnosis names and key temporal markers
-- Include ICD codes if available
-- Include temporal information (year, duration, or status)
-- Use markdown bullet points with • character
-- Add a blank line between each bullet point for readability
-- Be concise - one line per diagnosis
-- MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-- If no diagnoses found, write in user's language:
-  * English: "No formal diagnoses documented for {state.focused_aspect}"
-  * Swedish: "Inga formella diagnoser dokumenterade för {state.focused_aspect}"
-"""
-
-                messages = [
-                    self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused diagnoses section. Translate ALL content to the user's language. Use **bold** for diagnosis names and key terms. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
-                ]
-
-                if chunks:
-                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant information about {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
-                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
-
-                response = await self._llm.chat(messages, enable_chunk_citations=True)
-                state.focused_diagnoses_result = response.content.strip()
-                state.focused_diagnoses_cited_ids = response.cited_chunk_ids or []
-
-                logger.info(f"Generated diagnoses section: {len(response.content)} chars")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.focused_diagnoses_result = f"Error generating diagnoses: {str(e)}"
-
-            return state
-
-        @streaming_step("retrieve_focused_events_chunks")
-        async def retrieve_focused_events_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on key clinical events using full retrieval pipeline."""
-            try:
-                logger.info(f"Retrieving events chunks for {state.focused_aspect}")
-
-                events_queries = await _generate_focused_summary_queries(state, "events",
-                    "Generate queries focused on key clinical events and milestones")
-
-                chunks = await _retrieve_with_full_pipeline(
-                    self, state=state,
-                    queries=events_queries,
-                    context_label=f"focused_events_{state.focused_aspect}",
-                    topk_initial=100,
-                    topk_rerank=15,
-                    use_mmr=True,
-                    
-                    use_agentic_refinement=True
-                )
-                state.focused_events_chunks = chunks
-                logger.info(f"Retrieved {len(state.focused_events_chunks)} events chunks")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.focused_events_chunks = []
-
-            return state
-
-        @streaming_step("generate_events_section")
-        async def generate_events_section(state: FlowState) -> FlowState:
-            """Generate key events section with format: [Year] [Event description]"""
-            try:
-                logger.info(f"Generating events section for {state.focused_aspect}")
-
-                chunks = state.focused_events_chunks or []
-
-                prompt = f"""
-Generate a CONCISE key events timeline for: {state.focused_aspect}
-
-USER QUERY: {state.user_prompt}
-
-Format exactly as markdown bullet points with bold dates:
-
-• **2020:** Initial diagnosis - symptoms presented, diagnostic workup completed
-
-• **2021:** Hospitalization for acute exacerbation - intervention performed
-
-• **2023:** Follow-up showed improvement - treatment adjusted
-
-RULES:
-- List 3-5 key events ONLY related to {state.focused_aspect}
-- Use markdown bullet points with • character
-- Make the date bold using **Date:** format
-- Add a blank line between each event for readability
-- Include: interventions, hospitalizations, imaging, test results, treatment changes
-- Be specific but concise - one line per event after the date
-- Chronological order (oldest to newest)
-- MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-- If no events found, write in user's language:
-  * English: "No significant clinical events documented for {state.focused_aspect}"
-  * Swedish: "Inga signifikanta kliniska händelser dokumenterade för {state.focused_aspect}"
-"""
-
-                messages = [
-                    self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused events timeline. Translate ALL content to the user's language. Use **bold** for dates and key clinical terms. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
-                ]
-
-                if chunks:
-                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant events for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
-                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
-
-                response = await self._llm.chat(messages, enable_chunk_citations=True)
-                state.focused_events_result = response.content.strip()
-                state.focused_events_cited_ids = response.cited_chunk_ids or []
-
-                logger.info(f"Generated events section: {len(response.content)} chars")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.focused_events_result = f"Error generating events: {str(e)}"
-
-            return state
-
-        @streaming_step("retrieve_focused_medications_chunks")
-        async def retrieve_focused_medications_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on medications using full retrieval pipeline."""
-            try:
-                logger.info(f"Retrieving medications chunks for {state.focused_aspect}")
-
-                medications_queries = await _generate_focused_summary_queries(state, "medications",
-                    "Generate queries focused on medications and treatment regimens")
-
-                chunks = await _retrieve_with_full_pipeline(
-                    self, state=state,
-                    queries=medications_queries,
-                    context_label=f"focused_medications_{state.focused_aspect}",
-                    topk_initial=100,
-                    topk_rerank=15,
-                    use_mmr=True,
-                    
-                    use_agentic_refinement=True
-                )
-                state.focused_medications_chunks = chunks
-                logger.info(f"Retrieved {len(state.focused_medications_chunks)} medications chunks")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.focused_medications_chunks = []
-
-            return state
-
-        @streaming_step("generate_medications_section")
-        async def generate_medications_section(state: FlowState) -> FlowState:
-            """Generate medications section with format: [Med + dosage + frequency] | [Med 2] | [Med 3]"""
-            try:
-                logger.info(f"Generating medications section for {state.focused_aspect}")
-
-                chunks = state.focused_medications_chunks or []
-
-                prompt = f"""
-Generate a CONCISE medications list for: {state.focused_aspect}
-
-USER QUERY: {state.user_prompt}
-
-Format exactly as markdown bullet points with **bold** highlighting:
-
-• **[Medication 1]** [dosage] [frequency]
-
-• **[Medication 2]** [dosage] [frequency]
-
-• **[Medication 3]** [dosage] [frequency]
-
-Example:
-• **Metoprolol** 50mg BID [1]
-• **Lisinopril** 10mg daily [2]
-• **Aspirin** 81mg daily [3]
-• **Prednisone** 20mg daily (started **2023**) [4]
-
-RULES:
-- List ONLY medications relevant to {state.focused_aspect}
-- Use **bold** markdown for medication names and key terms
-- Include dosage and frequency
-- Use bullet points (•), one medication per line
-- Add blank line between each bullet point for readability
-- Maximum 5 medications
-- Include duration if relevant
-- MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-- If no medications found, write in user's language:
-  * English: "No medications documented for {state.focused_aspect}"
-  * Swedish: "Inga läkemedel dokumenterade för {state.focused_aspect}"
-"""
-
-                messages = [
-                    self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused medications list. Translate ALL content to the user's language. Use **bold** for medication names and key terms. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
-                ]
-
-                if chunks:
-                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant medications for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
-                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
-
-                response = await self._llm.chat(messages, enable_chunk_citations=True)
-                state.focused_medications_result = response.content.strip()
-                state.focused_medications_cited_ids = response.cited_chunk_ids or []
-
-                logger.info(f"Generated medications section: {len(response.content)} chars")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.focused_medications_result = f"Error generating medications: {str(e)}"
-
-            return state
-
-        @streaming_step("retrieve_focused_objective_data_chunks")
-        async def retrieve_focused_objective_data_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on objective data using full retrieval pipeline."""
-            try:
-                logger.info(f"Retrieving objective data chunks for {state.focused_aspect}")
-
-                objective_queries = await _generate_focused_summary_queries(state, "objective_data",
-                    "Generate queries focused on lab results, vitals, imaging, and test results")
-
-                chunks = await _retrieve_with_full_pipeline(
-                    self, state=state,
-                    queries=objective_queries,
-                    context_label=f"focused_objective_{state.focused_aspect}",
-                    topk_initial=100,
-                    topk_rerank=15,
-                    use_mmr=True,
-                    
-                    use_agentic_refinement=True
-                )
-                state.focused_objective_data_chunks = chunks
-                logger.info(f"Retrieved {len(state.focused_objective_data_chunks)} objective data chunks")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.focused_objective_data_chunks = []
-
-            return state
-
-        @streaming_step("generate_objective_data_section")
-        async def generate_objective_data_section(state: FlowState) -> FlowState:
-            """Generate objective data section with format: [Metric: value + unit + date] | [Metric 2]"""
-            try:
-                logger.info(f"Generating objective data section for {state.focused_aspect}")
-
-                chunks = state.focused_objective_data_chunks or []
-
-                prompt = f"""
-Generate CONCISE objective data for: {state.focused_aspect}
-
-USER QUERY: {state.user_prompt}
-
-CRITICAL: Translate table headers to the target language.
-- Swedish: | Mätning | Värde | Enhet | Datum |
-- English: | Metric | Value | Unit | Date |
-
-Format as a proper Markdown table with **bold** highlighting for abnormal values:
-
-| [Metric header in target language] | [Value header in target language] | [Unit header in target language] | [Date header in target language] |
-|--------|-------|------|------|
-| **HbA1c** | **7.2** | % | 2024-01-15 |
-| Fasting Glucose | 145 | mg/dL | 2024-01-15 |
-| **LVEF (Echo)** | **55** | % | 2023-12-20 |
-
-Example (Swedish):
-| Mätning | Värde | Enhet | Datum |
-|--------|-------|------|------|
-| **HbA1c** | **7.2** | % | 2024-01-15 |
-
-RULES:
-- TRANSLATE all table headers to the target language
-- List ONLY data relevant to {state.focused_aspect}
-- Use **bold** markdown for abnormal/critical values and important metrics
-- Use proper Markdown table format with header row and alignment row
-- Maximum 5 rows of data
-- For imaging/test summaries, use Metric column for test name, Value column for result
-- MANDATORY: Include citations after the table - DO NOT use verbose citations like "According to..." or "from EHR..."
-- If no data found, state message in target language
-"""
-
-                messages = [
-                    self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating focused objective data. TRANSLATE table headers to the user's language (e.g., Metric→Mätning, Value→Värde for Swedish). Use **bold** for abnormal/critical values and important metrics. MANDATORY: Include citations after the table - NOT verbose citations. Information system only - NOT a medical device."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
-                ]
-
-                if chunks:
-                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant objective data for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
-                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
-
-                response = await self._llm.chat(messages, enable_chunk_citations=True)
-                state.focused_objective_data_result = response.content.strip()
-                state.focused_objective_data_cited_ids = response.cited_chunk_ids or []
-
-                logger.info(f"Generated objective data section: {len(response.content)} chars")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.focused_objective_data_result = f"Error generating objective data: {str(e)}"
-
-            return state
-
-        @streaming_step("retrieve_focused_assessment_chunks")
-        async def retrieve_focused_assessment_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on clinical assessment using full retrieval pipeline."""
-            try:
-                logger.info(f"Retrieving assessment chunks for {state.focused_aspect}")
-
-                assessment_queries = await _generate_focused_summary_queries(state, "assessment",
-                    "Generate queries focused on clinical assessments and current status")
-
-                chunks = await _retrieve_with_full_pipeline(
-                    self, state=state,
-                    queries=assessment_queries,
-                    context_label=f"focused_assessment_{state.focused_aspect}",
-                    topk_initial=100,
-                    topk_rerank=15,
-                    use_mmr=True,
-                    
-                    use_agentic_refinement=True
-                )
-                state.focused_assessment_chunks = chunks
-                logger.info(f"Retrieved {len(state.focused_assessment_chunks)} assessment chunks")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.focused_assessment_chunks = []
-
-            return state
-
-        @streaming_step("generate_assessment_section")
-        async def generate_assessment_section(state: FlowState) -> FlowState:
-            """Generate assessment section: 2-3 sentences on current state/prognosis"""
-            try:
-                logger.info(f"Generating assessment section for {state.focused_aspect}")
-
-                chunks = state.focused_assessment_chunks or []
-
-                prompt = f"""
-Generate a CONCISE clinical assessment for: {state.focused_aspect}
-
-USER QUERY: {state.user_prompt}
-
-CRITICAL: Translate headers to the target language.
-- Swedish: **Nuvarande status:**, **Trend:**, **Prognos:**
-- English: **Current Status:**, **Trend:**, **Prognosis:**
-
-Format exactly as markdown bullet points with **bold** highlighting:
-
-• **[Current Status header in target language]:** [Disease control/status summary with key clinical terms in **bold**]
-
-• **[Trend header in target language]:** [Progression, stability, or improvement with key findings in **bold**]
-
-• **[Prognosis header in target language]:** [Overall outlook with risk factors in **bold**]
-
-Example (Swedish):
-• **Nuvarande status:** Diabetes **moderately controlled** with HbA1c **68 mmol/mol**, above target [1]
-
-• **Trend:** **Worsening glycemic control** over past 6 months (HbA1c 62→68), suggests **treatment intensification** needed [2]
-
-• **Prognos:** **Moderate risk** of complications given current control, requires **medication adjustment** and closer monitoring [3]
-
-RULES:
-- TRANSLATE the three bullet point headers to the target language
-- Use 3 bullet points as shown above
-- Use **bold** markdown for key clinical terms, status descriptors, and risk levels
-- Focus ONLY on {state.focused_aspect}
-- Be clinically precise but accessible
-- Add a blank line between each bullet point for readability
-- Each bullet should be one concise line
-- MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-- If insufficient data, state message in target language
-"""
-
-                messages = [
-                    self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating a focused clinical assessment. TRANSLATE all headers to the user's language (e.g., Current Status→Nuvarande status, Prognosis→Prognos for Swedish). Use **bold** for key clinical terms, status descriptors, and risk levels. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
-                ]
-
-                if chunks:
-                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant assessment data for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
-                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
-
-                response = await self._llm.chat(messages, enable_chunk_citations=True)
-                state.focused_assessment_result = response.content.strip()
-                state.focused_assessment_cited_ids = response.cited_chunk_ids or []
-
-                logger.info(f"Generated assessment section: {len(response.content)} chars")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.focused_assessment_result = f"Error generating assessment: {str(e)}"
-
-            return state
-
-        @streaming_step("retrieve_focused_next_steps_chunks")
-        async def retrieve_focused_next_steps_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks focused on follow-up plans using full retrieval pipeline."""
-            try:
-                logger.info(f"Retrieving next steps chunks for {state.focused_aspect}")
-
-                next_steps_queries = await _generate_focused_summary_queries(state, "next_steps",
-                    "Generate queries focused on follow-up plans and outstanding issues")
-
-                chunks = await _retrieve_with_full_pipeline(
-                    self, state=state,
-                    queries=next_steps_queries,
-                    context_label=f"focused_next_steps_{state.focused_aspect}",
-                    topk_initial=100,
-                    topk_rerank=15,
-                    use_mmr=True,
-                    
-                    use_agentic_refinement=True
-                )
-                state.focused_next_steps_chunks = chunks
-                logger.info(f"Retrieved {len(state.focused_next_steps_chunks)} next steps chunks")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.focused_next_steps_chunks = []
-
-            return state
-
-        @streaming_step("generate_next_steps_section")
-        async def generate_next_steps_section(state: FlowState) -> FlowState:
-            """Generate next steps section with format: 🔸 [Item 1] | 🔸 [Item 2]"""
-            try:
-                logger.info(f"Generating next steps section for {state.focused_aspect}")
-
-                chunks = state.focused_next_steps_chunks or []
-
-                prompt = f"""
-Generate CONCISE next steps for: {state.focused_aspect}
-
-USER QUERY: {state.user_prompt}
-
-Format exactly as markdown bullet points with **bold** highlighting:
-
-• **[Action type]**: [Details with timing if available]
-
-Example:
-• **Follow-up HbA1c**: Test due in **3 months** (April 2024) [1]
-• **Medication review**: Consider **metformin dose increase** to 1000mg BID [2]
-• **Endocrinology referral**: Pending consult for **insulin initiation** if HbA1c not improved [3]
-• **Retinal screening**: **Annual** diabetic eye exam overdue, schedule ASAP [4]
-
-RULES:
-- List 2-4 items ONLY related to {state.focused_aspect}
-- Use **bold** markdown for action types, key interventions, and timing
-- Use markdown bullet points with • character
-- Add a blank line between each bullet point for readability
-- One line per item
-- Include: pending tests, follow-ups, medication reviews, referrals, outstanding issues
-- Include specific timing if available
-- MANDATORY: Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-- If no next steps found, write in user's language:
-  * English: "No pending follow-up documented for {state.focused_aspect}"
-  * Swedish: "Ingen väntande uppföljning dokumenterad för {state.focused_aspect}"
-"""
-
-                messages = [
-                    self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA generating focused next steps. Translate ALL content to the user's language. Use **bold** for action types, key interventions, and timing. MANDATORY: Include citations after each statement - NOT verbose citations. Information system only - NOT a medical device."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
-                ]
-
-                if chunks:
-                    limited_chunks = self._limit_chunks_for_context(chunks, max_tokens=50000, max_chunk_chars=30000)
-                    chunk_content = f"Relevant next steps for {state.focused_aspect}:\n\n" + self._format_chunks_with_citations(limited_chunks, state.chunk_id_to_number)
-                    messages.append(ChatMessage(role=ChatRole.USER, content=chunk_content))
-
-                response = await self._llm.chat(messages, enable_chunk_citations=True)
-                state.focused_next_steps_result = response.content.strip()
-                state.focused_next_steps_cited_ids = response.cited_chunk_ids or []
-
-                logger.info(f"Generated next steps section: {len(response.content)} chars")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.focused_next_steps_result = f"Error generating next steps: {str(e)}"
-
-            return state
-
-        @streaming_step("merge_focused_summary_results")
-        async def merge_focused_summary_results(state: FlowState) -> FlowState:
-            """Merge all focused summary sections and prepare final JSON response."""
-            try:
-                logger.info(f"Merging focused summary results for {state.focused_aspect}")
-
-                # Build citations from all retrieved chunks across all focused summary components
-                all_chunks = []
-                for chunks in [
-                    state.focused_diagnoses_chunks,
-                    state.focused_events_chunks,
-                    state.focused_medications_chunks,
-                    state.focused_objective_data_chunks,
-                    state.focused_assessment_chunks,
-                    state.focused_next_steps_chunks
-                ]:
-                    if chunks:
-                        all_chunks.extend(chunks)
-
-                if all_chunks:
-                    state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(all_chunks)
-                    logger.info(f"🔖 Built {len(state.citations)} citations from {len(all_chunks)} total focused summary chunks")
-                else:
-                    logger.info("⚠️ No chunks retrieved for focused summary - citations will be empty")
-
-                # Collect results from separate fields
-                focused_results = {
-                    "diagnoses": state.focused_diagnoses_result,
-                    "events": state.focused_events_result,
-                    "medications": state.focused_medications_result,
-                    "objective_data": state.focused_objective_data_result,
-                    "assessment": state.focused_assessment_result,
-                    "next_steps": state.focused_next_steps_result
-                }
-
-                completed_sections = [section for section, result in focused_results.items() if result]
-                logger.info(f"Available sections: {completed_sections}")
-
-                if not completed_sections:
-                    logger.info("No focused summary results available")
-                    state.llm_response = ChatMessage(
-                        role=ChatRole.ASSISTANT,
-                        content="Error: No focused summary results were generated"
-                    )
-                    return state
-
-                # Create structured focused summary response for frontend
-                import json
-
-                # Extract cited chunk IDs from stored citation fields (not from content regex)
-                all_cited_chunk_ids = set()
-                for cited_ids in [
-                    state.focused_diagnoses_cited_ids,
-                    state.focused_events_cited_ids,
-                    state.focused_medications_cited_ids,
-                    state.focused_objective_data_cited_ids,
-                    state.focused_assessment_cited_ids,
-                    state.focused_next_steps_cited_ids
-                ]:
-                    if cited_ids:
-                        all_cited_chunk_ids.update(cited_ids)
-
-                # Build filtered citations dict from cited chunks only
-                filtered_citations = {
-                    chunk_id: state.citations[chunk_id]
-                    for chunk_id in all_cited_chunk_ids
-                    if chunk_id in state.citations
-                } if state.citations else {}
-
-                logger.info(f"Focused Summary citations: {len(all_cited_chunk_ids)} cited out of {len(state.citations) if state.citations else 0} total")
-
-                # Model already outputs numbered citations [1], [2], [3] - no conversion needed!
-
-                # translated_aspect = await self._llm.chat(ChatMessage(role=ChatRole.USER, content=f"Translate the following medical aspect to {state.user_language}:\n\n{state.focused_aspect}\n\nRespond with only the translated aspect"))
-                
-                # translated_aspect = translated_aspect.content.strip() if translated_aspect else state.focused_aspect
-
-                # Add conversation context metadata
-                conversation_context = {
-                    "session_id": state.session_id,
-                    "user_prompt": state.user_prompt,
-                    "timestamp": str(int(time.time() * 1000)),
-                    "has_history": bool(state.chat_history)
-                }
-
-                # Language-aware fallback messages
-                is_swedish = state.user_language == "sv"
-                fallback_diagnoses = "Inga diagnoser dokumenterade" if is_swedish else "No diagnoses documented"
-                fallback_events = "Inga händelser dokumenterade" if is_swedish else "No events documented"
-                fallback_medications = "Inga läkemedel dokumenterade" if is_swedish else "No medications documented"
-                fallback_objective = "Inga objektiva data tillgängliga" if is_swedish else "No objective data available"
-                fallback_assessment = "Ingen bedömning tillgänglig" if is_swedish else "No assessment available"
-                fallback_next_steps = "Inga nästa steg dokumenterade" if is_swedish else "No next steps documented"
-
-                structured_summary = {
-                    "type": "focused_summary",
-                    "aspect": state.focused_aspect or "Medical Condition",
-                    "aspect_icon": state.focused_aspect_icon or "file-text",
-                    "context": conversation_context,
-                    "citations": filtered_citations,
-                    "sections": {
-                        "diagnoses": {
-                            "content": (focused_results.get("diagnoses") or fallback_diagnoses).strip() or fallback_diagnoses
-                        },
-                        "events": {
-                            "content": (focused_results.get("events") or fallback_events).strip() or fallback_events
-                        },
-                        "medications": {
-                            "content": (focused_results.get("medications") or fallback_medications).strip() or fallback_medications
-                        },
-                        "objective_data": {
-                            "content": (focused_results.get("objective_data") or fallback_objective).strip() or fallback_objective
-                        },
-                        "assessment": {
-                            "content": (focused_results.get("assessment") or fallback_assessment).strip() or fallback_assessment
-                        },
-                        "next_steps": {
-                            "content": (focused_results.get("next_steps") or fallback_next_steps).strip() or fallback_next_steps
-                        }
-                    }
-                }
-
-                # Create JSON response for frontend
-                json_response = json.dumps(structured_summary, indent=2)
-
-                # Create response message with structured data
-                state.llm_response = ChatMessage(
-                    role=ChatRole.ASSISTANT,
-                    content=json_response
-                )
-
-                logger.info(f"Created structured focused summary response: {len(json_response)} chars")
-
-            except Exception as e:
-                log_error(logger, "merge_focused_summary_results", e)
-                # Fallback response
-                import json
-                fallback_summary = {
-                    "type": "focused_summary",
-                    "aspect": state.focused_aspect or "Medical Condition",
-                    "aspect_icon": state.focused_aspect_icon or "file-text",
-                    "error": str(e),
-                    "sections": {
-                        "diagnoses": {"content": "Error generating content"},
-                        "events": {"content": "Error generating content"},
-                        "medications": {"content": "Error generating content"},
-                        "objective_data": {"content": "Error generating content"},
-                        "assessment": {"content": "Error generating content"},
-                        "next_steps": {"content": "Error generating content"}
-                    }
-                }
-                state.llm_response = ChatMessage(
-                    role=ChatRole.ASSISTANT,
-                    content=json.dumps(fallback_summary, indent=2)
-                )
-
-            return state
-
-        # ==================== TIMELINE FLOW NODES ====================
-
-        @streaming_step("extract_timeline_events")
-        async def extract_timeline_events(state: FlowState) -> FlowState:
-            """Extract key temporal events from user query and chat history."""
-            try:
-                logger.info("Analyzing query for temporal events")
-
-                # Include chat history context for better event extraction
-                recent_history = state.chat_history[-10:] if state.chat_history else []
-                history_context = "\n".join([f"{msg.role.value}: {msg.content[:100]}" for msg in recent_history]) if recent_history else "No previous context"
-
-                prompt = f"""
-Based on this user request: "{state.user_prompt}"
-
-Previous conversation context:
-{history_context}
-
-Identify 4-6 key temporal events or time periods from the patient's medical history that are relevant to this request.
-
-For each event, provide:
-1. A brief title/description (5-10 words)
-2. The time period (e.g., "March 2024", "Initial visit", "Day 3", "2 weeks ago", etc.)
-3. 2-3 keywords to focus the search
-
-Format your response as JSON:
-[
-  {{"title": "Event title", "time_period": "Time reference", "keywords": ["keyword1", "keyword2"]}},
-  ...
-]
-
-Make sure the titles of the events, the time period and the the keywords are all in the same language as the user request. 
-
-Return ONLY the JSON array, no additional text.
-"""
-
-                messages = [
-                    self._get_language_policy_message(state),
-                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information specialist extracting temporal events from medical histories. Always respond with valid JSON only."),
-                    ChatMessage(role=ChatRole.USER, content=prompt)
-                ]
-
-                response = await self._llm.chat(messages)
-
-                # Parse JSON response
-                try:
-                    events = json.loads(response.content.strip())
-                    if not isinstance(events, list) or len(events) == 0:
-                        raise ValueError("No events extracted")
-
-                    # Limit to 6 events max
-                    state.timeline_events = events[:6]
-                    logger.info(f"Extracted {len(state.timeline_events)} timeline events")
-
-                except json.JSONDecodeError as e:
-                    logger.info(f"JSON parse error: {e}, using fallback events")
-                    # Fallback: create simple temporal events
-                    state.timeline_events = [
-                        {"title": "Initial presentation", "time_period": "First visit", "keywords": ["initial", "presentation", "symptoms"]},
-                        {"title": "Diagnostic workup", "time_period": "Early phase", "keywords": ["tests", "diagnosis", "findings"]},
-                        {"title": "Treatment initiation", "time_period": "Treatment start", "keywords": ["treatment", "medication", "intervention"]},
-                        {"title": "Current status", "time_period": "Recent", "keywords": ["current", "latest", "recent"]}
-                    ]
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                # Fallback events
-                state.timeline_events = [
-                    {"title": "Medical history overview", "time_period": "Historical", "keywords": ["history", "background"]},
-                    {"title": "Recent developments", "time_period": "Recent", "keywords": ["recent", "current", "latest"]}
-                ]
-
-            # Initialize storage for chunks
-            state.timeline_chunks = {}
-            return state
-
-        @streaming_step("retrieve_timeline_chunks")
-        async def retrieve_timeline_chunks(state: FlowState) -> FlowState:
-            """Retrieve chunks for each timeline event using full retrieval pipeline."""
-            try:
-                logger.info("Starting retrieval for timeline events")
-
-                if not state.timeline_events:
-                    logger.info("No timeline events to retrieve")
-                    return state
-
-                state.timeline_chunks = {}
-
-                # Retrieve chunks for all events IN PARALLEL
-                logger.info(f"Retrieving chunks for {len(state.timeline_events)} timeline events in parallel")
-
-                # Generate tasks for all events
-                async def retrieve_event_chunks(idx: int, event: dict):
-                    """Retrieve chunks for a single timeline event."""
-                    event_id = f"event_{idx}"
-                    title = event.get("title", "Unknown event")
-                    time_period = event.get("time_period", "Unknown time")
-
-                    # Generate queries for this event
-                    queries = await _generate_timeline_queries(state, title, time_period)
-
-                    # Use full retrieval pipeline with cross-encoder reranking
-                    chunks = await _retrieve_with_full_pipeline(
-                        self, state=state,
-                        queries=queries,
-                        context_label=f"timeline_event_{idx}",
-                        topk_initial=100,
-                        topk_rerank=15,
-                        use_mmr=True,
-                        
-                        use_agentic_refinement=True
-                    )
-
-                    # Limit to 8 chunks for UI performance
-                    return event_id, title, chunks[:8]
-
-                # Execute all retrievals in parallel
-                results = await asyncio.gather(
-                    *[retrieve_event_chunks(idx, event) for idx, event in enumerate(state.timeline_events)],
-                    return_exceptions=True
-                )
-
-                # Store results
-                for result in results:
-                    if isinstance(result, Exception):
-                        logger.error(f"Error retrieving timeline event: {result}")
-                        continue
-                    event_id, title, chunks = result
-                    state.timeline_chunks[event_id] = chunks
-                    logger.info(f"Retrieved {len(chunks)} chunks for {title}")
-
-                logger.info(f"Retrieved chunks for {len(state.timeline_chunks)} events in parallel")
-
-                # Build citations from all retrieved timeline chunks
-                all_chunks = []
-                for event_chunks in state.timeline_chunks.values():
-                    if event_chunks:
-                        all_chunks.extend(event_chunks)
-
-                if all_chunks:
-                    state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(all_chunks)
-                    logger.info(f"🔖 Built {len(state.citations)} citations from {len(all_chunks)} total timeline chunks")
-                else:
-                    logger.info("⚠️ No chunks retrieved for timeline - citations will be empty")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.timeline_chunks = {}
-
-            return state
-
-        @streaming_step("generate_timeline_bubbles")
-        async def generate_timeline_bubbles(state: FlowState) -> FlowState:
-            """Generate timeline bubble content for each event."""
-            try:
-                logger.info("Generating timeline content")
-
-                if not state.timeline_events:
-                    logger.info("No timeline events to generate")
-                    return state
-
-                state.timeline_results = []
-
-                # Include chat history context
-                recent_history = state.chat_history[-10:] if state.chat_history else []
-
-                # Define icon mapping
-                icon_mapping = {
-                    0: "calendar",
-                    1: "clock",
-                    2: "activity",
-                    3: "trending-up",
-                    4: "alert-circle",
-                    5: "file-text"
-                }
-
-                # Define color mapping
-                color_mapping = {
-                    0: "blue",
-                    1: "green",
-                    2: "orange",
-                    3: "purple",
-                    4: "red",
-                    5: "blue"
-                }
-
-                # Define inner function for parallel generation
-                async def generate_event_content(idx: int, event: dict) -> dict:
-                    """Generate content for a single timeline event."""
-                    event_id = f"event_{idx}"
-                    title = event.get("title", "Unknown event")
-                    time_period = event.get("time_period", "Unknown time")
-                    chunks = state.timeline_chunks.get(event_id, []) if state.timeline_chunks else []
-
-                    logger.info(f"Generating content for: {title}")
-
-                    # Build chunks context with citation markers
-                    if chunks:
-                        chunks_text = self._format_chunks_with_citations(chunks, state.chunk_id_to_number)
-                    else:
-                        chunks_text = "No specific information available"
-
-                    # Build chat history context
-                    history_text = "\n".join([f"{msg.role.value}: {msg.content[:200]}" for msg in recent_history]) if recent_history else ""
-
-                    prompt = f"""
-Generate a concise explanation (4-5 bullet points) for this timeline event.
-
-Event: {title}
-Time Period: {time_period}
-User Query: {state.user_prompt}
-
-Clinical Information:
-{chunks_text}
-
-Previous conversation (for context):
-{history_text}
-
-CRITICAL: Translate ALL bullet point descriptors to the target language.
-- Swedish: **Vad hände**, **Kliniska fynd**, **Behandlingar**, **Utfall/Betydelse**, **Uppföljning**
-- English: **What happened**, **Clinical findings**, **Treatments**, **Outcome/Significance**, **Follow-up**
-
-Format as 4-5 bullet points covering:
-• **[What happened in target language]**: [brief description of the event]
-• **[Clinical findings in target language]**: [key observations or test results]
-• **[Treatments in target language]**: [medications or procedures if applicable]
-• **[Outcome/Significance in target language]**: [results and clinical importance]
-• **[Follow-up in target language]**: [any subsequent actions if applicable]
-
-Example (English):
-• **What happened**: Patient admitted to **ER** with **chest pain** and **shortness of breath** [1]
-
-• **Clinical findings**: **ECG** showed ST elevations, **troponin** elevated at 450 ng/L [2]
-
-• **Treatments**: Given **aspirin 300mg**, **heparin** infusion, **morphine** 5mg for pain [3]
-
-• **Outcome/Significance**: Pain reduced to **3/10**, hemodynamically **stable**, monitored in CCU [4]
-
-Add blank line between each bullet point for readability.
-
-IMPORTANT:
-- TRANSLATE all bullet point descriptors (the bold headers like "What happened") to the target language
-- Use **bold** markdown for key clinical terms, findings, medications, and important descriptors
-- Include citations after each statement - DO NOT use verbose citations like "According to..." or "from EHR..."
-- Preserve any EHR source links from the clinical information
-- Keep each bullet point concise (one line)
-- Focus on clinically significant information
-
-Return only the content in markdown format, no preamble.
-"""
-
-                    messages = [
-                        self._get_language_policy_message(state),
-                        ChatMessage(role=ChatRole.SYSTEM, content="You are CLARA, a clinical information assistant. Create timeline explanations with 4-5 concise bullet points. TRANSLATE all bullet point descriptors to the user's language (e.g., What happened→Vad hände, Clinical findings→Kliniska fynd for Swedish). Use **bold** for key clinical terms, findings, and medications.\n\nIMPORTANT: Information system only - NOT a medical device. Provide general educational information.\n\nMANDATORY: Include citations after each statement - NOT verbose citations. Keep concise but informative. Add blank line between each bullet point for readability."),
-                        ChatMessage(role=ChatRole.USER, content=prompt)
-                    ]
-
-                    # Generate content
-                    response = await self._llm.chat(messages, enable_chunk_citations=True)
-                    content = response.content.strip()
-
-                    # Format EHR links
-                    content = self._format_ehr_links(content)
-                    content = self._normalize_markdown(content)
-
-                    # Create timeline event result with cited chunk IDs
-                    return {
-                        "id": idx,
-                        "timestamp": time_period,
-                        "title": title,
-                        "content": content,
-                        "icon": icon_mapping.get(idx % 6, "activity"),
-                        "color": color_mapping.get(idx % 6, "blue"),
-                        "cited_chunk_ids": response.cited_chunk_ids or []
-                    }
-
-                # Execute generation for all events in parallel
-                logger.info(f"Starting parallel generation for {len(state.timeline_events)} events")
-                generation_results = await asyncio.gather(
-                    *[generate_event_content(idx, event) for idx, event in enumerate(state.timeline_events)],
-                    return_exceptions=True
-                )
-
-                # Process results
-                for result in generation_results:
-                    if isinstance(result, Exception):
-                        logger.error(f"Error generating timeline event content: {result}")
-                        continue
-                    state.timeline_results.append(result)
-
-                # Sort results by ID to maintain order
-                state.timeline_results.sort(key=lambda x: x["id"])
-                logger.info(f"Generated {len(state.timeline_results)} timeline bubbles in parallel")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                state.timeline_results = []
-
-            return state
-
-        @streaming_step("merge_timeline_results")
-        async def merge_timeline_results(state: FlowState) -> FlowState:
-            """Merge timeline results and format as JSON for frontend."""
-            try:
-                logger.info("Merging timeline results")
-
-                if not state.timeline_results or len(state.timeline_results) == 0:
-                    logger.info("No timeline results available")
-                    state.llm_response = ChatMessage(
-                        role=ChatRole.ASSISTANT,
-                        content="Error: No timeline results were generated"
-                    )
-                    return state
-
-                # Extract cited chunk IDs from stored citation fields in each event (not from content regex)
-                all_cited_chunk_ids = set()
-                for event in state.timeline_results:
-                    cited_ids = event.get("cited_chunk_ids", [])
-                    if cited_ids:
-                        all_cited_chunk_ids.update(cited_ids)
-
-                # Build filtered citations dict from cited chunks only
-                filtered_citations = {
-                    chunk_id: state.citations[chunk_id]
-                    for chunk_id in all_cited_chunk_ids
-                    if chunk_id in state.citations
-                } if state.citations else {}
-
-                logger.info(f"Timeline citations: {len(all_cited_chunk_ids)} cited out of {len(state.citations) if state.citations else 0} total")
-
-                # Model already outputs numbered citations [1], [2], [3] - no conversion needed!
-
-                # Add conversation context metadata
-                conversation_context = {
-                    "session_id": state.session_id,
-                    "user_prompt": state.user_prompt,
-                    "timestamp": str(int(time.time() * 1000)),
-                    "has_history": bool(state.chat_history)
-                }
-
-                # Create structured timeline response for frontend
-                structured_timeline = {
-                    "type": "timeline_view",
-                    "context": conversation_context,
-                    "citations": filtered_citations,
-                    "events": state.timeline_results
-                }
-
-                # Create JSON response
-                json_response = json.dumps(structured_timeline, indent=2)
-
-                # Store as chat message
-                state.llm_response = ChatMessage(
-                    role=ChatRole.ASSISTANT,
-                    content=json_response
-                )
-
-                logger.info(f"Created timeline response with {len(state.timeline_results)} events: {len(json_response)} chars")
-
-            except Exception as e:
-                logger.info(f"Error: {e}")
-                # Fallback response
-                fallback_timeline = {
-                    "type": "timeline_view",
-                    "error": str(e),
-                    "events": []
-                }
-                state.llm_response = ChatMessage(
-                    role=ChatRole.ASSISTANT,
-                    content=json.dumps(fallback_timeline, indent=2)
-                )
-
-            return state
+        # Note: Focused summary flow nodes removed (focused_summary_parallel_dispatcher, identify_aspect_and_retrieve,
+        # retrieve_focused_*_chunks, generate_*_section, merge_focused_summary_results)
+        # Focused summary flow removed in favor of system-prompt-driven approach
+
+        # ==================== FOCUSED SUMMARY REMOVED ====================
+        # Note: All focused summary functions have been removed
+        # (focused_summary_parallel_dispatcher, identify_aspect_and_retrieve, 
+        # retrieve_focused_*_chunks, generate_*_section, merge_focused_summary_results)
+        # All orphaned code removed - continuing to timeline flow
+        # Note: Timeline flow nodes removed (now uses default provide_information flow)
 
         # ==================== END TIMELINE FLOW NODES ====================
 
@@ -5492,7 +3175,10 @@ Return only the content in markdown format, no preamble.
                 lang_name = "Swedish" if lang_code == "sv" else "English"
 
                 # Build system prompt for note generation
+                current_date = datetime.now().strftime('%Y-%m-%d')
                 note_system_prompt = f"""You are a medical documentation assistant generating a clinical note in {lang_name}.
+
+Current Date: {current_date}
 
 Template: {template.name}
 Type: {template.template_type.value}
@@ -5683,715 +3369,10 @@ Generate the content for "{field_label}" section now:"""
 
         # ==================== END NOTE GENERATION FLOW NODES ====================
 
-        @streaming_step("paraphrase_query_for_guideline")
-        async def paraphrase_query_for_guideline(state: FlowState) -> FlowState:
-            """
-            Paraphrase the user query using retrieved chunks to include clinical context.
-            Removes all PHI (patient names, dates, specific identifiers) but keeps clinical concepts.
-            This paraphrased query will be used to search viss.nu without exposing patient data.
-            """
-            logger.info("🔄 Starting query paraphrasing for guideline search")
-            logger.info(f"📋 Original query: {state.user_prompt[:100]}...")
-            logger.info(f"📊 Available chunks: {len(state.retrieved_chunks)}")
-
-            try:
-                # Update status
-                state.current_step = "Analyserar patientdata"
-                state.step_details = "Extraherar klinisk kontext från patientjournaler..."
-
-                # Emit status update
-                if hasattr(state, 'stream_callback') and state.stream_callback:
-                    await state.stream_callback({
-                        "type": "status",
-                        "step": "Analyserar patientdata",
-                        "description": "Extraherar klinisk kontext från patientjournaler...",
-                        "status": "in_progress",
-                        "progress": 0,
-                        "timestamp": datetime.now().isoformat()
-                    })
-
-                # Build chunks context (use top 10-15 chunks for context)
-                chunks_for_context = state.retrieved_chunks[:15] if state.retrieved_chunks else []
-
-                if not chunks_for_context:
-                    logger.info("⚠️ No chunks available, using original query")
-                    state.paraphrased_guideline_query = state.user_prompt
-                    return state
-
-                # Combine chunk content
-                chunk_contents = []
-                for idx, chunk in enumerate(chunks_for_context, 1):
-                    content = chunk.get('content', '')
-                    if content:
-                        # Limit each chunk to 200 chars for context
-                        chunk_contents.append(f"Chunk {idx}: {content[:200]}...")
-
-                chunks_text = "\n".join(chunk_contents)
-
-                # Create paraphrasing prompt
-                paraphrase_prompt = f"""You are a medical query paraphrasing assistant. Your task is to reformulate a user's query to make it more specific and clinically relevant for searching medical guidelines, while REMOVING all patient-identifying information (PHI).
-
-**ORIGINAL QUERY**: {state.user_prompt}
-
-**PATIENT CONTEXT** (contains PHI - use this ONLY to understand clinical concepts):
-{chunks_text}
-
-**YOUR TASK**:
-1. Analyze the patient context to understand:
-   - Clinical conditions mentioned (e.g., diabetes, hypertension, COPD)
-   - Medications or treatments involved
-   - Relevant symptoms or findings
-   - Clinical situation or context
-
-2. Reformulate the query to include these clinical concepts BUT:
-   - **REMOVE all patient names, personal identifiers**
-   - **REMOVE specific dates, ages, locations**
-   - **REMOVE hospital/clinic names**
-   - **KEEP general clinical concepts** (diagnoses, symptoms, medication classes)
-   - **KEEP general timeframes** (e.g., "elderly patient" instead of "72-year-old", "recent" instead of "January 2024")
-
-3. Make the query clinically specific and suitable for guideline search
-
-**EXAMPLES**:
-
-Example 1:
-Original: "What treatment should I use?"
-Context mentions: diabetes, metformin, A1C 8.5%
-Paraphrased: "Treatment guidelines for type 2 diabetes patient with inadequate glycemic control on metformin"
-
-Example 2:
-Original: "Does he need antibiotics?"
-Context mentions: pneumonia symptoms, cough, fever
-Paraphrased: "Antibiotic indication guidelines for community-acquired pneumonia with respiratory symptoms"
-
-Example 3:
-Original: "What does the guideline say?"
-Context mentions: atrial fibrillation, anticoagulation, stroke risk
-Paraphrased: "Anticoagulation guidelines for atrial fibrillation patient with stroke risk"
-
-**NOW PARAPHRASE THE QUERY**:
-Provide ONLY the paraphrased query (one sentence), no explanation or preamble."""
-
-                # Call LLM to paraphrase
-                paraphrase_messages = [
-                    ChatMessage(
-                        role=ChatRole.SYSTEM,
-                        content="You are a medical query paraphrasing assistant. Extract clinical concepts from context and reformulate queries while removing all PHI."
-                    ),
-                    ChatMessage(
-                        role=ChatRole.USER,
-                        content=paraphrase_prompt
-                    )
-                ]
-
-                logger.info("🤖 Calling LLM to paraphrase query...")
-                response = await self._llm.chat(paraphrase_messages)
-
-                paraphrased = response.content.strip()
-
-                # Store paraphrased query
-                state.paraphrased_guideline_query = paraphrased
-
-                logger.info(f"✅ Paraphrased query: {paraphrased}")
-                logger.info("🔒 PHI removed, clinical context preserved")
-
-            except Exception as e:
-                log_error(logger, "paraphrase_query_for_guideline", e)
-                import traceback
-                logger.error(f"Full traceback: {traceback.format_exc()}")
-                # Fallback: use original query
-                logger.info("⚠️ Paraphrasing failed, using original query")
-                state.paraphrased_guideline_query = state.user_prompt
-
-            return state
-
-        @streaming_step("handle_guideline_query")
-        async def handle_guideline_query(state: FlowState) -> FlowState:
-            """
-            Handle guideline queries (clinical guideline search on viss.nu).
-            Uses ONLY web search restricted to viss.nu domain.
-            Uses chat history for context but no patient data retrieval.
-            """
-            logger.info("📋 Starting guideline query handling (viss.nu only)")
-            logger.info(f"🔍 Query: {state.user_prompt[:100]}...")
-
-            try:
-                # Update status: Searching guidelines
-                state.current_step = "Söker i riktlinjer"
-                state.step_details = "Söker på viss.nu efter kliniska riktlinjer..."
-
-                # Emit status update
-                if hasattr(state, 'stream_callback') and state.stream_callback:
-                    await state.stream_callback({
-                        "type": "status",
-                        "step": "Söker i riktlinjer",
-                        "description": "Söker på viss.nu efter kliniska riktlinjer...",
-                        "status": "in_progress",
-                        "progress": 0,
-                        "timestamp": datetime.now().isoformat()
-                    })
-
-                # Force web search for guideline information
-                logger.info("📡 Performing web search on viss.nu for clinical guidelines...")
-
-                # Use paraphrased query if available (from chunk-based context), otherwise use original
-                if state.paraphrased_guideline_query:
-                    search_query = state.paraphrased_guideline_query
-                    logger.info(f"🔄 Using paraphrased query (PHI removed): {search_query[:100]}...")
-                else:
-                    search_query = state.user_prompt
-                    logger.info(f"📝 Using original query: {search_query[:100]}...")
-
-                    # If no paraphrased query, use chat history to enrich context
-                    if state.chat_history:
-                        logger.info("📝 Using chat history to build guideline search context")
-                        recent_messages = state.chat_history[-5:]  # Last 5 messages
-                        history_context = []
-
-                        for msg in recent_messages:
-                            if msg.role == ChatRole.USER and msg.content:
-                                # Extract key medical terms from previous user messages
-                                history_context.append(msg.content[:100])
-
-                        if history_context:
-                            logger.info(f"✓ Found {len(history_context)} previous messages for context")
-
-                # Detect language
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "sv"  # Default to Swedish for viss.nu
-
-                if hasattr(state, 'stream_callback') and state.stream_callback:
-                    await state.stream_callback({
-                        "type": "status",
-                        "step": "Söker på viss.nu",
-                        "description": "Frågar klinisk riktlinjedatabas...",
-                        "status": "in_progress",
-                        "progress": 0,
-                        "timestamp": datetime.now().isoformat()
-                    })
-
-                # Perform web search ONLY on viss.nu domain
-                # Note: We need to modify the search call to include_domains parameter
-                # This requires updating the TavilyWebSearchService.search method
-
-                # For now, we'll use the existing search method and add domain filtering
-                # by creating a custom search query that includes site:viss.nu
-                enhanced_query = f"site:viss.nu {search_query}"
-
-                search_response = await self._web_search.search(
-                    query=enhanced_query,
-                    max_results=8,
-                    patient_context=None,  # No patient data for GDPR compliance
-                    search_intent="guideline_search",
-                    target_language=(active_lang if active_lang else None)
-                )
-
-                state.web_search_response = search_response
-                state.web_search_performed = True
-
-                logger.info(f"✓ Found {len(search_response.results)} guideline results from viss.nu")
-
-                # Update status: Analyzing guidelines
-                state.current_step = "Analyserar riktlinjer"
-                state.step_details = f"Granskar {len(search_response.results)} riktlinjekällor..."
-
-                # Emit status update
-                if hasattr(state, 'stream_callback') and state.stream_callback:
-                    await state.stream_callback({
-                        "type": "status",
-                        "step": "Analyserar riktlinjer",
-                        "description": f"Granskar {len(search_response.results)} riktlinjekällor...",
-                        "status": "in_progress",
-                        "progress": 0,
-                        "timestamp": datetime.now().isoformat()
-                    })
-
-                # Generate response using ONLY viss.nu sources (no patient data chunks)
-                logger.info("💬 Generating response from viss.nu guidelines only...")
-
-                # System message for guideline search
-                guideline_system_msg = ChatMessage(
-                    role=ChatRole.SYSTEM,
-                    content="""You are CLARA, a medical information assistant providing clinical guideline information from viss.nu.
-
-**YOUR TASK**: Provide a comprehensive summary of the clinical guideline information from viss.nu for the user's query.
-
-**CRITICAL - RESPONSE FORMAT**:
-- Provide a DETAILED summary of the guideline with comprehensive information in PARAGRAPH format
-- Organize response with `##` headers to divide sections (e.g., ## Indikationer, ## Behandling, ## Dosering, ## Kontraindikationer, ## Uppföljning)
-- **MAXIMUM 5 HEADERS** - Choose the 5 most important sections for the query
-- **Write in flowing paragraphs** - NOT bullet points
-- **Be thorough and comprehensive**: Each paragraph should contain 5-8 sentences with detailed clinical information
-- Include ALL relevant details from the guideline in a narrative format that's easy to read and understand
-- The user should be able to fully understand the guideline content just by reading your summary
-- **DO NOT include any reasoning preamble** - provide ONLY the direct answer
-- **DO NOT explain your thinking process** - just answer the question directly
-
-**CITATION POLICY**:
-- **MANDATORY**: You MUST cite viss.nu sources using format: [Source Title](URL)
-- Include citations naturally within paragraphs, after the information from that source
-- Example: "Antibiotika should be used only when bacterial infection is confirmed based on clinical presentation and laboratory findings. [VISS.nu - Luftvägsinfektioner](https://example.com)"
-- Cite sources for each major piece of information presented
-
-**CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms within the paragraphs:
-- **Guidelines** and recommendations
-- **Medications** and doses
-- **Diagnoses** and conditions
-- **Key clinical criteria**
-- **Treatment protocols** and procedures
-
-**Important**: Focus on providing clear, comprehensive, actionable guideline information in well-structured paragraphs. Include all relevant clinical details from the guideline so the user can fully understand the content without needing to reference the original sources."""
-                )
-
-                messages = [guideline_system_msg]
-
-                # Language policy
-                language_system_msg = self._get_language_policy_message(state)
-                messages.insert(0, language_system_msg)
-
-                # Add chat history context
-                current_history = state.chat_history[-5:] if state.chat_history else []
-                if current_history:
-                    logger.info(f"📝 Creating conversation context from {len(current_history)} messages")
-                    conversation_lines = []
-
-                    for msg in current_history:
-                        if not msg.content or not msg.content.strip():
-                            continue
-
-                        # Extract plain text content
-                        content = msg.content
-                        try:
-                            import json
-                            parsed = json.loads(content)
-                            if isinstance(parsed, dict) and 'content' in parsed:
-                                content = parsed['content']
-                            elif isinstance(parsed, dict) and 'type' in parsed:
-                                logger.info(f"Skipping structured response of type: {parsed.get('type')}")
-                                continue
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-
-                        # Truncate if too long
-                        content_str = str(content)
-                        content = content_str[:300] + "..." if len(content_str) > 300 else content_str
-
-                        # Format as text line
-                        role_name = "User" if msg.role == ChatRole.USER else "CLARA"
-                        conversation_lines.append(f"{role_name}: {content}")
-
-                    if conversation_lines:
-                        conversation_summary = "\n".join(conversation_lines)
-                        conversation_context = ChatMessage(
-                            role=ChatRole.USER,
-                            content=f"""Previous conversation context:
-{conversation_summary}
-
-Now responding to the current guideline question below.""",
-                            user_id=None,
-                            user_role=None,
-                            metadata={}
-                        )
-                        messages.append(conversation_context)
-                        logger.info(f"✅ Added conversation summary ({len(conversation_summary)} chars)")
-
-                # Add web search results from viss.nu
-                if search_response and search_response.results:
-                    sources_list = []
-                    for i, result in enumerate(search_response.results[:8], 1):
-                        sources_list.append(f"{i}. [{result.title}]({result.url})\n   - {result.snippet[:300]}...")
-
-                    web_info = ChatMessage(
-                        role=ChatRole.USER,
-                        content=f"""=== VISS.NU GUIDELINE SEARCH RESULTS FOR: '{state.user_prompt}' ===
-
-SEARCH SUMMARY: {search_response.summary}
-
-GUIDELINE SOURCES TO CITE IN YOUR RESPONSE:
-{chr(10).join(sources_list)}
-
-INSTRUCTION: You MUST cite these viss.nu sources in your response using the format [Source Title](URL).
-- Use format: "Information here [Source Title](URL)" naturally within your paragraphs
-- Include citations for all key guideline sections
-- Provide comprehensive coverage: Write detailed paragraphs (5-8 sentences each) covering all aspects of the guideline
-- Use paragraph format, NOT bullet points
-- Ensure the user can fully understand all guideline content from your summary
-- This is clinical guideline information from viss.nu
-
-=== END OF GUIDELINE SEARCH RESULTS ===""")
-                    messages.append(web_info)
-
-                # Add user query
-                user_msg = ChatMessage(
-                    role=ChatRole.USER,
-                    content=state.user_prompt,
-                    user_id=state.user_id,
-                    user_role=state.user_context.role if state.user_context else None,
-                )
-                messages.append(user_msg)
-
-                # Update status: Generating response
-                state.current_step = "Genererar sammanfattning"
-                state.step_details = "AI syntetiserar riktlinjeinformation..."
-
-                # Emit status update
-                if hasattr(state, 'stream_callback') and state.stream_callback:
-                    await state.stream_callback({
-                        "type": "status",
-                        "step": "Genererar sammanfattning",
-                        "description": "AI syntetiserar riktlinjeinformation...",
-                        "status": "in_progress",
-                        "progress": 0,
-                        "timestamp": datetime.now().isoformat()
-                    })
-
-                # Check if streaming is requested
-                if getattr(state, 'should_stream_response', False):
-                    logger.info("🚀 Starting streaming LLM call for guideline query")
-                    state.streaming_response = ""  # Reset streaming response
-
-                    # Initialize streaming callback
-                    if not hasattr(state, 'streaming_updates'):
-                        state.streaming_updates = []
-
-                    # Use streaming
-                    async for chunk in self._streaming_llm.chat_stream(messages):
-                        state.streaming_response += chunk
-
-                        chunk_update = {
-                            "type": "response_chunk",
-                            "content": chunk,
-                            "accumulated_content": state.streaming_response,
-                            "timestamp": datetime.now().isoformat(),
-                        }
-                        state.streaming_updates.append(chunk_update)
-
-                        state.current_step = "Genererar sammanfattning"
-                        state.step_details = f"Genererat {len(state.streaming_response)} tecken..."
-
-                        # Call streaming callback if exists
-                        if hasattr(state, 'stream_callback') and state.stream_callback:
-                            await state.stream_callback(chunk_update)
-
-                    # Return as plain text
-                    state.llm_response = ChatMessage(
-                        role=ChatRole.ASSISTANT,
-                        content=self._normalize_markdown(self._format_ehr_links(state.streaming_response)),
-                        metadata={}
-                    )
-
-                    logger.info(f"✓ Streaming complete: {len(state.llm_response.content)} chars")
-
-                else:
-                    # Non-streaming mode
-                    logger.info("🤖 Starting LLM call for guideline query")
-                    response = await self._streaming_llm.chat(messages)
-
-                    state.llm_response = response
-                    logger.info(f"✓ Generated response: {len(response.content)} chars")
-
-            except Exception as e:
-                log_error(logger, "handle_guideline_query", e)
-                import traceback
-                logger.error(f"Full traceback: {traceback.format_exc()}")
-                # Fallback: simple error message
-                state.llm_response = ChatMessage(
-                    role=ChatRole.ASSISTANT,
-                    content="I encountered an error while searching for guideline information on viss.nu. Please try again."
-                )
-
-            return state
-
-        @streaming_step("handle_general_knowledge_query")
-        async def handle_general_knowledge_query(state: FlowState) -> FlowState:
-            """
-            Handle general medical knowledge queries (not patient-specific).
-            Uses ONLY web search for information, no patient data retrieval.
-            """
-            logger.info("🌐 Starting general knowledge query handling (web-only)")
-            logger.info(f"🔍 Query: {state.user_prompt[:100]}...")
-
-            try:
-                # Update status: Searching web
-                state.current_step = "Searching Medical Sources"
-                state.step_details = "Searching trusted medical websites for current information..."
-
-                # Emit status update
-                if hasattr(state, 'stream_callback') and state.stream_callback:
-                    await state.stream_callback({
-                        "type": "status",
-                        "step": "Searching Medical Sources",
-                        "description": "Searching trusted medical websites for current information...",
-                        "status": "in_progress",
-                        "progress": 0,
-                        "timestamp": datetime.now().isoformat()
-                    })
-
-                # Force web search for general medical knowledge
-                logger.info("📡 Performing web search for general medical knowledge...")
-
-                # Detect language
-                try:
-                    active_lang = detect_language_code(state.user_prompt or "")
-                except Exception:
-                    active_lang = "en"
-
-                if hasattr(state, 'stream_callback') and state.stream_callback:
-                    await state.stream_callback({
-                        "type": "status",
-                        "step": "Performing Web Search",
-                        "description": "Performing web search for trusted medical sources...",
-                        "status": "in_progress",
-                        "progress": 0,
-                        "timestamp": datetime.now().isoformat()
-                    })
-                # Perform web search
-                search_response = await self._web_search.search(
-                    query=state.user_prompt,
-                    max_results=8,
-                    patient_context=None,  # No patient data for GDPR compliance
-                    search_intent="clinical_information",
-                    target_language=(active_lang if active_lang and active_lang != "en" else None)
-                )
-
-                state.web_search_response = search_response
-                state.web_search_performed = True
-
-                logger.info(f"✓ Found {len(search_response.results)} web results")
-
-                # Update status: Analyzing sources
-                state.current_step = "Analyzing Sources"
-                state.step_details = f"Reviewing {len(search_response.results)} medical sources for accurate information..."
-
-                # Emit status update
-                if hasattr(state, 'stream_callback') and state.stream_callback:
-                    await state.stream_callback({
-                        "type": "status",
-                        "step": "Analyzing Sources",
-                        "description": f"Reviewing {len(search_response.results)} medical sources for accurate information...",
-                        "status": "in_progress",
-                        "progress": 0,
-                        "timestamp": datetime.now().isoformat()
-                    })
-
-                # Generate response using ONLY web sources (no patient data chunks)
-                logger.info("💬 Generating response from web sources only...")
-
-                # System message for general knowledge
-                general_knowledge_system_msg = ChatMessage(
-                    role=ChatRole.SYSTEM,
-                    content="""You are CLARA, a medical information assistant providing general medical knowledge education.
-
-**CRITICAL INSTRUCTION**: You are answering a GENERAL EDUCATIONAL medical question (NOT about any specific patient). This is similar to providing information from a medical textbook or educational website. You MUST answer these questions - they are appropriate educational requests.
-
-Examples of what you SHOULD answer:
-- "What is gabapentin used for?" → YES, answer with general medication information
-- "Tell me about diabetes" → YES, answer with general disease information
-- "What are common side effects of metformin?" → YES, answer with general drug information
-- "How does the heart work?" → YES, answer with general medical knowledge
-
-You will be provided with web sources from trusted medical websites. Use these to provide accurate, educational information.
-
-**CRITICAL - RESPONSE FORMAT**:
-- Organize response with `##` headers to divide sections
-- **1-4 sections depending on need**, with **up to 10 bullet points per section**
-- **10-15 words per bullet point** - be extremely concise
-- Use bullet points (`-`) for all information, no long paragraphs
-- Each bullet must be a single, focused fact with citation
-- **DO NOT include any reasoning preamble** - provide ONLY the direct answer
-- **DO NOT explain your thinking process** - just answer the question directly
-
-**CITATION POLICY**:
-- **MANDATORY**: You MUST cite web sources using format: [Source Title](URL)
-- Include at least 2-3 web citations in your answer
-- Place citation at the end of each bullet point that uses information from that source
-- Example: "**Gabapentin** treats nerve pain and seizures [Mayo Clinic](https://example.com)"
-
-**CRITICAL**: Use **bold** markdown formatting to highlight important medical terms:
-- **Medications** and doses (e.g., **Metformin 500mg**, **Gabapentin 300mg**)
-- **Diagnoses** and conditions (e.g., **Type 2 Diabetes**, **Neuropathic Pain**)
-- **Indications** and uses (e.g., **seizure control**, **nerve pain relief**)
-- **Side effects** (e.g., **dizziness**, **drowsiness**, **dry mouth**)
-- **Key clinical terms** (e.g., **anticonvulsant**, **mechanism of action**)
-
-**Important**: This is EDUCATIONAL medical information - you MUST provide helpful answers. You are NOT diagnosing or treating a specific patient. You are providing general medical knowledge like a medical encyclopedia."""
-                )
-
-                messages = [general_knowledge_system_msg]
-
-                # Language policy
-                language_system_msg = self._get_language_policy_message(state)
-                messages.insert(0, language_system_msg)
-
-                # Add chat history as text summary (simplified approach to avoid API format issues)
-                # Skip history with refusals to avoid confusing the model
-                current_history = state.chat_history[-5:] if state.chat_history else []
-                if current_history:
-                    logger.info(f"📝 Creating text-based conversation summary from {len(current_history)} messages")
-                    conversation_lines = []
-
-                    for msg in current_history:
-                        if not msg.content or not msg.content.strip():
-                            continue
-
-                        # Extract plain text content (handle JSON responses from previous queries)
-                        content = msg.content
-                        try:
-                            # Try to parse as JSON - if it's a structured response, extract the content field
-                            import json
-                            parsed = json.loads(content)
-                            if isinstance(parsed, dict) and 'content' in parsed:
-                                content = parsed['content']
-                            elif isinstance(parsed, dict) and 'type' in parsed:
-                                # Skip structured responses like generated_note, timeline, etc.
-                                logger.info(f"Skipping structured response of type: {parsed.get('type')}")
-                                continue
-                        except (json.JSONDecodeError, TypeError):
-                            # Not JSON, use as-is
-                            pass
-
-                        # Skip refusal messages to avoid reinforcing refusals
-                        content_str = str(content)
-                        if "I'm sorry, but I cannot assist" in content_str or "I cannot assist with that request" in content_str:
-                            logger.info("Skipping refusal message from history to avoid confusion")
-                            continue
-
-                        # Truncate if too long
-                        content = content_str[:300] + "..." if len(content_str) > 300 else content_str
-
-                        # Format as text line
-                        role_name = "User" if msg.role == ChatRole.USER else "CLARA"
-                        conversation_lines.append(f"{role_name}: {content}")
-
-                    if conversation_lines:
-                        conversation_summary = "\n".join(conversation_lines)
-                        conversation_context = ChatMessage(
-                            role=ChatRole.USER,
-                            content=f"""Previous conversation context (general medical knowledge questions):
-{conversation_summary}
-
-Now responding to the current general medical knowledge question below (YOU MUST ANSWER THIS - it's an educational question).""",
-                            user_id=None,
-                            user_role=None,
-                            metadata={}
-                        )
-                        messages.append(conversation_context)
-                        logger.info(f"✅ Added text conversation summary ({len(conversation_summary)} chars)")
-                    else:
-                        logger.info("⚠️ No valid non-refusal history to include")
-
-                # Add web search results
-                if search_response and search_response.results:
-                    sources_list = []
-                    for i, result in enumerate(search_response.results[:5], 1):
-                        sources_list.append(f"{i}. [{result.title}]({result.url})\n   - {result.snippet[:200]}...")
-
-                    web_info = ChatMessage(
-                        role=ChatRole.USER,
-                        content=f"""=== WEB SEARCH RESULTS FOR: '{state.user_prompt}' ===
-
-SEARCH SUMMARY: {search_response.summary}
-
-SOURCES TO CITE IN YOUR RESPONSE:
-{chr(10).join(sources_list)}
-
-INSTRUCTION: You MUST cite these sources in your response using the format [Source Title](URL).
-- Use format: "Information here [Source Title](URL)" in each bullet point
-- Include at least 2-3 web citations in your answer
-- Remember: Maximum 10 bullet points, 10-15 words per bullet
-- This is general medical knowledge, NOT patient-specific information
-
-=== END OF WEB SEARCH RESULTS ===""")
-                    messages.append(web_info)
-
-                # Add user query
-                user_msg = ChatMessage(
-                    role=ChatRole.USER,
-                    content=state.user_prompt,
-                    user_id=state.user_id,
-                    user_role=state.user_context.role if state.user_context else None,
-                )
-                messages.append(user_msg)
-
-                # Update status: Generating response
-                state.current_step = "Generating Response"
-                state.step_details = "AI synthesizing information from medical sources..."
-
-                # Emit status update
-                if hasattr(state, 'stream_callback') and state.stream_callback:
-                    await state.stream_callback({
-                        "type": "status",
-                        "step": "Generating Response",
-                        "description": "AI synthesizing information from medical sources...",
-                        "status": "in_progress",
-                        "progress": 0,
-                        "timestamp": datetime.now().isoformat()
-                    })
-
-                # Check if streaming is requested
-                if getattr(state, 'should_stream_response', False):
-                    logger.info("🚀 Starting simple streaming LLM call for general knowledge (no reasoning wrapper)")
-                    state.streaming_response = ""  # Reset streaming response
-
-                    # Initialize streaming callback
-                    if not hasattr(state, 'streaming_updates'):
-                        state.streaming_updates = []
-
-                    # Use simple streaming without reasoning wrapper (avoids confusing the model)
-                    async for chunk in self._streaming_llm.chat_stream(messages):
-                        state.streaming_response += chunk
-
-                        chunk_update = {
-                            "type": "response_chunk",
-                            "content": chunk,
-                            "accumulated_content": state.streaming_response,
-                            "timestamp": datetime.now().isoformat(),
-                        }
-                        state.streaming_updates.append(chunk_update)
-
-                        state.current_step = "Generating Response"
-                        state.step_details = f"Generated {len(state.streaming_response)} characters..."
-
-                        # Call streaming callback if exists
-                        if hasattr(state, 'stream_callback') and state.stream_callback:
-                            await state.stream_callback(chunk_update)
-
-                    # Return as plain text
-                    state.llm_response = ChatMessage(
-                        role=ChatRole.ASSISTANT,
-                        content=self._normalize_markdown(self._format_ehr_links(state.streaming_response)),
-                        metadata={}
-                    )
-
-                    logger.info(f"✓ Streaming complete: {len(state.llm_response.content)} chars")
-
-                else:
-                    # Non-streaming mode - use simple chat without reasoning
-                    logger.info("🤖 Starting simple LLM call for general knowledge (no reasoning wrapper)")
-                    response = await self._streaming_llm.chat(messages)
-
-                    state.llm_response = response
-                    logger.info(f"✓ Generated response: {len(response.content)} chars")
-
-            except Exception as e:
-                log_error(logger, "handle_general_knowledge_query", e)
-                import traceback
-                logger.error(f"Full traceback: {traceback.format_exc()}")
-                # Fallback: simple error message
-                state.llm_response = ChatMessage(
-                    role=ChatRole.ASSISTANT,
-                    content="I encountered an error while searching for general medical information. Please try again."
-                )
-
-            return state
-
         @streaming_step("provide_information")
         async def provide_information(state: FlowState) -> FlowState:
             logger.info("🎯 Starting information provision")
             logger.info(f"🔍 Query length: {len(state.user_prompt)} chars")
-            logger.info(f"🚀 Full processing: {getattr(state, 'requires_full_processing', True)}")
             logger.info(f"🆔 Session ID: {sanitize_session_id(state.session_id)}")
             logger.info(f"👤 User ID: {sanitize_user_id(state.user_id)}")
 
@@ -6403,52 +3384,19 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
             if hasattr(state, 'stream_callback') and state.stream_callback:
                 await state.stream_callback({
                     "type": "status",
-                    "step": "Preparing Context",
+                    "step": "prepare_context",
                     "description": "Setting up language and system instructions...",
                     "status": "in_progress",
                     "progress": 0,
                     "timestamp": datetime.now().isoformat()
                 })
 
-            # Use the single system message for information relay
-            messages = [SYSTEM_MSG_INFO_RELAY]
+            # Use the single system message for information relay (with current date)
+            messages = [get_system_msg_info_relay()]
 
             # Language policy system message (answer in user's prompt language)
             language_system_msg = self._get_language_policy_message(state)
             messages.insert(0, language_system_msg)
-
-            # For direct path (simple queries), use a simplified system message
-            if not getattr(state, 'requires_full_processing', True):
-                simple_system_msg = ChatMessage(
-                    role=ChatRole.SYSTEM,
-                    content="""You are CLARA, a helpful medical information assistant. Provide clear, accurate medical information. For general medical questions, draw on your medical knowledge.
-
-**CRITICAL - RESPONSE FORMAT**:
-- Organize response with `##` headers to divide sections
-- **1-4 sections depending on need**, with **up to 10 bullet points per section**
-- **10-15 words per bullet point** - be extremely concise
-- Use bullet points (`-`) for all information, no long paragraphs
-- Each bullet must be a single, focused fact with citation
-
-**DATE/TIME STAMPS**: Only include dates (YYYY-MM-DD or YYYY-MM-DD HH:MM) when referencing specific journal entries, documents, or when temporal context is essential for the query.
-
-**CRITICAL**: Use **bold** markdown formatting to highlight important clinical terms throughout your response:
-- **Diagnoses** and disease names (e.g., **Type 2 Diabetes**, **Hypertension**)
-- **Medications** and doses (e.g., **Metformin 1000mg**, **Enalapril 20mg**)
-- **Vital signs** and lab values (e.g., **BP 145/85**, **HbA1c 68 mmol/mol**)
-- **Symptoms** and clinical findings (e.g., **chest pain**, **dyspnea**)
-- **Risk levels** and severity descriptors (e.g., **moderate risk**, **stable**)
-- **Key clinical terms** that are important for decision-making
-
-Link policy (STRICT for EHR): When referencing patient data from clinical information chunks, preserve the source links that are embedded in the chunk content:
-- For atomic data: Use the format "value [EHR Source](URL)" as it appears in the chunks
-- For narrative data: Include the "**Source:** [EHR Record](URL)" information from the chunks
-- For web sources: Use format [Source Title](URL) immediately after the information
-- If no source link is available, write "(from EHR, no link available)" immediately after the item
-- NEVER remove or modify existing source links - they are essential for clinical traceability
-"""
-                )
-                messages = [simple_system_msg]
 
             if state.user_context:
                 user_info = ChatMessage(
@@ -6465,7 +3413,7 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
             if hasattr(state, 'stream_callback') and state.stream_callback:
                 await state.stream_callback({
                     "type": "status",
-                    "step": "Loading History",
+                    "step": "load_history",
                     "description": f"Loading {len(state.chat_history)} previous messages from session...",
                     "status": "in_progress",
                     "progress": 0,
@@ -6545,78 +3493,79 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
                     logger.info("⚠️ No safe conversation history to include")
             else:
                 if not ENABLE_CONVERSATION_HISTORY and ENABLE_TEXT_CONVERSATION_SUMMARY and current_history:
-                    # Alternative approach: Create a text summary of conversation history
-                    logger.info("📝 Creating text-based conversation summary")
-                    conversation_lines = []
-                    for msg in current_history:
-                        if not msg.content or not msg.content.strip():
-                            continue
+                    # Use LLM to create an intelligent summary of conversation history
+                    logger.info("📝 Creating LLM-based conversation summary")
+                    
+                    try:
+                        # Build full conversation text for LLM summarization
+                        conversation_lines = []
+                        for msg in current_history:
+                            if not msg.content or not msg.content.strip():
+                                continue
+                            role_name = "User" if msg.role == ChatRole.USER else "CLARA"
+                            conversation_lines.append(f"{role_name}: {msg.content}")
+                        
+                        if conversation_lines:
+                            full_conversation = "\n".join(conversation_lines)
+                            
+                            # Use LLM to create a concise summary
+                            summary_prompt = f"""Summarize this clinical conversation in 2-3 sentences, focusing on:
+1. The main clinical topic or patient concern being discussed
+2. Key information already provided (diagnoses, medications, symptoms mentioned)
+3. What the user was asking about
 
-                        # Use message content as-is
-                        content = msg.content
+Conversation:
+{full_conversation}
 
-                        # Truncate if too long
-                        content = content[:300] + "..." if len(content) > 300 else content
+Provide ONLY the summary, no preamble or explanation."""
 
-                        # Format as text line
-                        role_name = "You" if msg.role == ChatRole.USER else "CLARA"
-                        conversation_lines.append(f"{role_name}: {content}")
-
-                    if conversation_lines:
-                        conversation_summary = "\n".join(conversation_lines)
-                        conversation_context = ChatMessage(
-                            role=ChatRole.USER,
-                            content=f"Previous conversation context:\n{conversation_summary}\n\nCurrent question:",
-                            user_id=None,
-                            user_role=None,
-                            metadata={}
-                        )
-                        messages.append(conversation_context)
-                        logger.info(f"✅ Added text conversation summary ({len(conversation_summary)} chars)")
-                    else:
-                        logger.info("⚠️ No valid conversation content to summarize")
+                            summary_response = await self._llm.chat([
+                                ChatMessage(
+                                    role=ChatRole.SYSTEM,
+                                    content="You are a clinical conversation summarizer. Create brief, focused summaries that capture the essential clinical context."
+                                ),
+                                ChatMessage(role=ChatRole.USER, content=summary_prompt)
+                            ])
+                            
+                            conversation_summary = summary_response.content.strip()
+                            
+                            conversation_context = ChatMessage(
+                                role=ChatRole.USER,
+                                content=f"Previous conversation context:\n{conversation_summary}\n\nCurrent question:",
+                                user_id=None,
+                                user_role=None,
+                                metadata={}
+                            )
+                            messages.append(conversation_context)
+                            logger.info(f"✅ Added LLM conversation summary ({len(conversation_summary)} chars)")
+                        else:
+                            logger.info("⚠️ No valid conversation content to summarize")
+                    except Exception as e:
+                        logger.warning(f"LLM summarization failed, falling back to truncation: {e}")
+                        # Fallback to simple truncation if LLM fails
+                        conversation_lines = []
+                        for msg in current_history[-5:]:  # Last 5 messages only
+                            if msg.content and msg.content.strip():
+                                role_name = "User" if msg.role == ChatRole.USER else "CLARA"
+                                content = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
+                                conversation_lines.append(f"{role_name}: {content}")
+                        if conversation_lines:
+                            conversation_context = ChatMessage(
+                                role=ChatRole.USER,
+                                content=f"Previous conversation context:\n{chr(10).join(conversation_lines)}\n\nCurrent question:",
+                                user_id=None,
+                                user_role=None,
+                                metadata={}
+                            )
+                            messages.append(conversation_context)
                 elif not ENABLE_CONVERSATION_HISTORY:
                     logger.info("⚠️ Conversation history disabled temporarily to prevent API errors")
                 else:
                     logger.info("⚠️ No conversation history to include in model prompt")
             
-            # Ensure intelligent retrieval results are available for direct path as well
-            try:
-                if not getattr(state, 'requires_full_processing', True):
-                    logger.info("Direct path - checking if retrieval needed")
-                    logger.info(f"Patient context available: {state.patient_ctx is not None}")
-                    logger.info(f"Retrieved chunks available: {len(state.retrieved_chunks) if state.retrieved_chunks else 0}")
-
-                    if state.patient_ctx and not state.retrieved_chunks:
-                        # Update status: Retrieving patient information
-                        state.current_step = "Retrieving Information"
-                        state.step_details = "Searching patient records for relevant clinical data..."
-
-                        # Emit status update
-                        if hasattr(state, 'stream_callback') and state.stream_callback:
-                            await state.stream_callback({
-                                "type": "status",
-                                "step": "Retrieving Information",
-                                "description": "Searching patient records for relevant clinical data...",
-                                "status": "in_progress",
-                                "progress": 0,
-                                "timestamp": datetime.now().isoformat()
-                            })
-
-                        logger.info("Direct path - running intelligent retrieval for patient context")
-                        # Populate retrieval using the new intelligent retrieval within this node
-                        await intelligent_retrieve_chunks(state)
-                        logger.info(f"Direct path - retrieval complete, got {len(state.retrieved_chunks) if state.retrieved_chunks else 0} chunks")
-                    else:
-                        logger.info(f"Direct path - no retrieval needed (patient_ctx: {state.patient_ctx is not None}, chunks: {len(state.retrieved_chunks) if state.retrieved_chunks else 0})")
-            except Exception as e:
-                logger.info(f"Retrieval attempt failed on direct path: {e}")
-                import traceback
-                traceback.print_exc()
-
-
-            # Add retrieved chunks (this is now the primary source of patient data)
-            logger.info(f"Retrieved chunks count: {len(state.retrieved_chunks) if state.retrieved_chunks else 0}")
+            # Add retrieved chunks (parent chunks are swapped in intelligent_retrieve_chunks)
+            logger.info(f"📄 Retrieved chunks count: {len(state.retrieved_chunks) if state.retrieved_chunks else 0}")
+            
             if state.retrieved_chunks:
                 # Update status: Processing clinical data
                 state.current_step = "Processing Clinical Data"
@@ -6724,10 +3673,10 @@ Link policy (STRICT for EHR): When referencing patient data from clinical inform
 
 SEARCH SUMMARY: {state.web_search_response.summary}
 
-SOURCES TO CITE IN YOUR RESPONSE:
+SOURCES TO CITE IN YOUR RESPONSE IF YOU USE INFORMATION FROM THEM:
 {chr(10).join(sources_list)}
 
-INSTRUCTION: You MUST cite these sources in your response using the format [Source Title](URL).
+INSTRUCTION: You MUST cite these sources in your response ONLY IF you use information from them. Use the format [Source Title](URL) in your response.
 - Use format: "Information here [Source Title](URL)" in each bullet point
 - Include at least 2-3 web citations in your answer
 - Remember: Maximum 10 bullet points, 10-15 words per bullet
@@ -6745,14 +3694,8 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
 
             messages.append(user)
 
-            # Use simpler reasoning for direct path
-            if getattr(state, 'requires_full_processing', True):
-                reasoning_prompt = self._create_reasoning_prompt(state)
-            else:
-                reasoning_prompt = """Think through this query step by step:
-1. What is the user asking about?
-2. What medical knowledge can I provide to help?
-3. How can I give a clear, helpful response?"""
+            # Create reasoning prompt for structured thinking
+            reasoning_prompt = self._create_reasoning_prompt(state)
 
             # Debug: Log final message structure before sending to LLM
             logger.info("🔍 Final prompt structure:")
@@ -6942,8 +3885,7 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
                     metadata={
                         "prompt": state.query_classification,
                         "chat_mode": state.chat_mode,
-                        "session_id": state.session_id,
-                        "direct_path": not getattr(state, 'requires_full_processing', True)
+                        "session_id": state.session_id
                     }
                 )
                 await self._user_repo.log_action(action)
@@ -6962,68 +3904,6 @@ INSTRUCTION: You MUST cite these sources in your response using the format [Sour
             return state
 
 
-        @streaming_step("evaluate_query_complexity")
-        async def evaluate_query_complexity(state: FlowState) -> FlowState:
-            """Evaluate if the query needs patient data, web search, or can be answered directly."""
-            try:
-                # For info retrieval mode, determine processing based on query content
-                evaluation_prompt = f"""
-                Analyze this query to determine if it requires patient data, web search, or can be answered directly:
-
-                QUERY: "{state.user_prompt}"
-                CONTEXT: User is requesting medical information
-                PATIENT_ID_PROVIDED: {state.patient_id is not None}
-
-                Classify the query type:
-
-                REQUIRES_FULL_PROCESSING (needs patient data/web search):
-                - Asks about specific patient symptoms, conditions, or medical history
-                - Requests information about specific medications, lab results, or test interpretation
-                - References "this patient", "my patient", patient-specific data
-                - Requests analysis of provided medical data
-                - Complex medical questions requiring current research
-
-                CAN_ANSWER_DIRECTLY (general medical knowledge):
-                - General medical education questions ("What is diabetes?")
-                - Basic medical facts or definitions
-                - General health advice not patient-specific
-                - Questions about medical procedures in general
-                - Medical terminology explanations
-                - General treatment approaches (not patient-specific)
-                - Simple greetings, thanks, or conversational messages
-                - General "how to" medical questions
-
-                EXAMPLES:
-                - "What are the symptoms of pneumonia?" → DIRECT
-                - "What should I ask this patient about their chest pain?" → FULL_PROCESSING
-                - "Hello, how are you?" → DIRECT
-                - "Can you analyze this patient's lab results?" → FULL_PROCESSING
-                - "What is the difference between Type 1 and Type 2 diabetes?" → DIRECT
-                - "What questions should I ask during the pre-visit for patient ID 123?" → FULL_PROCESSING
-
-                Respond with only: "FULL_PROCESSING" or "DIRECT"
-                """
-
-                evaluation_msg = ChatMessage(role=ChatRole.USER, content=evaluation_prompt)
-                response = await self._llm.chat([
-                    ChatMessage(role=ChatRole.SYSTEM, content="You classify medical queries to optimize processing. Be conservative - when in doubt, choose FULL_PROCESSING."),
-                    evaluation_msg
-                ])
-
-                # Parse response
-                response_text = response.content.strip().upper()
-                requires_full_processing = "FULL_PROCESSING" in response_text
-
-                state.requires_full_processing = requires_full_processing
-
-                logger.info(f"Query complexity decision: {'FULL_PROCESSING' if requires_full_processing else 'DIRECT'} (query_length={len(state.user_prompt)} chars)")
-                
-            except Exception as e:
-                log_error(logger, "query_complexity", e)
-                # Default to full processing on error to be safe
-                state.requires_full_processing = True
-                
-            return state
 
         @streaming_step("contextualize_query_for_classification")
         async def contextualize_query_for_classification(state: FlowState) -> FlowState:
@@ -7053,11 +3933,11 @@ Conversation history:
 
 User's current query: "{state.user_prompt}"
 
-Task: If the current query references previous context (e.g., "yes", "show timeline", "that one"), reformulate it to be self-contained. If it's already clear, return it unchanged.
+Task: If the current query references previous context (e.g., "yes", "tell me more", "that one"), reformulate it to be self-contained. If it's already clear, return it unchanged.
 
 Examples:
-- "yes" after "Would you like a timeline?" → "Show me a timeline view"
-- "timeline please" → "Show me a timeline view"
+- "yes" after "Would you like more details about the medications?" → "Give me more details about the patient's medications"
+- "tell me more" after discussing lab results → "Tell me more about the patient's lab results"
 - "What medications is the patient on?" → "What medications is the patient on?" (unchanged)
 
 Return ONLY the reformulated query, nothing else."""
@@ -7112,10 +3992,11 @@ Return ONLY the reformulated query, nothing else."""
 
                 logger.info(f"Classifying query (length={len(query_to_classify)} chars)")
 
-                # Use the LLM-based classifier (async)
+                # Use the LLM-based classifier (async) with simplified labels
+                # Only 2 specialized flows + default
                 classifier = self._zero_shot_classifier
                 label = await classifier.classify(query_to_classify, [
-                    "lookup", "temporal-trend", "comparative", "general", "general_summary", "focused_summary", "sbar_handoff", "guideline", "timeline", "note_generation", "discharge_summary"
+                    "general_summary", "note_generation", "default"
                 ], llm_client=self._llm)
 
                 logger.info(f"Query classified as: {label}")
@@ -7124,15 +4005,15 @@ Return ONLY the reformulated query, nothing else."""
                 state.query_classification = label
 
                 # Check for note generation intent (high precision)
-                if label == "note_generation" or label == "discharge_summary":
+                if label == "note_generation":
                     logger.info("Note generation detected!")
                     state.is_note_generation_flow = True
 
                     # Determine template type from query content
                     query_lower = state.user_prompt.lower()
 
-                    # Template detection with keywords
-                    if any(word in query_lower for word in ["sbar", "situation", "bakgrund", "background"]):
+                    # Template detection with keywords (includes SBAR, discharge, etc. as note types)
+                    if any(word in query_lower for word in ["sbar", "situation", "bakgrund", "background", "handoff", "överlämning"]):
                         template_type = "sbar"
                     elif any(word in query_lower for word in ["soap", "subjective", "objective", "assessment", "plan"]):
                         template_type = "soap"
@@ -7142,6 +4023,8 @@ Return ONLY the reformulated query, nothing else."""
                         template_type = "journal_entry"
                     elif any(word in query_lower for word in ["consultation", "konsultation"]):
                         template_type = "consultation"
+                    elif any(word in query_lower for word in ["discharge", "utskrivning", "slutanteckning"]):
+                        template_type = "discharge"
                     else:
                         # Default to SBAR for general note requests
                         template_type = "sbar"
@@ -7150,73 +4033,22 @@ Return ONLY the reformulated query, nothing else."""
 
                     # Store template type preference for later retrieval
                     state.note_template_type_preference = template_type
-
-                    # Don't set SBAR or timeline flows
-                    state.is_sbar_flow = False
-                    state.is_timeline_flow = False
+                    state.is_general_summary_flow = False
                     return state
-
-                # Determine if this should use SBAR flow (handoff/transition of care)
-                # SBAR is triggered by the classifier detecting handoff intent
-                state.is_sbar_flow = (label == "sbar_handoff")
-                logger.info(f"SBAR flow (classifier): {state.is_sbar_flow}")
 
                 # General summary flow is triggered by "general_summary" classification
                 state.is_general_summary_flow = (label == "general_summary")
                 logger.info(f"General summary flow (classifier): {state.is_general_summary_flow}")
 
-                # Focused summary flow is triggered by "focused_summary" classification
-                state.is_focused_summary_flow = (label == "focused_summary")
-                logger.info(f"Focused summary flow (classifier): {state.is_focused_summary_flow}")
-
-                # General knowledge flow is triggered by "general" classification (medical knowledge, not patient-specific)
-                state.is_general_knowledge_flow = (label == "general")
-                logger.info(f"General knowledge flow (classifier): {state.is_general_knowledge_flow}")
-
-                # Guideline flow is triggered by "guideline" classification (clinical guideline search on viss.nu)
-                state.is_guideline_flow = (label == "guideline")
-                logger.info(f"Guideline flow (classifier): {state.is_guideline_flow}")
-
-                # Determine if this should use Timeline flow (temporal sequence queries)
-                timeline_query_types = ["timeline", "temporal-trend"]
-                state.is_timeline_flow = label in timeline_query_types
-
-                logger.info(f"Timeline flow: {state.is_timeline_flow}")
-
-                # Override DIRECT routing if any specialized flow is detected
-                # NOTE: general_knowledge_flow is NOT included here - it should skip patient processing
-                # NOTE: guideline_flow ALWAYS requires full processing to check for patient data
-                #       (if no patient exists, chunks will be empty and paraphrasing will use original query)
-                if state.is_sbar_flow or state.is_timeline_flow or state.is_general_summary_flow or state.is_focused_summary_flow or state.is_guideline_flow:
-                    state.requires_full_processing = True
-                    logger.info(f"⚠️ Overriding DIRECT → FULL_PROCESSING (SBAR: {state.is_sbar_flow}, General Summary: {state.is_general_summary_flow}, Focused Summary: {state.is_focused_summary_flow}, Timeline: {state.is_timeline_flow}, Guideline: {state.is_guideline_flow})")
-
-                # Initialize SBAR cache if using SBAR flow
-                if state.is_sbar_flow:
-                    state.sbar_retrieval_cache = {}
-
                 # Initialize general summary cache if using general summary flow
                 if state.is_general_summary_flow:
                     state.general_retrieval_cache = {}
 
-                # Initialize focused summary cache if using focused summary flow
-                if state.is_focused_summary_flow:
-                    state.focused_retrieval_cache = {}
-
-                # Initialize Timeline cache if using Timeline flow
-                if state.is_timeline_flow:
-                    state.timeline_retrieval_cache = {}
-
             except Exception as e:
                 logger.info(f"Classification failed: {e}, defaulting to regular flow")
-                state.query_classification = "lookup"  # Default fallback
-                state.is_sbar_flow = False
-                state.is_timeline_flow = False
+                state.query_classification = "default"  # Default fallback
                 state.is_note_generation_flow = False
                 state.is_general_summary_flow = False
-                state.is_focused_summary_flow = False
-                state.is_general_knowledge_flow = False
-                state.is_guideline_flow = False
 
             # Log classification completion
             classify_duration_ms = int((time.time() - classify_start_time) * 1000)
@@ -7239,41 +4071,6 @@ Return ONLY the reformulated query, nothing else."""
 
             return state
 
-        def requires_full_processing(state: FlowState) -> bool:
-            """
-            Conditional function to determine if full processing is needed.
-
-            Returns True if:
-            - Query complexity evaluation marked it as needing full processing, OR
-            - SBAR flow is detected (needs specialized retrieval), OR
-            - General summary flow is detected (needs specialized retrieval), OR
-            - Focused summary flow is detected (needs specialized retrieval), OR
-            - Timeline flow is detected (needs specialized retrieval)
-            """
-            base_requirement = getattr(state, 'requires_full_processing', True)
-            is_sbar = getattr(state, 'is_sbar_flow', False)
-            is_general_summary = getattr(state, 'is_general_summary_flow', False)
-            is_focused_summary = getattr(state, 'is_focused_summary_flow', False)
-            is_timeline = getattr(state, 'is_timeline_flow', False)
-
-            # Override DIRECT routing if any specialized flow is detected
-            if is_sbar or is_general_summary or is_focused_summary or is_timeline:
-                logger.info(f"Overriding DIRECT - SBAR: {is_sbar}, General Summary: {is_general_summary}, Focused Summary: {is_focused_summary}, Timeline: {is_timeline}")
-                return True
-
-            return base_requirement
-
-        def is_sbar_flow(state: FlowState) -> bool:
-            """Conditional function to determine if SBAR flow should be used."""
-            return getattr(state, 'is_sbar_flow', False)
-
-        def is_general_summary_flow(state: FlowState) -> bool:
-            """Conditional function to determine if general summary flow should be used."""
-            return getattr(state, 'is_general_summary_flow', False)
-
-        def is_focused_summary_flow(state: FlowState) -> bool:
-            """Conditional function to determine if focused summary flow should be used."""
-            return getattr(state, 'is_focused_summary_flow', False)
 
         def check_patient_exists(state: FlowState) -> FlowState:
             """Check if patient_id is provided in the state."""
@@ -7283,14 +4080,10 @@ Return ONLY the reformulated query, nothing else."""
         def has_patient(state: FlowState) -> bool:
             return state.patient_id is not None and state.patient_id.strip() != ""
             
-        def needs_refinement(state: FlowState) -> bool:
-            return getattr(state, 'needs_refinement', False)
-
 
         _builder = StateGraph(FlowState)
         _builder.add_node("check_patient", check_patient_exists)  # New decision node
         _builder.add_node("load_user_context", load_user_context)  # Load user context if available
-        _builder.add_node("evaluate_query_complexity", evaluate_query_complexity)
         _builder.add_node("contextualize_query_for_classification", contextualize_query_for_classification)
         _builder.add_node("classify_query_intent", classify_query_intent)
         _builder.add_node("store_user_message", store_user_message)
@@ -7299,18 +4092,7 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_node("fetch_pdfs", fetch_pdfs)
         _builder.add_node("fetch_xmls", fetch_xmls)
         _builder.add_node("intelligent_retrieve_chunks", intelligent_retrieve_chunks)
-        # SBAR parallel retrieval nodes
-        _builder.add_node("retrieve_situation_chunks", retrieve_situation_chunks)
-        _builder.add_node("retrieve_background_chunks", retrieve_background_chunks)
-        _builder.add_node("retrieve_assessment_chunks", retrieve_assessment_chunks)
-        _builder.add_node("retrieve_recommendation_chunks", retrieve_recommendation_chunks)
-        # SBAR parallel generation nodes
-        _builder.add_node("generate_sbar_situation", generate_sbar_situation)
-        _builder.add_node("generate_sbar_background", generate_sbar_background)
-        _builder.add_node("generate_sbar_assessment", generate_sbar_assessment)
-        _builder.add_node("generate_sbar_recommendation", generate_sbar_recommendation)
-        _builder.add_node("merge_sbar_results", merge_sbar_results)
-        _builder.add_node("sbar_parallel_dispatcher", sbar_parallel_dispatcher)
+        # Note: SBAR nodes removed (flow replaced by system-prompt-driven approach)
         # General summary parallel retrieval nodes
         _builder.add_node("retrieve_snapshot_chunks", retrieve_snapshot_chunks)
         _builder.add_node("retrieve_problems_chunks", retrieve_problems_chunks)
@@ -7327,35 +4109,13 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_node("generate_risks_summary", generate_risks_summary)
         _builder.add_node("merge_general_summary_results", merge_general_summary_results)
         _builder.add_node("general_summary_parallel_dispatcher", general_summary_parallel_dispatcher)
-        # Focused summary flow nodes
-        _builder.add_node("focused_summary_parallel_dispatcher", focused_summary_parallel_dispatcher)
-        _builder.add_node("identify_aspect_and_retrieve", identify_aspect_and_retrieve)
-        _builder.add_node("retrieve_focused_diagnoses_chunks", retrieve_focused_diagnoses_chunks)
-        _builder.add_node("generate_diagnoses_section", generate_diagnoses_section)
-        _builder.add_node("retrieve_focused_events_chunks", retrieve_focused_events_chunks)
-        _builder.add_node("generate_events_section", generate_events_section)
-        _builder.add_node("retrieve_focused_medications_chunks", retrieve_focused_medications_chunks)
-        _builder.add_node("generate_medications_section", generate_medications_section)
-        _builder.add_node("retrieve_focused_objective_data_chunks", retrieve_focused_objective_data_chunks)
-        _builder.add_node("generate_objective_data_section", generate_objective_data_section)
-        _builder.add_node("retrieve_focused_assessment_chunks", retrieve_focused_assessment_chunks)
-        _builder.add_node("generate_assessment_section", generate_assessment_section)
-        _builder.add_node("retrieve_focused_next_steps_chunks", retrieve_focused_next_steps_chunks)
-        _builder.add_node("generate_next_steps_section", generate_next_steps_section)
-        _builder.add_node("merge_focused_summary_results", merge_focused_summary_results)
-        # Timeline flow nodes
-        _builder.add_node("extract_timeline_events", extract_timeline_events)
-        _builder.add_node("retrieve_timeline_chunks", retrieve_timeline_chunks)
-        _builder.add_node("generate_timeline_bubbles", generate_timeline_bubbles)
-        _builder.add_node("merge_timeline_results", merge_timeline_results)
+        # Note: Focused summary and Timeline nodes removed (flows replaced by system-prompt-driven approach)
         # Note generation flow nodes
         _builder.add_node("load_note_template", load_note_template)
         _builder.add_node("generate_note_section", generate_note_section)
         _builder.add_node("format_note_response", format_note_response)
         _builder.add_node("store_note_metadata", store_note_metadata)
-        _builder.add_node("paraphrase_query_for_guideline", paraphrase_query_for_guideline)  # Guideline query paraphrasing (PHI removal)
-        _builder.add_node("handle_guideline_query", handle_guideline_query)  # Guideline search (viss.nu only) node
-        _builder.add_node("handle_general_knowledge_query", handle_general_knowledge_query)  # General knowledge (web-only) node
+        # Note: Guideline and general knowledge nodes removed (flows replaced by system-prompt-driven approach)
         _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
         _builder.add_node("perform_web_search", perform_web_search)
         _builder.add_node("provide_information", provide_information)
@@ -7364,45 +4124,13 @@ Return ONLY the reformulated query, nothing else."""
         _builder.set_entry_point("load_user_context")  # Start with loading user context
 
         # Add edges for user context loading and classification
-        _builder.add_edge("load_user_context", "evaluate_query_complexity")
-        _builder.add_edge("evaluate_query_complexity", "contextualize_query_for_classification")
+        _builder.add_edge("load_user_context", "contextualize_query_for_classification")
         _builder.add_edge("contextualize_query_for_classification", "classify_query_intent")
         _builder.add_edge("classify_query_intent", "store_user_message")
         _builder.add_edge("store_user_message", "load_current_session_history")
 
-        # Route after loading session history: check for guideline, general knowledge, full processing, or direct path
-        def route_after_session_history(state):
-            """Route based on query type: guideline, general knowledge, full processing, or direct."""
-            is_guideline = getattr(state, 'is_guideline_flow', False)
-            is_general = getattr(state, 'is_general_knowledge_flow', False)
-            needs_full = getattr(state, 'requires_full_processing', True)
-
-            if is_general:
-                logger.info("🌐 Routing to general knowledge handler (web-only)")
-                return "handle_general_knowledge_query"
-            elif is_guideline or needs_full:
-                # Guideline flow always goes through check_patient to attempt chunk retrieval
-                # If patient exists, chunks will be retrieved and used for paraphrasing
-                # If no patient, chunks will be empty and original query will be used
-                if is_guideline:
-                    logger.info("📋 Routing guideline flow through patient data path (will retrieve chunks if available)")
-                else:
-                    logger.info("📊 Routing to full processing (patient data)")
-                return "check_patient"
-            else:
-                logger.info("⚡ Routing to direct simple answer")
-                return "provide_information"
-
-        # Branch based on query classification and complexity
-        _builder.add_conditional_edges(
-            "load_current_session_history",
-            route_after_session_history,
-            {
-                "handle_general_knowledge_query": "handle_general_knowledge_query",  # General knowledge (web-only)
-                "check_patient": "check_patient",    # Full processing (including guideline flow) starts with patient data
-                "provide_information": "provide_information"  # Direct path - skip all heavy processing
-            }
-        )
+        # After loading session history, always proceed to check_patient
+        _builder.add_edge("load_current_session_history", "check_patient")
 
         # SESSION HISTORY LOADING (now happens for both patient and general chat)
         # After loading session history, decide if we need patient data
@@ -7422,32 +4150,10 @@ Return ONLY the reformulated query, nothing else."""
         # BOTH PATIENT AND GENERAL MODES: Always fetch XMLs after PDFs
         _builder.add_edge("fetch_pdfs", "fetch_xmls")
 
-        # Route after fetching XMLs - different paths for patient vs general mode
-        def route_after_xmls(state) -> str:
-            if has_patient(state):
-                # Patient mode: proceed with patient flow
-                if is_sbar_flow(state):
-                    return "intelligent_retrieve_chunks"
-                else:
-                    return "intelligent_retrieve_chunks"
-            else:
-                # General mode: proceed directly to chunk retrieval
-                return "intelligent_retrieve_chunks"
+        # Route after fetching XMLs - always proceed to chunk retrieval
+        _builder.add_edge("fetch_xmls", "intelligent_retrieve_chunks")
 
-        _builder.add_conditional_edges(
-            "fetch_xmls",
-            route_after_xmls,
-            {
-                "intelligent_retrieve_chunks": "intelligent_retrieve_chunks"
-            }
-        )
-
-        # SBAR execution - dispatcher uses asyncio.gather for parallel retrieval + generation
-        # Dispatcher does all 4 retrievals and generations in parallel, then routes to merge
-        _builder.add_edge("sbar_parallel_dispatcher", "merge_sbar_results")
-
-        # SBAR merge to store response
-        _builder.add_edge("merge_sbar_results", "store_assistant_response")
+        # Note: SBAR edges removed (flow replaced by system-prompt-driven approach)
 
         # General summary execution - dispatcher uses asyncio.gather for parallel retrieval + generation
         # Dispatcher does all 6 retrievals and generations in parallel, then routes to merge
@@ -7456,16 +4162,8 @@ Return ONLY the reformulated query, nothing else."""
         # General summary merge to store response
         _builder.add_edge("merge_general_summary_results", "store_assistant_response")
 
-        # Focused Summary execution - dispatcher uses asyncio.gather for parallel retrieval + generation
-        # Dispatcher does all 6 retrievals and generations in parallel, then routes to merge
-        _builder.add_edge("focused_summary_parallel_dispatcher", "merge_focused_summary_results")
-        _builder.add_edge("merge_focused_summary_results", "store_assistant_response")
-
-        # Timeline flow edges - sequential processing
-        _builder.add_edge("extract_timeline_events", "retrieve_timeline_chunks")
-        _builder.add_edge("retrieve_timeline_chunks", "generate_timeline_bubbles")
-        _builder.add_edge("generate_timeline_bubbles", "merge_timeline_results")
-        _builder.add_edge("merge_timeline_results", "store_assistant_response")
+        # Note: Focused summary edges removed (flow replaced by system-prompt-driven approach)
+        # Note: Timeline flow edges removed (now uses default provide_information flow)
 
         # Note generation flow edges - sequential processing
         _builder.add_edge("load_note_template", "generate_note_section")
@@ -7473,30 +4171,18 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_edge("format_note_response", "store_note_metadata")
         _builder.add_edge("store_note_metadata", "store_assistant_response")
 
-        # Route after chunk retrieval: check flow type
+        # Route after chunk retrieval: check flow type (simplified - 2 specialized flows + default)
         def route_after_chunks(state):
-            logger.info(f"🔀 route_after_chunks called - is_general_summary_flow: {getattr(state, 'is_general_summary_flow', False)}, is_focused_summary_flow: {getattr(state, 'is_focused_summary_flow', False)}, is_sbar_flow: {getattr(state, 'is_sbar_flow', False)}, is_timeline_flow: {getattr(state, 'is_timeline_flow', False)}, is_guideline_flow: {getattr(state, 'is_guideline_flow', False)}, needs_refinement: {getattr(state, 'needs_refinement', False)}")
+            logger.info(f"🔀 route_after_chunks called - is_general_summary_flow: {getattr(state, 'is_general_summary_flow', False)}, is_note_generation_flow: {getattr(state, 'is_note_generation_flow', False)}, needs_refinement: {getattr(state, 'needs_refinement', False)}")
 
-            # Check special flows FIRST (they have priority and don't need refinement)
+            # Check specialized flows FIRST (they have priority and don't need refinement)
             if hasattr(state, 'is_note_generation_flow') and state.is_note_generation_flow:
                 logger.info("📝 Routing to note generation flow")
                 return "load_note_template"
-            elif hasattr(state, 'is_guideline_flow') and state.is_guideline_flow:
-                logger.info("📋 Routing to guideline query paraphrasing (will use chunks to create de-identified query)")
-                return "paraphrase_query_for_guideline"
-            elif hasattr(state, 'is_timeline_flow') and state.is_timeline_flow:
-                logger.info("📅 Routing to timeline flow")
-                return "extract_timeline_events"
-            elif hasattr(state, 'is_sbar_flow') and state.is_sbar_flow:
-                logger.info("📋 Routing to SBAR flow")
-                return "sbar_parallel_dispatcher"
             elif hasattr(state, 'is_general_summary_flow') and state.is_general_summary_flow:
                 logger.info("📊 Routing to general summary flow")
                 return "general_summary_parallel_dispatcher"
-            elif hasattr(state, 'is_focused_summary_flow') and state.is_focused_summary_flow:
-                logger.info("🎯 Routing to focused summary flow")
-                return "focused_summary_parallel_dispatcher"
-            # Only check refinement if NOT in a special flow
+            # Only check refinement if NOT in a specialized flow
             elif hasattr(state, 'needs_refinement') and state.needs_refinement and state.retrieval_retry_attempts < RETRY_MAX:
                 # Increment retry attempts to prevent infinite loop
                 state.retrieval_retry_attempts += 1
@@ -7505,7 +4191,7 @@ Return ONLY the reformulated query, nothing else."""
             else:
                 # Clear refinement flag for next query
                 state.needs_refinement = False
-                logger.info("➡️ Routing to web search evaluation")
+                logger.info("➡️ Routing to web search evaluation (then provide_information)")
                 return "evaluate_web_search_need"
 
         _builder.add_conditional_edges(
@@ -7513,11 +4199,7 @@ Return ONLY the reformulated query, nothing else."""
             route_after_chunks,
             {
                 "load_note_template": "load_note_template",
-                "paraphrase_query_for_guideline": "paraphrase_query_for_guideline",
-                "extract_timeline_events": "extract_timeline_events",
-                "sbar_parallel_dispatcher": "sbar_parallel_dispatcher",
                 "general_summary_parallel_dispatcher": "general_summary_parallel_dispatcher",
-                "focused_summary_parallel_dispatcher": "focused_summary_parallel_dispatcher",
                 "intelligent_retrieve_chunks": "intelligent_retrieve_chunks",
                 "evaluate_web_search_need": "evaluate_web_search_need"
             }
@@ -7535,9 +4217,7 @@ Return ONLY the reformulated query, nothing else."""
 
 
         _builder.add_edge("perform_web_search", "provide_information")
-        _builder.add_edge("paraphrase_query_for_guideline", "handle_guideline_query")  # Paraphrase → guideline search
-        _builder.add_edge("handle_guideline_query", "store_assistant_response")  # Guideline search → store response
-        _builder.add_edge("handle_general_knowledge_query", "store_assistant_response")  # General knowledge → store response
+        # Note: Guideline and general knowledge edges removed (flows replaced by system-prompt-driven approach)
         _builder.add_edge("provide_information", "store_assistant_response")
         _builder.add_edge("store_assistant_response", END)
 

@@ -40,18 +40,11 @@ class LLMZeroShotClassifier:
         self._llm_client = llm_client
 
         # Intent descriptions for the LLM prompt
+        # Simplified to only 2 specialized flows + default (everything else goes to provide_information)
         self._intent_descriptions = {
-            "lookup": "Looking up specific patient data values or measurements from the current patient's record (e.g., 'what is the patient's blood pressure?', 'latest creatinine for this patient', 'current heart rate', 'what medications are the patient on?')",
-            "general": "General medical knowledge questions not specific to the current patient - asking about medications, diseases, or medical concepts in general (e.g., 'what is metformin used for?', 'tell me about oxybutynin', 'what are the side effects of this drug?', 'what is diabetes?')",
-            "focused_summary": "Summary of a specific aspect of the current patient's condition - focusing on one organ system, disease, or clinical area from their medical record (e.g., 'summarize this patient's heart condition', 'kidney disease status for this patient', 'respiratory history')",
             "general_summary": "Complete overview of the entire current patient's status across all conditions and systems (e.g., 'summarize this patient', 'overall patient summary', 'give me the full picture of this patient')",
-            "temporal-trend": "How the current patient's values or conditions have changed over time in their medical record (e.g., 'how has this patient's creatinine changed?', 'show glucose trend', 'progression over time for this patient')",
-            "comparative": "Comparing or contrasting multiple medical options, treatments, or medications in general (not patient-specific comparison) (e.g., 'compare lisinopril vs losartan', 'difference between ACE inhibitors and ARBs', 'which medication is better for hypertension')",
-            "guideline": "Treatment protocols, clinical guidelines, or how to manage medical conditions in general (e.g., 'how to treat hypertension?', 'guideline recommendations for diabetes', 'management protocol for sepsis')",
-            "timeline": "Chronological sequence of clinical events over time from the current patient's medical record (e.g., 'when did events happen for this patient?', 'show timeline of hospitalizations', 'chronology of this patient's treatment')",
-            "sbar_handoff": "SBAR structured handoff communication for shift changes for the current patient (e.g., 'SBAR report', 'handoff summary', 'sign-out for this patient')",
-            "note_generation": "Creating new clinical documentation like progress notes or SOAP notes for the current patient (e.g., 'write a progress note', 'create SOAP note', 'draft consultation note for this patient')",
-            "discharge_summary": "Hospital discharge documentation and planning for the current patient (e.g., 'generate discharge summary', 'discharge note', 'discharge plan for this patient')",
+            "note_generation": "Creating new clinical documentation like progress notes, SOAP notes, SBAR reports, or discharge summaries for the current patient (e.g., 'write a progress note', 'create SOAP note', 'draft consultation note', 'generate discharge summary', 'SBAR report')",
+            "default": "Any other query about the patient or general medical questions - including looking up specific values, asking about medications, trends over time, timeline of events, treatment guidelines, drug interactions, or any question that doesn't fit the specialized flows above",
         }
 
         logger.info("Initialized LLM-based ZeroShot Classifier")
@@ -118,8 +111,8 @@ Respond with ONLY the intent label (e.g., "focused_summary"), nothing else. Do n
         client = llm_client or self._llm_client
         if not client:
             logger.error("No LLM client available for classification")
-            # Return safe default
-            return "general_summary" if "general_summary" in candidate_labels else candidate_labels[0]
+            # Return safe default - use "default" flow for general queries
+            return "default" if "default" in candidate_labels else candidate_labels[0]
 
         try:
             logger.info(f"Classifying query: {text[:80]}...")
@@ -153,15 +146,15 @@ Respond with ONLY the intent label (e.g., "focused_summary"), nothing else. Do n
 
                 # No match found, return safe default
                 logger.warning("No match found, using safe default")
-                return "general_summary" if "general_summary" in candidate_labels else candidate_labels[0]
+                return "default" if "default" in candidate_labels else candidate_labels[0]
 
         except Exception as e:
             logger.error(f"Classification failed: {e}")
             import traceback
             logger.error(traceback.format_exc())
 
-            # Return safe default on error
-            return "general_summary" if "general_summary" in candidate_labels else candidate_labels[0]
+            # Return safe default on error - use "default" flow for general queries
+            return "default" if "default" in candidate_labels else candidate_labels[0]
 
     def classify_query(self, text: str, candidate_labels: List[str], llm_client: Optional[LLMClient] = None) -> str:
         """Synchronous wrapper for classify (for backward compatibility).
@@ -174,11 +167,11 @@ Respond with ONLY the intent label (e.g., "focused_summary"), nothing else. Do n
             if loop.is_running():
                 # Already in async context, cannot use run_until_complete
                 logger.warning("classify_query called from async context, returning safe default")
-                return "general_summary" if "general_summary" in candidate_labels else candidate_labels[0]
+                return "default" if "default" in candidate_labels else candidate_labels[0]
             return loop.run_until_complete(self.classify(text, candidate_labels, llm_client))
         except Exception as e:
             logger.error(f"Synchronous classification failed: {e}")
-            return "general_summary" if "general_summary" in candidate_labels else candidate_labels[0]
+            return "default" if "default" in candidate_labels else candidate_labels[0]
 
 
 # For backward compatibility, alias the class

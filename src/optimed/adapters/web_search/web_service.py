@@ -49,11 +49,17 @@ class TavilyWebSearchService(WebSearchService):
         - Query asks about web search
         - Query asks about up-to-date information
         - Query mentions web search, search engine, or online resources
+        - Query is about ICD/SNOWMED terms, epidemiology, risk factors, or other factual data missing from internal resources
+        - Query is about specific treatments, procedures, or medications stated but not described in patient context
+        - Query is about general medical knowledge
+        - Query is about clinical guidelines
+        - Query is about diagnosing a new condition for the patient
+        - Query is about treatment options for a new condition for the patient
 
         Web search is NOT needed if:
         - Query can be answered with patient context alone
-        - Query is about general medical knowledge
         - Query is conversational or about basic symptoms
+        - Answer can be derived from context, internal reasoning, or previous chat history
         
         Respond with only "YES" if web search is needed, "NO" if not needed.
         """
@@ -88,7 +94,7 @@ class TavilyWebSearchService(WebSearchService):
         
         try:
             # Enhance query for medical context (patient_context ignored for GDPR compliance)
-            enhanced_query = await self._enhance_medical_query(query, None)
+            enhanced_query = await self._enhance_medical_query(query, patient_context)
 
             # Domain preferences based on language
             prefer_sv = (target_language or "").lower().startswith("sv")
@@ -99,6 +105,7 @@ class TavilyWebSearchService(WebSearchService):
                 "socialstyrelsen.se",
                 "1177.se",
                 "vardhandboken.se",
+                "viss.nu"
             ]
             english_domains = [
                 "pubmed.ncbi.nlm.nih.gov",
@@ -183,7 +190,33 @@ class TavilyWebSearchService(WebSearchService):
         """Enhance query with medical context for better search results."""
         # Note: patient_context parameter ignored for GDPR compliance
         # Always return generic medical query enhancement
-        return f"medical {query} clinical guidelines treatment"
+
+
+
+        if not patient_context:
+            return query
+
+        system_prompt = f"""
+            "You are an assistant for generating medical web search queries for clinicians. "
+            "Given a user query and anonymized patient context, reformulate the query as a web search query that could help a clinician find guidelines, treatment options, or clinical information, "
+            "WITHOUT including any patient-specific details from the context. Respond in the SAME LANGUAGE as the original query and output only the reformulated web search query with no additional explanation.\n\n"
+        """
+
+        user_prompt = f"""
+            "ORIGINAL QUERY: {query}\n\n"
+            "CONTEXT (DO NOT include ANY details in the reformulated query): {patient_context}\n\n"
+        """
+
+        try:
+            response = await self.llm_client.chat([
+                ChatMessage(role=ChatRole.SYSTEM, content=system_prompt),
+                ChatMessage(role=ChatRole.USER, content=user_prompt)
+            ])
+            return response.content
+        except Exception as e:
+            log_error(logger, "enhance medical query", e)
+            return query
+        
     
     def _classify_source(self, url: str) -> str:
         """Classify the source type based on URL."""
