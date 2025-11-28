@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useStreamDecryption } from './useEncryption';
 import { sanitizeUserId, sanitizePatientId, sanitizeSessionId, sanitizeDocumentId, logInfo, logError, logWarning } from '@/lib/logger';
+import { useTranslations } from 'next-intl';
 
 interface DifferentialDiagnosis {
   icd_code: string;
@@ -80,6 +81,8 @@ interface StreamingState {
 }
 
 export const useStreamingChat = (sessionId?: string) => {
+  const t = useTranslations('streamingChat.steps');
+  
   const [state, setState] = useState<StreamingState>({
     isStreaming: false,
     currentStep: '',
@@ -127,7 +130,7 @@ export const useStreamingChat = (sessionId?: string) => {
           stepCountRef.current += 1;
           return {
             ...prev,
-            currentStep: update.step || 'Processing...',
+            currentStep: update.step || t('processing'),
             currentDescription: update.description || '',
             progress: Math.min((stepCountRef.current / 12) * 100, 95),
             updates: newUpdates,
@@ -146,8 +149,8 @@ export const useStreamingChat = (sessionId?: string) => {
             ...prev,
             reasoning: newReasoning,
             currentReasoning: update.reasoning || '',
-            currentStep: 'AI Reasoning',
-            currentDescription: 'Analyzing and thinking through the problem...',
+            currentStep: t('aiReasoning'),
+            currentDescription: t('analyzingProblem'),
             updates: newUpdates
           };
           
@@ -169,8 +172,8 @@ export const useStreamingChat = (sessionId?: string) => {
           
           return {
             ...prev,
-            currentStep: 'Analysis Complete',
-            currentDescription: 'Generating final response...',
+            currentStep: t('analysisComplete'),
+            currentDescription: t('generatingFinalResponse'),
             currentReasoning: '',
             progress: 90,
             updates: newUpdates
@@ -185,8 +188,8 @@ export const useStreamingChat = (sessionId?: string) => {
           return {
             ...prev,
             streamingResponse: newStreamingResponse,
-            currentStep: 'Generating Response',
-            currentDescription: 'Streaming response...',
+            currentStep: t('generatingResponse'),
+            currentDescription: t('streamingResponse'),
             progress: 85,
             updates: newUpdates
           };
@@ -231,8 +234,8 @@ export const useStreamingChat = (sessionId?: string) => {
             reasoning: finalReasoning,
             citations: update.citations || {},
             progress: 100,
-            currentStep: 'Complete',
-            currentDescription: 'Analysis finished',
+            currentStep: t('complete'),
+            currentDescription: t('analysisFinished'),
             currentReasoning: '',
             streamingResponse: '', // Clear streaming response
             differentialDiagnosisProgress: {
@@ -268,8 +271,8 @@ export const useStreamingChat = (sessionId?: string) => {
               currentStep: update.step || '',
               details: update.details || ''
             },
-            currentStep: isCompleting ? 'Differential Diagnoses Complete' : 'Computing Differential Diagnoses',
-            currentDescription: `${isCompleting ? 'Completed: ' : 'Analyzing '}${update.diagnosis_name}: ${update.step}${update.details ? ' - ' + update.details : ''}`,
+            currentStep: isCompleting ? t('differentialDiagnosesComplete') : t('computingDifferentialDiagnoses'),
+            currentDescription: `${isCompleting ? t('completed') : t('analyzing')}${update.diagnosis_name}: ${update.step}${update.details ? ' - ' + update.details : ''}`,
             updates: newUpdates
           };
 
@@ -290,8 +293,8 @@ export const useStreamingChat = (sessionId?: string) => {
               templateName: update.template_name || prev.noteGenerationProgress.templateName,
               currentStep: update.note_generation_step || update.step || ''
             },
-            currentStep: isNoteComplete ? 'Note Generation Complete' : 'Generating Clinical Note',
-            currentDescription: update.description || `Generating ${update.template_type || 'clinical'} note...`,
+            currentStep: isNoteComplete ? t('noteGenerationComplete') : t('generatingClinicalNote'),
+            currentDescription: update.description || t('generatingNote', { type: update.template_type || 'clinical' }),
             updates: newUpdates
           };
 
@@ -305,10 +308,10 @@ export const useStreamingChat = (sessionId?: string) => {
           return {
             ...prev,
             isStreaming: false,
-            error: update.error || 'An error occurred',
+            error: update.error || t('errorOccurred'),
             progress: 0,
-            currentStep: 'Error',
-            currentDescription: 'Stream failed',
+            currentStep: t('error'),
+            currentDescription: t('streamFailed'),
             currentReasoning: '',
             streamingResponse: '', // Clear streaming response
             updates: newUpdates
@@ -319,7 +322,7 @@ export const useStreamingChat = (sessionId?: string) => {
           return { ...prev, updates: newUpdates };
       }
     });
-  }, []);
+  }, [t]);
 
   const startStream = useCallback(async (
     endpoint: string,
@@ -337,8 +340,8 @@ export const useStreamingChat = (sessionId?: string) => {
     // Reset all state
     setState({
       isStreaming: true,
-      currentStep: 'Initializing...',
-      currentDescription: 'Starting analysis',
+      currentStep: t('initializing'),
+      currentDescription: t('startingAnalysis'),
       reasoning: [],
       finalResponse: '',
       streamingResponse: '',
@@ -429,7 +432,7 @@ export const useStreamingChat = (sessionId?: string) => {
           setState(prev => ({
             ...prev,
             isStreaming: false,
-            error: 'Stream processing failed',
+            error: t('streamProcessingFailed'),
           }));
         }
       };
@@ -441,10 +444,10 @@ export const useStreamingChat = (sessionId?: string) => {
       setState(prev => ({
         ...prev,
         isStreaming: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        error: error instanceof Error ? error.message : t('unknownErrorOccurred'),
       }));
     }
-  }, [handleStreamUpdate]);
+  }, [handleStreamUpdate, t]);
 
   const stopStream = useCallback(() => {
     if (eventSourceRef.current) {

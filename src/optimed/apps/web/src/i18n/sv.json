@@ -993,6 +993,33 @@
       "label": "Telefon",
       "value": "+46 73 786 95 15"
     }
+  },
+  "streamingChat": {
+    "steps": {
+      "processing": "Bearbetar...",
+      "initializing": "Initierar...",
+      "startingAnalysis": "Startar analys",
+      "aiReasoning": "AI-resonemang",
+      "analyzingProblem": "Analyserar och tänker igenom problemet...",
+      "analysisComplete": "Analys klar",
+      "generatingFinalResponse": "Genererar slutligt svar...",
+      "generatingResponse": "Genererar svar",
+      "streamingResponse": "Strömmar svar...",
+      "complete": "Klar",
+      "analysisFinished": "Analys avslutad",
+      "differentialDiagnosesComplete": "Differentialdiagnoser klara",
+      "computingDifferentialDiagnoses": "Beräknar differentialdiagnoser",
+      "completed": "Klar: ",
+      "analyzing": "Analyserar ",
+      "noteGenerationComplete": "Anteckningsgenerering klar",
+      "generatingClinicalNote": "Genererar klinisk anteckning",
+      "generatingNote": "Genererar {type} anteckning...",
+      "error": "Fel",
+      "streamFailed": "Strömning misslyckades",
+      "errorOccurred": "Ett fel uppstod",
+      "streamProcessingFailed": "Strömbehandling misslyckades",
+      "unknownErrorOccurred": "Okänt fel uppstod"
+    }
   }
 }
 

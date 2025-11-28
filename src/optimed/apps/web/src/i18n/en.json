@@ -993,6 +993,33 @@
       "label": "Phone",
       "value": "+46 73 786 95 15"
     }
+  },
+  "streamingChat": {
+    "steps": {
+      "processing": "Processing...",
+      "initializing": "Initializing...",
+      "startingAnalysis": "Starting analysis",
+      "aiReasoning": "AI Reasoning",
+      "analyzingProblem": "Analyzing and thinking through the problem...",
+      "analysisComplete": "Analysis Complete",
+      "generatingFinalResponse": "Generating final response...",
+      "generatingResponse": "Generating Response",
+      "streamingResponse": "Streaming response...",
+      "complete": "Complete",
+      "analysisFinished": "Analysis finished",
+      "differentialDiagnosesComplete": "Differential Diagnoses Complete",
+      "computingDifferentialDiagnoses": "Computing Differential Diagnoses",
+      "completed": "Completed: ",
+      "analyzing": "Analyzing ",
+      "noteGenerationComplete": "Note Generation Complete",
+      "generatingClinicalNote": "Generating Clinical Note",
+      "generatingNote": "Generating {type} note...",
+      "error": "Error",
+      "streamFailed": "Stream failed",
+      "errorOccurred": "An error occurred",
+      "streamProcessingFailed": "Stream processing failed",
+      "unknownErrorOccurred": "Unknown error occurred"
+    }
   }
 }
 
