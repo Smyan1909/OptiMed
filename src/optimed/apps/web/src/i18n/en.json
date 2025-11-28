@@ -974,6 +974,14 @@
       }
     }
   },
+  "reasoningViewer": {
+    "title": "AI Reasoning Process",
+    "show": "Show AI Reasoning Process",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "steps": "Steps",
+    "detailedReasoning": "Detailed Reasoning"
+  },
   "help": {
     "title": "Need Help?",
     "subtitle": "Contact us for support",

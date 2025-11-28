@@ -974,6 +974,14 @@
       }
     }
   },
+  "reasoningViewer": {
+    "title": "AI-resonemang",
+    "show": "Visa AI-resonemang",
+    "copy": "Kopiera",
+    "copied": "Kopierat!",
+    "steps": "Resonemangssteg",
+    "detailedReasoning": "Detaljerat resonemang"
+  },
   "help": {
     "title": "Behöver du hjälp?",
     "subtitle": "Kontakta oss för support",

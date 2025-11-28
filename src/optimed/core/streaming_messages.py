@@ -19,6 +19,7 @@ STREAMING_MESSAGES = {
     "en": {
         "prepare_context": {
             "starting": "Preparing context...",
+            "in_progress": "Setting up language and system instructions...",
             "completed": "Context prepared"
         },
         # Loading and fetching
@@ -95,6 +96,11 @@ STREAMING_MESSAGES = {
         # History and session
         "load_current_session_history": {
             "starting": "Loading conversation history...",
+            "completed": "Loaded {count} previous messages"
+        },
+        "load_history": {
+            "starting": "Loading conversation history...",
+            "in_progress": "Loading {count} previous messages from session...",
             "completed": "Loaded {count} previous messages"
         },
         "evaluate_cross_session_history_need": {
@@ -357,6 +363,33 @@ STREAMING_MESSAGES = {
         # Information provision
         "provide_information": {
             "starting": "Preparing response...",
+            "in_progress": "AI model analyzing information and formulating answer...",
+            "completed": "Response ready"
+        },
+        "process_clinical_data": {
+            "starting": "Processing clinical data...",
+            "in_progress": "Analyzing {count} relevant clinical records...",
+            "completed": "Clinical data processed"
+        },
+        "integrate_web_sources": {
+            "starting": "Integrating web sources...",
+            "in_progress": "Including {count} external medical sources...",
+            "completed": "Web sources integrated"
+        },
+        # Aliases for step names with spaces (normalized to lowercase)
+        "processing clinical data": {
+            "starting": "Processing clinical data...",
+            "in_progress": "Analyzing {count} relevant clinical records...",
+            "completed": "Clinical data processed"
+        },
+        "integrating web sources": {
+            "starting": "Integrating web sources...",
+            "in_progress": "Including {count} external medical sources...",
+            "completed": "Web sources integrated"
+        },
+        "generating response": {
+            "starting": "Preparing response...",
+            "in_progress": "AI model analyzing information and formulating answer...",
             "completed": "Response ready"
         },
 
@@ -368,6 +401,11 @@ STREAMING_MESSAGES = {
     },
 
     "sv": {
+        "prepare_context": {
+            "starting": "Förbereder kontext...",
+            "in_progress": "Sätter upp språk och systeminstruktioner...",
+            "completed": "Kontext förberedd"
+        },
         # Loading and fetching
         "load_user_context": {
             "starting": "Laddar din profil...",
@@ -442,6 +480,11 @@ STREAMING_MESSAGES = {
         # History and session
         "load_current_session_history": {
             "starting": "Laddar konversationshistorik...",
+            "completed": "Laddade {count} tidigare meddelanden"
+        },
+        "load_history": {
+            "starting": "Laddar konversationshistorik...",
+            "in_progress": "Laddar {count} tidigare meddelanden från sessionen...",
             "completed": "Laddade {count} tidigare meddelanden"
         },
         "evaluate_cross_session_history_need": {
@@ -704,6 +747,33 @@ STREAMING_MESSAGES = {
         # Information provision
         "provide_information": {
             "starting": "Förbereder svar...",
+            "in_progress": "AI-modell analyserar information och formulerar svar...",
+            "completed": "Svar klart"
+        },
+        "process_clinical_data": {
+            "starting": "Bearbetar kliniska data...",
+            "in_progress": "Analyserar {count} relevanta kliniska journaler...",
+            "completed": "Kliniska data bearbetade"
+        },
+        "integrate_web_sources": {
+            "starting": "Integrerar webbkällor...",
+            "in_progress": "Inkluderar {count} externa medicinska källor...",
+            "completed": "Webbkällor integrerade"
+        },
+        # Aliases for step names with spaces (normalized to lowercase)
+        "processing clinical data": {
+            "starting": "Bearbetar kliniska data...",
+            "in_progress": "Analyserar {count} relevanta kliniska journaler...",
+            "completed": "Kliniska data bearbetade"
+        },
+        "integrating web sources": {
+            "starting": "Integrerar webbkällor...",
+            "in_progress": "Inkluderar {count} externa medicinska källor...",
+            "completed": "Webbkällor integrerade"
+        },
+        "generating response": {
+            "starting": "Förbereder svar...",
+            "in_progress": "AI-modell analyserar information och formulerar svar...",
             "completed": "Svar klart"
         },
 

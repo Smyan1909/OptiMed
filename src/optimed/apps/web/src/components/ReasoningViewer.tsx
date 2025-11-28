@@ -6,6 +6,7 @@ import { logInfo, logError } from '@/lib/logger';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Brain, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 
 interface ReasoningViewerProps {
   reasoning: string;
@@ -85,6 +86,8 @@ export const ReasoningViewer: React.FC<ReasoningViewerProps> = ({
   const [isExpanded, setIsExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  const t = useTranslations('reasoningViewer');
+  
   const handleCopy = async () => {
     try {
       const contentToCopy = reasoning || reasoningSteps.join('\n\n');
@@ -125,9 +128,9 @@ export const ReasoningViewer: React.FC<ReasoningViewerProps> = ({
           <ChevronRight className="h-4 w-4 mr-1" />
         )}
         <Brain className="h-4 w-4 mr-1" />
-        Show AI Reasoning Process
+        {t('show')}
         <Badge variant="secondary" className="ml-2 text-xs">
-          {reasoningSteps?.length || 1} steps
+          {t('steps', { count: reasoningSteps?.length || 1 })}
         </Badge>
       </Button>
 
@@ -137,7 +140,7 @@ export const ReasoningViewer: React.FC<ReasoningViewerProps> = ({
             <CardTitle className="flex items-center justify-between text-sm">
               <div className="flex items-center gap-2">
                 <Brain className="h-4 w-4 text-blue-600" />
-                <span className="text-blue-900">AI Reasoning Process</span>
+                <span className="text-blue-900">{t('title')}</span>
               </div>
               <Button
                 variant="ghost"
@@ -148,12 +151,12 @@ export const ReasoningViewer: React.FC<ReasoningViewerProps> = ({
                 {copied ? (
                   <>
                     <Check className="h-3 w-3 mr-1" />
-                    Copied
+                    {t('copied')}
                   </>
                 ) : (
                   <>
                     <Copy className="h-3 w-3 mr-1" />
-                    Copy
+                    {t('copy')}
                   </>
                 )}
               </Button>

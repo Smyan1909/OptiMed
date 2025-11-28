@@ -81,7 +81,7 @@ The primary users of this service are doctors and nurses.
 
 **RESPONSE STRUCTURE**:
 - Keep answers concise - if one sentence suffices, use one sentence
-- If more detail is needed, use `##` headers to organize sections
+- If more detail is needed, use `##` and `###` headers to organize sections
 - Use bullet points (`-`) for lists, 10-15 words per bullet
 - Each statement referencing patient data MUST include a citation
 
@@ -91,7 +91,7 @@ The primary users of this service are doctors and nurses.
 - If old information is specifically relevant to the query, include it with clear date context
 
 **FORMATTING**:
-- Use **bold** for: diagnoses, medications, vital signs, lab values, symptoms, key clinical terms
+- Use **bold** for: diagnoses, medications, vital signs, lab values, symptoms, key clinical terms, key dates, or other key information
 - Format URLs as clickable Markdown links: [Link Text](URL)
 - For web sources: [Source Title](URL) immediately after the information
 - Output valid GitHub-flavored Markdown
@@ -807,6 +807,23 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                 
                 state.web_search_response = search_response
                 
+                if state.stream_callback:
+                    language = getattr(state, 'user_language', 'en')
+
+                    description = get_message(
+                        "perform_web_search",
+                        "completed",
+                        language
+                    )
+
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "perform_web_search",
+                        "description": description,
+                        "status": "completed",
+                        "timestamp": datetime.now().isoformat(),
+                        "count": len(state.web_search_response.results)
+                    })
                 # Also populate the legacy retrieved_web field for compatibility
                 if search_response.results:
                     state.retrieved_web = [
@@ -3382,10 +3399,19 @@ Generate the content for "{field_label}" section now:"""
 
             # Emit status update
             if hasattr(state, 'stream_callback') and state.stream_callback:
+
+                language = getattr(state, 'user_language', 'en')
+
+                description = get_message(
+                    "prepare_context",
+                    "in_progress",
+                    language
+                )
+
                 await state.stream_callback({
                     "type": "status",
                     "step": "prepare_context",
-                    "description": "Setting up language and system instructions...",
+                    "description": description,
                     "status": "in_progress",
                     "progress": 0,
                     "timestamp": datetime.now().isoformat()
@@ -3411,10 +3437,17 @@ Generate the content for "{field_label}" section now:"""
 
             # Emit status update
             if hasattr(state, 'stream_callback') and state.stream_callback:
+                language = getattr(state, 'user_language', 'en')
+
+                description = get_message(
+                    "load_history",
+                    "in_progress",
+                    language
+                )
                 await state.stream_callback({
                     "type": "status",
                     "step": "load_history",
-                    "description": f"Loading {len(state.chat_history)} previous messages from session...",
+                    "description": description,
                     "status": "in_progress",
                     "progress": 0,
                     "timestamp": datetime.now().isoformat()
@@ -3573,10 +3606,19 @@ Provide ONLY the summary, no preamble or explanation."""
 
                 # Emit status update
                 if hasattr(state, 'stream_callback') and state.stream_callback:
+
+                    language = getattr(state, 'user_language', 'en')
+
+                    description = get_message(
+                        "process_clinical_data",
+                        "in_progress",
+                        language
+                    )
+
                     await state.stream_callback({
                         "type": "status",
-                        "step": "Processing Clinical Data",
-                        "description": f"Analyzing {len(state.retrieved_chunks)} relevant clinical records...",
+                        "step": "process_clinical_data",
+                        "description": description,
                         "status": "in_progress",
                         "progress": 0,
                         "timestamp": datetime.now().isoformat()
@@ -3653,13 +3695,21 @@ Provide ONLY the summary, no preamble or explanation."""
 
                 # Emit status update
                 if hasattr(state, 'stream_callback') and state.stream_callback:
+                    language = getattr(state, 'user_language', 'en')
+
+                    description = get_message(
+                        "integrate_web_sources",
+                        "in_progress",
+                        language
+                    )
                     await state.stream_callback({
                         "type": "status",
-                        "step": "Integrating Web Sources",
-                        "description": f"Including {len(state.web_search_response.results)} external medical sources...",
+                        "step": "integrate_web_sources",
+                        "description": description,
                         "status": "in_progress",
                         "progress": 0,
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
+                        "count": len(state.web_search_response.results)
                     })
 
                 # Create a more detailed and instructional web search message
@@ -3714,10 +3764,17 @@ INSTRUCTION: You MUST cite these sources in your response ONLY IF you use inform
 
             # Emit status update
             if hasattr(state, 'stream_callback') and state.stream_callback:
+                language = getattr(state, 'user_language', 'en')
+
+                description = get_message(
+                    "generate_response",
+                    "in_progress",
+                    language
+                )
                 await state.stream_callback({
                     "type": "status",
-                    "step": "Generating Response",
-                    "description": "AI model analyzing information and formulating answer...",
+                    "step": "generate_response",
+                    "description": description,
                     "status": "in_progress",
                     "progress": 0,
                     "timestamp": datetime.now().isoformat()
