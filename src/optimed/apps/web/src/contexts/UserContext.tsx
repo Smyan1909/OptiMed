@@ -4,6 +4,7 @@ import { createContext, useContext, useState, useEffect, ReactNode, useRef } fro
 import { getCurrentUser, loginUser, logoutUser, User, setupSessionEncryption } from '@/lib/api';
 import { sendSessionToWatcher, clearSessionFromWatcher } from '@/lib/watcherService';
 import { sanitizeUserId, sanitizePatientId, sanitizeSessionId, sanitizeDocumentId, logInfo, logError, logWarning } from '@/lib/logger';
+import { stopRPAExtraction } from '@/lib/watcherService';
 
 type UserContextType = {
   user: User | null;
@@ -220,6 +221,30 @@ export function UserProvider({ children }: { children: ReactNode }) {
       window.fetch = originalFetch;
     };
   }, [isAuthenticated, logout]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        logInfo('Escape key pressed - stopping RPA extraction if active');
+
+        stopRPAExtraction().then((result) => {
+          if (result.success) {
+            logInfo('RPA extraction stopped via Escape key');
+          } else {
+            logWarning('Failed to stop RPA extraction via Escape key');
+          }
+        }).catch((error) => {
+          logError('ESC key handler error', error);
+        });
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isAuthenticated]);
 
   return (
     <UserContext.Provider 

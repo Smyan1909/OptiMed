@@ -50,7 +50,10 @@ STREAMING_MESSAGES = {
             "starting": "Searching clinical records for: \"{query}\"",
             "completed": "Found {chunk_count} relevant items from {total_processed} records",
             "completed_with_reasoning": "Found {chunk_count} relevant items. {reasoning}",
-            "refining": "Refining search (attempt {attempt}) with {query_count} new queries..."
+            "refining": "Refining search (attempt {attempt}) with {query_count} new queries...",
+            "refining_with_reason": "Insufficient results found: {reason}... Refining search strategy (attempt {attempt}/{max_attempts})...",
+            "retrieval": "Retrieving relevant information from records...",
+            "processing": "Processing journal information..."
         },
 
         # Evaluation steps
@@ -125,7 +128,7 @@ STREAMING_MESSAGES = {
 
         # SBAR flow
         "sbar_parallel_dispatcher": {
-            "starting": "Preparing SBAR summary...",
+            "starting": "Generating all 4 SBAR components in parallel (Situation, Background, Assessment, Recommendation)...",
             "completed": "SBAR components ready"
         },
         "retrieve_situation_chunks": {
@@ -167,7 +170,7 @@ STREAMING_MESSAGES = {
 
         # General summary flow
         "general_summary_parallel_dispatcher": {
-            "starting": "Preparing comprehensive summary...",
+            "starting": "Generating all summary components in parallel (Snapshot, Problems, Medications, Trends, History, Risks, Encounters, Deep-dive)...",
             "completed": "Summary components ready"
         },
         "retrieve_snapshot_chunks": {
@@ -307,7 +310,7 @@ STREAMING_MESSAGES = {
             "completed": "Identified {count} timeline events"
         },
         "retrieve_timeline_chunks": {
-            "starting": "Gathering details for timeline events...",
+            "starting": "Retrieving details for all timeline events in parallel...",
             "completed": "Timeline event details retrieved"
         },
         "generate_timeline_bubbles": {
@@ -394,7 +397,10 @@ STREAMING_MESSAGES = {
             "starting": "Söker i kliniska journaler efter: \"{query}\"",
             "completed": "Hittade {chunk_count} relevanta poster från {total_processed} journaler",
             "completed_with_reasoning": "Hittade {chunk_count} relevanta poster. {reasoning}",
-            "refining": "Förfinar sökning (försök {attempt}) med {query_count} nya frågor..."
+            "refining": "Förfinar sökning (försök {attempt}) med {query_count} nya frågor...",
+            "refining_with_reason": "Otillräckliga resultat: {reason}... Förfinar sökstrategi (försök {attempt}/{max_attempts})...",
+            "retrieval": "Letar efter relevant information från journaler...",
+            "processing": "Behandlar journaldata..."
         },
 
         # Evaluation steps
@@ -469,7 +475,7 @@ STREAMING_MESSAGES = {
 
         # SBAR flow
         "sbar_parallel_dispatcher": {
-            "starting": "Förbereder SBAR-sammanfattning...",
+            "starting": "Genererar alla 4 SBAR-komponenter parallellt (Situation, Bakgrund, Bedömning, Rekommendation)...",
             "completed": "SBAR-komponenter klara"
         },
         "retrieve_situation_chunks": {
@@ -511,7 +517,7 @@ STREAMING_MESSAGES = {
 
         # General summary flow
         "general_summary_parallel_dispatcher": {
-            "starting": "Förbereder omfattande sammanfattning...",
+            "starting": "Genererar alla sammanfattningskomponenter parallellt (Snapshot, Problem, Läkemedel, Trender, Historia, Risker, Vårdkontakter, Djupanalys)...",
             "completed": "Sammanfattningskomponenter klara"
         },
         "retrieve_snapshot_chunks": {
@@ -651,7 +657,7 @@ STREAMING_MESSAGES = {
             "completed": "Identifierade {count} tidslinjehändelser"
         },
         "retrieve_timeline_chunks": {
-            "starting": "Samlar detaljer för tidslinjehändelser...",
+            "starting": "Hämtar detaljer för alla tidslinjehändelser parallellt...",
             "completed": "Tidslinjehändelsedetaljer hämtade"
         },
         "generate_timeline_bubbles": {

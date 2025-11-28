@@ -8,8 +8,12 @@
 
 import { logInfo, logWarning } from './logger';
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const WATCHER_BASE_URL = 'http://localhost:9999';
 const WATCHER_TIMEOUT = 2000; // 2 seconds
+const RPA_WAIT_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+const RPA_POLL_INTERVAL = 2000; // 2 seconds
 
 /**
  * Send session ID to the local watcher
@@ -191,6 +195,70 @@ export async function startRPAExtraction(): Promise<{
   }
 }
 
+export async function startLabExtraction(): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), WATCHER_TIMEOUT);
+
+    const response = await fetch(`${WATCHER_BASE_URL}/start-lab-extraction`, {
+      method: 'POST',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      logInfo('Watcher Service: Lab extraction started successfully');
+      return { success: true };
+    } else {
+      const data = await response.json().catch(() => ({}));
+      const error = data.error || 'Failed to start lab extraction';
+      logWarning(`Watcher Service: Failed to start lab extraction: ${error}`);
+      return { success: false, error };
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Watcher connection timeout' };
+    }
+    return { success: false, error: 'Watcher not available' };
+  }
+}
+
+export async function startMedicationExtraction(): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), WATCHER_TIMEOUT);
+
+    const response = await fetch(`${WATCHER_BASE_URL}/start-medication-extraction`, {
+      method: 'POST',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      logInfo('Watcher Service: Medication extraction started successfully');
+      return { success: true };
+    } else {
+      const data = await response.json().catch(() => ({}));
+      const error = data.error || 'Failed to start medication extraction';
+      logWarning(`Watcher Service: Failed to start medication extraction: ${error}`);
+      return { success: false, error };
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Watcher connection timeout' };
+    }
+    return { success: false, error: 'Watcher not available' };
+  }
+}
+
 /**
  * Start doctor notes extraction workflow on the local watcher
  * Returns true if successfully started, false otherwise
@@ -225,6 +293,31 @@ export async function startDoctorNotesExtraction(): Promise<{
     }
     return { success: false, error: 'Watcher not available' };
   }
+}
+
+export async function waitForRPAIdle(options?: {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}): Promise<{ success: boolean; error?: string }> {
+  const timeoutMs = options?.timeoutMs ?? RPA_WAIT_TIMEOUT;
+  const pollIntervalMs = options?.pollIntervalMs ?? RPA_POLL_INTERVAL;
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    const status = await getRPAExecutionStatus();
+
+    if (!status) {
+      return { success: false, error: 'Watcher not available' };
+    }
+
+    if (!status.is_executing) {
+      return { success: true };
+    }
+
+    await sleep(pollIntervalMs);
+  }
+
+  return { success: false, error: 'Timed out waiting for RPA completion' };
 }
 
 /**

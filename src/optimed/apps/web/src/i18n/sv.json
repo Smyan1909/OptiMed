@@ -956,10 +956,22 @@
       "notRunning": "Watcher-klient körs inte"
     },
     "actions": {
-      "startExtraction": "Starta extraktion",
+      "startExtraction": "Extrahera alla anteckningar",
+      "extractOnlyDoctorNotes": "Extrahera endast läkaranteckningar",
       "starting": "Startar...",
       "stopExtraction": "Stoppa extraktion",
       "stopping": "Stoppar..."
+    },
+    "followUps": {
+      "title": "Uppföljande extraktioner",
+      "provsvar": {
+        "title": "Provsvar",
+        "helper": "Kör labb-RPA:n efter att huvudextraktionen är klar."
+      },
+      "medications": {
+        "title": "Läkemedel",
+        "helper": "Kör läkemedels-RPA:n efter föregående extraktion."
+      }
     }
   },
   "help": {
