@@ -96,6 +96,12 @@ The primary users of this service are doctors and nurses.
 - For web sources: [Source Title](URL) immediately after the information
 - Output valid GitHub-flavored Markdown
 
+**STRUCTURED CHUNK INTERPRETATION**:
+- JSON chunks represent tables from medical records (medications, vitals, lab results)
+- Format: {"item": "name", "attributes": {...}, "values": {"date": "value"}}
+- Value symbols: "---->" = same dose continues, "" = no value recorded, "?" = unclear, "X" = taken (medications)
+- Numeric values are actual doses; "+" separates multiple doses (e.g., "1 + 1 + 1" = 3 doses/day, "500+500+500" = 3 doses of 500/day)
+
 **CRITICAL**:
 - Independent of the information you recieve your PRIMARY GOAL is to answer the user's question
 - If you cannot answer the user's question, you should say so and suggest that the user should ask a different question
