@@ -350,6 +350,24 @@ STREAMING_MESSAGES = {
             "completed": "Metadata stored"
         },
 
+        # Document generation flow (referrals, medical certificates)
+        "determine_document_sections": {
+            "starting": "Analyzing {document_type} structure...",
+            "completed": "Identified {section_count} sections for document"
+        },
+        "parallel_retrieve_for_document_sections": {
+            "starting": "Retrieving clinical data for {section_count} sections in parallel...",
+            "completed": "Retrieved {chunk_count} relevant records across {section_count} sections"
+        },
+        "generate_document_content": {
+            "starting": "Generating {document_type} content ({section_count} sections)...",
+            "completed": "Generated {section_count} sections ({char_count} characters)"
+        },
+        "format_document_response": {
+            "starting": "Formatting {document_type}...",
+            "completed": "Document formatted and ready"
+        },
+
         # Query classification
         "contextualize_query_for_classification": {
             "starting": "Understanding your question...",
@@ -734,6 +752,24 @@ STREAMING_MESSAGES = {
             "completed": "Metadata lagrad"
         },
 
+        # Document generation flow (referrals, medical certificates)
+        "determine_document_sections": {
+            "starting": "Analyserar {document_type}-struktur...",
+            "completed": "Identifierade {section_count} sektioner för dokument"
+        },
+        "parallel_retrieve_for_document_sections": {
+            "starting": "Hämtar klinisk data för {section_count} sektioner parallellt...",
+            "completed": "Hämtade {chunk_count} relevanta poster från {section_count} sektioner"
+        },
+        "generate_document_content": {
+            "starting": "Genererar {document_type}-innehåll ({section_count} sektioner)...",
+            "completed": "Genererade {section_count} sektioner ({char_count} tecken)"
+        },
+        "format_document_response": {
+            "starting": "Formaterar {document_type}...",
+            "completed": "Dokument formaterat och klart"
+        },
+
         # Query classification
         "contextualize_query_for_classification": {
             "starting": "Förstår din fråga...",
@@ -828,8 +864,9 @@ def get_message(step_name: str, status: str, language: str = "en", **kwargs: Any
     # Format with provided kwargs
     try:
         return message_template.format(**kwargs)
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, IndexError) as e:
         # If formatting fails, return unformatted message
+        # This can happen when kwargs are missing or template has invalid format specifiers
         return message_template
 
 

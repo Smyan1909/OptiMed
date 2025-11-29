@@ -98,7 +98,7 @@ The primary users of this service are doctors and nurses.
 
 **STRUCTURED CHUNK INTERPRETATION**:
 - JSON chunks represent tables from medical records (medications, vitals, lab results)
-- Format: {"item": "name", "attributes": {...}, "values": {"date": "value"}}
+- Format: {{"item": "name", "attributes": {{...}}, "values": {{"date": "value"}}}}
 - Value symbols: "---->" = same dose continues, "" = no value recorded, "?" = unclear, "X" = taken (medications)
 - Numeric values are actual doses; "+" separates multiple doses (e.g., "1 + 1 + 1" = 3 doses/day, "500+500+500" = 3 doses of 500/day)
 
@@ -112,6 +112,57 @@ The primary users of this service are doctors and nurses.
 - Treatment/guideline information must come from web sources (viss.nu, socialstyrelsen.se, 1177.se, vardhandboken.se, or trusted medical databases)
 - Refer all clinical decision-making to qualified healthcare providers
 """)
+
+
+# =========================
+# Document-Specific System Prompts (Referrals & Medical Certificates)
+# =========================
+
+REFERRAL_SYSTEM_PROMPT = """You are generating a medical referral in telegram-style clinical note format.
+
+SECTIONS (translate headers to user's language):
+1. Diagnostic Question - ONE word or short phrase. The suspected diagnosis or question to answer.
+2. Background - Brief relevant history. Age, relevant medical history, heredity if applicable.
+3. Current Status - Current symptoms, findings, observations. Brief factual statements.
+4. Functional Level - ONE sentence on how condition affects daily function/work/life.
+5. Previous Interventions - What investigations/treatments already done. Results.
+6. Assessment - ONE sentence with recommendation for further action.
+
+STYLE - THIS IS CRITICAL:
+- Write like clinical shorthand/notes, NOT prose
+- Short factual statements separated by periods
+- No connecting words like "and", "because", "therefore"
+- No elaboration or interpretation
+- Example: "45 year old male. Diabetes since 2015. Increasing chest pain 3 months. ECG normal. Stress test pending."
+
+RULES:
+- Write in SAME LANGUAGE as user's query
+- PLAIN TEXT only
+- NEVER include citations or references
+- If information unavailable, omit that fact
+"""
+
+MEDICAL_CERTIFICATE_SYSTEM_PROMPT = """You are generating a medical certificate document.
+
+SECTIONS (translate headers to user's language):
+1. Certificate Purpose - What the certificate is for
+2. Diagnosis - Diagnosis with ICD code, or main symptoms if unclear
+3. Functional Impairment - Objective findings on impaired function, degree of impairment
+4. Activity Limitation - What patient cannot do in relation to work (critical section)
+5. Work Capacity - Sick leave percentage (100/75/50/25%), justify if full-time
+6. Time Period - Start and end dates (no open-ended)
+7. Prognosis and Plan - Expected recovery, planned treatments
+8. Additional Information - Other relevant details
+
+RULES:
+- Write in SAME LANGUAGE as user's query
+- PLAIN TEXT only - no markdown, no formatting
+- Be CONCISE - 2-4 sentences per section
+- NEVER include citations, references, or source markers
+- Write clearly for non-medical readers
+- Distinguish observations ("Upon examination...") from patient reports ("Patient states...")
+- If information unavailable: "Information not available"
+"""
 
 
 class FlowState(BaseModel):
@@ -202,6 +253,13 @@ class FlowState(BaseModel):
     note_final_content: Optional[str] = None
     note_sources: List[str] = Field(default_factory=list)
 
+    # Document generation flow fields (referrals, medical certificates)
+    is_document_generation_flow: bool = False
+    document_type: Optional[str] = None  # "referral" or "medical_certificate"
+    document_primary_focus: str = ""  # The main diagnostic question/topic - ALL sections must be relevant to this
+    document_sections: List[Dict[str, Any]] = Field(default_factory=list)  # Model-determined sections with name/label/description
+    document_section_chunks: Dict[str, List[Dict[str, Any]]] = Field(default_factory=dict)  # Retrieved chunks per section
+
     # General summary flow fields
     is_general_summary_flow: bool = False
 
@@ -273,6 +331,55 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
         self._compiled_graph = self._build_graph()
         # Use global session memory that persists across instances
         self._session_memory = _GLOBAL_SESSION_MEMORY
+
+    def _parse_json_response_to_string(self, content: str) -> str:
+        """
+        Parse JSON-formatted assistant responses into human-readable strings.
+        Used when loading chat history to convert structured responses (like generated notes)
+        into readable text for conversation context.
+        
+        Args:
+            content: The raw message content (possibly JSON)
+            
+        Returns:
+            A human-readable string representation of the content
+        """
+        if not content or not content.strip():
+            return content
+            
+        content = content.strip()
+        
+        # Check if it looks like a JSON response
+        if not (content.startswith('{"type":') or content.startswith('{"error":')):
+            return content
+            
+        try:
+            json_data = json.loads(content)
+            msg_type = json_data.get("type", "response")
+            
+            if msg_type == "generated_note":
+                template_name = json_data.get("template_name", "document")
+                note_content = json_data.get("content", "")
+                # Extract a readable summary from the note content
+                if note_content:
+                    # Take first 500 chars to preserve context
+                    summary = note_content[:500] + "..." if len(note_content) > 500 else note_content
+                    return f"[Generated {template_name}]: {summary}"
+                else:
+                    return f"[Generated {template_name}]"
+                    
+            elif msg_type == "error":
+                error_msg = json_data.get("message", "Unknown error")
+                return f"[Error]: {error_msg}"
+                
+            else:
+                # For other JSON types, provide a descriptive summary
+                return f"[{msg_type} response]"
+                
+        except json.JSONDecodeError:
+            # If JSON parsing fails, return the original content
+            # but escape curly braces to prevent format specifier issues
+            return content.replace("{", "{{").replace("}", "}}")
 
     def _get_language_policy_message(self, state: FlowState) -> ChatMessage:
         """
@@ -878,6 +985,14 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                                     decrypted_message = session_manager.decrypt_session_data(state.session_id, encrypted_data)
                                     role = ChatRole(decrypted_message.get("role", "user"))
                                     content = decrypted_message.get("content", "")
+                                    
+                                    # Parse JSON responses (like generated notes) to readable strings for assistant messages
+                                    if role == ChatRole.ASSISTANT:
+                                        original_len = len(content)
+                                        content = self._parse_json_response_to_string(content)
+                                        if len(content) != original_len:
+                                            logger.info(f"📝 Parsed JSON response to readable format ({original_len} -> {len(content)} chars)")
+                                    
                                     chat_messages.append(ChatMessage(role=role, content=content))
                                     logger.info(f"✅ Decrypted {role.value} message (length={len(content)} chars)")
                                 except Exception as decrypt_error:
@@ -887,6 +1002,14 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                             # Handle legacy unencrypted messages
                             role = ChatRole(item.get("role", "user"))
                             content = item.get("content", "")
+                            
+                            # Parse JSON responses (like generated notes) to readable strings for assistant messages
+                            if role == ChatRole.ASSISTANT:
+                                original_len = len(content)
+                                content = self._parse_json_response_to_string(content)
+                                if len(content) != original_len:
+                                    logger.info(f"📝 Parsed JSON response to readable format ({original_len} -> {len(content)} chars)")
+                            
                             chat_messages.append(ChatMessage(role=role, content=content))
                             logger.info(f"✅ Loaded unencrypted {role.value} message (length={len(content)} chars)")
                     except Exception as e:
@@ -3428,6 +3551,692 @@ Generate the content for "{field_label}" section now:"""
 
         # ==================== END NOTE GENERATION FLOW NODES ====================
 
+        # ==================== DOCUMENT GENERATION FLOW NODES (Referrals & Medical Certificates) ====================
+
+        @streaming_step("determine_document_sections")
+        async def determine_document_sections(state: FlowState) -> FlowState:
+            """
+            Use LLM to determine appropriate sections/headers for the document based on:
+            - Document type (referral or medical_certificate)
+            - User's query/context
+            - Document-specific system prompt requirements
+            
+            IMPORTANT: First extracts the PRIMARY FOCUS (diagnostic question/main topic) to ensure
+            all subsequent sections retrieve only information relevant to that specific topic.
+            """
+            try:
+                logger.info(f"📋 Determining sections for document type: {state.document_type}")
+
+                # Get the appropriate system prompt
+                if state.document_type == "referral":
+                    doc_system_prompt = REFERRAL_SYSTEM_PROMPT
+                    doc_type_name = "Referral (Remiss)"
+                    doc_type_display = "referral" if state.user_language != "sv" else "remiss"
+                elif state.document_type == "medical_certificate":
+                    doc_system_prompt = MEDICAL_CERTIFICATE_SYSTEM_PROMPT
+                    doc_type_name = "Medical Certificate (Läkarintyg)"
+                    doc_type_display = "medical certificate" if state.user_language != "sv" else "läkarintyg"
+                else:
+                    logger.warning(f"Unknown document type: {state.document_type}, defaulting to referral")
+                    doc_system_prompt = REFERRAL_SYSTEM_PROMPT
+                    doc_type_name = "Referral (Remiss)"
+                    doc_type_display = "referral"
+
+                # Emit starting status
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    language = getattr(state, 'user_language', 'en')
+                    description = get_message(
+                        "determine_document_sections",
+                        "starting",
+                        language,
+                        document_type=doc_type_display
+                    )
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "determine_document_sections",
+                        "description": description,
+                        "status": "in_progress",
+                        "progress": state.progress_percentage,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Detect language
+                lang_code = detect_language_code(state.user_prompt)
+                lang_name = "Swedish" if lang_code == "sv" else "English"
+
+                # ===== STEP 1: Extract PRIMARY FOCUS (diagnostic question/main topic) =====
+                # This is CRITICAL - all sections must be focused on this specific topic
+                focus_prompt = f"""Analyze this request for a medical {doc_type_name}:
+
+User's Request: "{state.user_prompt}"
+
+Extract the PRIMARY DIAGNOSTIC FOCUS - the single main condition, diagnosis, or health issue this document is about.
+
+Examples:
+- "Write a referral for depression evaluation" -> "depression"
+- "I need a certificate for the patient's back pain and inability to work" -> "back pain / lumbar issues"
+- "Referral to dermatologist for psoriasis" -> "psoriasis"
+- "Medical certificate for patient's anxiety disorder" -> "anxiety disorder"
+
+Return ONLY the primary focus as a short phrase (1-5 words). No explanation."""
+
+                from optimed.core.domain import ChatMessage, ChatRole
+                focus_messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="Extract the primary medical focus from the request. Return only a short phrase."),
+                    ChatMessage(role=ChatRole.USER, content=focus_prompt)
+                ]
+
+                focus_response = await self._llm.chat(focus_messages)
+                state.document_primary_focus = focus_response.content.strip().strip('"').strip("'")
+                logger.info(f"🎯 Primary document focus: '{state.document_primary_focus}'")
+
+                # ===== STEP 2: Determine sections =====
+                # Build prompt to determine sections
+                section_prompt = f"""Based on the user's request and the document requirements, determine the appropriate sections for this {doc_type_name}.
+
+PRIMARY FOCUS: {state.document_primary_focus}
+(ALL sections must be focused ONLY on information relevant to: {state.document_primary_focus})
+
+User's Request: "{state.user_prompt}"
+
+Document Requirements:
+{doc_system_prompt}
+
+Your task is to analyze the user's request and determine which sections are most appropriate for this specific document. 
+Consider what information would be relevant based on the request context.
+
+Return a JSON array of section objects with the following structure:
+[
+    {{"name": "section_key", "label": "Section Title in {lang_name}", "description": "Brief description of what this section should contain"}}
+]
+
+IMPORTANT:
+- Use {lang_name} for the section labels
+- Include 5-10 sections that are most relevant for this specific request
+- Section names should be snake_case (e.g., "patient_info", "current_symptoms")
+- Order sections logically for the document type
+
+Return ONLY the JSON array, no additional text."""
+
+                # Call LLM to determine sections
+                from optimed.core.domain import ChatMessage, ChatRole
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content="You are a medical documentation specialist. Analyze the request and return a JSON array of appropriate document sections."),
+                    ChatMessage(role=ChatRole.USER, content=section_prompt)
+                ]
+
+                response = await self._llm.chat(messages)
+                response_text = response.content.strip()
+
+                # Parse JSON response
+                # Try to extract JSON from the response
+                try:
+                    # Handle markdown code blocks
+                    if "```json" in response_text:
+                        response_text = response_text.split("```json")[1].split("```")[0].strip()
+                    elif "```" in response_text:
+                        response_text = response_text.split("```")[1].split("```")[0].strip()
+                    
+                    sections = json.loads(response_text)
+                    
+                    if not isinstance(sections, list):
+                        raise ValueError("Response is not a list")
+                    
+                    state.document_sections = sections
+                    logger.info(f"✓ Determined {len(sections)} sections for {state.document_type}")
+                    
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse sections JSON: {e}, using default sections")
+                    # Fallback to default sections based on document type
+                    if state.document_type == "referral":
+                        state.document_sections = [
+                            {"name": "fragestallning", "label": "Frågeställning" if lang_code == "sv" else "Diagnostic Question", "description": "ONE word or short phrase - suspected diagnosis or question"},
+                            {"name": "bakgrund", "label": "Bakgrund" if lang_code == "sv" else "Background", "description": "Age, relevant medical history, heredity if applicable"},
+                            {"name": "aktuellt", "label": "Aktuellt" if lang_code == "sv" else "Current Status", "description": "Current symptoms, findings, observations as brief facts"},
+                            {"name": "funktionsniva", "label": "Funktionsnivå" if lang_code == "sv" else "Functional Level", "description": "ONE sentence on how condition affects daily function"},
+                            {"name": "tidigare_insatser", "label": "Tidigare behandlingsinsatser" if lang_code == "sv" else "Previous Interventions", "description": "What investigations/treatments done and results"},
+                            {"name": "bedomning", "label": "Bedömning" if lang_code == "sv" else "Assessment", "description": "ONE sentence recommendation"},
+                        ]
+                    else:  # medical_certificate
+                        state.document_sections = [
+                            {"name": "syfte", "label": "Intygets syfte" if lang_code == "sv" else "Certificate Purpose", "description": "Purpose of the certificate"},
+                            {"name": "diagnosis", "label": "Diagnos" if lang_code == "sv" else "Diagnosis", "description": "Diagnosis with ICD code"},
+                            {"name": "functional_impairment", "label": "Funktionsnedsättning" if lang_code == "sv" else "Functional Impairment", "description": "Objective findings on impaired function"},
+                            {"name": "activity_limitation", "label": "Aktivitetsbegränsning" if lang_code == "sv" else "Activity Limitation", "description": "Concrete limitations in work tasks"},
+                            {"name": "work_capacity", "label": "Arbetsförmåga" if lang_code == "sv" else "Work Capacity", "description": "Assessment of work capacity percentage"},
+                            {"name": "time_period", "label": "Tidsperiod" if lang_code == "sv" else "Time Period", "description": "Certificate start and end dates"},
+                            {"name": "prognosis", "label": "Prognos och plan" if lang_code == "sv" else "Prognosis and Plan", "description": "Expected recovery and planned treatments"},
+                            {"name": "ovriga_upplysningar", "label": "Övriga upplysningar" if lang_code == "sv" else "Additional Information", "description": "Other relevant information"},
+                        ]
+                    logger.info(f"✓ Using {len(state.document_sections)} default sections for {state.document_type}")
+
+                # Generate a note_generation_id for tracking
+                import uuid
+                state.note_generation_id = str(uuid.uuid4())
+
+                # Emit completion status
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    language = getattr(state, 'user_language', 'en')
+                    description = get_message(
+                        "determine_document_sections",
+                        "completed",
+                        language,
+                        section_count=len(state.document_sections)
+                    )
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "determine_document_sections",
+                        "description": description,
+                        "status": "completed",
+                        "progress": state.progress_percentage,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                return state
+
+            except Exception as e:
+                logger.error(f"❌ Error determining document sections: {e}")
+                import traceback
+                traceback.print_exc()
+                # Set minimal fallback sections
+                state.document_sections = [
+                    {"name": "content", "label": "Content", "description": "Document content"}
+                ]
+                return state
+
+        async def _generate_document_section_queries(state: FlowState, section: dict, doc_type: str) -> List[str]:
+            """
+            Generate focused queries for a specific document section.
+            
+            CRITICAL: All queries MUST be focused on the PRIMARY FOCUS (diagnostic question/condition).
+            This ensures the document is coherent and only contains relevant information.
+            """
+            try:
+                section_name = section.get("name", "")
+                section_label = section.get("label", section_name)
+                section_desc = section.get("description", "")
+                
+                # Get the primary focus - this is the key to consistency
+                primary_focus = state.document_primary_focus or ""
+
+                logger.info(f"Generating queries for section: {section_label} (focus: {primary_focus})")
+
+                # Include chat history context for better query generation
+                history_context = ""
+                if state.chat_history:
+                    recent = state.chat_history[-4:]  # Last 2 turns
+                    if recent:
+                        history_context = "\n\nRecent conversation context:\n"
+                        for msg in recent:
+                            content_preview = msg.content[:150] if len(msg.content) > 150 else msg.content
+                            history_context += f"{msg.role.value}: {content_preview}\n"
+
+                # Build prompt with PRIMARY FOCUS as the central constraint
+                prompt = f"""Generate search queries for a {doc_type} document.
+
+PRIMARY CONDITION/FOCUS: {primary_focus}
+⚠️ ALL queries MUST retrieve information ONLY relevant to: {primary_focus}
+Do NOT retrieve information about other conditions or unrelated medical history.
+
+Section: "{section_label}"
+Section description: {section_desc}
+
+User's original request: "{state.user_prompt}"{history_context}
+
+Generate 3 specific search queries that will find information about {primary_focus} as it relates to "{section_label}".
+
+IMPORTANT CONSTRAINTS:
+- Every query MUST include or be focused on: {primary_focus}
+- Do NOT generate generic queries - make them specific to {primary_focus}
+- Retrieve ONLY information that would be relevant when discussing {primary_focus}
+
+Example for depression referral:
+- Section "Background" -> "patient history depression onset family mental health"
+- Section "Current Status" -> "current depression symptoms mood sleep appetite concentration"
+- Section "Functional Level" -> "depression impact work daily activities social function"
+
+Your 3 queries (one per line):"""
+
+                from optimed.core.domain import ChatMessage, ChatRole
+                messages = [
+                    ChatMessage(role=ChatRole.SYSTEM, content=f"You generate search queries focused ONLY on information relevant to: {primary_focus}. Every query must retrieve content specific to this condition/topic. Return exactly 3 queries, one per line."),
+                    ChatMessage(role=ChatRole.USER, content=prompt)
+                ]
+
+                response = await self._llm.chat(messages)
+                queries_text = response.content.strip()
+
+                # Parse queries (one per line)
+                queries = [q.strip() for q in queries_text.split('\n') if q.strip() and not q.strip().startswith('#')]
+                queries = queries[:3]  # Limit to 3
+
+                if not queries:
+                    # Fallback queries - still focused on primary condition
+                    queries = [
+                        f"{primary_focus} {section_label}",
+                        f"{primary_focus} {section_desc}",
+                        f"patient {primary_focus} {section_name}"
+                    ]
+
+                logger.info(f"Generated {len(queries)} queries for section '{section_label}' (focus: {primary_focus})")
+                return queries
+
+            except Exception as e:
+                logger.error(f"Error generating queries for section: {e}")
+                # Even in error fallback, include primary focus
+                primary_focus = state.document_primary_focus or ""
+                return [f"{primary_focus} {section.get('label', 'medical information')}"]
+
+        @streaming_step("parallel_retrieve_for_document_sections")
+        async def parallel_retrieve_for_document_sections(state: FlowState) -> FlowState:
+            """
+            Execute parallel retrieval for all document sections using asyncio.gather.
+            Similar to general_summary_parallel_dispatcher but for document sections.
+            """
+            try:
+                logger.info(f"🔄 Starting parallel retrieval for {len(state.document_sections)} document sections")
+
+                if not state.document_sections:
+                    logger.warning("No document sections defined, skipping retrieval")
+                    return state
+
+                # Emit starting status
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    language = getattr(state, 'user_language', 'en')
+                    description = get_message(
+                        "parallel_retrieve_for_document_sections",
+                        "starting",
+                        language,
+                        section_count=len(state.document_sections)
+                    )
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "parallel_retrieve_for_document_sections",
+                        "description": description,
+                        "status": "in_progress",
+                        "progress": state.progress_percentage,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Disable refinement for document flows (they use their own retrieval)
+                state.needs_refinement = False
+
+                # Get document type name for queries
+                doc_type = "referral" if state.document_type == "referral" else "medical certificate"
+
+                # Generate queries for all sections IN PARALLEL
+                logger.info("Generating queries for all sections in parallel")
+                query_tasks = [
+                    _generate_document_section_queries(state, section, doc_type)
+                    for section in state.document_sections
+                ]
+                query_results = await asyncio.gather(*query_tasks, return_exceptions=True)
+
+                # Handle any exceptions in query generation
+                section_queries = {}
+                for i, (section, queries) in enumerate(zip(state.document_sections, query_results)):
+                    section_name = section.get("name", f"section_{i}")
+                    if isinstance(queries, Exception):
+                        logger.error(f"Error generating queries for {section_name}: {queries}")
+                        section_queries[section_name] = [section.get("label", "medical information")]
+                    else:
+                        section_queries[section_name] = queries
+
+                logger.info("All queries generated, starting parallel retrievals")
+
+                # Execute all retrievals in parallel using asyncio.gather
+                retrieval_tasks = []
+                section_names = []
+                for section in state.document_sections:
+                    section_name = section.get("name", "")
+                    queries = section_queries.get(section_name, [])
+                    section_names.append(section_name)
+                    retrieval_tasks.append(
+                        _retrieve_with_full_pipeline(
+                            self, state=state,
+                            queries=queries,
+                            context_label=f"document_{section_name}",
+                            topk_initial=100,
+                            topk_rerank=15,
+                            use_mmr=True,
+                            use_agentic_refinement=True
+                        )
+                    )
+
+                results = await asyncio.gather(*retrieval_tasks, return_exceptions=True)
+
+                # Store results in document_section_chunks
+                state.document_section_chunks = {}
+                all_chunks = []
+                for section_name, chunks in zip(section_names, results):
+                    if isinstance(chunks, Exception):
+                        logger.error(f"Error retrieving chunks for {section_name}: {chunks}")
+                        state.document_section_chunks[section_name] = []
+                    else:
+                        state.document_section_chunks[section_name] = chunks
+                        all_chunks.extend(chunks)
+                        logger.info(f"Retrieved {len(chunks)} chunks for section '{section_name}'")
+
+                logger.info(f"✓ Parallel retrieval completed for {len(state.document_sections)} sections, {len(all_chunks)} total chunks")
+
+                # Build citations from all retrieved chunks
+                if all_chunks:
+                    state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(all_chunks)
+                    logger.info(f"🔖 Built {len(state.citations)} citations from {len(all_chunks)} total chunks")
+                else:
+                    state.citations = {}
+                    state.chunk_id_to_number = {}
+                    logger.warning("No chunks retrieved - citations will be empty")
+
+                # Emit completion status
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    language = getattr(state, 'user_language', 'en')
+                    description = get_message(
+                        "parallel_retrieve_for_document_sections",
+                        "completed",
+                        language,
+                        section_count=len(state.document_sections),
+                        chunk_count=len(all_chunks)
+                    )
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "parallel_retrieve_for_document_sections",
+                        "description": description,
+                        "status": "completed",
+                        "progress": state.progress_percentage,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                return state
+
+            except Exception as e:
+                logger.error(f"❌ Error in parallel retrieval: {e}")
+                import traceback
+                traceback.print_exc()
+                state.document_section_chunks = {}
+                return state
+
+        @streaming_step("generate_document_content")
+        async def generate_document_content(state: FlowState) -> FlowState:
+            """
+            Generate content for all document sections using the section-specific chunks.
+            Uses the document-specific system prompt for guidance.
+            """
+            try:
+                logger.info(f"📝 Generating content for {len(state.document_sections)} document sections")
+
+                if not state.document_sections:
+                    logger.warning("No document sections defined")
+                    return state
+
+                # Get the appropriate system prompt
+                if state.document_type == "referral":
+                    doc_system_prompt = REFERRAL_SYSTEM_PROMPT
+                    doc_type_name = "Referral (Remiss)"
+                    doc_type_display = "referral" if state.user_language != "sv" else "remiss"
+                else:
+                    doc_system_prompt = MEDICAL_CERTIFICATE_SYSTEM_PROMPT
+                    doc_type_name = "Medical Certificate (Läkarintyg)"
+                    doc_type_display = "medical certificate" if state.user_language != "sv" else "läkarintyg"
+
+                # Emit starting status
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    language = getattr(state, 'user_language', 'en')
+                    description = get_message(
+                        "generate_document_content",
+                        "starting",
+                        language,
+                        document_type=doc_type_display,
+                        section_count=len(state.document_sections)
+                    )
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "generate_document_content",
+                        "description": description,
+                        "status": "in_progress",
+                        "progress": state.progress_percentage,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Detect language
+                lang_code = detect_language_code(state.user_prompt)
+                lang_name = "Swedish" if lang_code == "sv" else "English"
+
+                current_date = datetime.now().strftime('%Y-%m-%d')
+
+                # Get the primary focus for consistency
+                primary_focus = state.document_primary_focus or "the patient's condition"
+
+                # Build the full system prompt for generation
+                generation_system_prompt = f"""You are generating a {doc_type_name} in {lang_name}.
+
+Date: {current_date}
+PRIMARY FOCUS: {primary_focus}
+
+{doc_system_prompt}
+
+CRITICAL:
+- Write in {lang_name}
+- PLAIN TEXT only
+- NEVER include citations or references
+- Write like clinical notes - short facts, not prose
+- Omit sections where no data available
+- EVERY section must be focused on: {primary_focus}
+- Do NOT include information about other conditions unless directly relevant to {primary_focus}
+"""
+
+                # Generate content for each section
+                sections_content = {}
+                
+                async def generate_section_content(section: dict) -> Tuple[str, str]:
+                    """Generate content for a single section, focused on the primary condition."""
+                    section_name = section.get("name", "")
+                    section_label = section.get("label", section_name)
+                    section_desc = section.get("description", "")
+
+                    # Get section-specific chunks
+                    section_chunks = state.document_section_chunks.get(section_name, [])
+                    
+                    if section_chunks:
+                        # Format chunks WITHOUT citations for document generation
+                        limited_chunks = self._limit_chunks_for_context(section_chunks[:10], max_tokens=30000, max_chunk_chars=10000)
+                        chunks_text = "\n\n".join([
+                            chunk.get("content", "") if isinstance(chunk, dict) else str(chunk)
+                            for chunk in limited_chunks
+                        ])
+                    else:
+                        chunks_text = "No specific information available."
+
+                    # Build section-specific prompt - emphasize focus on primary condition
+                    if state.document_type == "referral":
+                        section_prompt = f"""Generate "{section_label}" section for {primary_focus}.
+
+⚠️ IMPORTANT: Include ONLY information relevant to {primary_focus}. Ignore unrelated conditions.
+
+Purpose: {section_desc}
+
+Data:
+{chunks_text}
+
+Write telegram-style clinical notes about {primary_focus}. Short facts separated by periods. No prose. No citations.
+Only include facts that are relevant to {primary_focus}."""
+                    else:
+                        section_prompt = f"""Generate "{section_label}" section for {primary_focus}.
+
+⚠️ IMPORTANT: Include ONLY information relevant to {primary_focus}. Ignore unrelated conditions.
+
+Purpose: {section_desc}
+
+Data:
+{chunks_text}
+
+Write 2-4 sentences about {primary_focus}. Plain text, no citations.
+Only include facts that are directly relevant to {primary_focus}."""
+
+                    from optimed.core.domain import ChatMessage, ChatRole
+                    messages = [
+                        ChatMessage(role=ChatRole.SYSTEM, content=generation_system_prompt),
+                        ChatMessage(role=ChatRole.USER, content=section_prompt)
+                    ]
+
+                    # Disable citations for document generation
+                    response = await self._llm.chat(messages, enable_chunk_citations=False)
+                    content = response.content.strip()
+
+                    logger.info(f"✓ Generated {len(content)} chars for section '{section_label}'")
+                    return section_name, content
+
+                # Generate all sections in parallel
+                generation_tasks = [generate_section_content(section) for section in state.document_sections]
+                generation_results = await asyncio.gather(*generation_tasks, return_exceptions=True)
+
+                # Process results
+                for result in generation_results:
+                    if isinstance(result, Exception):
+                        logger.error(f"Error generating section content: {result}")
+                    else:
+                        section_name, content = result
+                        sections_content[section_name] = content
+
+                # Store in note_sections for compatibility with format_note_response
+                state.note_sections = sections_content
+
+                # Format the final document content
+                final_content = f"# {doc_type_name}\n\n"
+                for section in state.document_sections:
+                    section_name = section.get("name", "")
+                    section_label = section.get("label", section_name)
+                    section_content = sections_content.get(section_name, "")
+                    final_content += f"## {section_label}\n{section_content}\n\n"
+
+                state.note_final_content = final_content
+                state.note_sources = []  # No sources needed in final output
+
+                logger.info(f"✓ Complete document generated: {len(final_content)} chars, {len(state.document_sections)} sections")
+
+                # Emit completion status
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    language = getattr(state, 'user_language', 'en')
+                    description = get_message(
+                        "generate_document_content",
+                        "completed",
+                        language,
+                        section_count=len(state.document_sections),
+                        char_count=len(final_content)
+                    )
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "generate_document_content",
+                        "description": description,
+                        "status": "completed",
+                        "progress": state.progress_percentage,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                return state
+
+            except Exception as e:
+                logger.error(f"❌ Error generating document content: {e}")
+                import traceback
+                traceback.print_exc()
+                return state
+
+        @streaming_step("format_document_response")
+        async def format_document_response(state: FlowState) -> FlowState:
+            """
+            Format the final document response for streaming to frontend.
+            Returns as JSON structure compatible with NoteGenerationDialog.
+            """
+            try:
+                logger.info("Formatting document for response")
+
+                # Emit starting status
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    language = getattr(state, 'user_language', 'en')
+                    doc_type_display = "referral" if state.document_type == "referral" else "medical certificate"
+                    if language == "sv":
+                        doc_type_display = "remiss" if state.document_type == "referral" else "läkarintyg"
+                    description = get_message(
+                        "format_document_response",
+                        "starting",
+                        language,
+                        document_type=doc_type_display
+                    )
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "format_document_response",
+                        "description": description,
+                        "status": "in_progress",
+                        "progress": state.progress_percentage,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                if not state.note_final_content:
+                    logger.warning("⚠️ No document content to format")
+                    from optimed.core.domain import ChatMessage, ChatRole
+                    error_response = {
+                        "type": "error",
+                        "message": "Document generation failed to produce content. Please try again."
+                    }
+                    state.llm_response = ChatMessage(
+                        role=ChatRole.ASSISTANT,
+                        content=json.dumps(error_response, ensure_ascii=False)
+                    )
+                    return state
+
+                # Create structured response compatible with generated_note format
+                doc_response = {
+                    "type": "generated_note",  # Reuse existing frontend component
+                    "generation_id": state.note_generation_id,
+                    "template_name": "Referral" if state.document_type == "referral" else "Medical Certificate",
+                    "template_type": state.document_type,
+                    "language": detect_language_code(state.user_prompt),
+                    "content": state.note_final_content,
+                    "sections": state.note_sections,
+                    "sources": state.note_sources,
+                    "metadata": {
+                        "document_type": state.document_type,
+                        "sections_count": len(state.document_sections),
+                        "chunks_used": sum(len(chunks) for chunks in state.document_section_chunks.values()),
+                        "word_count": len(state.note_final_content.split())
+                    }
+                }
+
+                from optimed.core.domain import ChatMessage, ChatRole
+                state.llm_response = ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content=json.dumps(doc_response, ensure_ascii=False)
+                )
+
+                logger.info("✓ Document response formatted and ready")
+
+                # Emit completion status
+                if hasattr(state, 'stream_callback') and state.stream_callback:
+                    language = getattr(state, 'user_language', 'en')
+                    description = get_message(
+                        "format_document_response",
+                        "completed",
+                        language
+                    )
+                    await state.stream_callback({
+                        "type": "status",
+                        "step": "format_document_response",
+                        "description": description,
+                        "status": "completed",
+                        "progress": state.progress_percentage,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                return state
+
+            except Exception as e:
+                logger.error(f"❌ Error formatting document response: {e}")
+                import traceback
+                traceback.print_exc()
+                return state
+
+        # ==================== END DOCUMENT GENERATION FLOW NODES ====================
+
         @streaming_step("provide_information")
         async def provide_information(state: FlowState) -> FlowState:
             logger.info("🎯 Starting information provision")
@@ -4112,12 +4921,25 @@ Return ONLY the reformulated query, nothing else."""
                     query_lower = state.user_prompt.lower()
 
                     # Template detection with keywords (includes SBAR, discharge, etc. as note types)
-                    if any(word in query_lower for word in ["sbar", "situation", "bakgrund", "background", "handoff", "överlämning"]):
+                    # Check for document generation types FIRST (referral, medical certificate)
+                    if any(word in query_lower for word in ["remiss", "referral", "refer", "hänvisa", "remittera"]):
+                        template_type = "referral"
+                        # Route to document generation flow for referrals
+                        state.is_document_generation_flow = True
+                        state.document_type = "referral"
+                        state.is_note_generation_flow = False  # Use document flow instead
+                        logger.info(f"Document generation flow activated: referral")
+                    elif any(word in query_lower for word in ["läkarintyg", "intyg", "sjukintyg", "medical certificate", "sick certificate", "certificate"]):
+                        template_type = "medical_certificate"
+                        # Route to document generation flow for medical certificates
+                        state.is_document_generation_flow = True
+                        state.document_type = "medical_certificate"
+                        state.is_note_generation_flow = False  # Use document flow instead
+                        logger.info(f"Document generation flow activated: medical_certificate")
+                    elif any(word in query_lower for word in ["sbar", "situation", "bakgrund", "background", "handoff", "överlämning"]):
                         template_type = "sbar"
                     elif any(word in query_lower for word in ["soap", "subjective", "objective", "assessment", "plan"]):
                         template_type = "soap"
-                    elif any(word in query_lower for word in ["remiss", "referral", "refer"]):
-                        template_type = "referral"
                     elif any(word in query_lower for word in ["journal", "progress", "anteckning"]):
                         template_type = "journal_entry"
                     elif any(word in query_lower for word in ["consultation", "konsultation"]):
@@ -4214,6 +5036,11 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_node("generate_note_section", generate_note_section)
         _builder.add_node("format_note_response", format_note_response)
         _builder.add_node("store_note_metadata", store_note_metadata)
+        # Document generation flow nodes (referrals, medical certificates)
+        _builder.add_node("determine_document_sections", determine_document_sections)
+        _builder.add_node("parallel_retrieve_for_document_sections", parallel_retrieve_for_document_sections)
+        _builder.add_node("generate_document_content", generate_document_content)
+        _builder.add_node("format_document_response", format_document_response)
         # Note: Guideline and general knowledge nodes removed (flows replaced by system-prompt-driven approach)
         _builder.add_node("evaluate_web_search_need", evaluate_web_search_need)
         _builder.add_node("perform_web_search", perform_web_search)
@@ -4270,12 +5097,22 @@ Return ONLY the reformulated query, nothing else."""
         _builder.add_edge("format_note_response", "store_note_metadata")
         _builder.add_edge("store_note_metadata", "store_assistant_response")
 
-        # Route after chunk retrieval: check flow type (simplified - 2 specialized flows + default)
+        # Document generation flow edges - referrals and medical certificates
+        _builder.add_edge("determine_document_sections", "parallel_retrieve_for_document_sections")
+        _builder.add_edge("parallel_retrieve_for_document_sections", "generate_document_content")
+        _builder.add_edge("generate_document_content", "format_document_response")
+        _builder.add_edge("format_document_response", "store_note_metadata")  # Reuse note metadata storage
+
+        # Route after chunk retrieval: check flow type (3 specialized flows + default)
         def route_after_chunks(state):
-            logger.info(f"🔀 route_after_chunks called - is_general_summary_flow: {getattr(state, 'is_general_summary_flow', False)}, is_note_generation_flow: {getattr(state, 'is_note_generation_flow', False)}, needs_refinement: {getattr(state, 'needs_refinement', False)}")
+            logger.info(f"🔀 route_after_chunks called - is_general_summary_flow: {getattr(state, 'is_general_summary_flow', False)}, is_note_generation_flow: {getattr(state, 'is_note_generation_flow', False)}, is_document_generation_flow: {getattr(state, 'is_document_generation_flow', False)}, needs_refinement: {getattr(state, 'needs_refinement', False)}")
 
             # Check specialized flows FIRST (they have priority and don't need refinement)
-            if hasattr(state, 'is_note_generation_flow') and state.is_note_generation_flow:
+            # Document generation flow (referrals, medical certificates) - highest priority
+            if hasattr(state, 'is_document_generation_flow') and state.is_document_generation_flow:
+                logger.info(f"📄 Routing to document generation flow (type: {getattr(state, 'document_type', 'unknown')})")
+                return "determine_document_sections"
+            elif hasattr(state, 'is_note_generation_flow') and state.is_note_generation_flow:
                 logger.info("📝 Routing to note generation flow")
                 return "load_note_template"
             elif hasattr(state, 'is_general_summary_flow') and state.is_general_summary_flow:
@@ -4297,6 +5134,7 @@ Return ONLY the reformulated query, nothing else."""
             "intelligent_retrieve_chunks",
             route_after_chunks,
             {
+                "determine_document_sections": "determine_document_sections",
                 "load_note_template": "load_note_template",
                 "general_summary_parallel_dispatcher": "general_summary_parallel_dispatcher",
                 "intelligent_retrieve_chunks": "intelligent_retrieve_chunks",
@@ -5713,9 +6551,11 @@ Content:
                     try:
                         graph_task.result()  # This will raise the exception if the task failed
                     except Exception as task_exception:
-                        # Log the task exception but don't re-raise it since we're in finally
+                        # Log the task exception with full traceback for debugging
                         import logging
+                        import traceback
                         logging.error(f"Graph task failed with exception: {task_exception}")
+                        logging.error(f"Full traceback:\n{traceback.format_exc()}")
 
                 # Clear GPU memory after streaming completes
                 try:

@@ -137,6 +137,7 @@ class TemplateType(str, Enum):
     """Types of clinical note templates."""
     JOURNAL_ENTRY = "journal_entry"
     REFERRAL = "referral"
+    MEDICAL_CERTIFICATE = "medical_certificate"
     SOAP = "soap"
     PROGRESS_NOTE = "progress_note"
     SBAR = "sbar"
