@@ -1171,6 +1171,11 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     # Use cached chunks from previous query
                     logger.info(f"Reusing {len(cached_chunks)} cached chunks (skipping chunking & embedding)")
                     chunks = cached_chunks
+                    # Ensure cache_entry is available for parent chunk lookup later
+                    if session_cache_key in _GLOBAL_CHUNK_CACHE:
+                        cache_entry = _GLOBAL_CHUNK_CACHE[session_cache_key]
+                    else:
+                        cache_entry = None
 
                 # SKIP RETRIEVAL FOR SPECIALIZED FLOWS (but keep the chunks in cache)
                 # General Summary flow does per-component retrieval
@@ -1297,14 +1302,33 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
 
                         if state.needs_refinement:
                             # Set partial state for streaming decorator to show progress
-                            state.retrieved_chunks = [
-                                {
-                                    "chunk_id": chunks[i]["chunk_id"],
-                                    "content": chunks[i]["content"],
-                                    "metadata": chunks[i]["metadata"]
-                                }
-                                for i in selected_indices
-                            ]
+                            # Swap child chunks for parent chunks (same logic as main flow)
+                            if session_cache_key in _GLOBAL_CHUNK_CACHE:
+                                cache_entry = _GLOBAL_CHUNK_CACHE[session_cache_key]
+                            parent_lookup = cache_entry.get("parent_chunks", {}) if cache_entry else {}
+                            
+                            state.retrieved_chunks = []
+                            for i in selected_indices:
+                                child_chunk = chunks[i]
+                                child_metadata = child_chunk.get("metadata", {}) or {}
+                                parent_chunk_id = child_metadata.get("parent_chunk_id")
+                                
+                                if parent_chunk_id and parent_lookup and parent_chunk_id in parent_lookup:
+                                    parent_chunk = parent_lookup[parent_chunk_id]
+                                    parent_metadata = parent_chunk.get("metadata", {}).copy() if parent_chunk.get("metadata") else {}
+                                    parent_metadata["child_chunk_id"] = child_chunk.get("chunk_id") or child_chunk.get("id")
+                                    parent_metadata["child_metadata"] = child_metadata
+                                    state.retrieved_chunks.append({
+                                        "chunk_id": parent_chunk.get("chunk_id") or parent_chunk.get("id"),
+                                        "content": parent_chunk.get("content", ""),
+                                        "metadata": parent_metadata
+                                    })
+                                else:
+                                    state.retrieved_chunks.append({
+                                        "chunk_id": child_chunk["chunk_id"],
+                                        "content": child_chunk["content"],
+                                        "metadata": child_chunk["metadata"]
+                                    })
 
                             # Build citations from chunk metadata
                             if state.retrieved_chunks:
@@ -1377,8 +1401,15 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                     )
 
                 # Set state variables early so streaming decorator can access them
+                # Ensure we have access to parent chunks from cache
+                if session_cache_key in _GLOBAL_CHUNK_CACHE:
+                    cache_entry = _GLOBAL_CHUNK_CACHE[session_cache_key]
                 parent_lookup = cache_entry.get("parent_chunks", {}) if cache_entry else {}
+                
+                logger.info(f"🔑 Parent chunk lookup: {len(parent_lookup)} parent chunks available")
+                
                 state.retrieved_chunks = []
+                swapped_count = 0
                 for idx in final_selected:
                     child_chunk = chunks[idx]
                     child_metadata = child_chunk.get("metadata", {}) or {}
@@ -1395,12 +1426,17 @@ class LangGraphRAMInformationEngine(DiagnosticEngine):
                             "content": parent_chunk.get("content", ""),
                             "metadata": parent_metadata
                         })
+                        swapped_count += 1
                     else:
+                        if parent_chunk_id:
+                            logger.warning(f"Parent chunk {parent_chunk_id} not found in lookup - using child chunk")
                         state.retrieved_chunks.append({
                             "chunk_id": child_chunk.get("chunk_id") or child_chunk.get("id"),
                             "content": child_chunk.get("content", ""),
                             "metadata": child_metadata
                         })
+                
+                logger.info(f"🔄 Parent-child swap: {swapped_count}/{len(final_selected)} chunks swapped to parents")
 
                 # Build citations from chunk metadata with sequential numbers
                 state.citations, state.chunk_id_to_number = self._build_citations_from_chunks(state.retrieved_chunks)
@@ -4667,12 +4703,16 @@ Content:
                     logger.info(f"Used text-based table parsing for '{pdf.filename}'")
                 
                 if table_output.tables:
+                    logger.info(f"Found {len(table_output.tables)} tables in '{pdf.filename}' - creating structured JSON chunks")
                     table_chunks = self._build_pdf_table_chunks(
                         tables=table_output.tables,
                         pdf=pdf,
                         pseudo_patient=pseudo_patient,
                     )
+                    logger.info(f"Created {len(table_chunks)} table chunks ({len([c for c in table_chunks if c.meta.get('chunk_level') == 'parent'])} parent + {len([c for c in table_chunks if c.meta.get('chunk_level') == 'child'])} child)")
                     final_chunks.extend(table_chunks)
+                else:
+                    logger.info(f"No tables detected in '{pdf.filename}' - using standard chunking")
                 text_for_chunking = table_output.cleaned_text or pdf.extracted_text
                 if not text_for_chunking:
                     logger.info(f"PDF '{pdf.filename}' contains tables only - skipping semantic chunker")

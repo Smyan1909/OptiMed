@@ -383,16 +383,20 @@ class PDFTableParser:
             return TableParseOutput(tables=[], cleaned_text="")
         
         tables: List[ParsedTable] = []
-        all_text_parts: List[str] = []
+        non_table_text_parts: List[str] = []
         
         for page_data in pages_data:
             table = self._parse_table_page_with_coords(page_data)
             if table and table.rows:
                 tables.append(table)
-            all_text_parts.append(page_data.raw_text)
+                # Page was parsed as a table - don't include in cleaned_text
+            else:
+                # Page wasn't a table - include in cleaned_text for semantic chunking
+                non_table_text_parts.append(page_data.raw_text)
         
-        # For cleaned_text, we'll use the raw text (table removal would need more work)
-        cleaned_text = "\n\n".join(all_text_parts)
+        # cleaned_text only contains pages that weren't parsed as tables
+        # This prevents duplicate chunking of table content
+        cleaned_text = "\n\n".join(non_table_text_parts) if non_table_text_parts else ""
         
         return TableParseOutput(tables=tables, cleaned_text=cleaned_text)
 
