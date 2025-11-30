@@ -1020,6 +1020,39 @@
       "streamProcessingFailed": "Strömbehandling misslyckades",
       "unknownErrorOccurred": "Okänt fel uppstod"
     }
+  },
+  "noteGeneration": {
+    "title": "Generera kliniskt dokument",
+    "steps": {
+      "template": "Välj en mall för ditt dokument",
+      "context": "Lägg till kontext för dokumentgenerering",
+      "generating": "Genererar ditt dokument...",
+      "editing": "Granska och redigera ditt dokument"
+    },
+    "filterLanguage": "Filtrera efter språk",
+    "allLanguages": "Alla språk",
+    "loadingTemplates": "Laddar mallar...",
+    "noTemplates": "Inga mallar tillgängliga",
+    "selectedTemplate": "Vald mall",
+    "contextPrompt": "Kontextprompt (Valfritt)",
+    "contextPromptDescription": "Lägg till specifik kontext eller instruktioner för dokumentgenerering",
+    "contextPromptPlaceholder": "t.ex., Fokusera på kardiovaskulära fynd, Inkludera läkemedelsändringar, Betona patientens huvudbekymmer...",
+    "next": "Nästa",
+    "back": "Tillbaka",
+    "cancel": "Avbryt",
+    "generateNote": "Generera dokument",
+    "regenerate": "Regenerera",
+    "regeneratePrompt": "Vad saknas eller behöver ändras?",
+    "regeneratePlaceholder": "t.ex., Lägg till mer detaljer om patientens symtom, Inkludera läkemedelshistorik, Utöka bedömningen...",
+    "regenerateNote": "Regenerera dokument",
+    "copyToClipboard": "Kopiera till urklipp",
+    "copySection": "Kopiera sektion",
+    "sectionCopied": "Sektion kopierad!",
+    "reviewAndEdit": "Granska och redigera dokument",
+    "reviewDescription": "Växla mellan Redigera och Förhandsgranska",
+    "edit": "Redigera",
+    "preview": "Förhandsgranska",
+    "noSections": "Inga sektioner hittades i dokumentet"
   }
 }
 

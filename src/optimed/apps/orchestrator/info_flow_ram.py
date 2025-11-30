@@ -11,7 +11,6 @@ import re
 from typing import List, Any, Union, AsyncGenerator, Optional, Dict, Tuple
 from datetime import datetime, timezone
 
-from langgraph.types import Send
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
@@ -121,7 +120,7 @@ The primary users of this service are doctors and nurses.
 REFERRAL_SYSTEM_PROMPT = """You are generating a medical referral in telegram-style clinical note format.
 
 SECTIONS (translate headers to user's language):
-1. Diagnostic Question - ONE word or short phrase. The suspected diagnosis or question to answer.
+1. Clinical Question - ONE word or short phrase formulated as a question. The suspected diagnosis or question to answer.
 2. Background - Brief relevant history. Age, relevant medical history, heredity if applicable.
 3. Current Status - Current symptoms, findings, observations. Brief factual statements.
 4. Functional Level - ONE sentence on how condition affects daily function/work/life.
@@ -249,6 +248,7 @@ class FlowState(BaseModel):
     note_template_type_preference: Optional[str] = None  # For auto-selected templates
     note_generation_id: Optional[str] = None
     note_context_prompt: Optional[str] = None
+    existing_note_content: Optional[str] = None  # For regeneration - existing note to modify
     note_sections: Dict[str, str] = Field(default_factory=dict)
     note_final_content: Optional[str] = None
     note_sources: List[str] = Field(default_factory=list)
@@ -3346,10 +3346,36 @@ CRITICAL: Output ONLY valid JSON. Translate encounter_type to user's language. N
                         role = "User" if msg.role == ChatRole.USER else "Assistant"
                         conversation_context += f"{role}: {msg.content}\n"
 
+                # Check if this is a regeneration
+                is_regeneration = state.existing_note_content is not None and len(state.existing_note_content.strip()) > 0
+                
+                # Parse existing note sections if regenerating
+                existing_sections = {}
+                if is_regeneration:
+                    # Parse markdown headers to extract existing sections
+                    import re
+                    existing_content = state.existing_note_content
+                    # Find all sections with ## headers
+                    section_pattern = r'##\s+(.+?)\n(.*?)(?=\n##|\Z)'
+                    matches = re.findall(section_pattern, existing_content, re.DOTALL)
+                    for match in matches:
+                        section_label = match[0].strip()
+                        section_content = match[1].strip()
+                        # Find matching field by label
+                        for field in fields:
+                            field_label = field.get("label", field["name"])
+                            if field_label.lower() == section_label.lower():
+                                existing_sections[field["name"]] = section_content
+                                break
+                    logger.info(f"Regeneration mode: Found {len(existing_sections)} existing sections")
+
                 # Add user's context prompt if provided
                 additional_context = ""
                 if state.note_context_prompt:
-                    additional_context = f"\n\n=== Additional Context ===\n{state.note_context_prompt}\n"
+                    if is_regeneration:
+                        additional_context = f"\n\n=== Modification Request ===\n{state.note_context_prompt}\n\nIMPORTANT: Only modify the sections/content that the user specifically requested to be changed. Keep all other sections exactly as they are in the existing note."
+                    else:
+                        additional_context = f"\n\n=== Additional Context ===\n{state.note_context_prompt}\n"
 
                 # Detect language
                 from optimed.core.lang import detect_language_code
@@ -3358,7 +3384,19 @@ CRITICAL: Output ONLY valid JSON. Translate encounter_type to user's language. N
 
                 # Build system prompt for note generation
                 current_date = datetime.now().strftime('%Y-%m-%d')
+                regeneration_instruction = ""
+                if is_regeneration:
+                    regeneration_instruction = f"""
+
+REGENERATION MODE:
+- You are MODIFYING an existing note, not creating a new one
+- ONLY change the sections or content that the user specifically requested to be modified
+- Keep ALL other sections and content EXACTLY as they are in the existing note
+- Do NOT regenerate sections that were not mentioned in the modification request
+- Preserve the exact formatting and structure of unchanged sections"""
+
                 note_system_prompt = f"""You are a medical documentation assistant generating a clinical note in {lang_name}.
+{regeneration_instruction}
 
 Current Date: {current_date}
 
@@ -3420,12 +3458,39 @@ Generate content for each section separately with only the necessary clinical fa
                         except Exception as callback_err:
                             logger.info(f"Failed to emit progress: {callback_err}")
 
+                    # Check if this section should be regenerated (regeneration mode)
+                    field_mentioned = False
+                    existing_section_content = None
+                    if is_regeneration:
+                        existing_section_content = existing_sections.get(field_name)
+                        # Check if this section is mentioned in the modification request
+                        modification_request = state.note_context_prompt or ""
+                        field_mentioned = (
+                            field_label.lower() in modification_request.lower() or
+                            field_name.lower() in modification_request.lower() or
+                            any(word in modification_request.lower() for word in field_label.lower().split())
+                        )
+                        
+                        if existing_section_content and not field_mentioned:
+                            # Keep existing section unchanged
+                            sections[field_name] = existing_section_content
+                            logger.info(f"✓ Kept existing {field_label} unchanged ({len(existing_section_content)} chars)")
+                            continue
+                        else:
+                            logger.info(f"🔄 Regenerating {field_label} (mentioned in modification request)")
+
                     # Build section-specific prompt
+                    existing_section_text = ""
+                    if is_regeneration and existing_section_content:
+                        existing_section_text = f"\n\nExisting content for this section:\n{existing_section_content}\n\n"
+                        if field_mentioned:
+                            existing_section_text += "Modify this section according to the user's request above. If the request doesn't apply to this section, keep it unchanged.\n"
+                    
                     section_prompt = f"""Based on the clinical information below, generate content for this section:
 
 Section: {field_label}
 {f"Description: {field_description}" if field_description else ""}
-
+{existing_section_text}
 Clinical Information:
 {chunks_text}
 {conversation_context}
@@ -3961,22 +4026,45 @@ Your 3 queries (one per line):"""
             """
             Generate content for all document sections using the section-specific chunks.
             Uses the document-specific system prompt for guidance.
+            Supports regeneration mode where only requested sections are modified.
             """
             try:
-                logger.info(f"📝 Generating content for {len(state.document_sections)} document sections")
+                # Check if this is a regeneration
+                is_regeneration = state.existing_note_content is not None and len(state.existing_note_content.strip()) > 0
+                
+                logger.info(f"📝 Generating content for {len(state.document_sections)} document sections" + (" (REGENERATION MODE)" if is_regeneration else ""))
 
                 if not state.document_sections:
                     logger.warning("No document sections defined")
                     return state
+                
+                # Parse existing note sections if regenerating
+                existing_sections = {}
+                if is_regeneration:
+                    import re
+                    existing_content = state.existing_note_content
+                    # Find all sections with ## headers
+                    section_pattern = r'##\s+(.+?)\n(.*?)(?=\n##|\Z)'
+                    matches = re.findall(section_pattern, existing_content, re.DOTALL)
+                    for match in matches:
+                        section_label = match[0].strip()
+                        section_content = match[1].strip()
+                        # Find matching section by label
+                        for section in state.document_sections:
+                            section_label_existing = section.get("label", section.get("name", ""))
+                            if section_label_existing.lower() == section_label.lower():
+                                existing_sections[section.get("name", "")] = section_content
+                                break
+                    logger.info(f"Regeneration mode: Found {len(existing_sections)} existing sections")
 
                 # Get the appropriate system prompt
                 if state.document_type == "referral":
                     doc_system_prompt = REFERRAL_SYSTEM_PROMPT
-                    doc_type_name = "Referral (Remiss)"
+                    doc_type_name = "Referral" if state.user_language != "sv" else "Remiss"
                     doc_type_display = "referral" if state.user_language != "sv" else "remiss"
                 else:
                     doc_system_prompt = MEDICAL_CERTIFICATE_SYSTEM_PROMPT
-                    doc_type_name = "Medical Certificate (Läkarintyg)"
+                    doc_type_name = "Medical Certificate" if state.user_language != "sv" else "Läkarintyg"
                     doc_type_display = "medical certificate" if state.user_language != "sv" else "läkarintyg"
 
                 # Emit starting status
@@ -4008,7 +4096,19 @@ Your 3 queries (one per line):"""
                 primary_focus = state.document_primary_focus or "the patient's condition"
 
                 # Build the full system prompt for generation
+                regeneration_instruction = ""
+                if is_regeneration:
+                    regeneration_instruction = f"""
+
+REGENERATION MODE:
+- You are MODIFYING an existing {doc_type_name}, not creating a new one
+- ONLY change the sections or content that the user specifically requested to be modified
+- Keep ALL other sections and content EXACTLY as they are in the existing document
+- Do NOT regenerate sections that were not mentioned in the modification request
+- Preserve the exact formatting and structure of unchanged sections"""
+
                 generation_system_prompt = f"""You are generating a {doc_type_name} in {lang_name}.
+{regeneration_instruction}
 
 Date: {current_date}
 PRIMARY FOCUS: {primary_focus}
@@ -4034,6 +4134,26 @@ CRITICAL:
                     section_label = section.get("label", section_name)
                     section_desc = section.get("description", "")
 
+                    # Check if this section should be regenerated (regeneration mode)
+                    field_mentioned = False
+                    existing_section_content = None
+                    if is_regeneration:
+                        existing_section_content = existing_sections.get(section_name)
+                        # Check if this section is mentioned in the modification request
+                        modification_request = state.note_context_prompt or ""
+                        field_mentioned = (
+                            section_label.lower() in modification_request.lower() or
+                            section_name.lower() in modification_request.lower() or
+                            any(word in modification_request.lower() for word in section_label.lower().split())
+                        )
+                        
+                        if existing_section_content and not field_mentioned:
+                            # Keep existing section unchanged
+                            logger.info(f"✓ Kept existing {section_label} unchanged ({len(existing_section_content)} chars)")
+                            return section_name, existing_section_content
+                        else:
+                            logger.info(f"🔄 Regenerating {section_label} (mentioned in modification request)")
+
                     # Get section-specific chunks
                     section_chunks = state.document_section_chunks.get(section_name, [])
                     
@@ -4048,9 +4168,15 @@ CRITICAL:
                         chunks_text = "No specific information available."
 
                     # Build section-specific prompt - emphasize focus on primary condition
+                    existing_section_text = ""
+                    if is_regeneration and existing_section_content:
+                        existing_section_text = f"\n\nExisting content for this section:\n{existing_section_content}\n\n"
+                        if field_mentioned:
+                            existing_section_text += "Modify this section according to the user's request above. If the request doesn't apply to this section, keep it unchanged.\n"
+                    
                     if state.document_type == "referral":
                         section_prompt = f"""Generate "{section_label}" section for {primary_focus}.
-
+{existing_section_text}
 ⚠️ IMPORTANT: Include ONLY information relevant to {primary_focus}. Ignore unrelated conditions.
 
 Purpose: {section_desc}
@@ -4062,7 +4188,7 @@ Write telegram-style clinical notes about {primary_focus}. Short facts separated
 Only include facts that are relevant to {primary_focus}."""
                     else:
                         section_prompt = f"""Generate "{section_label}" section for {primary_focus}.
-
+{existing_section_text}
 ⚠️ IMPORTANT: Include ONLY information relevant to {primary_focus}. Ignore unrelated conditions.
 
 Purpose: {section_desc}
@@ -6326,7 +6452,7 @@ Content:
             return self._to_output(data.model_dump())
         return self._to_output(data)
 
-    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "info_retrieval", user_id: str | None = None, session_id: str | None = None, note_template: NoteTemplate | None = None, note_generation_id: str | None = None, note_context_prompt: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
+    def run_stream(self, patient: PatientContext | None = None, user_prompt: str | None = None, chat_mode: bool = False, diagnostic_mode: str = "info_retrieval", user_id: str | None = None, session_id: str | None = None, note_template: NoteTemplate | None = None, note_generation_id: str | None = None, note_context_prompt: str | None = None, existing_note_content: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Return an async generator that yields chunks as they stream from the graph."""
 
         async def _stream_generator():
@@ -6375,7 +6501,8 @@ Content:
                     "is_note_generation_flow": is_note_generation_flow,
                     "note_template": note_template,
                     "note_generation_id": note_generation_id,
-                    "note_context_prompt": note_context_prompt
+                    "note_context_prompt": note_context_prompt,
+                    "existing_note_content": existing_note_content
                 }
             else:
                 initial_input = {
@@ -6390,7 +6517,8 @@ Content:
                     "is_note_generation_flow": is_note_generation_flow,
                     "note_template": note_template,
                     "note_generation_id": note_generation_id,
-                    "note_context_prompt": note_context_prompt
+                    "note_context_prompt": note_context_prompt,
+                    "existing_note_content": existing_note_content
                 }
 
             graph_task = None

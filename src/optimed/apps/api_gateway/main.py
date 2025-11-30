@@ -4708,10 +4708,11 @@ async def delete_xml_document(
 # ==================== NOTE TEMPLATE ENDPOINTS ====================
 
 class NoteGenerationRequestModel(BaseModel):
-    template_id: str
+    template_id: Optional[str] = None  # Optional for document generation (referrals, certificates)
     session_id: str
     patient_id: Optional[str] = None
     context_prompt: Optional[str] = None
+    existing_note_content: Optional[str] = None  # For regeneration - existing note to modify
     include_conversation_history: bool = True
 
 
@@ -4871,14 +4872,114 @@ async def generate_note_stream(
     fhir_repo: FHIRRepository = Depends(get_user_fhir_repository),
     template_repo = Depends(get_template_repo)
 ):
-    """Generate clinical note with streaming (GDPR: content never stored)."""
+    """Generate or regenerate clinical note with streaming (GDPR: content never stored).
+    
+    Supports:
+    - Template-based note generation (with template_id)
+    - Document generation (referrals, certificates) without template_id
+    - Regeneration with existing content (only modifies what's requested) - FAST PATH: Direct LLM call
+    """
     try:
-        logger.info("[Note Generate] Starting generation for template")
+        is_regeneration = req.existing_note_content is not None and len(req.existing_note_content.strip()) > 0
+        
+        # FAST PATH: For regeneration, call LLM directly without going through orchestrator
+        if is_regeneration:
+            logger.info("[Note Generate] Regeneration mode - using direct LLM call (fast path)")
+            
+            # Build regeneration prompt
+            regeneration_prompt = f"""You are a medical documentation assistant. The user wants to modify an existing clinical note.
 
-        # Get template
-        template = await template_repo.get_template_by_id(req.template_id)
-        if not template:
-            raise HTTPException(status_code=404, detail="Template not found")
+CURRENT NOTE:
+{req.existing_note_content}
+
+USER'S MODIFICATION REQUEST:
+{req.context_prompt or "No specific changes requested"}
+
+INSTRUCTIONS:
+1. Only modify the sections or content that the user specifically requested to change
+2. Keep all other sections and content EXACTLY as they are in the current note
+3. Maintain the same format, structure, and style as the original note
+4. If the user's request is unclear, make minimal changes and preserve the original content
+5. Return the complete modified note, not just the changed sections
+
+Return the complete modified note:"""
+
+            # Determine language from existing note or context
+            from optimed.core.lang import detect_language_code
+            detected_lang = detect_language_code(req.existing_note_content or req.context_prompt or "")
+            active_lang = detected_lang if detected_lang in ["en", "sv"] else "en"
+            
+            # Stream response directly from LLM
+            async def regeneration_stream():
+                try:
+                    # Send status update
+                    yield f"data: {json.dumps({'type': 'status', 'step': 'regenerating', 'message': 'Regenerating note...', 'timestamp': datetime.now().isoformat()})}\n\n"
+                    
+                    # Prepare messages
+                    from optimed.core.domain import ChatMessage, ChatRole
+                    messages = [
+                        ChatMessage(
+                            role=ChatRole.SYSTEM,
+                            content=f"You are a medical documentation assistant. Respond in '{active_lang}'. Always return the complete modified note."
+                        ),
+                        ChatMessage(
+                            role=ChatRole.USER,
+                            content=regeneration_prompt
+                        )
+                    ]
+                    
+                    # Stream from LLM
+                    accumulated_content = ""
+                    async for chunk in _journal_llm_service.chat_stream(messages):
+                        accumulated_content += chunk
+                        
+                        # Emit chunk in expected format
+                        chunk_event = {
+                            "type": "response_chunk",
+                            "content": chunk,
+                            "accumulated_content": accumulated_content,
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        yield f"data: {json.dumps(chunk_event)}\n\n"
+                    
+                    # Emit completion event in format expected by frontend
+                    # Frontend expects either final_response with JSON or direct generated_note event
+                    completion_event = {
+                        "type": "completion",
+                        "final_response": json.dumps({
+                            "type": "generated_note",
+                            "content": accumulated_content
+                        }),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    yield f"data: {json.dumps(completion_event)}\n\n"
+                    
+                except Exception as e:
+                    error_event = {"type": "error", "message": str(e), "timestamp": datetime.now().isoformat()}
+                    yield f"data: {json.dumps(error_event)}\n\n"
+                    log_error(logger, "Regeneration stream error", e)
+            
+            return StreamingResponse(
+                regeneration_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive"
+                }
+            )
+        
+        # SLOW PATH: New generation - use full orchestrator flow
+        logger.info("[Note Generate] New generation mode - using orchestrator flow")
+
+        # Get template (optional - for document generation)
+        template = None
+        if req.template_id:
+            template = await template_repo.get_template_by_id(req.template_id)
+            if not template:
+                raise HTTPException(status_code=404, detail="Template not found")
+        else:
+            logger.info("[Note Generate] No template_id provided - using document generation flow")
 
         # Get patient context if provided
         patient_ctx = None
@@ -4888,60 +4989,67 @@ async def generate_note_stream(
             except Exception:
                 logger.warning("[Note Generate] Warning: Could not fetch patient")
 
-        # Start metadata tracking
+        # Start metadata tracking (only if template provided)
         import hashlib
         generation_id = str(uuid.uuid4())
         from optimed.core.domain import NoteGenerationMetadata, NoteGenerationStatus
 
-        context_hash = None
-        if req.context_prompt:
-            context_hash = hashlib.sha256(req.context_prompt.encode()).hexdigest()
+        if template:
+            context_hash = None
+            if req.context_prompt:
+                context_hash = hashlib.sha256(req.context_prompt.encode()).hexdigest()
 
-        metadata = NoteGenerationMetadata(
-            generation_id=generation_id,
-            user_id=user_ctx["user_id"],
-            patient_id=req.patient_id,
-            template_id=req.template_id,
-            session_id=req.session_id,
-            template_name=template.name,
-            template_type=template.template_type,
-            language=template.language,
-            status=NoteGenerationStatus.STARTED,
-            context_prompt_hash=context_hash,
-            created_at=datetime.now(timezone.utc)
-        )
-        await template_repo.save_generation_metadata(metadata)
+            metadata = NoteGenerationMetadata(
+                generation_id=generation_id,
+                user_id=user_ctx["user_id"],
+                patient_id=req.patient_id,
+                template_id=req.template_id,
+                session_id=req.session_id,
+                template_name=template.name,
+                template_type=template.template_type,
+                language=template.language,
+                status=NoteGenerationStatus.STARTED,
+                context_prompt_hash=context_hash,
+                created_at=datetime.now(timezone.utc)
+            )
+            await template_repo.save_generation_metadata(metadata)
+
+        # Build user prompt for new generation
+        user_prompt = req.context_prompt or "Generate clinical note"
 
         # Stream generation using orchestrator
         async def event_stream():
             try:
                 async for event in _engine.run_stream(
                     patient=patient_ctx,
-                    user_prompt=req.context_prompt or "Generate clinical note",
+                    user_prompt=user_prompt,
                     user_id=user_ctx["user_id"],
                     session_id=req.session_id,
                     note_template=template,
                     note_generation_id=generation_id,
-                    note_context_prompt=req.context_prompt
+                    note_context_prompt=req.context_prompt,
+                    existing_note_content=None
                 ):
                     # Forward all events to frontend
                     yield f"data: {json.dumps(event)}\n\n"
 
-                # Update metadata on completion
-                await template_repo.update_generation_metadata(
-                    generation_id=generation_id,
-                    status=NoteGenerationStatus.COMPLETED
-                )
+                # Update metadata on completion (only if template provided)
+                if template:
+                    await template_repo.update_generation_metadata(
+                        generation_id=generation_id,
+                        status=NoteGenerationStatus.COMPLETED
+                    )
 
             except Exception as e:
                 error_event = {"type": "error", "message": str(e)}
                 yield f"data: {json.dumps(error_event)}\n\n"
 
-                await template_repo.update_generation_metadata(
-                    generation_id=generation_id,
-                    status=NoteGenerationStatus.ERROR,
-                    error_message=str(e)
-                )
+                if template:
+                    await template_repo.update_generation_metadata(
+                        generation_id=generation_id,
+                        status=NoteGenerationStatus.ERROR,
+                        error_message=str(e)
+                    )
 
         return StreamingResponse(
             event_stream(),

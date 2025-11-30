@@ -1107,10 +1107,11 @@ export type NoteTemplateUploadRequest = {
 };
 
 export type NoteGenerationRequest = {
-  template_id: string;
+  template_id?: string;  // Optional for document generation (referrals, certificates)
   patient_id?: string;
   session_id: string;
   context_prompt?: string;
+  existing_note_content?: string;  // For regeneration - existing note to modify
 };
 
 export type TemplateListResponse = {

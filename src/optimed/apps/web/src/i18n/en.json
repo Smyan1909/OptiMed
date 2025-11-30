@@ -1020,6 +1020,39 @@
       "streamProcessingFailed": "Stream processing failed",
       "unknownErrorOccurred": "Unknown error occurred"
     }
+  },
+  "noteGeneration": {
+    "title": "Generate Clinical Document",
+    "steps": {
+      "template": "Select a template for your document",
+      "context": "Add context for document generation",
+      "generating": "Generating your document...",
+      "editing": "Review and edit your document"
+    },
+    "filterLanguage": "Filter by Language",
+    "allLanguages": "All Languages",
+    "loadingTemplates": "Loading templates...",
+    "noTemplates": "No templates available",
+    "selectedTemplate": "Selected Template",
+    "contextPrompt": "Context Prompt (Optional)",
+    "contextPromptDescription": "Add specific context or instructions for document generation",
+    "contextPromptPlaceholder": "e.g., Focus on cardiovascular findings, Include medication changes, Emphasize patient's main concerns...",
+    "next": "Next",
+    "back": "Back",
+    "cancel": "Cancel",
+    "generateNote": "Generate Document",
+    "regenerate": "Regenerate",
+    "regeneratePrompt": "What's missing or needs to be changed?",
+    "regeneratePlaceholder": "e.g., Add more details about the patient's symptoms, Include medication history, Expand on the assessment...",
+    "regenerateNote": "Regenerate Document",
+    "copyToClipboard": "Copy to Clipboard",
+    "copySection": "Copy section",
+    "sectionCopied": "Section copied!",
+    "reviewAndEdit": "Review and Edit Document",
+    "reviewDescription": "Switch between Edit and Preview modes",
+    "edit": "Edit",
+    "preview": "Preview",
+    "noSections": "No sections found in document"
   }
 }
 

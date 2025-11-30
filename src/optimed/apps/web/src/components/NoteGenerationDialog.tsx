@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useUser } from '@/contexts/UserContext';
 import { logInfo } from '@/lib/logger';
+import { useTranslations, useLocale } from 'next-intl';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -13,6 +14,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import ReactMarkdown from 'react-markdown';
+import { Copy, Check } from 'lucide-react';
 import {
   NoteTemplate,
   listNoteTemplates,
@@ -29,6 +31,11 @@ interface NoteGenerationDialogProps {
   initialNote?: string | null;
 }
 
+interface NoteSection {
+  header: string;
+  content: string;
+}
+
 export function NoteGenerationDialog({
   open,
   onOpenChange,
@@ -38,26 +45,112 @@ export function NoteGenerationDialog({
   initialNote,
 }: NoteGenerationDialogProps) {
   const { user } = useUser();
-  const [step, setStep] = useState<'template' | 'context' | 'generating' | 'editing'>('template');
+  const locale = useLocale();
+  const t = useTranslations('noteGeneration');
+  const [step, setStep] = useState<'template' | 'context' | 'generating' | 'editing' | 'regenerating'>('template');
   const [templates, setTemplates] = useState<NoteTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<NoteTemplate | null>(null);
   const [contextPrompt, setContextPrompt] = useState('');
+  const [regeneratePrompt, setRegeneratePrompt] = useState('');
   const [generatedNote, setGeneratedNote] = useState('');
-  const [editedNote, setEditedNote] = useState('');
+  const [noteSections, setNoteSections] = useState<NoteSection[]>([]);
+  const [noteMainTitle, setNoteMainTitle] = useState<string>('');  // Main title (# Title) if present
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generationProgress, setGenerationProgress] = useState<string>('');
   const [filterLanguage, setFilterLanguage] = useState<string>('all');
+  const [copiedSectionIndex, setCopiedSectionIndex] = useState<number | null>(null);
+
+  // Parse markdown note into sections
+  const parseNoteIntoSections = (note: string): { sections: NoteSection[]; mainTitle: string } => {
+    if (!note) return { sections: [], mainTitle: '' };
+    
+    // Extract main title (# Title) if present - we don't want to show it as an editable section
+    let noteContent = note;
+    let mainTitle = '';
+    const mainTitleMatch = noteContent.match(/^#\s+(.+)$/m);
+    if (mainTitleMatch) {
+      mainTitle = mainTitleMatch[1].trim();
+      // Remove the main title line and any following blank lines
+      noteContent = noteContent.replace(/^#\s+.+$/m, '').replace(/^\n+/, '');
+    }
+    
+    // Split by markdown headers (##)
+    const headerRegex = /^##\s+(.+)$/gm;
+    const sections: NoteSection[] = [];
+    let lastIndex = 0;
+    let match;
+    
+    // Find all headers
+    const headers: Array<{ index: number; header: string }> = [];
+    while ((match = headerRegex.exec(noteContent)) !== null) {
+      headers.push({ index: match.index, header: match[1].trim() });
+    }
+    
+    // Extract sections
+    if (headers.length === 0) {
+      // No headers found, treat entire note as one section
+      sections.push({ header: '', content: noteContent.trim() });
+    } else {
+      // Extract content between headers
+      for (let i = 0; i < headers.length; i++) {
+        const startIndex = headers[i].index;
+        const endIndex = i < headers.length - 1 ? headers[i + 1].index : noteContent.length;
+        
+        // Extract header
+        const headerMatch = noteContent.substring(startIndex).match(/^##\s+(.+)$/m);
+        const header = headerMatch ? headerMatch[1].trim() : '';
+        
+        // Extract content (skip the header line itself)
+        const contentStart = noteContent.indexOf('\n', startIndex) + 1;
+        const content = noteContent.substring(contentStart, endIndex).trim();
+        
+        sections.push({ header, content });
+      }
+    }
+    
+    return { sections, mainTitle };
+  };
+
+  // Reconstruct note from sections (with main title if it exists)
+  const reconstructNoteFromSections = (sections: NoteSection[], mainTitle?: string): string => {
+    const sectionsText = sections
+      .map(section => {
+        if (section.header) {
+          return `## ${section.header}\n${section.content}`;
+        }
+        return section.content;
+      })
+      .join('\n\n');
+    
+    // Add main title back if it exists
+    if (mainTitle) {
+      return `# ${mainTitle}\n\n${sectionsText}`;
+    }
+    
+    return sectionsText;
+  };
 
   // Handle auto-generated note (from natural language prompt)
   useEffect(() => {
     if (open && initialNote) {
       logInfo('Note Generation Dialog: Auto-generated note detected, skipping to editing step');
       setGeneratedNote(initialNote);
-      setEditedNote(initialNote);
+      const { sections, mainTitle } = parseNoteIntoSections(initialNote);
+      setNoteSections(sections);
+      setNoteMainTitle(mainTitle);
       setStep('editing');
     }
   }, [open, initialNote]);
+
+  // Update sections when generated note changes
+  useEffect(() => {
+    if (generatedNote && step === 'editing') {
+      const { sections, mainTitle } = parseNoteIntoSections(generatedNote);
+      setNoteSections(sections);
+      setNoteMainTitle(mainTitle);
+    }
+  }, [generatedNote, step]);
 
   useEffect(() => {
     if (open && step === 'template') {
@@ -77,58 +170,73 @@ export function NoteGenerationDialog({
 
       setTemplates(data.templates || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load templates');
+      setError(err instanceof Error ? err.message : t('noTemplates'));
     } finally {
       setLoading(false);
     }
   };
 
-  const generateNote = async () => {
-    if (!user || !selectedTemplate) return;
+  const generateNote = async (isRegeneration = false) => {
+    if (!user) return;
+    
+    // For regeneration, template is optional (works for referrals/certificates)
+    // For new generation, template is required
+    if (!isRegeneration && !selectedTemplate) return;
 
     try {
-      setStep('generating');
+      setStep(isRegeneration ? 'regenerating' : 'generating');
       setLoading(true);
       setError(null);
-      setGenerationProgress('Starting note generation...');
+      setGenerationProgress(isRegeneration ? t('regenerateNote') : t('generateNote'));
+
+      // For regeneration, pass existing note content separately
+      // Use the current edited note (reconstructed from sections with main title)
+      const existingNote = isRegeneration && (generatedNote || noteSections.length > 0)
+        ? reconstructNoteFromSections(noteSections, noteMainTitle)  // Use current edited version
+        : undefined;
 
       const request: NoteGenerationRequest = {
-        template_id: selectedTemplate.template_id,
+        template_id: selectedTemplate?.template_id,  // Optional for regeneration
         patient_id: patientId,
         session_id: sessionId,
-        context_prompt: contextPrompt || undefined,
+        context_prompt: isRegeneration ? regeneratePrompt : (contextPrompt || undefined),
+        existing_note_content: existingNote,
       };
 
       await generateNoteStreaming(
         request,
         (progressEvent) => {
-          setGenerationProgress(progressEvent.message || 'Generating...');
+          setGenerationProgress(progressEvent.message || (isRegeneration ? t('regenerateNote') : t('generateNote')));
         },
         (finalNote) => {
           setGeneratedNote(finalNote);
-          setEditedNote(finalNote);
-          setGenerationProgress('Note generated successfully!');
+          const { sections, mainTitle } = parseNoteIntoSections(finalNote);
+          setNoteSections(sections);
+          setNoteMainTitle(mainTitle);
+          setGenerationProgress(isRegeneration ? t('regenerateNote') : t('generateNote'));
           setStep('editing');
           setLoading(false);
+          setRegeneratePrompt(''); // Clear regenerate prompt after successful regeneration
         },
         (errorMessage) => {
           setError(errorMessage);
-          setStep('context');
+          setStep(isRegeneration ? 'editing' : 'context');
           setLoading(false);
         }
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate note');
-      setStep('context');
+      setError(err instanceof Error ? err.message : (isRegeneration ? t('regenerateNote') : t('generateNote')));
+      setStep(isRegeneration ? 'editing' : 'context');
       setLoading(false);
     }
   };
 
   const handleCopyToClipboard = async () => {
     try {
-      await navigator.clipboard.writeText(editedNote);
+      const fullNote = reconstructNoteFromSections(noteSections, noteMainTitle);
+      await navigator.clipboard.writeText(fullNote);
       if (onNoteGenerated) {
-        onNoteGenerated(editedNote);
+        onNoteGenerated(fullNote);
       }
       onOpenChange(false);
       resetDialog();
@@ -137,15 +245,36 @@ export function NoteGenerationDialog({
     }
   };
 
+  const handleCopySection = async (index: number) => {
+    try {
+      const section = noteSections[index];
+      const sectionText = section.header ? `## ${section.header}\n${section.content}` : section.content;
+      await navigator.clipboard.writeText(sectionText);
+      setCopiedSectionIndex(index);
+      setTimeout(() => setCopiedSectionIndex(null), 2000);
+    } catch (err) {
+      setError('Failed to copy section');
+    }
+  };
+
+  const handleSectionContentChange = (index: number, content: string) => {
+    const updatedSections = [...noteSections];
+    updatedSections[index].content = content;
+    setNoteSections(updatedSections);
+  };
+
   const resetDialog = () => {
     setStep('template');
     setSelectedTemplate(null);
     setContextPrompt('');
+    setRegeneratePrompt('');
     setGeneratedNote('');
-    setEditedNote('');
+    setNoteSections([]);
+    setNoteMainTitle('');
     setError(null);
     setGenerationProgress('');
     setFilterLanguage('all');
+    setCopiedSectionIndex(null);
   };
 
   const getTemplateIcon = (type: string) => {
@@ -157,6 +286,7 @@ export function NoteGenerationDialog({
       sbar: '📢',
       consultation: '👨‍⚕️',
       custom: '📄',
+      medical_certificate: '🏥',
     };
     return icons[type] || '📄';
   };
@@ -176,13 +306,14 @@ export function NoteGenerationDialog({
     }}>
       <DialogContent className="sm:max-w-[700px] max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Generate Clinical Note</DialogTitle>
-          <DialogDescription>
-            {step === 'template' && 'Select a template for your note'}
-            {step === 'context' && 'Add context for note generation'}
-            {step === 'generating' && 'Generating your note...'}
-            {step === 'editing' && 'Review and edit your note'}
-          </DialogDescription>
+          <DialogTitle>{t('title')}</DialogTitle>
+          {step !== 'editing' && (
+            <DialogDescription>
+              {step === 'template' && t('steps.template')}
+              {step === 'context' && t('steps.context')}
+              {(step === 'generating' || step === 'regenerating') && t('steps.generating')}
+            </DialogDescription>
+          )}
         </DialogHeader>
 
         {error && (
@@ -195,13 +326,13 @@ export function NoteGenerationDialog({
         {step === 'template' && (
           <div className="space-y-4 py-4">
             <div>
-              <Label>Filter by Language</Label>
+              <Label>{t('filterLanguage')}</Label>
               <Select value={filterLanguage} onValueChange={setFilterLanguage}>
                 <SelectTrigger className="bg-white opacity-100 border-gray-300">
-                  <SelectValue placeholder="All Languages" />
+                  <SelectValue placeholder={t('allLanguages')} />
                 </SelectTrigger>
                 <SelectContent className="bg-white opacity-100">
-                  <SelectItem value="all">All Languages</SelectItem>
+                  <SelectItem value="all">{t('allLanguages')}</SelectItem>
                   <SelectItem value="en">EN - English</SelectItem>
                   <SelectItem value="sv">SV - Swedish</SelectItem>
                 </SelectContent>
@@ -212,10 +343,10 @@ export function NoteGenerationDialog({
               {loading ? (
                 <div className="text-center py-8">
                   <div className="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-                  <p className="text-gray-600">Loading templates...</p>
+                  <p className="text-gray-600">{t('loadingTemplates')}</p>
                 </div>
               ) : templates.length === 0 ? (
-                <p className="text-center text-gray-500 py-8">No templates available</p>
+                <p className="text-center text-gray-500 py-8">{t('noTemplates')}</p>
               ) : (
                 templates.map((template) => (
                   <Card
@@ -257,14 +388,14 @@ export function NoteGenerationDialog({
 
             <div className="flex justify-end gap-2 pt-4">
               <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
+                {t('cancel')}
               </Button>
               <Button
                 onClick={() => setStep('context')}
                 disabled={!selectedTemplate}
                 className="bg-blue-600 hover:bg-blue-700"
               >
-                Next
+                {t('next')}
               </Button>
             </div>
           </div>
@@ -274,7 +405,7 @@ export function NoteGenerationDialog({
         {step === 'context' && (
           <div className="space-y-4 py-4">
             <div>
-              <Label>Selected Template</Label>
+              <Label>{t('selectedTemplate')}</Label>
               <Card className="mt-2">
                 <CardContent className="py-3">
                   <div className="flex items-center gap-2">
@@ -292,16 +423,16 @@ export function NoteGenerationDialog({
 
             <div>
               <Label htmlFor="context-prompt">
-                Context Prompt (Optional)
+                {t('contextPrompt')}
               </Label>
               <p className="text-xs text-gray-500 mb-2">
-                Add specific context or instructions for note generation
+                {t('contextPromptDescription')}
               </p>
               <Textarea
                 id="context-prompt"
                 value={contextPrompt}
                 onChange={(e) => setContextPrompt(e.target.value)}
-                placeholder="e.g., Focus on cardiovascular findings, Include medication changes, Emphasize patient's main concerns..."
+                placeholder={t('contextPromptPlaceholder')}
                 rows={5}
                 className="resize-none"
               />
@@ -309,24 +440,26 @@ export function NoteGenerationDialog({
 
             <div className="flex justify-end gap-2 pt-4">
               <Button variant="outline" onClick={() => setStep('template')}>
-                Back
+                {t('back')}
               </Button>
               <Button
-                onClick={generateNote}
+                onClick={() => generateNote(false)}
                 className="bg-blue-600 hover:bg-blue-700"
               >
-                Generate Note
+                {t('generateNote')}
               </Button>
             </div>
           </div>
         )}
 
         {/* Step 3: Generating */}
-        {step === 'generating' && (
+        {(step === 'generating' || step === 'regenerating') && (
           <div className="space-y-4 py-8">
             <div className="text-center">
               <div className="animate-spin h-12 w-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-              <p className="text-gray-900 font-medium mb-2">Generating your note...</p>
+              <p className="text-gray-900 font-medium mb-2">
+                {step === 'regenerating' ? t('regenerateNote') : t('generateNote')}
+              </p>
               <p className="text-sm text-gray-600">{generationProgress}</p>
             </div>
           </div>
@@ -336,25 +469,57 @@ export function NoteGenerationDialog({
         {step === 'editing' && (
           <div className="space-y-4 py-4">
             <div>
-              <Label>Review and Edit Note</Label>
+              <Label>{t('reviewAndEdit')}</Label>
               <p className="text-xs text-gray-500 mb-2">
-                Switch between Edit and Preview modes
+                {t('reviewDescription')}
               </p>
 
               <Tabs defaultValue="edit" className="w-full">
                 <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="edit">Edit</TabsTrigger>
-                  <TabsTrigger value="preview">Preview</TabsTrigger>
+                  <TabsTrigger value="edit">{t('edit')}</TabsTrigger>
+                  <TabsTrigger value="preview">{t('preview')}</TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="edit" className="mt-4">
-                  <Textarea
-                    id="note-editor"
-                    value={editedNote}
-                    onChange={(e) => setEditedNote(e.target.value)}
-                    rows={15}
-                    className="resize-none font-mono text-sm"
-                  />
+                <TabsContent value="edit" className="mt-4 space-y-4">
+                  {noteSections.length === 0 ? (
+                    <p className="text-center text-gray-500 py-8">{t('noSections')}</p>
+                  ) : (
+                    noteSections.map((section, index) => (
+                      <div key={index} className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          {section.header ? (
+                            <Label className="text-base font-semibold text-gray-900">
+                              {section.header}
+                            </Label>
+                          ) : (
+                            <Label className="text-base font-semibold text-gray-900">
+                              {t('noSections')}
+                            </Label>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleCopySection(index)}
+                            className="h-8 w-8 p-0"
+                            title={t('copySection')}
+                          >
+                            {copiedSectionIndex === index ? (
+                              <Check className="h-4 w-4 text-green-600" />
+                            ) : (
+                              <Copy className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
+                        <Textarea
+                          value={section.content}
+                          onChange={(e) => handleSectionContentChange(index, e.target.value)}
+                          rows={section.content.split('\n').length + 2}
+                          className="resize-none font-mono text-sm"
+                          placeholder={section.header ? `${section.header} content...` : 'Note content...'}
+                        />
+                      </div>
+                    ))
+                  )}
                 </TabsContent>
 
                 <TabsContent value="preview" className="mt-4">
@@ -375,26 +540,46 @@ export function NoteGenerationDialog({
                         blockquote: ({ node, ...props }) => <blockquote className="border-l-4 border-blue-500 pl-4 italic text-gray-700 mb-3" {...props} />,
                       }}
                     >
-                      {editedNote}
+                      {reconstructNoteFromSections(noteSections, noteMainTitle)}
                     </ReactMarkdown>
                   </div>
                 </TabsContent>
               </Tabs>
             </div>
 
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="outline" onClick={() => {
-                setStep('context');
-                setGeneratedNote('');
-                setEditedNote('');
-              }}>
-                Regenerate
+            {/* Regenerate prompt section - moved to bottom */}
+            <div className="border rounded-lg p-4 bg-gray-50">
+              <Label htmlFor="regenerate-prompt" className="text-sm font-semibold mb-2 block">
+                {t('regenerate')}
+              </Label>
+              <p className="text-xs text-gray-500 mb-2">
+                {t('regeneratePrompt')}
+              </p>
+              <Textarea
+                id="regenerate-prompt"
+                value={regeneratePrompt}
+                onChange={(e) => setRegeneratePrompt(e.target.value)}
+                placeholder={t('regeneratePlaceholder')}
+                rows={3}
+                className="resize-none mb-2"
+              />
+              <Button
+                onClick={() => generateNote(true)}
+                disabled={loading || !regeneratePrompt.trim() || noteSections.length === 0}
+                variant="outline"
+                size="sm"
+                className="w-full"
+              >
+                {t('regenerateNote')}
               </Button>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4">
               <Button
                 onClick={handleCopyToClipboard}
                 className="bg-blue-600 hover:bg-blue-700"
               >
-                Copy to Clipboard
+                {t('copyToClipboard')}
               </Button>
             </div>
           </div>
