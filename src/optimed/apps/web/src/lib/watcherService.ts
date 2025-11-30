@@ -355,3 +355,34 @@ export async function stopRPAExtraction(): Promise<{
     return { success: false, error: 'Watcher not available' };
   }
 }
+
+/**
+ * Notify CLARA that the entire RPA extraction pipeline has completed
+ * This triggers CLARA to bring its window to the front and show a completion message
+ * Fails silently if watcher is not running
+ */
+export async function notifyRPACompletion(): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), WATCHER_TIMEOUT);
+
+    const response = await fetch(`${WATCHER_BASE_URL}/notify-completion`, {
+      method: 'POST',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      logInfo('Watcher Service: RPA completion notification sent to CLARA');
+      return true;
+    } else {
+      logWarning('Watcher Service: Failed to send RPA completion notification');
+      return false;
+    }
+  } catch (error) {
+    // Silently fail - watcher not running is expected for most users
+    logInfo('Watcher Service: CLARA watcher not available for completion notification');
+    return false;
+  }
+}

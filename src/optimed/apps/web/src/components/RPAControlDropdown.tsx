@@ -28,6 +28,7 @@ import {
   startMedicationExtraction,
   waitForRPAIdle,
   stopRPAExtraction,
+  notifyRPACompletion,
 } from '@/lib/watcherService';
 import { logInfo, logError } from '@/lib/logger';
 import { useTranslations } from 'next-intl';
@@ -234,6 +235,11 @@ export function RPAControlDropdown() {
       }
 
       await refreshExecutionStatus();
+
+      // Notify CLARA that the entire extraction pipeline has completed
+      // This will bring the CLARA window to the front and show a completion message
+      logInfo('RPA Control: Extraction pipeline completed, notifying CLARA...');
+      await notifyRPACompletion();
     } catch (error) {
       logError(`RPA Control: Error during ${contextLabel} pipeline`, error);
       setStatus((prev) => ({
