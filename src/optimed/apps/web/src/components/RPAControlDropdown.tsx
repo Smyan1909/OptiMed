@@ -158,6 +158,8 @@ export function RPAControlDropdown() {
     if (!waitResult.success) {
       throw new Error(waitResult.error ? `${context}: ${waitResult.error}` : context);
     }
+    // Small delay to allow server state to fully settle before starting next extraction
+    await new Promise((resolve) => setTimeout(resolve, 500));
   };
 
   const runFollowupExtractions = async (options: {
@@ -229,8 +231,11 @@ export function RPAControlDropdown() {
         lastError: undefined,
       }));
 
+      // Always wait for the initial extraction to complete
+      await waitForRPAOrThrow(`${contextLabel} extraction`);
+
+      // Run follow-up extractions if selected
       if (shouldRunFollowups) {
-        await waitForRPAOrThrow(`${contextLabel} extraction`);
         await runFollowupExtractions(followupConfig);
       }
 

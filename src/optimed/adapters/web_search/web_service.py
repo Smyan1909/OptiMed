@@ -53,12 +53,11 @@ class TavilyWebSearchService(WebSearchService):
         - Query is about specific treatments, procedures, or medications stated but not described in patient context
         - Query is about general medical knowledge
         - Query is about clinical guidelines
-        - Query is about diagnosing a new condition for the patient
-        - Query is about treatment options for a new condition for the patient
+        - Query is about diagnosing a condition for the patient
+        - Query is about treatment options for a condition for the patient
 
         Web search is NOT needed if:
         - Query can be answered with patient context alone
-        - Query is conversational or about basic symptoms
         - Answer can be derived from context, internal reasoning, or previous chat history
         
         Respond with only "YES" if web search is needed, "NO" if not needed.
@@ -66,7 +65,7 @@ class TavilyWebSearchService(WebSearchService):
         
         try:
             response = await self.llm_client.chat([
-                ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information assistant."),
+                ChatMessage(role=ChatRole.SYSTEM, content="You are a medical information assistant to help decide if web search is needed for a medical query."),
                 ChatMessage(role=ChatRole.USER, content=evaluation_prompt)
             ])
             
