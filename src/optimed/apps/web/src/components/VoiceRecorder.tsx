@@ -32,6 +32,7 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, onRec
     transcript,
     interimTranscript,
     error,
+    connectionState,
     startRecording,
     stopRecording,
     reset
@@ -114,6 +115,23 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, onRec
     }
   }, [error]);
 
+  // Monitor connection state changes
+  useEffect(() => {
+    if (connectionState === 'error') {
+      logError(`[VoiceRecorder] Connection error state detected`);
+      // Clear processing state on connection error
+      setIsProcessing(false);
+    } else if (connectionState === 'disconnecting') {
+      logInfo(`[VoiceRecorder] Connection disconnecting`);
+    } else if (connectionState === 'connecting') {
+      logInfo(`[VoiceRecorder] Connection connecting`);
+    } else if (connectionState === 'connected') {
+      logInfo(`[VoiceRecorder] Connection established`);
+    } else if (connectionState === 'idle') {
+      logInfo(`[VoiceRecorder] Connection idle`);
+    }
+  }, [connectionState]);
+
   // Pass interim transcript to parent in real-time - including after stopping
   useEffect(() => {
     if ((isRecording || wasRecordingRef.current) && onInterimTranscript) {
@@ -124,6 +142,15 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, onRec
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transcript, interimTranscript, isRecording]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (finalTranscriptTimeoutRef.current) {
+        clearTimeout(finalTranscriptTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleToggle = async () => {
     if (isRecording) {
@@ -207,15 +234,29 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, onRec
     <div className="relative">
       <button
         onClick={handleToggle}
-        disabled={disabled || isFetching || !isReady || isProcessing}
+        disabled={disabled || isFetching || !isReady || isProcessing || connectionState === 'error' || connectionState === 'disconnecting' || connectionState === 'connecting'}
         className={`p-2 rounded-full transition-all ${
           isRecording
             ? 'bg-red-500 hover:bg-red-600 animate-pulse'
             : isProcessing
             ? 'bg-yellow-500'
+            : connectionState === 'error'
+            ? 'bg-red-400'
             : 'bg-blue-500 hover:bg-blue-600'
         } text-white disabled:opacity-50 disabled:cursor-not-allowed`}
-        title={!isReady ? 'Loading...' : isProcessing ? 'Processing...' : (isRecording ? 'Stop recording' : 'Start voice input')}
+        title={
+          !isReady 
+            ? 'Loading...' 
+            : connectionState === 'error'
+            ? 'Connection error - please try again'
+            : connectionState === 'disconnecting'
+            ? 'Disconnecting...'
+            : connectionState === 'connecting'
+            ? 'Connecting...'
+            : isProcessing 
+            ? 'Processing...' 
+            : (isRecording ? 'Stop recording' : 'Start voice input')
+        }
         type="button"
       >
         {!isReady || isFetching ? (
@@ -230,10 +271,15 @@ export function VoiceRecorder({ onTranscriptComplete, onInterimTranscript, onRec
       </button>
 
       {/* Error display */}
-      {(error || tokenError) && (
+      {(error || tokenError || connectionState === 'error') && (
         <div className="absolute bottom-full mb-2 right-0 bg-red-50 border border-red-300 p-3 rounded-lg shadow-lg text-sm text-red-700 max-w-xs z-50">
           <div className="font-semibold text-xs mb-1">Error</div>
-          <div>{error || tokenError}</div>
+          <div>{error || tokenError || 'Connection error occurred'}</div>
+          {connectionState === 'error' && (
+            <div className="mt-2 text-xs text-red-600">
+              Try refreshing the page or starting a new recording.
+            </div>
+          )}
         </div>
       )}
     </div>

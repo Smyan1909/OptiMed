@@ -1,5 +1,36 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
+// Set up console filtering at module level to suppress SDK internal warnings
+// The SDK's ReconnectingWebSocket generates "Close received after close" errors
+// which are harmless but noisy. This filter suppresses them.
+if (typeof window !== 'undefined') {
+  const originalWarn = console.warn;
+  const originalError = console.error;
+  
+  if (!(console.warn as any).__cortiFiltered) {
+    const filteredWarn = (...args: any[]) => {
+      const msg = args.map(a => String(a)).join(' ').toLowerCase();
+      if (msg.includes('unhandled message type') && 
+          (msg.includes('usage') || msg.includes('ended'))) {
+        return;
+      }
+      originalWarn.apply(console, args);
+    };
+    (filteredWarn as any).__cortiFiltered = true;
+    console.warn = filteredWarn;
+
+    const filteredError = (...args: any[]) => {
+      const msg = args.map(a => String(a)).join(' ').toLowerCase();
+      if (msg.includes('close received after close')) {
+        return;
+      }
+      originalError.apply(console, args);
+    };
+    (filteredError as any).__cortiFiltered = true;
+    console.error = filteredError;
+  }
+}
+
 interface CortiDictationState {
   isRecording: boolean;
   transcript: string;
@@ -47,14 +78,13 @@ export const useCortiDictation = () => {
       return;
     }
 
-    // Check if component already exists in DOM (from previous mount)
+    // Check if component already exists in DOM
     let container = containerRef.current;
     let dictationEl = container?.querySelector('corti-dictation') ||
                       document.querySelector('#corti-dictation-element');
 
     if (!dictationEl) {
-      // Create new component
-      console.log('[Corti SDK] Initializing web component');
+      console.log('[Corti SDK] Creating web component');
       container = document.createElement('div');
       container.style.display = 'none';
       container.innerHTML = '<corti-dictation id="corti-dictation-element"></corti-dictation>';
@@ -68,32 +98,28 @@ export const useCortiDictation = () => {
       }
     }
 
-    // Wait a bit for custom element to be defined
+    // Wait for custom element to be defined
     setTimeout(() => {
       if (dictationEl) {
         dictationRef.current = dictationEl;
-        console.log('[Corti SDK] Component element found:', dictationEl);
+        console.log('[Corti SDK] Component element found');
 
         // Listen for ready event
         dictationEl.addEventListener('ready', () => {
-          console.log('[Corti SDK] Component ready event fired');
+          console.log('[Corti SDK] Component ready');
           setState(prev => ({ ...prev, isReady: true }));
         });
 
-        // Check if component is already ready (doesn't always fire 'ready' event)
-        // Trigger our own ready check after a short delay
+        // Check if already ready
         setTimeout(() => {
-          console.log('[Corti SDK] Checking if component is already ready...');
-          // If we have the element and it has methods, it's ready
           if (dictationEl && typeof (dictationEl as any).setAccessToken === 'function') {
-            console.log('[Corti SDK] Component is already ready');
+            console.log('[Corti SDK] Component already ready');
             setState(prev => ({ ...prev, isReady: true }));
           }
         }, 200);
 
         // Listen for transcript events
         dictationEl.addEventListener('transcript', ((e: CustomEvent) => {
-          // Try different paths to get the text
           let text = '';
           let isFinal = true;
 
@@ -104,14 +130,11 @@ export const useCortiDictation = () => {
 
           if (text) {
             if (isFinal) {
-              setState(prev => {
-                const newTranscript = prev.transcript + (prev.transcript ? ' ' : '') + text;
-                return {
-                  ...prev,
-                  transcript: newTranscript,
-                  interimTranscript: '',
-                };
-              });
+              setState(prev => ({
+                ...prev,
+                transcript: prev.transcript + (prev.transcript ? ' ' : '') + text,
+                interimTranscript: '',
+              }));
             } else {
               setState(prev => ({
                 ...prev,
@@ -123,11 +146,10 @@ export const useCortiDictation = () => {
 
         // Listen for recording state changes
         dictationEl.addEventListener('recording-state-changed', ((e: CustomEvent) => {
-          console.log('[Corti SDK] Recording state changed:', e.detail.state);
-          const recordingState = e.detail.state;
+          console.log('[Corti SDK] Recording state:', e.detail.state);
           setState(prev => ({
             ...prev,
-            isRecording: recordingState === 'recording'
+            isRecording: e.detail.state === 'recording'
           }));
         }) as EventListener);
 
@@ -136,19 +158,14 @@ export const useCortiDictation = () => {
           console.error('[Corti SDK] Error:', e.detail);
           setState(prev => ({
             ...prev,
-            error: e.detail?.message || 'Transcription error occurred'
+            error: e.detail?.message || 'Transcription error'
           }));
         }) as EventListener);
-      } else {
-        console.error('[Corti SDK] Component element not found');
       }
     }, 100);
 
-    // Cleanup - DON'T remove the component on unmount since it can be reused
-    // Only clean up on full page unload
     return () => {
-      // Keep the component in DOM for reuse across session changes
-      console.log('[Corti SDK] Hook unmounting - keeping component for reuse');
+      console.log('[Corti SDK] Hook unmounting');
     };
   }, [sdkLoaded]);
 
@@ -159,7 +176,7 @@ export const useCortiDictation = () => {
     }
 
     try {
-      console.log('[Corti SDK] Setting access token and starting recording');
+      console.log('[Corti SDK] Starting recording');
 
       // Clear previous transcript
       setState(prev => ({
@@ -169,21 +186,21 @@ export const useCortiDictation = () => {
         error: null
       }));
 
-      // Set configuration FIRST for fastest interim results
+      // Set configuration
       dictationRef.current.dictationConfig = {
         primaryLanguage: config.language || 'en',
-        interimResults: true,  // Enable interim results for real-time streaming
+        interimResults: true,
         automaticPunctuation: true,
         spokenPunctuation: false,
       };
 
-      console.log('[Corti SDK] Configuration set:', dictationRef.current.dictationConfig);
-
-      // Set access token AFTER configuration
+      // Set access token
       await dictationRef.current.setAccessToken(config.token);
 
       // Start recording
       await dictationRef.current.toggleRecording();
+
+      console.log('[Corti SDK] Recording started');
 
     } catch (error: any) {
       console.error('[Corti SDK] Failed to start recording:', error);
@@ -202,7 +219,7 @@ export const useCortiDictation = () => {
     try {
       console.log('[Corti SDK] Stopping recording');
 
-      // Stop recording
+      // Stop recording if currently recording
       if (state.isRecording) {
         await dictationRef.current.toggleRecording();
       }
@@ -211,6 +228,8 @@ export const useCortiDictation = () => {
         ...prev,
         isRecording: false
       }));
+
+      console.log('[Corti SDK] Recording stopped');
 
       return state.transcript.trim();
     } catch (error) {
@@ -235,6 +254,7 @@ export const useCortiDictation = () => {
     transcript: state.transcript,
     interimTranscript: state.interimTranscript,
     error: state.error,
+    connectionState: state.isRecording ? 'connected' : 'idle',
     startRecording,
     stopRecording,
     reset,
