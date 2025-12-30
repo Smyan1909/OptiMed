@@ -12,6 +12,8 @@ from optimed.adapters.fhir_hapi.repository import HAPIFHIRRepository
 from optimed.adapters.smart_fhir.repository import SMARTFHIRRepository
 from optimed.adapters.vectorstores.pgvector import PGVectorAdapter
 from optimed.adapters.openai_gpt.azure_gpt5_mini_client import AzureOpenAIGPT5MiniClient # type: ignore
+from optimed.adapters.openai_gpt.gpt5_mini_client import OpenAIGPT5MiniClient # type: ignore
+from optimed.adapters.vertex_ai.gemini_client import VertexAIGeminiClient # type: ignore
 from optimed.adapters.user_repository.pg_user_repository import PGUserRepository
 from optimed.adapters.user_repository.pg_ehr_connection_repository import PGUserEHRConnectionRepository
 from optimed.adapters.dicom.pydicom_processor import PyDICOMProcessor
@@ -92,9 +94,16 @@ async def create_app_dependencies(use_smart=False) -> Tuple[DiagnosticEngine,
         dsn=str(os.getenv("PGVECTOR_DSN")),
         embedding_dim=int(os.getenv("EMBEDDING_DIM", "1024"))
     )
-    # Use fast GPT-5 mini for general LLM (minimal reasoning effort)
-    llm_client = AzureOpenAIGPT5MiniClient()
-    journal_client = AzureOpenAIGPT5MiniClient()
+    # Use Vertex AI Gemini or Azure OpenAI based on environment variable
+    use_vertex_ai = os.getenv("USE_VERTEX_AI", "false").lower() == "true"
+    if use_vertex_ai:
+        logger.info("Using Vertex AI Gemini 2.5 Flash adapter")
+        llm_client = VertexAIGeminiClient()
+        journal_client = VertexAIGeminiClient()
+    else:
+        logger.info("Using Azure OpenAI GPT-5 mini adapter")
+        llm_client = OpenAIGPT5MiniClient()
+        journal_client = OpenAIGPT5MiniClient()
     user_repo: UserRepository = PGUserRepository(dsn=str(os.getenv("PGVECTOR_DSN")))
     
     # Initialize image generation service if configured

@@ -127,8 +127,14 @@ Respond with ONLY the intent label (e.g., "focused_summary"), nothing else. Do n
                 max_tokens=50  # Only need one label
             )
 
-            # Extract predicted label
+            # Extract predicted label with normalization
             predicted_label = response.content.strip().lower()
+            # Strip quotes/punctuation and keep first token
+            for ch in ['"', "'", "`", ".", ",", ";", ":"]:
+                predicted_label = predicted_label.replace(ch, "")
+            predicted_label = predicted_label.strip()
+            if " " in predicted_label:
+                predicted_label = predicted_label.split()[0]
 
             # Validate prediction is in candidate labels
             if predicted_label in candidate_labels:
@@ -138,10 +144,16 @@ Respond with ONLY the intent label (e.g., "focused_summary"), nothing else. Do n
                 # LLM returned invalid label, try to find closest match
                 logger.warning(f"LLM returned invalid label '{predicted_label}', not in {candidate_labels}")
 
-                # Check if it's a substring match
+                # Check if it's a substring or startswith/endswith match
                 for label in candidate_labels:
+                    if predicted_label == label:
+                        logger.info(f"Using exact match: {label}")
+                        return label
                     if predicted_label in label or label in predicted_label:
                         logger.info(f"Using closest match: {label}")
+                        return label
+                    if predicted_label.startswith(label) or label.startswith(predicted_label):
+                        logger.info(f"Using startswith match: {label}")
                         return label
 
                 # No match found, return safe default
